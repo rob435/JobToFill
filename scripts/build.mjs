@@ -6,6 +6,8 @@
 // the keys the other browser needs so store validators report no warnings. "key" only pins the
 // extension ID of the unpacked folder (so moving it keeps your data); the stores assign their own.
 // Usage: npm run build
+// FIREFOX_VERSION and FIREFOX_UPDATE_URL (set by scripts/firefox-release.mjs) give the Firefox copy
+// its own version and the address Firefox checks for updates of a self-distributed install.
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +28,8 @@ const TARGETS = {
     delete m.key;
     m.background = { scripts: m.background.scripts };
     delete m.minimum_chrome_version;
+    if (process.env.FIREFOX_VERSION) m.version = process.env.FIREFOX_VERSION;
+    if (process.env.FIREFOX_UPDATE_URL) m.browser_specific_settings.gecko.update_url = process.env.FIREFOX_UPDATE_URL;
   },
 };
 

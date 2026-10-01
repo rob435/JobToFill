@@ -1,0 +1,51 @@
+# Signs JobToFill with Mozilla (unlisted: signed for you, not listed on addons.mozilla.org) and
+# publishes it as a GitHub release, so regular Firefox installs it permanently and updates it itself.
+#
+# One-time setup: add two repository secrets (Settings › Secrets and variables › Actions) holding
+# your addons.mozilla.org API credentials (https://addons.mozilla.org/developers/addon/api/key/):
+#   AMO_API_KEY     the "JWT issuer"  (user:12345:678)
+#   AMO_API_SECRET  the "JWT secret"
+# Then: Actions › Firefox release › Run workflow. Run it again whenever you want Firefox to update.
+name: Firefox release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency: firefox-release
+
+jobs:
+  release:
+    name: Sign and publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the Mozilla API credentials
+        env:
+          AMO_API_KEY: ${{ secrets.AMO_API_KEY }}
+          AMO_API_SECRET: ${{ secrets.AMO_API_SECRET }}
+        run: |
+          if [ -z "$AMO_API_KEY" ] || [ -z "$AMO_API_SECRET" ]; then
+            echo "::error title=Mozilla API credentials missing::Add the repository secrets AMO_API_KEY and AMO_API_SECRET (README › Permanent Firefox install)."
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test:unit
+      - name: Sign and publish
+        run: npm run sign:firefox -- --publish
+        env:
+          RELEASE_NUMBER: ${{ github.run_number }}
+          WEB_EXT_API_KEY: ${{ secrets.AMO_API_KEY }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_API_SECRET }}
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jobtofill-firefox-signed
+          path: dist/release/

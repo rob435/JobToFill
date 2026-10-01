@@ -1,6 +1,6 @@
 {
   "name": "jobtofill",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Browser extension that autofills job applications and everyday forms.",
   "scripts": {
@@ -11,7 +11,7 @@
     "lint": "eslint . && prettier --check . && node scripts/check.mjs && npm run build --silent && web-ext lint --source-dir dist/firefox --warnings-as-errors",
     "format": "prettier --write . && eslint --fix .",
     "build": "node scripts/build.mjs",
-    "sign:firefox": "npm run build && web-ext sign --channel unlisted --source-dir dist/firefox --artifacts-dir dist",
+    "sign:firefox": "node scripts/firefox-release.mjs",
     "chrome": "web-ext run --target chromium",
     "firefox": "web-ext run --target firefox-desktop",
     "demo": "node tests/fixtures/serve.mjs",
