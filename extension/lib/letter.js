@@ -580,7 +580,7 @@
           content: [
             'You are a strict fact-checker for cover letters. The CANDIDATE MATERIAL and EXAMPLE LETTERS are the only truth about the candidate.',
             'List each statement in the LETTER about the candidate (what they did, built, studied, know, use, won, or traits claimed from experience) that this truth does not support.',
-            'Paraphrase and summary are fine. Statements about the employer, the role, or what the candidate wants or hopes to do need no support. Only flag statements that add or change facts about the candidate.',
+            'Paraphrase and summary are fine. A skill, tool or language named anywhere in the material (including a skills list or a module list) supports a plain statement that the candidate uses it. Statements about the employer, the role, or what the candidate wants or hopes to do need no support. Only flag statements that add or change facts about the candidate, and check the whole material before flagging.',
             'Reply with JSON only: {"unsupported": [{"quote": "the exact words from the letter", "problem": "what isn’t supported, in a few words"}]}. Use an empty list when everything is supported.',
           ].join('\n'),
         },
