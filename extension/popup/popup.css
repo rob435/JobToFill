@@ -40,6 +40,26 @@ button.big {
   border-radius: 10px;
 }
 
+button.letter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px;
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-weak);
+}
+button.letter:hover:not(:disabled) {
+  background: var(--surface);
+}
+button.letter svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
 .note {
   margin: -4px 0 0;
   font-size: 12.5px;

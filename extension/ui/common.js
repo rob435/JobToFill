@@ -48,6 +48,31 @@ export function requestSiteAccess() {
   return api.permissions.request(ALL_SITES);
 }
 
+/* ------------------------------------------------------------ AI consent */
+
+// Firefox asks before an add-on sends personal data anywhere. The cover letter writer sends your CV,
+// profile and the job page's text to the AI provider you chose, so it asks once, from a click.
+const AI_DATA = { data_collection: ['personallyIdentifyingInfo', 'websiteContent'] };
+
+export async function hasAiConsent() {
+  if (!util.isFirefox()) return true;
+  try {
+    return await api.permissions.contains(AI_DATA);
+  } catch (err) {
+    return true; // a Firefox without data-collection permissions doesn't ask
+  }
+}
+
+/** Must be called straight from a click handler (no await before it) or Firefox refuses. */
+export function requestAiConsent() {
+  if (!util.isFirefox()) return Promise.resolve(true);
+  try {
+    return api.permissions.request(AI_DATA).catch(() => false);
+  } catch (err) {
+    return Promise.resolve(true);
+  }
+}
+
 /* -------------------------------------------------------------- shortcuts */
 
 export async function fillShortcut() {

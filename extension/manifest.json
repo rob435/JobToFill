@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "JobToFill",
   "short_name": "JobToFill",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Autofill job applications and everyday forms: contact details, address, education, work history, resumes, screening questions, passwords and cards.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtkpioggOSuQuzF6YlaoLGNqc+HLKGyim/4wUt1maD8Qn7S/HO/ZOZldhrQaPV43Rjqpo/5+M5gYD3XaIYryrbgodgjL2xhsGaR3XymGCYzyY1WnPXWXBnhzp4CbU6wRXSU22unBd2NvlUf70UW/uC3suXw7V4l9MaRCpgKYJr29qRzhKU/wDrqqBDhDyMA8FLEOcSUq1Rsh+EakqIRKL2p4vOI+bNO+iSDEPk0eKTBMRiPzwaF/doYroOh03t8lIJdaX6d0065Jg7c+o7d7xWnf36ViM/OEwlOrqtzaKhb/GYto0v5gaZyy6XQZZWwSFb68X2cZqb1uiO/4qC4DhowIDAQAB",
   "icons": {
@@ -36,6 +36,7 @@
     ]
   },
   "permissions": ["storage", "unlimitedStorage", "scripting", "activeTab", "contextMenus", "alarms", "downloads"],
+  "optional_permissions": ["history"],
   "host_permissions": ["<all_urls>"],
   "commands": {
     "fill-page": {
@@ -56,7 +57,8 @@
       "id": "{49b8e24e-544e-4e41-9c12-48efe5117247}",
       "strict_min_version": "142.0",
       "data_collection_permissions": {
-        "required": ["none"]
+        "required": ["none"],
+        "optional": ["personallyIdentifyingInfo", "websiteContent"]
       }
     }
   }

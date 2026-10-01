@@ -1,0 +1,35 @@
+Fonts and hyphenation patterns used by lib/pdfdoc.js to typeset cover letters and CVs.
+
+JTF Roman (jtfroman*.ttf)
+-------------------------
+A modified version of the Latin Modern fonts, version 2.005:
+  Copyright 2003--2021 by B. Jackowski and J.M. Nowacki (on behalf of TeX Users Groups).
+  Based on Donald E. Knuth's Computer Modern fonts.
+  Released under the GUST Font License (GUST-FONT-LICENSE.txt), which is the LaTeX Project
+  Public License version 1.3c (LPPL-1.3c.txt) with an additional request to rename modified fonts.
+
+  Source file                  -> this file
+  lmroman10-regular.otf        -> jtfroman10-regular.ttf      (JTF Roman 10 Regular)
+  lmroman10-bold.otf           -> jtfroman10-bold.ttf         (JTF Roman 10 Bold)
+  lmroman10-italic.otf         -> jtfroman10-italic.ttf       (JTF Roman 10 Italic)
+  lmroman12-bold.otf           -> jtfroman12-bold.ttf         (JTF Roman 12 Bold)
+  lmromancaps10-regular.otf    -> jtfromancaps10-regular.ttf  (JTF Roman Caps 10 Regular)
+
+  Changes (made by scripts/fonts.py in the JobToFill repository):
+  - subset to Basic Latin, Latin-1 Supplement, Latin Extended-A, Romanian comma-below letters,
+    spacing accents, common punctuation and symbols, and the ff/fi/fl/ffi/ffl ligatures;
+  - CFF outlines converted to TrueType quadratic outlines, accented letters rebuilt as composites;
+  - hinting, glyph names and OpenType substitution tables removed, pair kerning re-encoded as
+    class kerning;
+  - fonts and files renamed, as the GUST Font License requests.
+  These are not the original Latin Modern fonts and are not supported by their authors.
+
+  The complete, unmodified Latin Modern fonts are available from CTAN:
+    https://ctan.org/pkg/lm   (https://mirrors.ctan.org/fonts/lm/)
+  and from https://www.gust.org.pl/projects/e-foundry/latin-modern
+
+hyph-en-gb.txt
+--------------
+British English hyphenation patterns from the hyph-utf8 package (hyph-en-gb.tex), MIT licence,
+Copyright (C) 1992, 1996, 2005, 2016 Dominik Wujastyk, Graham Toal. The licence text is reproduced
+in the header of the file. Source: https://github.com/hyphenation/tex-hyphen

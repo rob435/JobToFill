@@ -185,6 +185,68 @@ test('store: export / import round trip with documents', async () => {
   assert.equal((await store.getDoc(restored.id, 'resume')).name, 'cv.pdf');
 });
 
+test('store: cover letter material is per profile, exported, and the API key is not', async () => {
+  const { profile } = await store.getActive();
+  await store.saveKit(profile.id, { notes: 'Chess captain', samples: [{ id: 's1', name: 'a.pdf', text: 'Dear X' }] });
+  await store.saveKit(profile.id, { closing: 'Kind regards,' });
+  const kit = await store.getKit(profile.id);
+  assert.equal(kit.notes, 'Chess captain');
+  assert.equal(kit.closing, 'Kind regards,');
+  assert.equal(kit.paper, 'a4', 'defaults fill the gaps');
+  assert.equal(await store.hasData(), true, 'notes count as data worth backing up');
+
+  await store.setAiKey('  sk-secret ');
+  await store.saveSettings({ ai: { provider: 'deepseek', model: '' } });
+  assert.deepEqual(await store.aiConfig(), {
+    provider: 'deepseek',
+    model: '',
+    baseUrl: '',
+    apiKey: 'sk-secret',
+  });
+  const backup = JSON.parse(JSON.stringify(await store.exportData()));
+  assert.ok(!JSON.stringify(backup).includes('sk-secret'), 'the key never leaves the browser');
+  assert.equal(backup.kits[`kit:${profile.id}`].notes, 'Chess captain');
+
+  installChrome();
+  await store.importData(backup);
+  assert.equal((await store.getKit(profile.id)).notes, 'Chess captain');
+  assert.equal(await store.getAiKey(), '');
+  await store.setAiKey('');
+  assert.equal(await store.getAiKey(), '');
+});
+
+test('store: a chosen letter follows its application across pages, not to other jobs', async () => {
+  const base = { profileId: 'p', pdf: { name: 'l.pdf' } };
+  const unused = await store.saveLetter({
+    ...base,
+    url: 'https://acme.wd3.myworkdayjobs.com/x/job/London/Analyst_R-1234',
+  });
+  assert.equal(await store.letterFor({ tabId: 1, url: unused.url }), null, 'only letters chosen for the application');
+  const chosen = await store.saveLetter({ id: unused.id, tabId: 7, attachedAt: Date.now(), jobIds: ['R-1234'] });
+  assert.equal(chosen.pdf.name, 'l.pdf', 'saving by id updates the letter');
+  assert.equal((await store.getLetters()).length, 1);
+
+  const find = (tabId, url) => store.letterFor({ tabId, url }).then((l) => l && l.id);
+  assert.equal(
+    await find(9, 'https://acme.wd3.myworkdayjobs.com/x/job/London/Analyst_R-1234/'),
+    chosen.id,
+    'same page',
+  );
+  assert.equal(
+    await find(9, 'https://acme.wd3.myworkdayjobs.com/x/job/Analyst_R-1234/apply/step2'),
+    chosen.id,
+    'job id',
+  );
+  assert.equal(await find(7, 'https://acme.wd3.myworkdayjobs.com/x/flow/review'), chosen.id, 'next step, same tab');
+  assert.equal(await find(9, 'https://acme.wd3.myworkdayjobs.com/x/flow/review'), null, 'another tab, another job');
+  assert.equal(await find(7, 'https://other.example/apply'), null, 'another site');
+
+  await store.saveLetter({ id: chosen.id, attachedAt: Date.now() - 4 * 86400000 });
+  assert.equal(await find(7, unused.url), null, 'old choices expire');
+  await store.removeLetter(chosen.id);
+  assert.deepEqual(await store.getLetters(), []);
+});
+
 test('geo and util helpers', () => {
   assert.equal(geo.findCountry('U.S.A.')[0], 'US');
   assert.equal(geo.findCountry('Deutschland')[0], 'DE');

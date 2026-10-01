@@ -34,6 +34,10 @@
     describedby: 0.3,
   };
 
+  const MIN_SCORE = 0.35;
+  // Types whose value is a short phrase, never the answer to an essay question.
+  const SHORT_VALUE =
+    /^(name\.|edu\.(school|degree|field|gpa|location|start|end)|exp\.(company|title|location)|address\.|location$|email$|phone|links\.|nationality$|pronouns$|job\.(currentCompany|currentTitle|salary|yearsExperience|startDate|referralSource)$)/;
   const EMAIL_TYPES = new Set(['email', 'account.username']);
   // Field types a lone checkbox can answer: "I am authorized to work in the US", "I have read the
   // privacy notice", or one option of a checklist ("London" under "Which offices…?").
@@ -123,13 +127,17 @@
       }
       if (!hits) continue;
       if (rule.test && !rule.test(desc, hitText)) continue;
+      // An essay box ("Do you have coding experience? … GitHub links welcomed", "Think of something in
+      // your academic life…") wants an answer, not a name, school or URL.
+      if (desc.kind === 'textarea' && SHORT_VALUE.test(rule.type) && hitText.split(' ').length > 12) continue;
       score += 0.05 * (hits - 1);
       const candidate = { type: rule.type, part: rule.part || null, score, source: 'rule', rule };
       const prev = byType.get(rule.type);
       if (!prev || score > prev.score) byType.set(rule.type, candidate);
       if (!best || score > best.score + 1e-9) best = candidate;
     }
-    if (!best) return refine(fallback(desc), desc);
+    // A word in the help text or a wrapper's id alone ("…your university's policy…") is not enough.
+    if (!best || best.score < MIN_SCORE) return refine(fallback(desc), desc);
 
     // "Name" labels a first/last pair more often than a full-name box: let specifics win.
     if (best.rule.yieldsTo) {
@@ -337,6 +345,9 @@
     )
       return 'no';
     if (/\bi am\b|\bi have\b|\bi identify\b|\bi do\b|\bi will\b|\bi can\b|\bi m\b|\bi agree\b/.test(t)) return 'yes';
+    // Acknowledgement answers: "I confirm", "Acknowledged", "I accept".
+    if (/^i (confirm|acknowledge|accept|consent|understand|certify)\b|^(confirm(ed)?|acknowledged?|accept(ed)?|agreed?)$/.test(t))
+      return 'yes';
     return null;
   }
 
@@ -392,6 +403,7 @@
   function bestText(opts, cands, v) {
     const wantDegree = v.kind === 'degree' ? degreeGroup(cands[0] || '') : null;
     const primary = U.tokens(cands[0] || '');
+    const near = (v.near || []).map(norm).filter(Boolean);
     let best = null;
     for (const o of opts) {
       let score = 0;
@@ -399,6 +411,8 @@
       if (wantDegree && degreeGroup(o.n) === wantDegree) score = Math.max(score, 75 + score * 0.2);
       // Break ties toward the option that shares the most words with the main spelling.
       if (score > 0) score += jaccard(U.tokens(o.n), primary) * 5;
+      // "San Francisco, California" rather than "San Francisco, Cebu": the option names your state or country.
+      if (score > 0 && near.some((n) => (' ' + o.n + ' ').includes(' ' + n + ' '))) score += 8;
       if (!best || score > best.score) best = { i: o.i, score };
     }
     return best;

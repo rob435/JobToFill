@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cover letter · JobToFill</title>
+    <link rel="icon" href="../icons/icon32.png" />
+    <link rel="stylesheet" href="../ui/theme.css" />
+    <link rel="stylesheet" href="studio.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <img src="../icons/icon32.png" alt="" width="24" height="24" />
+      <strong>Cover letter</strong>
+      <span id="profile-name" class="muted"></span>
+      <span class="grow"></span>
+      <span id="cost" class="muted small" title="What the AI calls on this page cost, as reported by the provider"></span>
+      <button id="open-settings" class="small" type="button">Settings</button>
+    </header>
+
+    <div class="layout">
+      <main>
+        <!-- No AI key yet: set it up right here. -->
+        <section id="setup" class="card" hidden>
+          <h2>Connect an AI model</h2>
+          <p class="muted">
+            JobToFill writes letters with your own API key (OpenRouter or DeepSeek). The key stays in this browser and is only sent to the
+            provider you choose.
+          </p>
+          <div class="grid">
+            <label class="field"
+              ><span>Provider</span>
+              <select id="setup-provider"></select>
+            </label>
+            <label class="field"
+              ><span>Model</span>
+              <input id="setup-model" type="text" list="setup-models" autocomplete="off" spellcheck="false" />
+              <datalist id="setup-models"></datalist>
+            </label>
+            <label class="field wide" id="setup-base-wrap" hidden
+              ><span>API address</span>
+              <input id="setup-base" type="url" placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false" />
+            </label>
+            <label class="field wide"
+              ><span>API key</span>
+              <input id="setup-key" type="password" autocomplete="off" spellcheck="false" />
+              <small>Get one at <a id="setup-key-link" href="#" target="_blank" rel="noopener"></a></small>
+            </label>
+          </div>
+          <div class="row">
+            <button id="setup-save" class="primary" type="button">Save and continue</button>
+            <span id="setup-status" class="muted small" aria-live="polite"></span>
+          </div>
+        </section>
+
+        <section id="access" class="card" hidden>
+          <h2>Allow JobToFill on websites</h2>
+          <p class="muted">Needed once so it can read the job’s page and reach your AI provider.</p>
+          <div class="row"><button id="access-allow" class="primary" type="button">Allow</button></div>
+        </section>
+
+        <section id="consent" class="card" hidden>
+          <h2>Allow the cover letter writer</h2>
+          <p class="muted">
+            To write a letter, JobToFill sends the job description and your CV, profile and notes to your AI provider. Firefox asks for your
+            permission first.
+          </p>
+          <div class="row"><button id="consent-allow" class="primary" type="button">Allow</button></div>
+        </section>
+
+        <section id="job" class="card">
+          <div class="card-head">
+            <h2>The job</h2>
+            <span id="job-verdict" class="pill" hidden></span>
+          </div>
+          <div id="job-body"><p class="muted">Looking at the application…</p></div>
+          <ul id="job-fit" class="checks" hidden></ul>
+          <details id="job-tried" hidden>
+            <summary>Where JobToFill looked</summary>
+            <ul id="job-tried-list"></ul>
+          </details>
+          <div class="row">
+            <button id="job-change" class="small" type="button">Wrong job? Paste it</button>
+            <button id="job-history" class="small" type="button" hidden>Also search my browsing history</button>
+          </div>
+          <div id="job-manual" class="stack" hidden>
+            <label class="field"
+              ><span>The job’s web address, or the whole job description</span>
+              <textarea id="job-manual-text" rows="5" placeholder="https://… or paste the description"></textarea>
+            </label>
+            <div class="row">
+              <button id="job-manual-use" class="primary small" type="button">Use this</button>
+              <button id="job-manual-cancel" class="small" type="button">Cancel</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="progress-card" class="card" hidden>
+          <ol id="steps" class="steps"></ol>
+          <p id="error" class="error" hidden></p>
+          <div class="row">
+            <button id="retry" class="small" type="button" hidden>Try again</button>
+            <button id="stop" class="small" type="button" hidden>Stop</button>
+          </div>
+        </section>
+
+        <section id="editor" class="card" hidden>
+          <div class="card-head">
+            <h2>Your letter</h2>
+            <span id="words" class="muted small"></span>
+          </div>
+          <label class="field"><span>Greeting</span><input id="salutation" type="text" /></label>
+          <label class="field"
+            ><span>Letter</span>
+            <textarea id="body" rows="18" spellcheck="true"></textarea>
+            <small>Leave a blank line between paragraphs. The PDF updates as you type.</small>
+          </label>
+          <label class="field"><span>Sign-off</span><input id="closing" type="text" /></label>
+          <ul id="checks" class="checks"></ul>
+          <div class="ask">
+            <input
+              id="instructions"
+              type="text"
+              placeholder="Ask for changes, e.g. “mention my chess”, “more about data quality”, “shorter”"
+            />
+            <button id="rewrite" type="button">Rewrite</button>
+          </div>
+          <div class="row actions">
+            <button id="use" class="primary" type="button">Use for this application</button>
+            <button id="download" type="button">Download PDF</button>
+            <button id="copy" type="button">Copy text</button>
+            <span id="use-status" class="muted small" aria-live="polite"></span>
+          </div>
+        </section>
+
+        <section id="cv-card" class="card" hidden>
+          <div class="card-head">
+            <h2>Tailor your CV too</h2>
+            <span id="cv-coverage" class="pill" hidden></span>
+          </div>
+          <p id="cv-intro" class="muted">
+            Rewords and reorders your CV around this job’s keywords, without adding anything that isn’t already in it. Every change is
+            listed so you can check it.
+          </p>
+          <div class="row">
+            <button id="cv-make" type="button">Tailor my CV</button>
+            <label class="check" id="cv-use-wrap" hidden><input id="cv-use" type="checkbox" /> Upload this CV for this application</label>
+            <button id="cv-download" type="button" hidden>Download CV</button>
+          </div>
+          <div id="cv-result" hidden>
+            <p id="cv-keywords" class="small"></p>
+            <ul id="cv-checks" class="checks"></ul>
+            <details>
+              <summary>What changed</summary>
+              <ul id="cv-changes"></ul>
+            </details>
+          </div>
+        </section>
+      </main>
+
+      <aside class="preview">
+        <div class="tabs" role="tablist">
+          <button id="tab-letter" role="tab" type="button" aria-selected="true">Letter</button>
+          <button id="tab-cv" role="tab" type="button" aria-selected="false" hidden>CV</button>
+          <span class="grow"></span>
+          <a id="open-pdf" class="small" href="#" target="_blank" rel="noopener" hidden>Open in a new tab</a>
+        </div>
+        <div id="preview-empty" class="preview-empty muted">The PDF appears here.</div>
+        <iframe id="preview" title="PDF preview" hidden></iframe>
+      </aside>
+    </div>
+
+    <script src="../lib/util.js"></script>
+    <script src="../lib/geo.js"></script>
+    <script src="../lib/fields.js"></script>
+    <script src="../lib/matcher.js"></script>
+    <script src="../lib/vault.js"></script>
+    <script src="../lib/store.js"></script>
+    <script src="../lib/ai.js"></script>
+    <script src="../lib/letter.js"></script>
+    <script src="../lib/jobpage.js"></script>
+    <script src="../lib/doctext.js"></script>
+    <script src="../lib/pdfdoc.js"></script>
+    <script type="module" src="studio.js"></script>
+  </body>
+</html>

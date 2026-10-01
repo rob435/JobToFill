@@ -175,7 +175,10 @@
       notes,
       unknown: 0,
       consents: 0,
+      wantsLetter: false,
     };
+    // Attaching a cover letter fills just those fields, replacing whatever is in them.
+    const only = payload.only ? new Set(payload.only) : null;
     const docCache = {};
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i];
@@ -184,6 +187,8 @@
         report.unknown++;
         continue;
       }
+      if (r.type === 'file.coverLetter' || r.type === 'coverLetter') report.wantsLetter = true;
+      if (only && !only.has(r.type)) continue;
       report.detected++;
       const def = JTF.fields.DEFS[r.type];
       const label = labelFor(field, r);
@@ -219,7 +224,7 @@
         continue;
       }
       const res = await JTF.fill.apply(field, v, {
-        overwrite: settings.overwrite,
+        overwrite: settings.overwrite || !!payload.force,
         comboboxes: settings.comboboxes !== false,
         history,
       });
@@ -375,10 +380,24 @@
     return { filled: targets.length };
   }
 
+  /* --------------------------------------------------------- job context */
+
+  /** What this page says about the job being applied for (see JTF.jobpage.applicationContext). */
+  function jobContext() {
+    const out = { url: location.href, top: root === root.top, title: document.title };
+    try {
+      return Object.assign(out, JTF.jobpage.applicationContext(document, location.href));
+    } catch (err) {
+      out.error = String((err && err.message) || err);
+      return out;
+    }
+  }
+
   const api = {
     version: 1,
     fill,
     learn,
+    jobContext,
     inspect,
     toast,
     fillActive,

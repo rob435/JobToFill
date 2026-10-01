@@ -24,6 +24,26 @@ Save your details once: name, contact info, address, links, education, work hist
 - **Application log.** Every job application you fill is recorded, and the log can be exported as CSV.
 - **Multiple profiles.** For example "Software engineer", "Data analyst" and "Personal shopping", each with its own resume.
 
+**Cover letters and tailored CVs (AI)**
+
+- **Write cover letter** in the popup, on any application. JobToFill finds the job's real description, writes a one-page letter in your voice from your CV, checks every fact, and attaches the PDF to the form (and pastes the text into "cover letter" boxes). The next steps of the same application get it too.
+- **Finds the actual job.** It checks the application page itself, the job site's public listing APIs (Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Workable, Oracle…), "View job" links, the page you came from and, if you allow it, your browsing history. Pages that only render with scripts are read in a background tab. Then it **proves it's the same job** (same job ID, company and title) before writing; if it's unsure, the AI double-checks, and you can always paste the job instead.
+- **Your style.** Add letters you've written before (PDF, Word or text). New letters copy their voice, structure and length, and reuse what they say about you. They never reuse the company they were written for.
+- **Bulletproof facts.** Every draft is checked before you see it, and failures go back to the model to fix:
+  - every number must appear in your CV, notes or the posting;
+  - tools and skills it claims must be yours;
+  - names must be real;
+  - it must name the right company, with no other company's name leaking in from an example letter;
+  - no placeholders, markdown, clichés or em dashes, and a sensible length.
+
+  A second AI pass reads the letter against your CV and flags any claim about you that isn't backed up. Whatever is still doubtful is listed for you to check.
+
+- **Eligibility check.** If the posting has hard requirements (graduation year, right to work, clearance, degree), it tells you when your profile doesn't seem to meet them.
+- **Looks like a LaTeX letter.** The PDF is typeset like the classic LaTeX letter: Latin Modern (Computer Modern) fonts, TeX-style justified paragraphs with hyphenation, your name and a contact line with clickable links, and it always fits on one page. The text stays selectable, so applicant tracking systems can read it.
+- **Tailor my CV.** Rewords and reorders your CV around the job's keywords, using only facts already in it. It shows keyword coverage before → after and a list of every change. If you choose to, it uploads the tailored PDF instead of your usual CV for that application.
+- **Edit freely.** The letter is editable, the PDF preview updates as you type, and the checks re-run on your edits. Use "Rewrite" with an instruction such as "mention my chess" or "shorter".
+- **Bring your own model.** DeepSeek V4.1 Flash through [OpenRouter](https://openrouter.ai) by default (about a tenth of a cent per letter, ~10 seconds), DeepSeek's own API, or any OpenAI-compatible provider. Settings › _Cover letters_.
+
 **General autofill**
 
 - Checkout and shipping forms, including country/state codes, phone numbers and split names. A "Company (optional)" box on a shipping form is _not_ filled with your employer.
@@ -82,14 +102,15 @@ In both browsers the settings page opens on install. Fill in your profile and pi
 
 ## Using it
 
-| Do this                        | How                                                                                       |
-| ------------------------------ | ----------------------------------------------------------------------------------------- |
-| Fill the page                  | **Alt+Shift+F**, the toolbar button → _Fill this page_, or right-click → _Fill this page_ |
-| See what was detected          | Toolbar → _Show detected fields_                                                          |
-| Save answers you typed         | Toolbar → _Learn from this page_                                                          |
-| Insert one value               | Right-click a box → _Insert from profile_                                                 |
-| New password on a sign-up form | Right-click the password box → _Generate strong password_ (or just fill the page)         |
-| Undo a fill                    | _Undo_ in the popup or in the on-page toast                                               |
+| Do this                        | How                                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------------------- |
+| Fill the page                  | **Alt+Shift+F**, the toolbar button → _Fill this page_, or right-click → _Fill this page_   |
+| See what was detected          | Toolbar → _Show detected fields_                                                            |
+| Save answers you typed         | Toolbar → _Learn from this page_                                                            |
+| Insert one value               | Right-click a box → _Insert from profile_                                                   |
+| New password on a sign-up form | Right-click the password box → _Generate strong password_ (or just fill the page)           |
+| Undo a fill                    | _Undo_ in the popup or in the on-page toast                                                 |
+| Write a cover letter           | Toolbar → _Write cover letter_ on the application page (set up a key under _Cover letters_) |
 
 To change the shortcut, open `chrome://extensions/shortcuts` in Chromium browsers, or in Firefox go to `about:addons`, click ⚙, then **Manage Extension Shortcuts**. The settings page links there too.
 
@@ -104,7 +125,8 @@ The demo includes Greenhouse-, Workday- and Lever-style applications, searchable
 
 ## Privacy and security
 
-- **Nothing leaves your browser.** There are no servers, analytics or network requests. The profile lives in the extension's local storage, plus the backup file in your own Downloads folder. The Firefox manifest declares that no data is collected.
+- **Nothing leaves your browser** unless you use the cover letter writer. There are no servers or analytics. The profile lives in the extension's local storage, plus the backup file in your own Downloads folder.
+- **The cover letter writer** sends the job description, your CV's text, your profile, notes and example letters to the AI provider you chose, with your own API key, and only when you ask for a letter. In Firefox it asks for your permission first. The key stays in this browser and is never included in backups or exports. Job descriptions are fetched from the job sites directly, without your cookies. Browsing history is only searched if you switch that on; it is searched locally, and only the matching job pages are opened.
 - **Nothing runs until you ask.** The fill code is injected into a page only when you press the shortcut or a button. It is not loaded on every site you visit.
 - **The backup file is yours.** It is written only to your Downloads folder and contains your profile as plain JSON (the vault stays encrypted). Turn it off under _Backup & restore_ if you'd rather not keep one.
 - **The vault is encrypted** with AES-256-GCM. The key is derived from your master password (PBKDF2-SHA256, 600,000 iterations) and is kept only in memory (`storage.session`) while unlocked. Content scripts can't read it. The vault auto-locks after inactivity (30 minutes by default) and always locks when the browser closes. Backups contain the vault still encrypted.
@@ -151,6 +173,9 @@ Implemented ✅ · Ideas for later 💡
 - "Enter manually" cover-letter boxes that only appear after a click aren't opened for you.
 - Sections that only appear after clicking _Add another_ aren't added automatically yet.
 - It can't fill CAPTCHAs or closed shadow roots, and won't run on browser pages or extension stores.
+- The cover letter writer needs an AI provider account (OpenRouter, DeepSeek or similar). Its checks catch invented numbers, skills, names and claims, but read the letter before you send it: the AI can still describe something more strongly than you would.
+- Job descriptions behind a login (some Workday, Oracle or SuccessFactors sites) can't always be fetched. Open the job page and start from there, or paste the description.
+- CV text is read from text-based PDFs and Word files. Scanned (image-only) PDFs have no text to read.
 
 ## Development
 
@@ -163,14 +188,21 @@ extension/
     matcher.js         classification, section/entry planning, option matching, formatting
     geo.js             countries (ISO codes + aliases) and US/CA/AU regions
     vault.js           encryption, password generator, lock/unlock
-    store.js           profiles, settings, documents, history, backups
+    store.js           profiles, settings, documents, history, backups, cover letter material and letters
     util.js            text normalization, dates, and JTF.api (browser.* in Firefox, chrome.* elsewhere)
+    ai.js              OpenAI-compatible chat client (OpenRouter, DeepSeek, custom): JSON mode, retries, errors
+    letter.js          cover letter and CV prompts, and the checks every draft must pass
+    jobpage.js         job postings: extraction, ATS APIs, finding the description, same-job validation
+    doctext.js         text from PDF and Word files (your CV, example letters), no dependencies
+    pdfdoc.js          PDF writer: TeX-style line breaking, embedded fonts, the letter and CV layouts
+  fonts/               Latin Modern (GUST font licence) as TrueType subsets, and English hyphenation patterns
   content/             injected on demand into every frame
     dom.js             finds controls (incl. shadow DOM), labels, radio groups
     fill.js            sets values the way frameworks notice, custom dropdowns, files, undo
     main.js            in-page API: fill / learn / inspect / undo / toast
   ui/                  shared styles and helpers for the popup and settings page (ES modules)
   popup/               toolbar popup
+  studio/              the cover letter page: find the job, write, check, preview, attach, tailor the CV
   options/             settings page: main.js (shell), profile.js, vault.js, app.js, controls.js
 tests/
   unit/                node:test, no browser

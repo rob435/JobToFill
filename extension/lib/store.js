@@ -9,6 +9,10 @@
  *   history       [{ date, url, host, title, filled }]  newest first
  *   vault         encrypted blob, managed by vault.js
  *   backupInfo    { at, path, error, paused, previous, dismissed }  the automatic backup file (background.js)
+ *   kit:<id>      cover letter material per profile: { notes, samples: [{ id, name, text }], contact, closing,
+ *                 spelling, paper, cv: { updatedAt, text } (text read from the resume file) }
+ *   aiKey         the AI provider's API key; never exported or backed up
+ *   letters       generated letters, newest first (see saveLetter)
  */
 (function (root) {
   'use strict';
@@ -25,10 +29,15 @@
     passwordStrategy: 'generate',
     autoLockMinutes: 30,
     logApplications: true,
+    ai: { provider: 'openrouter', model: '', baseUrl: '' },
+    searchHistory: false,
   };
+
+  const DEFAULT_KIT = { notes: '', samples: [], contact: '', closing: '', spelling: 'auto', paper: 'a4', cv: null };
 
   const DOC_TYPES = ['resume', 'coverLetter'];
   const HISTORY_LIMIT = 500;
+  const LETTER_LIMIT = 25;
   const area = () => JTF.api.storage.local;
 
   // Read-modify-write operations run one at a time within a context so they don't drop each other's changes.
@@ -103,7 +112,7 @@
     const nextOrder = order.filter((x) => x !== id);
     if (settings.activeProfileId === id) settings.activeProfileId = nextOrder[0];
     await area().set({ profiles, profileOrder: nextOrder, settings });
-    await area().remove(DOC_TYPES.map((w) => docKey(id, w)));
+    await area().remove([...DOC_TYPES.map((w) => docKey(id, w)), kitKey(id)]);
   });
 
   async function setActive(id) {
@@ -138,6 +147,91 @@
       out[w] = d ? { name: d.name, size: d.size, type: d.type, updatedAt: d.updatedAt } : null;
     });
     return out;
+  }
+
+  /* ---------------------------------------------------------- cover letters */
+
+  const kitKey = (profileId) => `kit:${profileId}`;
+
+  async function getKit(profileId) {
+    const key = kitKey(profileId);
+    return Object.assign(structuredClone(DEFAULT_KIT), (await area().get(key))[key] || {});
+  }
+
+  const saveKit = exclusive(async function saveKit(profileId, patch) {
+    const kit = Object.assign(await getKit(profileId), patch);
+    await area().set({ [kitKey(profileId)]: kit });
+    return kit;
+  });
+
+  async function getAiKey() {
+    return (await area().get('aiKey')).aiKey || '';
+  }
+
+  async function setAiKey(key) {
+    const value = String(key || '').trim();
+    if (value) await area().set({ aiKey: value });
+    else await area().remove('aiKey');
+  }
+
+  /** The AI settings with the key, ready for JTF.ai. */
+  async function aiConfig() {
+    const [settings, apiKey] = await Promise.all([getSettings(), getAiKey()]);
+    return Object.assign({}, DEFAULT_SETTINGS.ai, settings.ai || {}, { apiKey });
+  }
+
+  async function getLetters() {
+    return (await area().get('letters')).letters || [];
+  }
+
+  /**
+   * Save (or update, by id) a generated letter: { id, profileId, createdAt, url, host, tabId, jobIds, posting,
+   * letter, header, text, pdf: { name, type, size, dataUrl }, cv, useCv, attachedAt }.
+   */
+  const saveLetter = exclusive(async function saveLetter(entry) {
+    const letters = await getLetters();
+    const i = letters.findIndex((l) => l.id === entry.id);
+    if (i >= 0) letters[i] = Object.assign(letters[i], entry);
+    else letters.unshift(Object.assign({ id: JTF.util.uid(), createdAt: Date.now() }, entry));
+    await area().set({ letters: letters.slice(0, LETTER_LIMIT) });
+    return i >= 0 ? letters[i] : letters[0];
+  });
+
+  const removeLetter = exclusive(async function removeLetter(id) {
+    await area().set({ letters: (await getLetters()).filter((l) => l.id !== id) });
+  });
+
+  const LETTER_TTL = 3 * 86400000;
+
+  /**
+   * The letter chosen for the application open in this tab: the same page, a page of the same job (its id is
+   * in the address), or the next step of the same application (same tab and site, a few hours on).
+   */
+  async function letterFor({ tabId, url }) {
+    if (!url) return null;
+    let u;
+    try {
+      u = new URL(url);
+    } catch (err) {
+      return null;
+    }
+    const now = Date.now();
+    const path = (x) => x.replace(/[?#].*$/, '').replace(/\/+$/, '');
+    const hostOf = (x) => {
+      try {
+        return new URL(x).hostname;
+      } catch (err) {
+        return null;
+      }
+    };
+    for (const l of await getLetters()) {
+      if (!l.attachedAt || now - l.attachedAt > LETTER_TTL) continue;
+      if (hostOf(l.url) !== u.hostname) continue;
+      if (path(l.url) === path(url)) return l;
+      if ((l.jobIds || []).some((id) => id && id.length >= 4 && url.includes(id))) return l;
+      if (l.tabId === tabId && now - l.attachedAt < 6 * 3600000) return l;
+    }
+    return null;
   }
 
   /* ---------------------------------------------------------------- history */
@@ -184,7 +278,7 @@
     if (order.length > 1) return true;
     if (order.some((id) => filledIn({ ...profiles[id], id: undefined, name: undefined }, template))) return true;
     const all = await area().get(null);
-    return !!all.vault || Object.keys(all).some((k) => k.startsWith('doc:'));
+    return !!all.vault || Object.keys(all).some((k) => k.startsWith('doc:') || k.startsWith('kit:'));
   }
 
   /**
@@ -229,6 +323,12 @@
         }
       }
     }
+    out.kits = {};
+    for (const id of all.order) {
+      const key = kitKey(id);
+      const kit = (await area().get(key))[key];
+      if (kit) out.kits[key] = kit;
+    }
     if (opts.vault) out.vault = (await area().get('vault')).vault || null;
     if (opts.history) out.history = await getHistory();
     return out;
@@ -244,6 +344,9 @@
     if (data.vault) set.vault = data.vault;
     for (const [key, doc] of Object.entries(data.documents || {})) {
       if (/^doc:[^:]+:(resume|coverLetter)$/.test(key)) set[key] = doc;
+    }
+    for (const [key, kit] of Object.entries(data.kits || {})) {
+      if (/^kit:[^:]+$/.test(key) && kit && typeof kit === 'object') set[key] = kit;
     }
     await area().set(set);
     if (data.vault && JTF.vault) await JTF.vault.lock();
@@ -264,6 +367,15 @@
     setDoc,
     removeDoc,
     docInfo,
+    getKit,
+    saveKit,
+    getAiKey,
+    setAiKey,
+    aiConfig,
+    getLetters,
+    saveLetter,
+    removeLetter,
+    letterFor,
     getHistory,
     addHistory,
     clearHistory,

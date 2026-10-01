@@ -97,6 +97,24 @@ function renderResult(r) {
     r.missing.length ? resultLine('Missing from your profile:', r.missing) : null,
     r.unmatched.length ? resultLine('No matching option:', r.unmatched) : null,
     r.consents ? consentLine(r.consents) : null,
+    r.letter
+      ? el('p', {
+          className: 'result-list',
+          textContent: `Used the cover letter you wrote for ${r.letter.company || 'this job'}.`,
+        })
+      : r.wantsLetter
+        ? el(
+            'p',
+            { className: 'result-list' },
+            'This form asks for a cover letter. ',
+            el('button', {
+              className: 'link',
+              type: 'button',
+              textContent: 'Write one for this job',
+              onclick: writeLetter,
+            }),
+          )
+        : null,
     ...r.notes.map((note) => el('p', { className: 'result-list', textContent: note })),
     actions.children.length ? actions : null,
   );
@@ -135,6 +153,12 @@ async function fill() {
     button.disabled = false;
     label.textContent = 'Fill this page';
   }
+}
+
+/** The cover letter studio, for the application in this tab. */
+function writeLetter() {
+  api.tabs.create({ url: api.runtime.getURL('studio/studio.html') + '?tab=' + tab.id });
+  window.close();
 }
 
 async function undo() {
@@ -247,11 +271,12 @@ async function init() {
   $('#shortcut').hidden = !shortcut;
 
   if (!tab || !/^(https?|file):/.test(tab.url || '')) {
-    for (const id of ['#fill', '#inspect', '#learn']) $(id).disabled = true;
+    for (const id of ['#fill', '#inspect', '#learn', '#write-letter']) $(id).disabled = true;
     $('#page-note').hidden = false;
   }
 
   $('#fill').addEventListener('click', fill);
+  $('#write-letter').addEventListener('click', writeLetter);
   $('#inspect').addEventListener('click', inspect);
   $('#learn').addEventListener('click', learn);
   $('#learn-save').addEventListener('click', saveLearned);

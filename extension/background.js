@@ -35,12 +35,12 @@ const INSERT_TYPES = [
 
 /* ---------------------------------------------------------- active fills */
 
-// tabId -> { count, expires, email }. Secrets and documents are only served while a fill runs.
+// tabId -> { count, expires, email, letter }. Secrets and documents are only served while a fill runs.
 const activeFills = new Map();
 
-function beginFill(tabId, email) {
+function beginFill(tabId, email, letter) {
   const current = activeFills.get(tabId) || { count: 0 };
-  activeFills.set(tabId, { count: current.count + 1, expires: Date.now() + 120000, email });
+  activeFills.set(tabId, { count: current.count + 1, expires: Date.now() + 120000, email, letter });
 }
 
 function endFill(tabId) {
@@ -104,18 +104,35 @@ async function explainError(err, tabId) {
 
 /* ------------------------------------------------------------------ fill */
 
+const docMeta = (d) => (d ? { name: d.name, size: d.size, type: d.type, updatedAt: d.updatedAt } : null);
+
+/**
+ * What a fill puts on the page: the active profile, plus the cover letter (and tailored CV) written
+ * for the application open in this tab, which take the place of the stored ones.
+ */
+async function fillPayload(tabId) {
+  const { profile, settings } = await store.getActive();
+  const tab = await api.tabs.get(tabId).catch(() => null);
+  const letter = await store.letterFor({ tabId, url: tab && tab.url });
+  const docs = await store.docInfo(profile.id);
+  let filled = profile;
+  if (letter && letter.profileId === profile.id) {
+    filled = { ...profile, coverLetter: letter.text || profile.coverLetter };
+    docs.coverLetter = docMeta(letter.pdf) || docs.coverLetter;
+    if (letter.useCv && letter.cv) docs.resume = docMeta(letter.cv);
+  }
+  const mine = letter && letter.profileId === profile.id ? letter : null;
+  return { payload: { profile: filled, settings, docs, vault: await vault.status() }, letter: mine };
+}
+
 async function fillTab(tabId, options) {
   const opts = { toast: false, ...options };
-  const { profile, settings } = await store.getActive();
-  const payload = {
-    profile,
-    settings,
-    docs: await store.docInfo(profile.id),
-    vault: await vault.status(),
-  };
+  const { payload, letter } = await fillPayload(tabId);
+  const { profile, settings } = payload;
+  if (opts.only) Object.assign(payload, { only: opts.only, force: true });
 
   let frames;
-  beginFill(tabId, profile.contact.email);
+  beginFill(tabId, profile.contact.email, letter && letter.id);
   try {
     frames = await callFrames(tabId, 'fill', [payload]);
   } catch (err) {
@@ -125,8 +142,9 @@ async function fillTab(tabId, options) {
   }
 
   const summary = mergeReports(frames);
+  summary.letter = letter ? { id: letter.id, company: letter.posting && letter.posting.company } : null;
   const top = frames.find((f) => f.frameId === 0);
-  if (summary.jobContext && settings.logApplications !== false && top && top.url) {
+  if (summary.jobContext && !opts.only && settings.logApplications !== false && top && top.url) {
     await store.addHistory({
       url: top.url,
       host: top.host,
@@ -154,6 +172,7 @@ function mergeReports(frames) {
     frames: frames.length,
     undoable: false,
     jobContext: false,
+    wantsLetter: false,
   };
   for (const f of frames) {
     if (typeof f.filled !== 'number') continue;
@@ -161,6 +180,7 @@ function mergeReports(frames) {
     for (const key of ['missing', 'missingTypes', 'unmatched', 'notes']) summary[key].push(...(f[key] || []));
     summary.undoable = summary.undoable || !!f.undoable;
     summary.jobContext = summary.jobContext || (f.jobContext && f.filled > 0);
+    summary.wantsLetter = summary.wantsLetter || !!f.wantsLetter;
   }
   for (const key of ['missing', 'missingTypes', 'unmatched', 'notes']) summary[key] = [...new Set(summary[key])];
   return summary;
@@ -278,7 +298,13 @@ async function secretsFor(msg, sender) {
 }
 
 async function documentFor(msg, sender) {
-  if (!fillInProgress(sender)) return { error: 'No fill in progress.' };
+  const fill = fillInProgress(sender);
+  if (!fill) return { error: 'No fill in progress.' };
+  if (fill.letter) {
+    const letter = (await store.getLetters()).find((l) => l.id === fill.letter);
+    const doc = letter && (msg.which === 'coverLetter' ? letter.pdf : letter.useCv ? letter.cv : null);
+    if (doc) return { name: doc.name, type: doc.type, dataUrl: doc.dataUrl };
+  }
   const { profile } = await store.getActive();
   const doc = await store.getDoc(profile.id, msg.which);
   return doc ? { name: doc.name, type: doc.type, dataUrl: doc.dataUrl } : { error: 'No document' };
@@ -291,7 +317,7 @@ async function documentFor(msg, sender) {
 // Downloads/JobToFill, rewritten shortly after each change, and offered back when JobToFill
 // starts out empty.
 const BACKUP_FILE = 'JobToFill/jobtofill-backup.json';
-const BACKUP_KEYS = /^(profiles|profileOrder|settings|vault|doc:.+)$/;
+const BACKUP_KEYS = /^(profiles|profileOrder|settings|vault|doc:.+|kit:.+)$/;
 
 api.storage.onChanged.addListener((changes, areaName) => {
   // Re-created on every change, so the file is written once things have been quiet for half a minute.
@@ -365,6 +391,89 @@ async function lookForPreviousBackup() {
   return previous;
 }
 
+/* ---------------------------------------------------------- cover letters */
+
+/**
+ * What the application open in a tab says about the job. The top frame describes the page; a frame
+ * (iCIMS, embedded Greenhouse boards) may hold the actual posting.
+ */
+// Only needed for cover letters, so it isn't injected with every fill.
+const JOB_FILE = 'lib/jobpage.js';
+
+/** Call the in-page jobContext() in each frame, adding the job page reader where it's missing. */
+async function readJobPages(tabId, frameIds) {
+  await ensureInjected(tabId, frameIds);
+  const probe = await execute(tabId, frameIds, { func: () => !!(globalThis.JTF && globalThis.JTF.jobpage) });
+  const missing = probe.filter((r) => !r.result).map((r) => r.frameId);
+  if (missing.length) await execute(tabId, missing, { files: [JOB_FILE] });
+  return callFrames(tabId, 'jobContext', [], frameIds);
+}
+
+async function jobContext(tabId) {
+  const frames = await readJobPages(tabId);
+  const top = frames.find((f) => f.frameId === 0 && f.url) || frames.find((f) => f.url);
+  if (!top) throw new Error(CANT_RUN);
+  const context = { ...top };
+  const best = (f) => (f.posting && f.posting.description ? f.posting.description.length : 0);
+  const framed = frames.filter((f) => f !== top && best(f) > best(top)).sort((a, b) => best(b) - best(a))[0];
+  if (framed && best(framed) > 400) {
+    context.posting = framed.posting;
+    context.framePosting = framed.url;
+  }
+  for (const f of frames) if (f !== top && f.title && !context.title) context.title = f.title;
+  context.frames = frames.map((f) => f.url).filter(Boolean);
+  return context;
+}
+
+function waitForTab(tabId, timeout) {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      api.tabs.onUpdated.removeListener(listener);
+      resolve();
+    };
+    const listener = (id, info) => id === tabId && info.status === 'complete' && done();
+    const timer = setTimeout(done, timeout);
+    api.tabs.onUpdated.addListener(listener);
+    api.tabs.get(tabId).then((t) => t.status === 'complete' && done(), done);
+  });
+}
+
+/**
+ * Some job pages are built entirely by scripts (Workday, SuccessFactors, Oracle, Phenom), so fetching
+ * them returns an empty shell. Open such a page in a background tab, read it, and close it again.
+ */
+async function scrapeInTab(url) {
+  if (!/^https?:\/\//.test(url || '')) return { error: 'Not a web page.' };
+  const tab = await api.tabs.create({ url, active: false });
+  try {
+    await waitForTab(tab.id, 20000);
+    let context = null;
+    for (let i = 0; i < 6; i++) {
+      // Script-built pages keep rendering after "complete"; wait until the description shows up.
+      await new Promise((r) => setTimeout(r, i ? 1500 : 1200));
+      context = (await readJobPages(tab.id, [0]))[0];
+      if (context && context.posting && context.posting.description && context.posting.description.length > 600) break;
+    }
+    return context || { error: 'The page could not be read.' };
+  } finally {
+    api.tabs.remove(tab.id).catch(() => {});
+  }
+}
+
+/** "Use for this application": remember the letter for this tab and put it into the form now. */
+async function attachLetter(tabId, letterId) {
+  const tab = await api.tabs.get(tabId).catch(() => null);
+  const letter = (await store.getLetters()).find((l) => l.id === letterId);
+  if (!letter) return { error: 'That letter no longer exists.' };
+  await store.saveLetter({ id: letterId, tabId, attachedAt: Date.now(), url: (tab && tab.url) || letter.url });
+  if (!tab) return { saved: true, filled: 0 };
+  const only = ['file.coverLetter', 'coverLetter', ...(letter.useCv && letter.cv ? ['file.resume'] : [])];
+  const summary = await fillTab(tabId, { only });
+  if (summary.error) return { saved: true, error: summary.error };
+  return { saved: true, filled: summary.filled, detected: summary.detected };
+}
+
 /* -------------------------------------------------------------- messages */
 
 const sum = (frames, key) => frames.reduce((n, f) => n + (f[key] || 0), 0);
@@ -381,6 +490,9 @@ const HANDLERS = {
     return { on: frames.some((f) => f.on), detected: sum(frames, 'detected') };
   },
   'jtf:backup': () => writeBackup({ force: true }),
+  'jtf:job-context': (msg) => jobContext(msg.tabId),
+  'jtf:scrape': (msg) => scrapeInTab(msg.url),
+  'jtf:attach': (msg) => attachLetter(msg.tabId, msg.letterId),
   'jtf:learn': async (msg) => {
     const { profile } = await store.getActive();
     const frames = await callFrames(msg.tabId, 'learn', [{ profile }]);
