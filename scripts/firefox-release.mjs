@@ -33,8 +33,9 @@ function repository() {
 
 const number = process.env.RELEASE_NUMBER || '';
 if (!/^\d{1,9}$/.test(number)) fail('Set RELEASE_NUMBER to a whole number, higher than the last release.');
-const apiKey = process.env.WEB_EXT_API_KEY;
-const apiSecret = process.env.WEB_EXT_API_SECRET;
+// Copied credentials often carry a stray space or line break, which breaks the signature.
+const apiKey = (process.env.WEB_EXT_API_KEY || '').trim();
+const apiSecret = (process.env.WEB_EXT_API_SECRET || '').trim();
 if (!apiKey || !apiSecret)
   fail(
     'Set WEB_EXT_API_KEY and WEB_EXT_API_SECRET to your addons.mozilla.org API credentials ' +
@@ -76,7 +77,11 @@ const result = await webExt.cmd
   .catch((err) =>
     fail(
       `Mozilla didn't sign it: ${err.message}` +
-        (/Unauthorized|JWT/.test(err.message) ? '\nCheck the API credentials (AMO_API_KEY / AMO_API_SECRET).' : ''),
+        (/decoding signature/i.test(err.message)
+          ? '\nMozilla knows the key (JWT issuer) but not the secret: copy the JWT secret into AMO_API_SECRET again.'
+          : /Unauthorized|JWT/.test(err.message)
+            ? '\nCheck the API credentials (AMO_API_KEY / AMO_API_SECRET).'
+            : ''),
     ),
   );
 const signed = (result.downloadedFiles || []).find((f) => f.endsWith('.xpi'));
