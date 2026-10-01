@@ -70,14 +70,19 @@ async function aiGroup() {
     await store.setAiKey(key.value);
     status.textContent = 'Saved.';
   };
+  // The model list is fetched when someone goes to pick a model, not every time settings open.
+  let listed = null;
+  model.addEventListener('focus', () => {
+    if (listed === provider.value) return;
+    listed = provider.value;
+    loadModels();
+  });
   provider.addEventListener('change', () => {
     sync();
     save();
-    loadModels();
   });
   for (const input of [model, base, key]) input.addEventListener('change', save);
   sync();
-  loadModels();
 
   const test = async () => {
     const consent = requestAiConsent(); // straight from the click, as Firefox requires
