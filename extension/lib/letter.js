@@ -242,6 +242,11 @@
     if (paragraphs.length > 6) errors.push(`Use 4 or 5 paragraphs (there are ${paragraphs.length}); merge some.`);
     if (count < min) errors.push(`Too short: ${count} words. Write ${min}–${max} words.`);
     if (count > max) errors.push(`Too long: ${count} words. Cut it to ${min}–${max} words.`);
+    const closingParagraph = paragraphs[paragraphs.length - 1] || '';
+    if (paragraphs.length >= 2 && (!/\bthank(s| you)\b/i.test(closingParagraph) || words(closingParagraph) > 70))
+      errors.push(
+        'End with a short closing paragraph of its own: “I would welcome the chance to …”, then “Thank you for considering my application.”',
+      );
     if (paragraphs.some((p) => /^\s*(dear|yours|kind regards|best regards|sincerely)\b/i.test(p)))
       errors.push('Keep the greeting and the sign-off out of the paragraphs.');
 

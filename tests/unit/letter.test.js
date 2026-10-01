@@ -107,6 +107,13 @@ test('letter: placeholders, markdown, dashes, stock phrases and a missing compan
     assert.match(all, re);
 });
 
+test('letter: a letter must end with its own short closing paragraph', () => {
+  const noClose = structuredClone(good);
+  noClose.paragraphs = good.paragraphs.slice(0, 3);
+  assert.match(L.checkLetter(noClose, ctx).errors.join('\n'), /closing paragraph/);
+  assert.doesNotMatch(L.checkLetter(good, ctx).errors.join('\n'), /closing paragraph/);
+});
+
 test('letter: cleanLetter separates the greeting and sign-off and fixes typography', () => {
   const out = L.cleanLetter(
     {
