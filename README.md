@@ -42,6 +42,7 @@ Save your details once: name, contact info, address, links, education, work hist
 - **Looks like a LaTeX letter.** The PDF is typeset like the classic LaTeX letter: Latin Modern (Computer Modern) fonts, TeX-style justified paragraphs with hyphenation, your name and a contact line with clickable links, and it always fits on one page. The text stays selectable, so applicant tracking systems can read it.
 - **Tailor my CV.** Rewords and reorders your CV around the job's keywords, using only facts already in it. It shows keyword coverage before → after and a list of every change. If you choose to, it uploads the tailored PDF instead of your usual CV for that application.
 - **Edit freely.** The letter is editable, the PDF preview updates as you type, and the checks re-run on your edits. Use "Rewrite" with an instruction such as "mention my chess" or "shorter".
+- **Pick up where you left off.** Coming back to a job you already wrote for offers that letter, with your edits, instead of writing a new one.
 - **Bring your own model.** DeepSeek V4.1 Flash through [OpenRouter](https://openrouter.ai) by default (about a tenth of a cent per letter, ~10 seconds), DeepSeek's own API, or any OpenAI-compatible provider. Settings › _Cover letters_.
 
 **General autofill**
@@ -208,7 +209,9 @@ tests/
   unit/                node:test, no browser
   e2e/                 the real extension in Chromium (Playwright) or Firefox (Puppeteer + remote debugging)
   fixtures/            the demo/test forms; src/*.jsx are pages built with real React widgets
-                       (react-select), bundled on request by serve.mjs
+                       (react-select), bundled on request by serve.mjs; docs/ CVs in many PDF/Word
+                       flavours (make.mjs rebuilds them), jobs/ trimmed real job pages and ATS API
+                       replies, letters/ an application and its job posting
 scripts/               build, static checks, icon rendering
 ```
 
