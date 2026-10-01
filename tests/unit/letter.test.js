@@ -80,6 +80,10 @@ test('letter: invented numbers, unclaimed skills and the wrong company are caugh
   assert.match(all, /15000/);
   assert.match(all, /\b4\b/);
   assert.match(all, /vba/i);
+  const learning = structuredClone(good);
+  learning.paragraphs[2] =
+    'I want to build up my VBA skills next summer, and I am captain of the university chess team.';
+  assert.doesNotMatch(L.checkLetter(learning, ctx).errors.join('\n'), /vba/i, 'wanting to learn it is not a claim');
   assert.doesNotMatch(all, /excel/i, 'Excel is in the profile');
   assert.match(all, /Contoso/);
   assert.ok(check.severe >= 3);

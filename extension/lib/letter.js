@@ -289,7 +289,13 @@
       );
 
     const mine = [ctx.sources, (ctx.samples || []).map((s) => s.text || s).join('\n')].join('\n');
-    const claimed = SKILL_RES.filter(([, re]) => re.test(body) && !re.test(mine)).map(([name]) => name);
+    // Wanting to learn a tool is fine ("I want to build up my Excel skills"); claiming it isn't.
+    const sentences = body.split(/(?<=[.?!])\s+/);
+    const LEARNING =
+      /\b(learn|learning|build up|develop|improve|pick up|get better|keen to|want to|would like to|hope to)\b/i;
+    const claimed = SKILL_RES.filter(
+      ([, re]) => !re.test(mine) && sentences.some((sentence) => re.test(sentence) && !LEARNING.test(sentence)),
+    ).map(([name]) => name);
     if (claimed.length)
       wrong(
         `The candidate’s material doesn’t mention ${claimed.join(', ')}; don’t claim it (you may say they want to learn it, once).`,
