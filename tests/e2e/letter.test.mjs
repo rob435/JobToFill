@@ -5,7 +5,7 @@ import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
-import { isFirefox, launch, until } from './harness.mjs';
+import { PROFILE, isFirefox, launch, until } from './harness.mjs';
 
 const CV_LINES = [
   'Ada Lovelace',
@@ -103,7 +103,7 @@ let ai;
 before(async () => {
   h = await launch();
   ai = await mockAi();
-  const profileId = await h.setProfile({});
+  const profileId = await h.setProfile(PROFILE);
   const dataUrl = await cvPdf();
   await h.bg(
     async ([id, url, base]) => {
@@ -111,6 +111,8 @@ before(async () => {
       await store.setDoc(id, 'resume', { name: 'ada_cv.pdf', type: 'application/pdf', size: url.length, dataUrl: url });
       await store.saveSettings({ ai: { provider: 'custom', baseUrl: base, model: 'mock' } });
       await store.setAiKey('test-key');
+      // The scripted letters are short; a lower target keeps the length check out of the way.
+      await store.saveKit(id, { minWords: 80 });
     },
     [profileId, dataUrl, `http://127.0.0.1:${ai.server.address().port}/v1`],
   );

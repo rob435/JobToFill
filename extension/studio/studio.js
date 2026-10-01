@@ -55,12 +55,11 @@ const slug = (s) =>
     .replace(/[^a-z0-9_]/g, '')
     .slice(0, 40);
 
+/** "ada_lovelace_cover_letter_acme_capital.pdf", like people name these files themselves. */
 function fileName(kind) {
-  const name = slug(L.fullName(state.profile)) || 'cover';
   const company = slug((state.analysis && state.analysis.company) || (state.job && state.job.posting.company) || '');
-  return kind === 'cv'
-    ? `${name}_cv${company ? '_' + company : ''}.pdf`
-    : `${name}_cover_letter${company ? '_' + company : ''}.pdf`;
+  const parts = [slug(L.fullName(state.profile)), kind === 'cv' ? 'cv' : 'cover_letter', company];
+  return parts.filter(Boolean).join('_') + '.pdf';
 }
 
 /** The AI call used by JTF.letter, with the running cost shown in the top bar. */
@@ -473,8 +472,9 @@ function checkContext() {
     ].join('\n'),
     samples: state.kit.samples || [],
     today: Date.now(),
-    minWords: 220,
-    maxWords: 480,
+    // The same range the writer aimed for, with the same slack.
+    minWords: state.result.options.minWords - 60,
+    maxWords: state.result.options.maxWords + 30,
   };
 }
 
