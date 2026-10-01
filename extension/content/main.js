@@ -128,6 +128,32 @@
     return cache[which] ? { text: cache[which].name, kind: 'file', document: cache[which], candidates: [] } : null;
   }
 
+  /** Wait until the page stops changing (an uploaded CV being parsed), for at most `max` ms. */
+  function settle(max = 2500, quiet = 500) {
+    return new Promise((resolve) => {
+      let timer = null;
+      let cap = null;
+      const observer = new MutationObserver(() => {
+        clearTimeout(timer);
+        timer = setTimeout(done, quiet);
+      });
+      function done() {
+        observer.disconnect();
+        clearTimeout(timer);
+        clearTimeout(cap);
+        resolve();
+      }
+      observer.observe(document.documentElement, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        characterData: true,
+      });
+      timer = setTimeout(done, quiet);
+      cap = setTimeout(done, max);
+    });
+  }
+
   async function fill(payload) {
     const { profile, settings } = payload;
     // A fill that changes nothing keeps the previous one undoable.
@@ -180,7 +206,31 @@
     // Attaching a cover letter fills just those fields, replacing whatever is in them.
     const only = payload.only ? new Set(payload.only) : null;
     const docCache = {};
-    for (let i = 0; i < fields.length; i++) {
+    const valueFor = async (field, r, def, question) => {
+      if (def && def.file) return documentValue(r.type, payload, docCache);
+      return JTF.fields.resolve(
+        r.type,
+        profile,
+        Object.assign({}, context, {
+          index: r.index || 0,
+          part: r.part,
+          kind: field.kind,
+          secrets,
+          answer: r.answer,
+          question,
+          consents: !!settings.consents,
+        }),
+      );
+    };
+    // Files first: sites like Breezy and Lever read an uploaded CV and rewrite the form, which would
+    // wipe answers filled before it. The rest is filled once the page has settled.
+    const order = fields.map((f, i) => i).sort((a, b) => (fields[b].kind === 'file') - (fields[a].kind === 'file'));
+    let uploaded = false;
+    let settled = false;
+    // Exactly which fields were filled (a follow-up box can share its type with the question it follows).
+    const filledKeys = new Set();
+    const keyOf = (r, question) => [r.type, r.index || 0, r.part || '', question].join('|');
+    for (const i of order) {
       const field = fields[i];
       const r = results[i];
       if (!r || !r.type) {
@@ -197,24 +247,11 @@
         if (!JTF.fill.hasValue(field)) report.consents++;
         continue;
       }
-      let v;
-      if (def && def.file) {
-        v = await documentValue(r.type, payload, docCache);
-      } else {
-        v = JTF.fields.resolve(
-          r.type,
-          profile,
-          Object.assign({}, context, {
-            index: r.index || 0,
-            part: r.part,
-            kind: field.kind,
-            secrets,
-            answer: r.answer,
-            question,
-            consents: !!settings.consents,
-          }),
-        );
+      if (uploaded && !settled && field.kind !== 'file') {
+        await settle();
+        settled = true;
       }
+      const v = await valueFor(field, r, def, question);
       if (v && r.type !== 'custom' && FOLLOW_UP.test(question) && v.canonical !== 'yes') continue;
       if (!v) {
         if (!(def && def.secret)) {
@@ -230,12 +267,38 @@
       });
       if (res.status === 'filled') {
         report.filled++;
+        if (field.kind === 'file') uploaded = true;
+        else filledKeys.add(keyOf(r, question));
         if (settings.highlight !== false) JTF.fill.highlight(res.target || field.el);
       } else if (res.status === 'skipped') {
         report.skipped++;
       } else {
         report.failed++;
         report.unmatched.push(label);
+      }
+    }
+
+    // A late CV parse can still clear or re-render fields after they were filled: fill those again.
+    if (uploaded && filledKeys.size) {
+      await settle();
+      const again = scan(profile);
+      for (let i = 0; i < again.fields.length; i++) {
+        const field = again.fields[i];
+        const r = again.results[i];
+        if (!r || !r.type || field.kind === 'file' || JTF.fill.hasValue(field)) continue;
+        const question = U.normalize(JTF.matcher.questionText(field.desc));
+        if (!filledKeys.has(keyOf(r, question))) continue;
+        const v = await valueFor(field, r, JTF.fields.DEFS[r.type], question);
+        if (!v) continue;
+        const res = await JTF.fill.apply(field, v, {
+          overwrite: false,
+          comboboxes: settings.comboboxes !== false,
+          history,
+        });
+        if (res.status === 'filled') {
+          report.restored = (report.restored || 0) + 1;
+          if (settings.highlight !== false) JTF.fill.highlight(res.target || field.el);
+        }
       }
     }
     report.missing = [...new Set(report.missing)];

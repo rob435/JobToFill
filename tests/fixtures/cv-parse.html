@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply – resume parsing form</title>
+  </head>
+  <body>
+    <!-- Like Breezy or Lever: uploading a resume "parses" it a moment later, clearing the answers
+         typed so far and re-rendering the email box. -->
+    <form id="form">
+      <label for="resume">Resume</label><input id="resume" type="file" name="resume" />
+      <p id="status"></p>
+      <label for="first">First name</label><input id="first" name="first_name" />
+      <label for="last">Last name</label><input id="last" name="last_name" />
+      <div id="email-box"><label for="email">Email</label><input id="email" type="email" name="email" /></div>
+      <label for="city">City</label><input id="city" name="city" />
+    </form>
+    <script>
+document.getElementById('resume').addEventListener('change', () => {
+  document.getElementById('status').textContent = 'Analyzing resume…';
+  setTimeout(() => {
+    for (const id of ['first', 'last', 'city']) document.getElementById(id).value = '';
+    document.getElementById('email-box').innerHTML =
+      '<label for="email">Email</label><input id="email" type="email" name="email" />';
+    document.getElementById('status').textContent = 'Done';
+  }, 400);
+});
+    </script>
+  </body>
+</html>

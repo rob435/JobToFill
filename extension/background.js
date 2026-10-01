@@ -176,7 +176,8 @@ function mergeReports(frames) {
   };
   for (const f of frames) {
     if (typeof f.filled !== 'number') continue;
-    for (const key of ['filled', 'detected', 'skipped', 'failed', 'unknown', 'consents']) summary[key] += f[key] || 0;
+    for (const key of ['filled', 'detected', 'skipped', 'failed', 'unknown', 'consents', 'restored'])
+      summary[key] = (summary[key] || 0) + (f[key] || 0);
     for (const key of ['missing', 'missingTypes', 'unmatched', 'notes']) summary[key].push(...(f[key] || []));
     summary.undoable = summary.undoable || !!f.undoable;
     summary.jobContext = summary.jobContext || (f.jobContext && f.filled > 0);
