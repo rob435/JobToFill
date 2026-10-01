@@ -393,10 +393,6 @@ async function lookForPreviousBackup() {
 
 /* ---------------------------------------------------------- cover letters */
 
-/**
- * What the application open in a tab says about the job. The top frame describes the page; a frame
- * (iCIMS, embedded Greenhouse boards) may hold the actual posting.
- */
 // Only needed for cover letters, so it isn't injected with every fill.
 const JOB_FILE = 'lib/jobpage.js';
 
@@ -409,6 +405,10 @@ async function readJobPages(tabId, frameIds) {
   return callFrames(tabId, 'jobContext', [], frameIds);
 }
 
+/**
+ * What the application open in a tab says about the job. The top frame describes the page; a frame
+ * (iCIMS, embedded Greenhouse boards) may hold the actual posting.
+ */
 async function jobContext(tabId) {
   const frames = await readJobPages(tabId);
   const top = frames.find((f) => f.frameId === 0 && f.url) || frames.find((f) => f.url);
