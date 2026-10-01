@@ -240,7 +240,10 @@
     const now = today || new Date();
     const nowM = now.getFullYear() * 12 + now.getMonth();
     const month = (d, typical) => (d ? d.year * 12 + (d.month || typical) - 1 : null);
-    const list = (p.education || []).map((e) => ({ start: month(U.parseDate(e.startDate), 9), end: month(U.parseDate(e.endDate), 6) }));
+    const list = (p.education || []).map((e) => ({
+      start: month(U.parseDate(e.startDate), 9),
+      end: month(U.parseDate(e.endDate), 6),
+    }));
     const e = list.find((x) => x.end != null && x.end >= nowM) || list[0];
     if (!e || e.start == null || e.end == null || nowM < e.start) return null;
     if (nowM > e.end)
@@ -827,7 +830,9 @@
     R(
       'edu.year',
       /\b(current |academic )?year of (study|studies|university|uni|college|degree|course|your (degree|course|studies|programme|program))\b|\b(what|which) year (of (your )?(study|studies|university|uni|degree|course|programme|program) )?are you (currently )?in\b|\bstudy year\b|\bcurrent year\b.*\b(study|studies|university|degree|course)\b|\byear in (school|university|college)\b|\bclass standing\b|\bacademic standing\b/,
-      { not: /graduat|\bstart|\bbegan|\bbegin|\bcomplet|\bfinish|\bentry|\bentered|high school|secondary|a levels?\b|gcse/ },
+      {
+        not: /graduat|\bstart|\bbegan|\bbegin|\bcomplet|\bfinish|\bentry|\bentered|high school|secondary|a levels?\b|gcse/,
+      },
     ),
     R(
       'edu.school',
@@ -959,7 +964,7 @@
     R(
       'nationality',
       /nationality|citizenship|citizen of|country of (citizenship|nationality)|staatsangehorigkeit|nacionalidad/,
-      { not: /other (countr|nationalit|citizenship)|\bdual\b|previous|\bformer|second (nationality|citizenship)|\bany\b/ },
+      { not: /other (countr|nationalit|citizenship)|\bdual\b|previous|\bformer|second (nationality|citizenship)/ },
     ),
     R('address.country', /\bcountr(y|ies)\b|\bnation\b|\bland\b|\bpais\b|\bpays\b/, {
       not: /code|phone|dial|calling|region|citizen|nationality|birth|issu|passport|origin|visa|other than|which countries|\btax\b/,
@@ -972,6 +977,16 @@
       { kinds: ['checkbox'] },
     ),
     R(
+      'exp.start',
+      /\b(employment|job|work|position|role) (start|from|begin)(ning)? (date|month|year)\b|\bdate (of )?(employment|hire) (start|began)/,
+      { not: /preferred|desired|earliest|availab|expected|when (can|could|would)/ },
+    ),
+    R('exp.end', /\b(employment|job|work|position|role) (end|to|finish|leaving) (date|month|year)\b/),
+    R(
+      'exp.location',
+      /\b(employer|company|organi[sz]ation)( s)? (location|city|address)\b|\blocation of (the )?(employer|company)\b/,
+    ),
+    R(
       'gen.start',
       /^(start|from|begin|started|since)( date| month| year)?$|\bstart ?date\b|\bstart (month|year)\b|\bdate (from|started|joined|of joining)\b|\bfrom (date|month|year)\b|\bstarted\b|\bbegin date\b|\bdate from\b/,
       {
@@ -981,6 +996,7 @@
     R(
       'gen.end',
       /^(end|to|until|finish|till)( date| month| year)?$|\bend ?date\b|\bend (month|year)\b|\bdate (to|left|ended|of leaving)\b|\bto (date|month|year)\b|\bended\b|\bfinish date\b|\bdate to\b|\bleaving date\b/,
+      { not: /open ended/ },
     ),
     R(
       'exp.company',
@@ -1019,7 +1035,9 @@
       'skills',
       /\b(programming|coding|scripting|computer|software) languages?\b|\b(languages?|technologies|tools|frameworks) (and|or|&) (frameworks|tools|technologies|libraries)\b|\bwhich (of the following )?(technologies|tools|frameworks|programming)|\b(programming|coding) (experience|skills|knowledge) (with|in) (any of )?the following\b/,
       // "Which languages do you use?" wants the list; "your favourite language" wants one answer.
-      { not: /\brate your|years|favou?rite|\bbest\b|primary|\bmain\b|strongest|\bmost\b|preferred|\blevel\b|how (proficient|experienced|comfortable)/ },
+      {
+        not: /\brate your|years|favou?rite|\bbest\b|primary|\bmain\b|strongest|\bmost\b|preferred|\blevel\b|how (proficient|experienced|comfortable)/,
+      },
     ),
     R('skills', /\bskills?\b|technologies|tech(nical)? stack|competenc|expertise|\btools\b|proficienc(y|ies)/, {
       not: /language|\bdo you\b|have you|rate your|years|\blevel\b|how (proficient|experienced|comfortable)/,

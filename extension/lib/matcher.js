@@ -38,6 +38,12 @@
   // Types whose value is a short phrase, never the answer to an essay question.
   const SHORT_VALUE =
     /^(name\.|edu\.(school|degree|field|gpa|location|start|end)|exp\.(company|title|location)|address\.|location$|email$|phone|links\.|nationality$|pronouns$|job\.(currentCompany|currentTitle|salary|yearsExperience|startDate|referralSource)$)/;
+  // Types a Yes/No question never asks for ("Has a bonding company ever denied you?" is not your employer).
+  const NEVER_YES_NO =
+    /^(name\.|edu\.(school|degree|field|gpa|location)|exp\.(company|title|location)|address\.|location$|email$|phone|links\.|nationality$|pronouns$)/;
+  // "Please specify if you selected Other": the box for an answer you chose not to give.
+  const OTHER_FOLLOW_UP =
+    /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b/;
   const EMAIL_TYPES = new Set(['email', 'account.username']);
   // Field types a lone checkbox can answer: "I am authorized to work in the US", "I have read the
   // privacy notice", or one option of a checklist ("London" under "Which offices…?").
@@ -48,6 +54,7 @@
     'job.over18',
     'exp.current',
     'consent',
+    'edu.end', // "I confirm that I will graduate in 2027": ticked only when your date says so
     'job.locations',
     'skills',
     'languages',
@@ -102,12 +109,22 @@
     }
   }
 
+  /** Options that are all yes/no answers ("Yes", "No", "Prefer not to say"). */
+  function yesNoOptions(desc) {
+    const opts = (desc.options || []).filter((o) => !isPlaceholder(norm(o.text)));
+    return opts.length > 0 && opts.length <= 3 && opts.every((o) => canonicalOf(o.text));
+  }
+
   /** Classify one control. Returns { type, part, score, source } or null. */
   function classify(desc) {
     const ac = fromAutocomplete(desc);
     if (ac) return refine(ac, desc);
 
     const signals = signalTexts(desc);
+    const s = desc.signals || {};
+    if (OTHER_FOLLOW_UP.test(norm(s.question || s.label || s.aria || s.nearby || ''))) return null;
+    // A Yes/No question is never answered with a name, a school or a link.
+    const yesNo = yesNoOptions(desc);
     const byType = new Map();
     let best = null;
     for (const rule of F().RULES) {
@@ -130,6 +147,7 @@
       // An essay box ("Do you have coding experience? … GitHub links welcomed", "Think of something in
       // your academic life…") wants an answer, not a name, school or URL.
       if (desc.kind === 'textarea' && SHORT_VALUE.test(rule.type) && hitText.split(' ').length > 12) continue;
+      if (yesNo && NEVER_YES_NO.test(rule.type)) continue;
       score += 0.05 * (hits - 1);
       const candidate = { type: rule.type, part: rule.part || null, score, source: 'rule', rule };
       const prev = byType.get(rule.type);
@@ -238,16 +256,33 @@
 
   function groupOf(type) {
     if (!type) return null;
-    if (type.startsWith('edu.') && type !== 'edu.level') return 'edu';
+    if (type.startsWith('edu.') && type !== 'edu.level' && type !== 'edu.year') return 'edu';
     if (type.startsWith('exp.')) return 'exp';
     return null;
+  }
+
+  const PLACE_TYPES = ['location', 'address.city'];
+  const SECTION_ONLY = ['address.state', 'address.country', 'address.postalCode'];
+
+  /** How many fields in a row, from results[i], belong to section `g` (generic boxes included). */
+  function runLength(results, i, g) {
+    let n = 0;
+    for (let j = i; j < results.length; j++) {
+      const r = results[j];
+      if (!r || !r.type || SECTION_ONLY.includes(r.type)) continue;
+      if (!(r.type.startsWith('gen.') || PLACE_TYPES.includes(r.type) || groupOf(r.type) === g)) break;
+      n++;
+    }
+    return n;
   }
 
   /**
    * Classify every control on a page, then use document order to decide which
    * education / work-history entry each box belongs to: a repeated type
    * ("School" again) starts the next entry, and generic boxes ("From", "To",
-   * "Location") take the section of the field just before them.
+   * "Location") take the section of the field just before them. A question asked
+   * again away from its section ("Which term matches your graduation date?" among
+   * the screening questions) is about your first entry, not a new one.
    */
   function plan(descs, profile) {
     const compiled = ((profile && profile.customAnswers) || [])
@@ -265,7 +300,9 @@
 
     const state = { edu: { index: -1, seen: new Set() }, exp: { index: -1, seen: new Set() } };
     let prev = null;
-    for (const r of results) {
+    let detached = null; // the section of a run of one-off questions, all about the first entry
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
       if (!r || !r.type) continue;
       if (r.type === 'custom') {
         prev = null;
@@ -290,13 +327,25 @@
       const g = groupOf(r.type);
       if (!g) {
         prev = null;
+        detached = null;
         continue;
       }
       const st = state[g];
       const key = r.type + ':' + (r.part || '');
+      if (prev !== g) detached = null;
+      // Back after other questions with something this section already had: a new entry only when
+      // it starts the way the first one did and goes on for more than one field.
+      if (!detached && prev !== g && st.seen.has(key) && (key !== st.lead || runLength(results, i, g) < 2))
+        detached = g;
+      if (detached === g) {
+        r.index = 0;
+        prev = g;
+        continue;
+      }
       if (st.index < 0 || st.seen.has(key)) {
         st.index++;
         st.seen = new Set();
+        if (st.index === 0) st.lead = key;
       }
       st.seen.add(key);
       r.index = st.index;
@@ -346,7 +395,11 @@
       return 'no';
     if (/\bi am\b|\bi have\b|\bi identify\b|\bi do\b|\bi will\b|\bi can\b|\bi m\b|\bi agree\b/.test(t)) return 'yes';
     // Acknowledgement answers: "I confirm", "Acknowledged", "I accept".
-    if (/^i (confirm|acknowledge|accept|consent|understand|certify)\b|^(confirm(ed)?|acknowledged?|accept(ed)?|agreed?)$/.test(t))
+    if (
+      /^i (confirm|acknowledge|accept|consent|understand|certify)\b|^(confirm(ed)?|acknowledged?|accept(ed)?|agreed?)$/.test(
+        t,
+      )
+    )
       return 'yes';
     return null;
   }
@@ -658,13 +711,28 @@
 
   /* --------------------------------------------------------------- formatting */
 
+  // A format spelled out in the label: "Start date (MM/YYYY)", "Date of birth, dd-mm-yyyy".
+  const DATE_PATTERN = /\b(dd|mm|yyyy|yy)(\s*[/.-]\s*(dd|mm|yyyy|yy)){1,2}\b/i;
+
   function formatDate(v, desc) {
     const d = v.date;
     const y = String(d.year);
     const mm = U.pad2(d.month || 1);
     const dd = U.pad2(d.day || 1);
     const type = desc.inputType || 'text';
-    const hint = String(desc.placeholderRaw || (desc.signals && desc.signals.placeholder) || '').toLowerCase();
+    const s = desc.signals || {};
+    let hint = String(desc.placeholderRaw || s.placeholder || '').toLowerCase();
+    const label = [s.label, s.question, s.aria, s.describedby].filter(Boolean).join(' ');
+    if (!DATE_PATTERN.test(hint) && DATE_PATTERN.test(label)) hint = label.match(DATE_PATTERN)[0].toLowerCase();
+    // "What date are you available (Month and Year)?" wants "November 2026", not a day.
+    if (
+      v.kind === 'date' &&
+      d.month &&
+      type === 'text' &&
+      /\bmonth (and|&|\/) year\b/i.test(label) &&
+      !DATE_PATTERN.test(hint)
+    )
+      return `${U.monthName(d.month)} ${y}`;
 
     if (v.kind === 'month') return type === 'number' ? String(d.month) : mm;
     if (v.kind === 'year') return desc.maxLength === 2 || /^\s*yy\s*$/.test(hint) ? y.slice(2) : y;
