@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Careers at Acme (embedded application)</title>
+  <style>body { font: 14px system-ui; margin: 24px; } iframe { width: 100%; height: 900px; border: 1px solid #ccc; }</style>
+</head>
+<body>
+  <h1>Careers at Acme</h1>
+  <p>The application below is served from a different origin, like a Greenhouse embed.</p>
+  <label for="newsletter_email">Get job alerts by email</label> <input id="newsletter_email" type="email" name="alerts">
+  <script>
+    // Same server, different origin: localhost <-> 127.0.0.1
+    const host = location.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+    const frame = document.createElement('iframe');
+    frame.id = 'gh';
+    frame.src = `http://${host}:${location.port}/greenhouse.html`;
+    document.body.appendChild(frame);
+  </script>
+</body>
+</html>

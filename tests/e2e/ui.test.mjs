@@ -1,0 +1,186 @@
+// End-to-end: the settings page and the toolbar popup.
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { launch } from './harness.mjs';
+
+let h;
+const errors = [];
+
+before(async () => {
+  h = await launch();
+});
+
+after(async () => {
+  await h.close();
+});
+
+async function openExt(path) {
+  const page = await h.context.newPage();
+  page.on('pageerror', (e) => errors.push(`${path}: ${e.message}`));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(`${path}: ${m.text()}`); });
+  await page.goto(h.extUrl(path));
+  return page;
+}
+
+const profile = () => h.sw.evaluate(async () => (await globalThis.JTF.store.getActive()).profile);
+
+test('every settings section renders without errors', async () => {
+  const page = await openExt('options/options.html');
+  const sections = await page.$$eval('#nav a', (as) => as.map((a) => a.getAttribute('href').slice(1)));
+  assert.ok(sections.length >= 12);
+  for (const s of sections) {
+    await page.click(`#nav a[href="#${s}"]`);
+    await page.waitForFunction((name) => document.querySelector('#sections').dataset.section === name && document.querySelector('#sections h1'), s);
+    assert.equal(await page.getAttribute(`#nav a[href="#${s}"]`, 'aria-current'), 'page');
+  }
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('profile edits autosave, including list entries and custom answers', async () => {
+  const page = await openExt('options/options.html#personal');
+  await page.fill('input[name="personal.firstName"]', 'Grace');
+  await page.fill('input[name="contact.email"]', 'grace@example.com');
+  await page.selectOption('select[name="contact.phoneType"]', 'Work');
+  await page.waitForSelector('#save-state.saved');
+  let p = await profile();
+  assert.equal(p.personal.firstName, 'Grace');
+  assert.equal(p.contact.email, 'grace@example.com');
+  assert.equal(p.contact.phoneType, 'Work');
+
+  await page.click('#nav a[href="#education"]');
+  await page.click('text=+ Add education');
+  const schools = page.locator('input[name="school"]');
+  assert.equal(await schools.count(), 2);
+  await schools.nth(1).fill('Yale');
+  await page.click('#nav a[href="#answers"]');
+  await page.click('text=+ Add answer');
+  await page.fill('input[name="question"]', 'clearance');
+  await page.fill('textarea[name="answer"]', 'No');
+  await page.waitForSelector('#save-state.saved');
+  await page.waitForTimeout(500);
+  p = await profile();
+  assert.equal(p.education.length, 2);
+  assert.equal(p.education[1].school, 'Yale');
+  assert.equal(p.customAnswers.at(-1).question, 'clearance');
+  assert.equal(p.customAnswers.at(-1).answer, 'No');
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('multiple profiles: create, switch, delete', async () => {
+  const page = await openExt('options/options.html#personal');
+  page.once('dialog', (d) => d.accept('Shopping'));
+  await page.click('#profile-new');
+  await page.waitForFunction(() => document.querySelector('#profile-select').selectedOptions[0]?.textContent === 'Shopping');
+  assert.equal((await profile()).name, 'Shopping');
+  page.once('dialog', (d) => d.accept());
+  await page.click('#profile-delete');
+  await page.waitForFunction(() => document.querySelector('#profile-select').options.length === 1);
+  assert.equal((await profile()).personal.firstName, 'Grace');
+  await page.close();
+});
+
+test('resume upload is stored per profile', async () => {
+  const page = await openExt('options/options.html#documents');
+  await page.setInputFiles('input[name="doc-resume"]', { name: 'Grace_CV.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 test') });
+  await page.waitForSelector('text=Grace_CV.pdf');
+  const info = await h.sw.evaluate(async () => {
+    const { profile } = await globalThis.JTF.store.getActive();
+    return globalThis.JTF.store.docInfo(profile.id);
+  });
+  assert.equal(info.resume.name, 'Grace_CV.pdf');
+  await page.close();
+});
+
+test('vault: create, add a card and a login, lock and unlock from the settings page', async () => {
+  const page = await openExt('options/options.html#vault');
+  await page.fill('input[name=master]', 'my long master password');
+  await page.fill('input[name=master2]', 'my long master password');
+  await page.click('text=Create vault');
+  await page.waitForSelector('text=Saved logins (0)');
+  assert.equal(await h.sw.evaluate(() => globalThis.JTF.vault.status()), 'unlocked');
+
+  await page.fill('input[name=cardNumber]', '4242 4242 4242 4242');
+  await page.fill('input[name=cardExpMonth]', '7');
+  await page.fill('input[name=cardExpYear]', '2030');
+  await page.click('text=Add card');
+  await page.waitForSelector('text=•••• 4242');
+
+  await page.fill('input[name=newHost]', 'https://acme.wd5.myworkdayjobs.com/en-US/careers');
+  await page.fill('input[name=newPass]', 'S3cret-pass!');
+  await page.click('text=Add login');
+  await page.waitForSelector('text=acme.wd5.myworkdayjobs.com');
+
+  const data = await h.sw.evaluate(() => globalThis.JTF.vault.read());
+  assert.equal(data.cards[0].number, '4242424242424242');
+  assert.equal(data.cards[0].expMonth, 7);
+  assert.equal(data.credentials[0].host, 'acme.wd5.myworkdayjobs.com');
+  assert.equal(data.credentials[0].username, 'grace@example.com');
+
+  await page.click('text=Lock now');
+  await page.waitForSelector('text=Vault locked');
+  await page.fill('input[name=master]', 'wrong password');
+  await page.click('button:has-text("Unlock")');
+  await page.waitForSelector('text=Wrong master password.');
+  await page.fill('input[name=master]', 'my long master password');
+  await page.click('button:has-text("Unlock")');
+  await page.waitForSelector('text=Saved logins (1)');
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('settings toggles persist', async () => {
+  const page = await openExt('options/options.html#settings');
+  await page.check('input[name=overwrite]');
+  await page.selectOption('select[name=autoLockMinutes]', '5');
+  await page.waitForTimeout(200);
+  const s = await h.sw.evaluate(() => globalThis.JTF.store.getSettings());
+  assert.equal(s.overwrite, true);
+  assert.equal(s.autoLockMinutes, 5);
+  await page.uncheck('input[name=overwrite]');
+  await page.close();
+});
+
+test('backup downloads a JobToFill JSON file', async () => {
+  const page = await openExt('options/options.html#backup');
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('text=Download backup')]);
+  const file = await download.path();
+  const data = JSON.parse(await (await import('node:fs/promises')).readFile(file, 'utf8'));
+  assert.equal(data.app, 'JobToFill');
+  assert.ok(data.vault && data.vault.data.ct, 'vault is included, encrypted');
+  assert.ok(!JSON.stringify(data).includes('4242424242424242'), 'no plain-text card number in the backup');
+  await page.close();
+});
+
+test('popup fills the page it points at and shows a summary', async () => {
+  const form = await h.open('greenhouse.html');
+  const tabId = await h.tabId(form);
+  const popup = await openExt(`popup/popup.html?tab=${tabId}`);
+  await popup.waitForSelector('#vault button:has-text("Lock")');
+  await popup.click('#fill');
+  await popup.waitForSelector('#result .count');
+  // This profile only has a name and email, so the summary should also list what is missing.
+  const count = Number(await popup.textContent('#result .count'));
+  assert.ok(count >= 2, `filled ${count}`);
+  assert.match(await popup.textContent('#result'), /Missing from your profile:.*Last name/);
+  assert.equal(await form.inputValue('#first_name'), 'Grace');
+
+  await popup.click('text=Undo');
+  await popup.waitForSelector('text=/Restored \\d+ field/');
+  assert.equal(await form.inputValue('#first_name'), '');
+
+  await form.fill('#q_why', 'Because of the mission.');
+  await popup.click('#learn');
+  await popup.waitForSelector('#learn-list li');
+  assert.ok((await popup.textContent('#learn-list')).includes('Because of the mission.'));
+  await popup.click('#learn-save');
+  await popup.waitForSelector('text=/Saved \\d+ item/');
+  const p = await profile();
+  assert.ok(p.customAnswers.some((a) => a.answer === 'Because of the mission.'));
+
+  await popup.click('#vault button:has-text("Lock")');
+  await popup.waitForSelector('#vault input[type=password]');
+  assert.deepEqual(errors, []);
+  await Promise.all([form.close(), popup.close()]);
+});

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Web components application</title>
+  <style>body { font: 14px system-ui; max-width: 560px; margin: 24px auto; }</style>
+</head>
+<body>
+  <h1>Apply (web components)</h1>
+  <apply-form></apply-form>
+  <script>
+    class ApplyField extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({ mode: 'open' });
+        const id = 'f-' + this.getAttribute('name');
+        root.innerHTML = `<div style="margin:8px 0"><label for="${id}">${this.getAttribute('label')}</label><br>
+          <input id="${id}" name="${this.getAttribute('name')}" type="${this.getAttribute('type') || 'text'}"></div>`;
+      }
+    }
+    customElements.define('apply-field', ApplyField);
+    class ApplyForm extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({ mode: 'open' });
+        root.innerHTML = `<form>
+          <apply-field name="firstName" label="First name"></apply-field>
+          <apply-field name="lastName" label="Last name"></apply-field>
+          <apply-field name="email" label="Email" type="email"></apply-field>
+          <apply-field name="linkedin" label="LinkedIn profile"></apply-field>
+        </form>`;
+      }
+    }
+    customElements.define('apply-form', ApplyForm);
+  </script>
+</body>
+</html>

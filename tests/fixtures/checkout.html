@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Checkout - Example Store</title>
+  <style>
+    body { font: 14px system-ui; max-width: 560px; margin: 24px auto; }
+    input, select { display: block; width: 100%; margin: 6px 0; padding: 6px; box-sizing: border-box; }
+    .row { display: flex; gap: 8px; }
+  </style>
+</head>
+<body>
+  <form id="checkout">
+    <h2>Contact</h2>
+    <input type="email" id="email" name="checkout[email]" autocomplete="email" placeholder="Email">
+    <h2>Shipping address</h2>
+    <select id="country" name="checkout[country]" autocomplete="country">
+      <option value="CA">Canada</option><option value="GB">United Kingdom</option><option value="US">United States</option>
+    </select>
+    <div class="row">
+      <input id="fn" name="checkout[first_name]" autocomplete="shipping given-name" placeholder="First name">
+      <input id="ln" name="checkout[last_name]" autocomplete="shipping family-name" placeholder="Last name">
+    </div>
+    <input id="company" name="checkout[company]" placeholder="Company (optional)">
+    <input id="a1" name="checkout[address1]" autocomplete="shipping address-line1" placeholder="Address">
+    <input id="a2" name="checkout[address2]" autocomplete="shipping address-line2" placeholder="Apartment, suite, etc. (optional)">
+    <div class="row">
+      <input id="city" name="checkout[city]" autocomplete="shipping address-level2" placeholder="City">
+      <select id="state" name="checkout[province]" autocomplete="shipping address-level1">
+        <option value="">State</option><option value="CA">California</option><option value="NY">New York</option><option value="TX">Texas</option>
+      </select>
+      <input id="zip" name="checkout[zip]" autocomplete="shipping postal-code" placeholder="ZIP code">
+    </div>
+    <input id="phone" type="tel" name="checkout[phone]" autocomplete="tel" placeholder="Phone">
+
+    <h2>Payment</h2>
+    <input id="ccnum" name="number" autocomplete="cc-number" inputmode="numeric" placeholder="Card number">
+    <input id="ccname" name="name" autocomplete="cc-name" placeholder="Name on card">
+    <div class="row">
+      <select id="expm" name="expiry_month" autocomplete="cc-exp-month">
+        <option value="">MM</option><option>01</option><option>02</option><option>03</option><option>04</option><option>05</option><option>06</option>
+        <option>07</option><option>08</option><option>09</option><option>10</option><option>11</option><option>12</option>
+      </select>
+      <select id="expy" name="expiry_year" autocomplete="cc-exp-year">
+        <option value="">YYYY</option><option>2026</option><option>2027</option><option>2028</option><option>2029</option><option>2030</option>
+      </select>
+      <input id="cvc" name="verification_value" autocomplete="cc-csc" placeholder="Security code">
+    </div>
+    <h3>Gift card form (single expiry box)</h3>
+    <label for="exp2">Expiration date</label><input id="exp2" name="card_expiry" placeholder="MM / YY">
+    <button type="submit">Pay now</button>
+  </form>
+</body>
+</html>

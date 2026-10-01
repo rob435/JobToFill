@@ -1,0 +1,21 @@
+{
+  "name": "jobtofill",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser extension that autofills job applications and everyday forms.",
+  "scripts": {
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "node --test \"tests/unit/*.test.js\"",
+    "test:e2e": "node --test --test-concurrency=1 \"tests/e2e/*.test.mjs\"",
+    "lint": "node scripts/check.mjs",
+    "build": "node scripts/build.mjs",
+    "icons": "node scripts/icons.mjs",
+    "demo": "node tests/fixtures/serve.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

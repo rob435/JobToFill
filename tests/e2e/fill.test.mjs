@@ -1,0 +1,361 @@
+// End-to-end: the real extension in Chromium filling realistic application pages.
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { launch, PROFILE, RESUME_PDF } from './harness.mjs';
+
+let h;
+
+before(async () => {
+  h = await launch();
+  const profileId = await h.setProfile(PROFILE);
+  await h.sw.evaluate(([id, dataUrl]) => globalThis.JTF.store.setDoc(id, 'resume', { name: 'Ada_Lovelace_CV.pdf', type: 'application/pdf', size: 60, dataUrl }), [profileId, RESUME_PDF]);
+});
+
+after(async () => {
+  await h.close();
+});
+
+const val = (page, sel) => page.inputValue(sel);
+const checked = (page, sel) => page.isChecked(sel);
+const selectedText = (page, sel) => page.$eval(sel, (s) => s.options[s.selectedIndex].text);
+
+test('Greenhouse-style form: text, files, selects, EEO, education dates, custom answer', async () => {
+  const page = await h.open('greenhouse.html');
+  const r = await h.fill(page);
+  assert.equal(r.error, undefined);
+  assert.equal(await val(page, '#first_name'), 'Ada');
+  assert.equal(await val(page, '#last_name'), 'Lovelace');
+  assert.equal(await val(page, '#email'), 'ada@example.com');
+  assert.equal(await val(page, '#phone'), '+1 415 555 0100');
+  assert.equal(await val(page, '#job_application_location'), 'San Francisco, CA');
+  assert.equal(await page.$eval('#resume', (i) => i.files[0] && i.files[0].name), 'Ada_Lovelace_CV.pdf');
+  assert.equal(await page.$eval('#cover_letter', (i) => i.files.length), 0, 'no cover letter file in the profile');
+  assert.equal(await val(page, '#q_linkedin'), 'https://www.linkedin.com/in/ada');
+  assert.equal(await val(page, '#q_website'), 'https://ada.dev');
+  assert.equal(await selectedText(page, '#q_source'), 'LinkedIn');
+  assert.equal(await selectedText(page, '#q_auth'), 'Yes');
+  assert.equal(await selectedText(page, '#q_sponsor'), 'No');
+  assert.equal(await val(page, '#q_why'), 'I love engines.');
+  assert.equal(await val(page, '#school'), 'University of Cambridge');
+  assert.equal(await selectedText(page, '#degree'), "Bachelor's Degree");
+  assert.equal(await selectedText(page, '#discipline'), 'Mathematics');
+  assert.equal(await val(page, '#edu_start_month'), '09');
+  assert.equal(await val(page, '#edu_start_year'), '2012');
+  assert.equal(await val(page, '#edu_end_month'), '06');
+  assert.equal(await val(page, '#edu_end_year'), '2016');
+  assert.equal(await selectedText(page, '#gender'), 'Female');
+  assert.equal(await selectedText(page, '#hispanic'), 'No');
+  assert.equal(await selectedText(page, '#veteran'), 'I am not a protected veteran');
+  assert.equal(await selectedText(page, '#disability'), "I don't wish to answer");
+  assert.ok(r.missing.includes('Cover letter file'), JSON.stringify(r.missing));
+  await page.close();
+});
+
+test('Workday-style form: listbox buttons, automation ids, two work-history entries, radio question', async () => {
+  const page = await h.open('workday.html');
+  const r = await h.fill(page);
+  assert.equal(r.error, undefined);
+  assert.equal(await page.textContent('#btn-country'), 'United States of America');
+  assert.equal(await val(page, '#input-1'), 'Ada');
+  assert.equal(await val(page, '#input-2'), 'Lovelace');
+  assert.equal(await val(page, '#input-3'), '1 Market St');
+  assert.equal(await val(page, '#input-4'), 'San Francisco');
+  assert.equal(await page.textContent('#btn-region'), 'California');
+  assert.equal(await val(page, '#input-5'), '94105');
+  assert.equal(await page.textContent('#btn-pdt'), 'Mobile');
+  assert.equal(await val(page, '#input-7'), 'ada@example.com');
+  assert.equal(await checked(page, '#prev-no'), true, 'custom answer for “previously worked for”');
+
+  assert.equal(await val(page, '#we1-title'), 'Senior Engineer');
+  assert.equal(await val(page, '#we1-company'), 'Analytical Engines Inc');
+  assert.equal(await val(page, '#we1-loc'), 'San Francisco, CA');
+  assert.equal(await checked(page, '#we1-current'), true);
+  assert.equal(await val(page, '#we1-from-m'), '03');
+  assert.equal(await val(page, '#we1-from-y'), '2020');
+  assert.equal(await val(page, '#we1-to-y'), '', 'a current job has no end date');
+  assert.equal(await val(page, '#we1-desc'), 'Leading the engine team.');
+
+  assert.equal(await val(page, '#we2-title'), 'Engineer');
+  assert.equal(await val(page, '#we2-company'), 'Babbage Labs');
+  assert.equal(await checked(page, '#we2-current'), false);
+  assert.equal(await val(page, '#we2-from-m'), '08');
+  assert.equal(await val(page, '#we2-from-y'), '2016');
+  assert.equal(await val(page, '#we2-to-m'), '02');
+  assert.equal(await val(page, '#we2-to-y'), '2020');
+
+  assert.equal(await val(page, '#ed1-school'), 'University of Cambridge');
+  assert.equal(await page.textContent('#btn-degree'), 'Bachelor of Science');
+  assert.equal(await val(page, '#ed1-field'), 'Mathematics');
+  assert.equal(await page.$$eval('ul[role=listbox]', (l) => l.length), 0, 'dropdowns are closed again');
+  await page.close();
+});
+
+test('Lever-style form: div labels, url fields, radio custom question, EEO', async () => {
+  const page = await h.open('lever.html');
+  await h.fill(page);
+  assert.equal(await val(page, 'input[name=name]'), 'Ada Lovelace');
+  assert.equal(await val(page, 'input[name=email]'), 'ada@example.com');
+  assert.equal(await val(page, 'input[name=org]'), 'Analytical Engines Inc');
+  assert.equal(await val(page, 'input[name="urls[LinkedIn]"]'), 'https://www.linkedin.com/in/ada');
+  assert.equal(await val(page, 'input[name="urls[GitHub]"]'), 'https://github.com/ada');
+  assert.equal(await val(page, 'input[name="urls[Portfolio]"]'), 'https://ada.dev');
+  assert.equal(await page.$eval('input[name="cards[abc][field0]"][value=Yes]', (i) => i.checked), true);
+  assert.equal(await val(page, 'textarea[name=comments]'), 'Dear hiring team, I would love to join.', 'Lever’s box says “Add a cover letter…”');
+  assert.equal(await selectedText(page, 'select[name="eeo[gender]"]'), 'Female');
+  assert.equal(await selectedText(page, 'select[name="eeo[race]"]'), 'Decline to self-identify');
+  assert.equal(await selectedText(page, 'select[name="eeo[veteran]"]'), 'I am not a veteran');
+  assert.equal(await page.$eval('#resume-upload-input', (i) => i.files[0].name), 'Ada_Lovelace_CV.pdf');
+  await page.close();
+});
+
+test('searchable dropdowns: react-select style, async search, free-text autocomplete', async () => {
+  const page = await h.open('combobox.html');
+  const r = await h.fill(page);
+  assert.equal(await val(page, '#first_name'), 'Ada');
+  const chip = (id) => page.$eval(`#${id}`, (i) => i.closest('.field').querySelector('.select__single-value')?.textContent || '');
+  assert.equal(await chip('country'), 'United States');
+  assert.equal(await chip('auth'), 'Yes');
+  assert.equal(await chip('school'), 'University of Cambridge');
+  assert.equal(await val(page, '#location'), 'San Francisco, CA', 'kept typed text when no suggestion matched');
+  assert.equal(await val(page, '#office_pref'), '', '“preferred office” is not your location');
+  assert.equal(r.failed, 0, JSON.stringify(r));
+  await page.close();
+});
+
+test('cross-origin iframe (embedded application) is filled', async () => {
+  const page = await h.open('embed.html');
+  await page.frameLocator('#gh').locator('#first_name').waitFor();
+  const r = await h.fill(page);
+  const frame = page.frames().find((f) => f.url().includes('127.0.0.1'));
+  assert.ok(frame, 'iframe loaded');
+  assert.equal(await frame.inputValue('#first_name'), 'Ada');
+  assert.equal(await frame.inputValue('#email'), 'ada@example.com');
+  assert.equal(await frame.$eval('#q_auth', (s) => s.options[s.selectedIndex].text), 'Yes');
+  assert.ok(r.frames >= 2);
+  await page.close();
+});
+
+test('shadow DOM web components are filled', async () => {
+  const page = await h.open('shadow.html');
+  await h.fill(page);
+  assert.equal(await val(page, 'input[name=firstName]'), 'Ada');
+  assert.equal(await val(page, 'input[name=lastName]'), 'Lovelace');
+  assert.equal(await val(page, 'input[name=email]'), 'ada@example.com');
+  assert.equal(await val(page, 'input[name=linkedin]'), 'https://www.linkedin.com/in/ada');
+  await page.close();
+});
+
+test('tricky page: honeypots, existing values, custom radios, checkbox lists, ranges, dates', async () => {
+  const page = await h.open('tricky.html');
+  const r = await h.fill(page);
+  assert.equal(await val(page, '#pre'), 'Augusta', 'existing values are not overwritten');
+  assert.equal(await val(page, '#lastname'), 'Lovelace');
+  assert.equal(await val(page, '#hp'), '', 'off-screen honeypot left empty');
+  assert.equal(await val(page, '#hidden_email'), '', 'hidden field left empty');
+  assert.equal(await val(page, '#realemail'), 'ada@example.com');
+  assert.equal(await checked(page, 'input[name=age][value=y]'), true);
+  assert.equal(await checked(page, 'input[name=langs][value=en]'), true);
+  assert.equal(await checked(page, 'input[name=langs][value=fr]'), true);
+  assert.equal(await checked(page, 'input[name=langs][value=es]'), false);
+  assert.equal(await checked(page, '#auth'), true);
+  assert.equal(await checked(page, '#terms'), false, 'never agrees to terms for you');
+  assert.equal(await val(page, '#table_zip'), '94105');
+  assert.equal(await val(page, '#inline_city'), 'San Francisco');
+  assert.equal(await val(page, '#inline_state'), 'CA');
+  assert.equal(await selectedText(page, '#country_default'), 'United States', 'a pre-selected default is not a user choice');
+  assert.equal(await selectedText(page, '#salary'), '$120k-$160k');
+  assert.equal(await selectedText(page, '#yoe'), '5-10');
+  assert.equal(await val(page, '#dob'), '1990-12-10');
+  assert.equal(await val(page, '#start'), '2026-11-02');
+  assert.equal(await val(page, '#fav'), '');
+  assert.ok(r.skipped >= 1);
+  assert.ok(r.missing.includes('Twitter / X'));
+
+  // Undo restores what was there before.
+  const u = await h.handler('jtf:undo', page);
+  assert.ok(u.undone > 5);
+  assert.equal(await val(page, '#lastname'), '');
+  assert.equal(await checked(page, '#auth'), false);
+  assert.equal(await selectedText(page, '#country_default'), 'Canada');
+  assert.equal(await val(page, '#pre'), 'Augusta');
+  await page.close();
+});
+
+test('overwrite setting replaces existing values', async () => {
+  await h.setSettings({ overwrite: true });
+  const page = await h.open('tricky.html');
+  await h.fill(page);
+  assert.equal(await val(page, '#pre'), 'Ada');
+  await h.setSettings({ overwrite: false });
+  await page.close();
+});
+
+test('learn from page suggests profile values and custom answers', async () => {
+  const page = await h.open('tricky.html');
+  await page.fill('#fav', 'Rust');
+  await page.fill('#tw', 'https://x.com/ada');
+  await page.fill('#lastname', 'Lovelace');
+  const { suggestions } = await h.handler('jtf:learn', page);
+  const custom = suggestions.find((s) => s.kind === 'custom' && /favourite programming language/i.test(s.question));
+  assert.ok(custom, JSON.stringify(suggestions));
+  assert.equal(custom.value, 'Rust');
+  const tw = suggestions.find((s) => s.kind === 'profile' && s.path === 'links.twitter');
+  assert.ok(tw);
+  assert.equal(tw.value, 'https://x.com/ada');
+  assert.ok(!suggestions.some((s) => s.path === 'personal.lastName'), 'already in the profile');
+  await page.close();
+});
+
+test('inspect overlay toggles', async () => {
+  const page = await h.open('greenhouse.html');
+  const on = await h.handler('jtf:inspect', page);
+  assert.equal(on.on, true);
+  assert.ok(on.detected > 20);
+  assert.equal(await page.$$eval('jobtofill-ui', (n) => n.length), 1);
+  const off = await h.handler('jtf:inspect', page);
+  assert.equal(off.on, false);
+  await page.close();
+});
+
+test('right-click “Insert from profile” fills the focused field', async () => {
+  const page = await h.open('tricky.html');
+  await page.focus('#fav');
+  await h.menu(page, 'jtf-insert:links.github');
+  assert.equal(await val(page, '#fav'), 'https://github.com/ada');
+  await page.close();
+});
+
+test('vault locked or missing: passwords and cards are skipped with a note', async () => {
+  const page = await h.open('checkout.html');
+  const r = await h.fill(page);
+  assert.equal(await val(page, '#fn'), 'Ada');
+  assert.equal(await val(page, '#ccnum'), '');
+  assert.ok(r.notes.some((n) => /vault/i.test(n)), JSON.stringify(r.notes));
+  await page.close();
+});
+
+test('checkout: address with codes, company stays empty, card from the vault', async () => {
+  await h.sw.evaluate(async () => {
+    await globalThis.JTF.vault.setup('correct horse battery', { iterations: 2000 });
+    await globalThis.JTF.vault.update((d) => {
+      d.cards.push({ id: 'k1', label: 'Visa', name: 'Ada Lovelace', number: '4242424242424242', expMonth: 4, expYear: 2029, cvc: '123' });
+      d.defaultCardId = 'k1';
+    });
+  });
+  const page = await h.open('checkout.html');
+  await h.fill(page);
+  assert.equal(await val(page, '#email'), 'ada@example.com');
+  assert.equal(await page.$eval('#country', (s) => s.value), 'US');
+  assert.equal(await val(page, '#fn'), 'Ada');
+  assert.equal(await val(page, '#ln'), 'Lovelace');
+  assert.equal(await val(page, '#company'), '', 'your employer is not put on a shipping label');
+  assert.equal(await val(page, '#a1'), '1 Market St');
+  assert.equal(await val(page, '#a2'), 'Apt 5');
+  assert.equal(await val(page, '#city'), 'San Francisco');
+  assert.equal(await page.$eval('#state', (s) => s.value), 'CA');
+  assert.equal(await val(page, '#zip'), '94105');
+  assert.equal(await val(page, '#phone'), '+1 415 555 0100');
+  assert.equal(await val(page, '#ccnum'), '4242424242424242');
+  assert.equal(await val(page, '#ccname'), 'Ada Lovelace');
+  assert.equal(await page.$eval('#expm', (s) => s.value), '04');
+  assert.equal(await page.$eval('#expy', (s) => s.value), '2029');
+  assert.equal(await val(page, '#cvc'), '123');
+  assert.equal(await val(page, '#exp2'), '04/29');
+  await page.close();
+});
+
+test('cards are not handed to a third-party iframe', async () => {
+  const page = await h.open('third-party-frame.html');
+  await page.frameLocator('#widget').locator('#ccnum').waitFor();
+  const r = await h.fill(page);
+  assert.equal(await val(page, '#name'), 'Ada Lovelace', 'the top page gets the card');
+  const frame = page.frames().find((f) => f.url().includes('card-fields'));
+  assert.equal(await frame.inputValue('#ccnum'), '');
+  assert.ok(r.notes.some((n) => /Card not filled into a frame/.test(n)), JSON.stringify(r.notes));
+  const allowed = await h.sw.evaluate(() => [
+    globalThis.JTFBackground.cardAllowedIn({ frameId: 3, url: 'https://js.stripe.com/v3/elements', tab: { url: 'https://shop.example/checkout' } }),
+    globalThis.JTFBackground.cardAllowedIn({ frameId: 3, url: 'https://pay.shop.example/frame', tab: { url: 'https://www.shop.example/checkout' } }),
+    globalThis.JTFBackground.cardAllowedIn({ frameId: 3, url: 'https://ads.tracker.example/x', tab: { url: 'https://shop.example/checkout' } }),
+    globalThis.JTFBackground.siteOf('checkout.shop.co.uk'),
+  ]);
+  assert.deepEqual(allowed, [true, true, false, 'shop.co.uk']);
+  await page.close();
+});
+
+test('sign-up generates and saves a password; login fills it back', async () => {
+  const signup = await h.open('signup.html');
+  const r = await h.fill(signup);
+  const pw = await val(signup, '#password');
+  assert.equal(pw.length, 20);
+  assert.equal(await val(signup, '#password2'), pw);
+  assert.equal(await val(signup, '#email'), 'ada@example.com');
+  assert.equal(await checked(signup, '#terms'), false);
+  assert.ok(r.notes.some((n) => /Generated a new password for localhost/.test(n)), JSON.stringify(r.notes));
+  const saved = await h.sw.evaluate(async () => (await globalThis.JTF.vault.read()).credentials.map((c) => [c.host, c.username, c.password]));
+  assert.deepEqual(saved, [['localhost', 'ada@example.com', pw]]);
+
+  // Filling the sign-up page again reuses the saved password rather than making another.
+  const again = await h.open('signup.html');
+  await h.fill(again);
+  assert.equal(await val(again, '#password'), pw);
+
+  const login = await h.open('login.html');
+  await h.fill(login);
+  assert.equal(await val(login, '#user'), 'ada@example.com');
+  assert.equal(await val(login, '#pw'), pw);
+  await Promise.all([signup.close(), again.close(), login.close()]);
+});
+
+test('the default password is only used when that strategy is chosen', async () => {
+  await h.sw.evaluate(() => globalThis.JTF.vault.update((d) => { d.defaultPassword = 'Default-Pass-123!'; }));
+  const login = await h.open('login.html', '127.0.0.1');
+  let r = await h.fill(login);
+  assert.equal(await val(login, '#pw'), '', 'no saved login for 127.0.0.1 and strategy is “generate”');
+  assert.ok(r.notes.some((n) => /No saved password for 127\.0\.0\.1/.test(n)), JSON.stringify(r.notes));
+  await h.setSettings({ passwordStrategy: 'default' });
+  await login.reload();
+  r = await h.fill(login);
+  assert.equal(await val(login, '#pw'), 'Default-Pass-123!');
+  await h.setSettings({ passwordStrategy: 'generate' });
+  await login.close();
+});
+
+test('passwords are not handed to insecure origins', async () => {
+  // 127.0.0.1 counts as local; use a non-local http origin via a hostname alias that resolves to loopback.
+  const page = await h.context.newPage();
+  await page.route('http://insecure.test/**', (route) => route.fulfill({ contentType: 'text/html', body: '<label>Password <input type=password id=p></label>' }));
+  await page.goto('http://insecure.test/login');
+  const r = await h.fill(page);
+  assert.equal(await page.inputValue('#p'), '');
+  assert.ok(r.notes.some((n) => /secure \(https\)/.test(n)), JSON.stringify(r.notes));
+  await page.close();
+});
+
+test('right-click “Generate strong password” fills and saves it', async () => {
+  await h.sw.evaluate(() => globalThis.JTF.vault.update((d) => { d.credentials = []; }));
+  const page = await h.open('signup.html');
+  await page.focus('#password');
+  await h.menu(page, 'jtf-genpass');
+  const pw = await val(page, '#password');
+  assert.equal(pw.length, 20);
+  assert.equal(await val(page, '#password2'), pw);
+  const saved = await h.sw.evaluate(async () => (await globalThis.JTF.vault.read()).credentials.map((c) => c.password));
+  assert.deepEqual(saved, [pw]);
+  await page.close();
+});
+
+test('application log records filled job applications only', async () => {
+  const history = await h.sw.evaluate(() => globalThis.JTF.store.getHistory());
+  const hosts = history.map((x) => x.title);
+  assert.ok(hosts.some((t) => /Greenhouse-style/.test(t)), JSON.stringify(hosts));
+  assert.ok(!hosts.some((t) => /Checkout/.test(t)), 'checkout pages are not job applications');
+});
+
+test('restricted pages report a friendly error', async () => {
+  const page = await h.context.newPage();
+  await page.goto(h.extUrl('options/options.html'));
+  const tabId = await page.evaluate(() => chrome.tabs.getCurrent().then((t) => t.id));
+  const r = await h.sw.evaluate((id) => globalThis.JTFBackground.fillTab(id), tabId);
+  assert.match(r.error, /can’t run on this page|Cannot access/i);
+  await page.close();
+});

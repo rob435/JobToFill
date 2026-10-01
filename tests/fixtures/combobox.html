@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Searchable dropdowns (react-select style)</title>
+  <style>
+    body { font: 14px system-ui; max-width: 720px; margin: 24px auto; }
+    .field { margin: 14px 0; position: relative; }
+    .select__control { display: flex; border: 1px solid #999; border-radius: 4px; padding: 4px 8px; min-height: 30px; align-items: center; }
+    .select__value-container { position: relative; flex: 1; display: grid; }
+    .select__placeholder, .select__single-value { grid-area: 1 / 1; color: #777; }
+    .select__single-value { color: #000; }
+    .select__input { grid-area: 1 / 1; border: 0; outline: 0; background: transparent; min-width: 2px; }
+    .select__menu { position: absolute; left: 0; right: 0; background: #fff; border: 1px solid #999; z-index: 5; }
+    .select__option { padding: 4px 8px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Application (searchable dropdowns)</h1>
+  <form>
+    <div class="field"><label for="first_name">First Name</label><input id="first_name" type="text"></div>
+    <div class="field">
+      <label for="location">Location</label>
+      <input id="location" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="location-list">
+      <ul id="location-list" role="listbox" hidden></ul>
+    </div>
+
+    <div class="field" data-select="Canada|United Kingdom|United States">
+      <label id="country-label" for="country">Country</label>
+    </div>
+
+    <div class="field" data-select="Yes|No">
+      <label id="auth-label" for="auth">Are you legally authorized to work in the United States?</label>
+    </div>
+
+    <div class="field" data-select="Stanford University|University of Cambridge|University of London|Massachusetts Institute of Technology" data-async="1">
+      <label id="school-label" for="school">School</label>
+    </div>
+
+
+    <div class="field">
+      <label for="office_pref">Preferred office (free text with suggestions)</label>
+      <input id="office_pref" type="text" aria-autocomplete="list" name="office">
+    </div>
+  </form>
+
+  <script>
+    // A small react-select look-alike: the real <input role="combobox"> is cleared after a pick and
+    // the chosen value lives in a separate "single value" element, exactly like react-select.
+    let counter = 0;
+    document.querySelectorAll('[data-select]').forEach((field) => {
+      const options = field.dataset.select.split('|');
+      const async = !!field.dataset.async;
+      const n = ++counter;
+      const label = field.querySelector('label');
+      const id = label.getAttribute('for');
+      field.insertAdjacentHTML('beforeend', `
+        <div class="select__control">
+          <div class="select__value-container">
+            <div class="select__placeholder">Select...</div>
+            <input class="select__input" id="${id}" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="${label.id}" autocomplete="off">
+          </div>
+        </div>
+        <input type="hidden" name="${id}">`);
+      const input = field.querySelector('.select__input');
+      const hidden = field.querySelector('input[type=hidden]');
+      const placeholder = field.querySelector('.select__placeholder');
+      let menu = null;
+      let timer = null;
+      const closeMenu = () => { if (menu) { menu.remove(); menu = null; input.setAttribute('aria-expanded', 'false'); } };
+      const openMenu = (filter) => {
+        closeMenu();
+        const shown = options.filter((o) => !filter || o.toLowerCase().includes(filter.toLowerCase()));
+        menu = document.createElement('div');
+        menu.className = 'select__menu';
+        const list = document.createElement('div');
+        list.setAttribute('role', 'listbox');
+        list.id = `react-select-${n}-listbox`;
+        shown.forEach((text, i) => {
+          const opt = document.createElement('div');
+          opt.className = 'select__option';
+          opt.id = `react-select-${n}-option-${i}`;
+          opt.setAttribute('role', 'option');
+          opt.textContent = text;
+          opt.addEventListener('click', () => {
+            let sv = field.querySelector('.select__single-value');
+            if (!sv) { sv = document.createElement('div'); sv.className = 'select__single-value'; input.before(sv); }
+            sv.textContent = text;
+            placeholder.hidden = true;
+            hidden.value = text;
+            input.value = '';
+            closeMenu();
+          });
+          list.appendChild(opt);
+        });
+        if (!shown.length) list.innerHTML = '<div class="select__menu-notice">No options</div>';
+        menu.appendChild(list);
+        field.appendChild(menu);
+        input.setAttribute('aria-expanded', 'true');
+        input.setAttribute('aria-controls', list.id);
+      };
+      input.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown' && !async) openMenu(input.value); if (e.key === 'Escape') closeMenu(); });
+      input.addEventListener('input', () => {
+        clearTimeout(timer);
+        if (async) timer = setTimeout(() => openMenu(input.value), 250); else openMenu(input.value);
+      });
+      input.addEventListener('blur', () => { setTimeout(() => { input.value = ''; closeMenu(); }, 150); });
+    });
+
+    // Location autocomplete: suggestions appear only after typing.
+    const loc = document.getElementById('location');
+    const list = document.getElementById('location-list');
+    const PLACES = ['London, Greater London, England, United Kingdom', 'London, Ontario, Canada', 'Londonderry, Northern Ireland, United Kingdom'];
+    loc.addEventListener('input', () => {
+      setTimeout(() => {
+        list.innerHTML = '';
+        for (const p of PLACES.filter((x) => loc.value && x.toLowerCase().startsWith(loc.value.split(',')[0].toLowerCase()))) {
+          const li = document.createElement('li');
+          li.setAttribute('role', 'option');
+          li.textContent = p;
+          li.addEventListener('click', () => { loc.value = p; list.hidden = true; loc.dataset.picked = p; });
+          list.appendChild(li);
+        }
+        list.hidden = !list.children.length;
+      }, 200);
+    });
+  </script>
+</body>
+</html>

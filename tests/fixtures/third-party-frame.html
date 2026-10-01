@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Store with a third-party widget</title></head>
+<body>
+  <h1>Checkout</h1>
+  <input id="name" autocomplete="cc-name" placeholder="Name on card">
+  <script>
+    // A frame from another site (not a known payment processor) asking for card details.
+    const host = location.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+    const f = document.createElement('iframe');
+    f.id = 'widget';
+    f.src = `http://${host}:${location.port}/card-fields.html`;
+    document.body.appendChild(f);
+  </script>
+</body>
+</html>
