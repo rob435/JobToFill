@@ -111,6 +111,13 @@ test('letter: placeholders, markdown, dashes, stock phrases and a missing compan
     assert.match(all, re);
 });
 
+test('letter: describing the job advert instead of the candidate is flagged', () => {
+  const meta = structuredClone(good);
+  meta.paragraphs[1] =
+    'The internship asks for Python and SQL. At Northwind I cleaned 12,000 customer records in Python and SQL.';
+  assert.match(L.checkLetter(meta, ctx).errors.join('\n'), /job advert/);
+});
+
 test('letter: a letter must end with its own short closing paragraph', () => {
   const noClose = structuredClone(good);
   noClose.paragraphs = good.paragraphs.slice(0, 3);

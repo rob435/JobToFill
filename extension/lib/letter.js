@@ -257,6 +257,13 @@
     if (/[—]|\s–\s/.test(body)) errors.push('Don’t use dashes (— or –) as punctuation; use commas or full stops.');
     if (/!/.test(body)) errors.push('No exclamation marks.');
 
+    const narrated = body.match(
+      /\b(the|this) (role|internship|position|programme|program|job|posting|advert|team|description) (asks|calls|requires|looks|is looking|wants|needs|mentions|says)\b[^.]*/i,
+    );
+    if (narrated)
+      errors.push(
+        `Don’t describe the job advert (“${narrated[0].slice(0, 60)}”); show the match through what the candidate did.`,
+      );
     const lower = body.toLowerCase();
     const cliches = CLICHES.filter((c) => lower.includes(c));
     if (cliches.length)
