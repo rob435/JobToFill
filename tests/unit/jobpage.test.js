@@ -246,6 +246,17 @@ test('JSON-LD: HTML-encoded description, PropertyValue identifier, several locat
   assert.doesNotMatch(p.description, /&lt;|<p>/);
   assert.match(p.description, /\n• Analyse large data sets/);
   assert.equal(p.ats, 'phenom');
+  // The hidden "job has been filled" template doesn't count against a page with structured data…
+  assert.equal(jp.applicationContext(doc('jsonld-phenom.html'), url).gone, false);
+  // …but a closed job's tab title does.
+  const closed = html('jsonld-phenom.html').replace(/<title>[^<]*/, '<title>Job not found | Marsh McLennan Careers');
+  assert.equal(jp.fromHtml(closed, url), null);
+});
+
+test('candidates: a Phenom apply page uses the job ID it shows to find the job page', () => {
+  const url = 'https://careers.marsh.com/global/en/apply?jobSeqNo=MAMCGLOBALR364008EXTERNALENGLOBAL&step=1';
+  const list = jp.candidates({ url, ats: jp.ats(url), jobIds: ['R_364008'], links: [] }).map((c) => c.url);
+  assert.equal(list[0], 'https://careers.marsh.com/global/en/job/R_364008');
 });
 
 test('JSON-LD: a JobPosting inside @graph with raw line breaks in its strings', () => {
@@ -274,6 +285,28 @@ test('JSON-LD: several postings on one page — the one this address is about wi
   // No address match: the page's own heading decides.
   const byHeading = jp.fromHtml(html('jsonld-list.html'), 'https://careers.contoso.example/some/other/page');
   assert.equal(byHeading.title, 'Summer Analyst 2027 – Markets');
+});
+
+test('JSON-LD: a Workday location that starts with the company name loses it', () => {
+  const ld = {
+    '@type': 'JobPosting',
+    title: 'Halma Catalyst Programme - Graduate Trainee',
+    hiringOrganization: { name: 'Halma plc' },
+    jobLocation: { address: { addressLocality: 'Halma plc Amersham', addressCountry: 'United Kingdom' } },
+    identifier: { value: 'JR26_000946' },
+    description: `<p>${'Join our graduate programme and rotate through businesses in the group. '.repeat(10)}</p>`,
+  };
+  const url =
+    'https://halma.wd3.myworkdayjobs.com/Halma/job/Amersham/Halma-Catalyst-Programme-Graduate-Trainee_JR26_000946/apply';
+  const page = `<html><head><script type="application/ld+json">${JSON.stringify(ld)}</script></head><body></body></html>`;
+  const c = jp.applicationContext(parseHTML(page).document, url);
+  assert.equal(c.company, 'Halma plc');
+  assert.equal(c.location, 'Amersham, United Kingdom');
+  assert.equal(c.posting.location, 'Amersham, United Kingdom');
+  // Only a leading company name goes, and never the whole location.
+  assert.equal(jp.fromHtml(page.replace('Halma plc Amersham', 'Halma plc'), url).location, 'United Kingdom');
+  const only = JSON.stringify({ ...ld, jobLocation: { address: { addressLocality: 'Halma plc' } } });
+  assert.equal(jp.fromHtml(page.replace(JSON.stringify(ld), only), url).location, 'Halma plc');
 });
 
 test('fromHtml: a page that is only a script shell has no posting; fromHtml needs a DOMParser', () => {
@@ -332,6 +365,22 @@ test('fromDocument: generic main text, without menus or cookie banners', () => {
   assert.doesNotMatch(p.description, /cookies|Copyright/);
   assert.equal(p.title, 'Graduate Analyst');
   assert.equal(p.company, 'Tailspin Toys');
+});
+
+test('fromDocument: a description split into section blocks (Personio-style markup) is read whole', () => {
+  const item = (title, body) =>
+    `<div class="page_jobDescriptionItem__x"><h2 class="detail-block-title">${title}</h2><div class="page_richTextContent__y">${body}</div></div>`;
+  const page = `<html><head><title>visiting analyst (f/m/d) | Jobs at </title></head><body><main><div class="page_jobContainer__z">
+    <h1>visiting analyst (f/m/d)</h1><p>Zug, Berlin, London · Full-time</p>
+    <div class="page_jobDescription__w">
+      ${item('Your mission', '<p>As part of the investment team you will source and assess early-stage companies, meet founders and help prepare investment memos for the partners.</p>')}
+      ${item('Your profile', '<ul><li>Excellent academic track record</li><li>Background in STEM or business</li><li>Prior internships in venture capital, start-ups, consulting or banking are a plus</li><li>Fluent English; German is helpful</li></ul>')}
+      ${item('Why us?', '<p>You will work closely with experienced investors on real deals and get feedback every week, in a small team that values initiative.</p>')}
+    </div></div></main></body></html>`;
+  const p = jp.fromHtml(page, 'https://redalpine.jobs.personio.com/job/2028216');
+  assert.match(p.description, /Your mission[\s\S]*Your profile[\s\S]*Why us\?/);
+  assert.equal(p.title, 'visiting analyst (f/m/d)');
+  assert.notEqual(p.company, 'at');
 });
 
 /* ---------------------------------------------------------------- fromApi */
@@ -584,6 +633,31 @@ test('applicationContext: no document, or a page with nothing about a job', () =
   assert.deepEqual([empty.title, empty.posting, empty.links], ['', null, []]);
   const c = jp.applicationContext(doc('../signup.html'), 'https://example.com/signup');
   assert.equal(c.posting, null);
+  assert.deepEqual(c.jobIds, []);
+});
+
+test('applicationContext: an iCIMS job inside #icims_content_iframe (no JSON-LD)', () => {
+  const frame =
+    'https://careers-sargentlundy.icims.com/jobs/27617/instrumentation-&-controls-engineering-intern---nuclear-%28summer-2027%29/job?in_iframe=1';
+  const c = jp.applicationContext(doc('icims-frame.html'), frame);
+  assert.equal(c.ats.name, 'icims');
+  assert.equal(c.title, 'Instrumentation & Controls Engineering Intern - Nuclear (Summer 2027)');
+  assert.equal(c.company, 'Sargent & Lundy');
+  assert.equal(c.location, 'Phoenix, AZ, United States');
+  assert.ok(c.jobIds.includes('27617'));
+  assert.equal(c.gone, false);
+  const p = c.posting;
+  assert.equal(p.source, 'page');
+  assert.match(p.description, /^Responsibilities\n\nThis internship starts in summer 2027/);
+  assert.match(p.description, /Qualifications\n\n• Studying electrical/);
+  assert.doesNotMatch(p.description, /Apply for this job online|Email this job/);
+});
+
+test('applicationContext: a closed iCIMS job (redirected to the search page) is reported as gone', () => {
+  const url = 'https://careers-gtsx.icims.com/jobs/search?ss=1&notFound=1&in_iframe=1';
+  const c = jp.applicationContext(doc('icims-gone.html'), url);
+  assert.equal(c.posting, null, 'the list of other jobs is not a posting');
+  assert.equal(c.gone, true);
   assert.deepEqual(c.jobIds, []);
 });
 
@@ -988,6 +1062,57 @@ test('find: 404s, timeouts and script shells are reported in tried', async () =>
   assert.deepEqual(
     errors.tried.map((t) => t.outcome),
     ['failed: Failed to fetch', 'HTTP 404'],
+  );
+});
+
+test('find: iCIMS from the address alone reads the ?in_iframe=1 page', async () => {
+  const url =
+    'https://careers-sargentlundy.icims.com/jobs/27617/instrumentation-%26-controls-engineering-intern/job?mode=job&iis=Trackr';
+  const ctx = {
+    url,
+    ats: jp.ats(url),
+    title: 'Instrumentation & Controls Engineering Intern',
+    jobIds: ['27617'],
+    links: [],
+  };
+  const frame =
+    'https://careers-sargentlundy.icims.com/jobs/27617/instrumentation-%26-controls-engineering-intern/job?in_iframe=1';
+  assert.equal(jp.candidates(ctx)[0].url, frame);
+  const wrapper =
+    '<html><head><title>Careers</title></head><body><iframe id="icims_content_iframe"></iframe></body></html>';
+  const r = await jp.find(ctx, { fetch: mockFetch({ [frame]: html('icims-frame.html'), [url]: wrapper }) });
+  assert.equal(r.verdict, 'same', r.reasons.join('; '));
+  assert.equal(r.source, frame);
+  assert.equal(r.posting.company, 'Sargent & Lundy');
+});
+
+test('find: never an empty "tried" — closed jobs and pages with nothing to look up say so', async () => {
+  const gone = jp.applicationContext(
+    doc('icims-gone.html'),
+    'https://careers-gtsx.icims.com/jobs/search?ss=1&notFound=1',
+  );
+  const r = await jp.find(gone, { fetch: mockFetch({}) });
+  assert.equal(r.posting, null);
+  assert.equal(r.tried.length, 1);
+  assert.match(r.tried[0].outcome, /closed or no longer available/);
+  assert.doesNotMatch(
+    r.tried[0].outcome,
+    /empty|no posting|shell|script/i,
+    'not something to open in a background tab',
+  );
+  const bare = await jp.find({ url: 'https://example.com/apply', links: [] }, { fetch: mockFetch({}) });
+  assert.match(bare.tried[0].outcome, /nothing to look up/);
+  const dead = await jp.find(
+    {
+      url: 'https://careers-gtsx.icims.com/jobs/1588/quant-intern/job',
+      ats: jp.ats('https://careers-gtsx.icims.com/jobs/1588/quant-intern/job'),
+      links: [],
+    },
+    { fetch: async () => ({ ok: false, status: 410 }) },
+  );
+  assert.deepEqual(
+    dead.tried.map((t) => t.outcome),
+    ['HTTP 410', 'HTTP 410'],
   );
 });
 
