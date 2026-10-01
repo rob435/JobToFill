@@ -19,6 +19,7 @@
     highlight: true,
     toast: true,
     comboboxes: true,
+    consents: false,
     passwordStrategy: 'generate',
     autoLockMinutes: 30,
     logApplications: true,

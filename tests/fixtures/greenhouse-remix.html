@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Campus Data Engineer (Intern) – Greenhouse job board replica</title>
+    <style>
+      body {
+        font: 15px/1.4 system-ui, sans-serif;
+        margin: 32px auto;
+        max-width: 760px;
+      }
+      .field-wrapper {
+        margin: 14px 0;
+      }
+      .label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      .input {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 8px;
+      }
+      .visually-hidden {
+        clip: rect(0 0 0 0);
+        clip-path: inset(50%);
+        height: 1px;
+        overflow: hidden;
+        position: absolute;
+        white-space: nowrap;
+        width: 1px;
+      }
+      fieldset {
+        border: 0;
+        margin: 0;
+        padding: 0;
+      }
+      .phone-input {
+        display: flex;
+        gap: 12px;
+      }
+      .phone-input__country {
+        width: 200px;
+      }
+      .phone-input__phone {
+        flex: 1;
+      }
+      .checkbox__wrapper {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      #state {
+        background: #f4f4f4;
+        padding: 8px;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Campus Data Engineer (Intern)</h1>
+    <p>London · Apply for this job</p>
+    <div id="root"></div>
+    <script src="build/greenhouse-remix.js"></script>
+  </body>
+</html>

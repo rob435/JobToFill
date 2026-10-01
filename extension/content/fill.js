@@ -69,8 +69,19 @@
     el.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true }));
   }
 
+  /** Checked state of a native radio/checkbox or an ARIA one (role="radio", aria-pressed buttons). */
+  function isChecked(el) {
+    if (el.localName === 'input') return el.checked;
+    return el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-pressed') === 'true';
+  }
+
   function setChecked(el, checked) {
-    if (el.checked === checked) return;
+    if (isChecked(el) === checked) return;
+    if (el.localName !== 'input') {
+      pointerClick(el);
+      if (isChecked(el) !== checked) key(el, ' ');
+      return;
+    }
     el.click();
     if (el.checked !== checked) {
       el.checked = checked;
@@ -94,20 +105,37 @@
     return dom().textOf(el) || '';
   }
 
-  const CHIP = '[class*="singleValue"], [class*="single-value"], [class*="selected-value"]';
+  const CHIP =
+    '[class*="singleValue"], [class*="single-value"], [class*="selected-value"], [class*="multiValue"], [class*="multi-value"], [class*="MuiChip-root"]';
 
-  /** The selected-value element of a react-select style widget, looking only inside its own container. */
-  function selectedChip(el) {
+  /**
+   * The selected values ("chips") of a react-select style widget, looking only inside its own
+   * container. Hidden helper inputs (react-select's required-field shim) don't count as neighbours.
+   */
+  function chipsOf(el) {
     let a = el.parentElement;
     for (let i = 0; a && i < 5; i++, a = a.parentElement) {
       const others = Array.from(
         a.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]'),
-      ).filter((c) => c !== el && !c.contains(el));
-      if (others.length) return null;
-      const chip = a.querySelector(CHIP);
-      if (chip) return chip;
+      ).filter((c) => c !== el && !c.contains(el) && c.getAttribute('aria-hidden') !== 'true' && c.tabIndex >= 0);
+      if (others.length) return [];
+      const all = Array.from(a.querySelectorAll(CHIP));
+      if (all.length) return all.filter((c) => !all.some((o) => o !== c && o.contains(c)));
     }
-    return null;
+    return unnamedChips(el);
+  }
+
+  /**
+   * react-select without readable class names: its input sits in a wrapper carrying data-value, and
+   * the value container holds either the placeholder (id …-placeholder) or the chosen value(s).
+   */
+  function unnamedChips(el) {
+    const wrapper = el.parentElement;
+    const container = wrapper && wrapper.hasAttribute('data-value') ? wrapper.parentElement : null;
+    if (!container) return [];
+    return Array.from(container.children).filter(
+      (c) => c !== wrapper && !/-placeholder$/.test(c.id) && !!dom().textOf(c),
+    );
   }
 
   /** Does this control already hold something the user (or site) put there? */
@@ -117,11 +145,11 @@
       case 'select':
         return !isUntouchedSelect(el);
       case 'radio':
-        return members.some((m) => m.checked && !m.defaultChecked);
+        return members.some((m) => isChecked(m) && !m.defaultChecked);
       case 'checkboxes':
-        return members.some((m) => m.checked !== m.defaultChecked);
+        return members.some((m) => isChecked(m) !== !!m.defaultChecked);
       case 'checkbox':
-        return el.checked;
+        return isChecked(el);
       case 'file':
         return el.files && el.files.length > 0;
       case 'combo': {
@@ -129,7 +157,7 @@
         return !!t && !M().isPlaceholder(JTF.util.normalize(t));
       }
       case 'combobox':
-        return !!el.value.trim() || !!selectedChip(el);
+        return !!el.value.trim() || chipsOf(el).length > 0;
       default: {
         const v = (el.value || '').trim();
         return !!v && !/^https?:\/\/$/.test(v);
@@ -144,16 +172,16 @@
       case 'select':
         return isUntouchedSelect(el) ? '' : (el.options[el.selectedIndex] || {}).text || '';
       case 'radio': {
-        const m = members.find((x) => x.checked);
+        const m = members.find(isChecked);
         return m ? field.desc.options[members.indexOf(m)].text : '';
       }
       case 'checkboxes':
         return members
-          .filter((m) => m.checked)
+          .filter(isChecked)
           .map((m) => field.desc.options[members.indexOf(m)].text)
           .join(', ');
       case 'checkbox':
-        return el.checked ? 'Yes' : '';
+        return isChecked(el) ? 'Yes' : '';
       case 'file':
       case 'password':
         return '';
@@ -161,17 +189,23 @@
         const t = comboText(el);
         return M().isPlaceholder(JTF.util.normalize(t)) ? '' : t;
       }
-      case 'combobox': {
-        if (el.value.trim()) return el.value.trim();
-        const chip = selectedChip(el);
-        return chip ? dom().textOf(chip) : '';
-      }
+      case 'combobox':
+        return (
+          el.value.trim() ||
+          chipsOf(el)
+            .map((c) => dom().textOf(c))
+            .filter(Boolean)
+            .join(', ')
+        );
       default:
         return (el.value || '').trim();
     }
   }
 
   /* ---------------------------------------------------- custom dropdowns */
+
+  const OPEN_WAIT = 600;
+  const SEARCH_WAIT = 2500;
 
   function listboxFor(el) {
     const rootNode = el.getRootNode();
@@ -207,87 +241,216 @@
     return opts.filter((o) => o.getAttribute('aria-disabled') !== 'true' && dom().isVisible(o));
   }
 
-  async function waitForOptions(el, timeout) {
+  /** Is the dropdown still fetching results ("Loading…", aria-busy)? */
+  function isLoading(el) {
+    const lb = listboxFor(el);
+    const menu = lb ? lb.parentElement || lb : null;
+    if (lb && lb.getAttribute('aria-busy') === 'true') return true;
+    return !!(menu && menu.querySelector('[class*="loading" i], [class*="spinner" i], [aria-busy="true"]'));
+  }
+
+  const optionsKey = (opts) =>
+    opts.length +
+    '|' +
+    opts
+      .slice(0, 3)
+      .map((o) => o.textContent)
+      .join('|');
+
+  /** Wait until the options stop changing (async searches return in stages), up to `timeout` ms. */
+  async function waitForOptions(el, timeout, previous) {
     const start = Date.now();
-    let last = -1;
+    let lastKey = null;
     let stable = 0;
     let opts = [];
     while (Date.now() - start < timeout) {
       opts = currentOptions(el);
-      if (opts.length && opts.length === last) {
+      // An empty menu that has stopped loading ("No options") won't fill up later.
+      if (!opts.length && Date.now() - start > 900 && !isLoading(el)) return opts;
+      const key = optionsKey(opts);
+      const fresh = previous == null || key !== previous;
+      if (opts.length && key === lastKey && fresh && !isLoading(el)) {
         if (++stable >= 2) return opts;
       } else stable = 0;
-      last = opts.length;
-      await sleep(60);
+      lastKey = key;
+      await sleep(40);
     }
     return opts;
   }
 
-  function pickOption(opts, v) {
-    const described = opts.map((o) => ({
+  function describeOptions(opts) {
+    return opts.map((o) => ({
       text: dom().textOf(o) || o.getAttribute('aria-label') || '',
       value: o.getAttribute('data-value') || o.getAttribute('value') || '',
     }));
-    return M().matchOption(described, v);
+  }
+
+  /** Type like a person: key events around the input event, so widgets that open on keyup notice. */
+  function typeQuery(el, query) {
+    const last = query.slice(-1) || 'a';
+    const code = /[a-z]/i.test(last) ? 'Key' + last.toUpperCase() : /\d/.test(last) ? 'Digit' + last : 'Space';
+    const init = { key: last, code, bubbles: true, cancelable: true, composed: true };
+    el.dispatchEvent(new KeyboardEvent('keydown', init));
+    setNativeValue(el, query);
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: query }));
+    el.dispatchEvent(new KeyboardEvent('keyup', init));
+  }
+
+  function clearQuery(el) {
+    if (!el.value) return;
+    setNativeValue(el, '');
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'deleteContentBackward' }));
+  }
+
+  async function openMenu(el, searchable) {
+    let opts = currentOptions(el);
+    if (opts.length) return opts;
+    if (el.localName === 'input') {
+      el.focus({ preventScroll: true });
+      key(el, 'ArrowDown');
+      opts = await waitForOptions(el, OPEN_WAIT);
+      // A read-only picker that ignores the keyboard: click it like a person would.
+      if (!opts.length && !searchable && !listboxFor(el)) {
+        pointerClick(el);
+        opts = await waitForOptions(el, OPEN_WAIT);
+      }
+    } else {
+      pointerClick(el);
+      opts = await waitForOptions(el, OPEN_WAIT);
+      if (!opts.length && !listboxFor(el)) {
+        el.focus({ preventScroll: true });
+        key(el, 'ArrowDown');
+        opts = await waitForOptions(el, OPEN_WAIT);
+      }
+    }
+    return opts;
+  }
+
+  /** Words to type into a searchable dropdown, best first: "University of Glasgow", then "Glasgow". */
+  function searchQueries(v) {
+    const out = [];
+    const add = (q) => {
+      q = String(q || '').trim();
+      if (q && !out.some((x) => x.toLowerCase() === q.toLowerCase())) out.push(q);
+    };
+    if (v.kind === 'list') (v.items || []).slice(0, 3).forEach(add);
+    add(v.search);
+    add(v.text.length <= 60 ? v.text : '');
+    const words = JTF.util
+      .tokens(v.search || v.text)
+      .filter((w) => w.length > 3 && !/^(university|college|school|institute|of|the)$/.test(w));
+    if (words.length > 1) add(words.sort((a, b) => b.length - a.length)[0]);
+    return out.slice(0, 3);
+  }
+
+  /** Did picking `text` register: a chip, the input's own value, or a closed menu showing it? */
+  function selectionShows(el, text) {
+    const want = JTF.util.normalize(text);
+    if (!want) return true;
+    if (JTF.util.normalize(el.value) === want) return true;
+    if (chipsOf(el).some((c) => JTF.util.normalize(dom().textOf(c)).includes(want))) return true;
+    const own = el.localName === 'input' ? '' : JTF.util.normalize(dom().textOf(el));
+    return !!own && own.includes(want);
+  }
+
+  async function choose(el, option) {
+    const text = dom().textOf(option);
+    if (option.scrollIntoView) option.scrollIntoView({ block: 'nearest' });
+    option.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, composed: true }));
+    option.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, composed: true }));
+    pointerClick(option);
+    // Registered once the value shows, or the menu closes behind the click (slow re-renders included).
+    for (let waited = 0; waited < 300; waited += 30) {
+      await sleep(30);
+      if (selectionShows(el, text) || !listboxFor(el)) return text;
+    }
+    // Some widgets only take the keyboard: highlight the option, then press Enter.
+    if (option.isConnected && el.localName === 'input') {
+      option.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, composed: true }));
+      key(el, 'Enter');
+      await sleep(30);
+      if (selectionShows(el, text)) return text;
+    }
+    return null;
+  }
+
+  function closeMenu(el) {
+    if (!listboxFor(el)) return;
+    key(el.localName === 'input' ? el : el.ownerDocument.activeElement || el, 'Escape');
+    if (el.localName !== 'input' && listboxFor(el)) pointerClick(el);
+  }
+
+  /**
+   * Pick one option for `v` in an open (or openable) dropdown, skipping options already chosen.
+   * Returns { chosen: text | null, opts, multi } — `multi` is read while the menu is open.
+   */
+  async function pickOne(el, v, searchable, already) {
+    let opts = await openMenu(el, searchable);
+    const multi = isMulti(el);
+    const pick = () => {
+      const idx = M().matchOption(describeOptions(opts), v);
+      return idx >= 0 && !already.includes(dom().textOf(opts[idx])) ? idx : -1;
+    };
+    let idx = pick();
+    if (idx < 0 && searchable) {
+      for (const query of searchQueries(v)) {
+        const before = optionsKey(opts);
+        typeQuery(el, query);
+        opts = await waitForOptions(el, SEARCH_WAIT, before);
+        idx = pick();
+        if (idx >= 0) break;
+        if (!opts.length && !listboxFor(el)) break; // no suggestions at all: not a dropdown
+      }
+    }
+    if (idx < 0) return { chosen: null, opts, multi };
+    return { chosen: await choose(el, opts[idx]), opts, multi };
   }
 
   async function fillCombo(field, v) {
     const el = field.el;
     const isInput = el.localName === 'input';
     const searchable = isInput && !el.readOnly;
-    let typed = false;
+    const items = v.kind === 'list' ? v.items.map((item) => JTF.fields.val(item)) : null;
+    const chosen = [];
+    let sawOptions = false;
+    let multi = isMulti(el);
+    const queue = multi && items ? items.slice() : [v];
 
-    if (isInput) {
-      el.focus({ preventScroll: true });
-      key(el, 'ArrowDown');
-    } else {
-      pointerClick(el);
-    }
-    let opts = await waitForOptions(el, 700);
-    let idx = pickOption(opts, v);
-
-    if (idx < 0 && searchable) {
-      const query = v.search || v.text;
-      setNativeValue(el, query);
-      el.dispatchEvent(
-        new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: query }),
-      );
-      typed = true;
-      opts = await waitForOptions(el, 2000);
-      idx = pickOption(opts, v);
-      if (idx < 0 && !opts.length && !listboxFor(el)) {
-        // A plain text box whose suggestions never appeared: leave the full value in it.
-        const full = M().formatForText(v, field.desc) || query;
-        if (full !== query) {
-          setNativeValue(el, full);
-          el.dispatchEvent(
-            new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: full }),
-          );
-        }
-        fire(el, 'change');
-        el.blur();
-        return { status: 'filled', value: full };
+    while (queue.length) {
+      const value = queue.shift();
+      const r = await pickOne(el, value, searchable, chosen);
+      if (r.opts.length || listboxFor(el)) sawOptions = true;
+      if (r.chosen) chosen.push(r.chosen);
+      else if (isInput) clearQuery(el);
+      // A multi-select only shows itself once open: then take every listed item, not just the first.
+      if (!multi && r.multi && items) {
+        multi = true;
+        queue.push(...items.filter((it) => !chosen.some((c) => M().matchOption([{ text: c }], it) === 0)));
       }
+      if (!multi) break;
     }
 
-    if (idx >= 0) {
-      const option = opts[idx];
-      const text = dom().textOf(option);
-      if (option.scrollIntoView) option.scrollIntoView({ block: 'nearest' });
-      pointerClick(option);
-      await sleep(80);
-      if (isInput) el.blur();
-      return { status: 'filled', value: text };
+    if (!chosen.length && searchable && !sawOptions) {
+      // A plain text box whose suggestions never appeared: type the full value and see if it sticks.
+      const full = M().formatForText(v, field.desc) || v.text;
+      typeQuery(el, full);
+      fire(el, 'change');
+      el.blur();
+      await sleep(60);
+      if (el.value === full) return { status: 'filled', value: full, typed: true };
+      return { status: 'nomatch' };
     }
 
-    if (typed) {
-      setNativeValue(el, '');
-      el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'deleteContentBackward' }));
-    }
-    key(isInput ? el : el.ownerDocument.activeElement || el, 'Escape');
-    if (!isInput && listboxFor(el)) pointerClick(el); // close it again
+    closeMenu(el);
     if (isInput) el.blur();
-    return { status: 'nomatch' };
+    return chosen.length ? { status: 'filled', value: chosen.join(', ') } : { status: 'nomatch' };
+  }
+
+  function isMulti(el) {
+    const lb = listboxFor(el);
+    if (lb && lb.getAttribute('aria-multiselectable') === 'true') return true;
+    if (el.getAttribute('aria-multiselectable') === 'true') return true;
+    return !!el.closest('[class*="is-multi" i], [class*="isMulti" i], [class*="--multi" i]');
   }
 
   /* ------------------------------------------------------------- files */
@@ -334,27 +497,27 @@
         case 'radio': {
           const idx = M().matchOption(desc.options, v);
           if (idx < 0) return { status: 'nomatch' };
-          history.push({ el, kind, members, prev: members.map((m) => m.checked) });
+          history.push({ el, kind, members, prev: members.map(isChecked) });
           setChecked(members[idx], true);
           return { status: 'filled', target: members[idx] };
         }
         case 'checkboxes': {
-          const wanted = String(v.text)
-            .split(/\s*[,;\n]\s*/)
-            .filter(Boolean);
-          const picks = new Set();
-          for (const w of wanted) {
-            const idx = M().matchOption(desc.options, JTF.fields.val(w));
-            if (idx >= 0) picks.add(idx);
+          // A list ("London, New York") ticks every match; a single answer ticks its one option.
+          let picks = v.kind === 'list' ? M().matchAll(desc.options, v) : [];
+          if (!picks.length) {
+            const idx = M().matchOption(desc.options, v);
+            picks = idx >= 0 ? [idx] : M().matchAll(desc.options, v);
           }
-          if (!picks.size) return { status: 'nomatch' };
-          history.push({ el, kind, members, prev: members.map((m) => m.checked) });
+          if (!picks.length) return { status: 'nomatch' };
+          history.push({ el, kind, members, prev: members.map(isChecked) });
           for (const i of picks) setChecked(members[i], true);
-          return { status: 'filled', target: members[[...picks][0]] };
+          return { status: 'filled', target: members[picks[0]] };
         }
         case 'checkbox': {
-          if (v.canonical !== 'yes') return { status: 'skipped', reason: 'answer is not yes' };
-          history.push({ el, kind, prev: el.checked });
+          // One option of a checklist ("London" under "Which offices…?"), or a yes/no box.
+          const tick = v.kind === 'list' ? M().matchAll(desc.options, v).length > 0 : v.canonical === 'yes';
+          if (!tick) return { status: 'skipped', reason: 'not one of your answers' };
+          history.push({ el, kind, prev: isChecked(el) });
           setChecked(el, true);
           return { status: 'filled' };
         }
@@ -367,8 +530,12 @@
         case 'combo':
         case 'combobox': {
           if (opts.comboboxes) {
-            if (kind === 'combobox') history.push({ el, kind, prev: el.value });
-            return await fillCombo(field, v);
+            const prev = el.value;
+            const res = await fillCombo(field, v);
+            // A picked option is undone with the widget's clear button; typed text by typing back.
+            if (res.status === 'filled' && kind === 'combobox')
+              history.push(res.typed ? { el, kind, prev } : { el, kind, prev: '', picked: true });
+            return res;
           }
           // Custom dropdown handling switched off: type into searchable ones, leave buttons alone.
           if (kind === 'combo') return { status: 'skipped', reason: 'custom dropdowns are switched off' };
@@ -389,6 +556,31 @@
     }
   }
 
+  /**
+   * Undo a dropdown pick with the widget's own clear (×) button, or each chip's remove button.
+   * Returns false when the widget offers no way to clear it.
+   */
+  function clearPicked(el) {
+    let a = el.parentElement;
+    for (let i = 0; a && i < 5; i++, a = a.parentElement) {
+      const clear = a.querySelector(
+        '[class*="clear-indicator"], [class*="clearIndicator"], [aria-label="Clear" i], [aria-label*="clear selection" i]',
+      );
+      if (clear) {
+        pointerClick(clear);
+        return true;
+      }
+      const removes = a.querySelectorAll(
+        '[class*="multi-value__remove"], [class*="multiValueRemove"], [aria-label^="Remove" i]',
+      );
+      if (removes.length && chipsOf(el).length) {
+        Array.from(removes).forEach((r) => pointerClick(r));
+        return true;
+      }
+    }
+    return false;
+  }
+
   function undo(history) {
     let n = 0;
     for (const h of history.slice().reverse()) {
@@ -398,9 +590,7 @@
           h.el.selectedIndex = h.prev;
           fire(h.el, 'change');
         } else if (h.kind === 'radio' || h.kind === 'checkboxes') {
-          h.members.forEach((m, i) => {
-            if (m.checked !== h.prev[i]) setChecked(m, h.prev[i]);
-          });
+          h.members.forEach((m, i) => setChecked(m, h.prev[i]));
         } else if (h.kind === 'checkbox') {
           setChecked(h.el, h.prev);
         } else if (h.kind === 'file') {
@@ -408,6 +598,10 @@
           for (const f of h.prev || []) dt.items.add(f);
           h.el.files = dt.files;
           fire(h.el, 'change');
+        } else if (h.picked) {
+          if (!clearPicked(h.el)) continue;
+          key(h.el, 'Escape'); // clearing can pop the menu open again
+          h.el.blur();
         } else {
           typeValue(h.el, h.prev || '');
         }

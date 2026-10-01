@@ -9,7 +9,7 @@
  * A "descriptor" is a plain object built by content/dom.js (or by a unit test):
  *   { kind, inputType, autocomplete, maxLength, placeholderRaw,
  *     options: [{ text, value }], signals: { label, question, aria, nearby,
- *     placeholder, attrs, name, id, title, ancestors, describedby } }
+ *     placeholder, attrs, name, id, title, group, ancestors, describedby } }
  */
 (function (root) {
   'use strict';
@@ -29,13 +29,25 @@
     name: 0.7,
     id: 0.65,
     title: 0.6,
+    group: 0.45, // legend of a small fieldset around the control, e.g. "Phone" around a country picker
     ancestors: 0.35,
     describedby: 0.3,
   };
 
   const EMAIL_TYPES = new Set(['email', 'account.username']);
-  // Field types a lone checkbox can answer ("I am authorized to work in the US").
-  const BOOL_TYPES = new Set(['job.authorized', 'job.sponsorship', 'job.relocate', 'job.over18', 'exp.current']);
+  // Field types a lone checkbox can answer: "I am authorized to work in the US", "I have read the
+  // privacy notice", or one option of a checklist ("London" under "Which offices…?").
+  const CHECKBOX_TYPES = new Set([
+    'job.authorized',
+    'job.sponsorship',
+    'job.relocate',
+    'job.over18',
+    'exp.current',
+    'consent',
+    'job.locations',
+    'skills',
+    'languages',
+  ]);
 
   function signalTexts(desc) {
     const out = [];
@@ -49,7 +61,7 @@
   }
 
   function kindAllowed(rule, desc) {
-    if (desc.kind === 'checkbox') return BOOL_TYPES.has(rule.type);
+    if (desc.kind === 'checkbox') return CHECKBOX_TYPES.has(rule.type);
     const kinds = rule.kinds || F().KINDS.DEFAULT_KINDS;
     if (!kinds.includes(desc.kind)) return false;
     if (desc.kind === 'email' && !EMAIL_TYPES.has(rule.type)) return false;
@@ -96,6 +108,8 @@
     let best = null;
     for (const rule of F().RULES) {
       if (!kindAllowed(rule, desc)) continue;
+      // A strong signal naming something else ("cover letter" on an "Attach" button) rules this type out.
+      if (rule.notAny && signals.some((s) => s.weight >= 0.6 && rule.notAny.test(s.text))) continue;
       let score = 0;
       let hits = 0;
       let hitText = '';
@@ -166,7 +180,11 @@
   function refine(r, desc) {
     if (!r) return null;
     if (F().DATE_TYPES.has(r.type) && !r.part) r.part = detectPart(desc);
-    if ((r.type === 'address.country' || r.type === 'nationality') && looksLikePhoneCodes(desc.options))
+    if (
+      (r.type === 'address.country' || r.type === 'nationality') &&
+      (looksLikePhoneCodes(desc.options) ||
+        /\b(phone|mobile|tel|telephone|cell)\b/.test(norm((desc.signals || {}).group)))
+    )
       r.type = 'phone.countryCode';
     if (desc.kind === 'email' && !EMAIL_TYPES.has(r.type)) r.type = 'email';
     if (desc.kind === 'password' && !r.type.startsWith('account.pass')) r.type = 'account.password';
@@ -429,12 +447,155 @@
     return best && best.s >= 40 ? best.i : -1;
   }
 
+  /* ------------------------------------------------------- dates against terms */
+
+  // Months of the year each academic term covers. December graduations count as "Fall".
+  const TERMS = { winter: [1, 2], spring: [3, 5], summer: [6, 8], fall: [9, 12], autumn: [9, 12] };
+  const PERIODS = { early: [1, 4], mid: [5, 8], late: [9, 12] };
+  const MONTH_NUMBER = {
+    jan: 1,
+    feb: 2,
+    mar: 3,
+    apr: 4,
+    may: 5,
+    jun: 6,
+    jul: 7,
+    aug: 8,
+    sep: 9,
+    oct: 10,
+    nov: 11,
+    dec: 12,
+  };
+  const MONTH_TOKEN = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*$/;
+
+  /**
+   * The months an option stands for, as [first, last] counted in months from year 0:
+   * "Spring/Summer 2027" -> March–August 2027, "Q4 2026", "May 2027", "2027", "Class of 2027",
+   * "2026-27", "2029 or later". Null when the option isn't a date.
+   */
+  function optionSpan(text) {
+    const raw = String(text || '')
+      // "2026-27" is an academic year; "2027-05" is a month.
+      .replace(/\b((?:19|20)\d{2})\s*[-–/]\s*(\d{2})\b(?![/.-]?\d)/g, (m, y, yy) =>
+        +yy === (+y + 1) % 100 ? `sep ${y} to aug 20${yy}` : m,
+      )
+      .replace(/['’](\d{2})\b/g, ' 20$1');
+    const t = norm(raw);
+    if (!t || t.length > 60) return null;
+    const words = t.split(' ');
+    if (words.some((w) => /^\d+$/.test(w) && w.length !== 4 && !(+w >= 1 && +w <= 12))) return null;
+    const units = [];
+    let year = null;
+    let numericMonth = null;
+    for (const w of words) {
+      let range = null;
+      if (/^(19|20)\d{2}$/.test(w)) {
+        const y = +w;
+        const open = units.filter((u) => u.year == null);
+        open.forEach((u) => (u.year = y));
+        if (numericMonth && !open.length) units.push({ from: numericMonth, to: numericMonth, year: y });
+        if (!open.length && !numericMonth) units.push({ from: 1, to: 12, year: y, wholeYear: true });
+        year = y;
+        numericMonth = null;
+        continue;
+      }
+      if (/^\d{1,2}$/.test(w)) {
+        if (year != null && units.length && units[units.length - 1].wholeYear) {
+          const u = units[units.length - 1];
+          Object.assign(u, { from: +w, to: +w, wholeYear: false });
+        } else numericMonth = +w;
+        continue;
+      }
+      if (TERMS[w]) range = TERMS[w];
+      else if (PERIODS[w]) range = PERIODS[w];
+      else if (MONTH_TOKEN.test(w)) range = [MONTH_NUMBER[w.slice(0, 3)], MONTH_NUMBER[w.slice(0, 3)]];
+      else if (/^q[1-4]$/.test(w)) range = [+w[1] * 3 - 2, +w[1] * 3];
+      else if (/^h[12]$/.test(w)) range = w === 'h1' ? [1, 6] : [7, 12];
+      if (range) units.push({ from: range[0], to: range[1], year: null });
+    }
+    if (/\b(first|1st) half\b/.test(t)) units.push({ from: 1, to: 6, year: null });
+    if (/\b(second|2nd) half\b/.test(t)) units.push({ from: 7, to: 12, year: null });
+    if (!units.length || year == null) return null;
+    let start = Infinity;
+    let end = -Infinity;
+    let prev = null;
+    for (const u of units) {
+      const y = u.year != null ? u.year : year;
+      let from = u.from;
+      let to = u.to;
+      // "Fall/Winter 2026": the winter after that fall.
+      if (prev && prev.year === u.year && from < prev.from && u.year != null && !prev.wholeYear) {
+        from += 12;
+        to += 12;
+      }
+      start = Math.min(start, y * 12 + from - 1);
+      end = Math.max(end, y * 12 + to - 1);
+      prev = u;
+    }
+    if (/\b(or|and) (later|after|beyond|above)\b|\bonwards?\b|\bbeyond\b|\+/.test(t + (/\+/.test(raw) ? ' +' : '')))
+      end = Infinity;
+    else if (/\bafter\b/.test(t)) [start, end] = [end + 1, Infinity];
+    if (/\b(or|and) (earlier|before|prior)\b|\bearlier\b/.test(t)) start = -Infinity;
+    else if (/\b(before|prior to)\b/.test(t)) [start, end] = [-Infinity, start - 1];
+    return [start, end];
+  }
+
+  /** The option whose term or period best covers date value `v`, or -1. Null when no option is a date. */
+  function bestDate(opts, v) {
+    const d = v.date;
+    const month = d.month || v.typicalMonth;
+    const target = month ? [d.year * 12 + month - 1, d.year * 12 + month - 1] : [d.year * 12, d.year * 12 + 11];
+    let best = null;
+    let dated = 0;
+    for (const o of opts) {
+      const span = optionSpan(o.text);
+      if (!span) continue;
+      dated++;
+      const width = Math.min(span[1] - span[0] + 1, 240);
+      const overlap = Math.min(target[1], span[1]) - Math.max(target[0], span[0]) + 1;
+      let score;
+      if (overlap > 0) score = 100 + (50 * overlap) / (target[1] - target[0] + 1) - width / 4;
+      else {
+        const gap = span[0] > target[1] ? span[0] - target[1] : target[0] - span[1];
+        if (gap > 2) continue;
+        score = 50 - 15 * gap - width / 10;
+      }
+      if (!best || score > best.score) best = { i: o.i, score };
+    }
+    if (!dated) return null;
+    return best ? best.i : -1;
+  }
+
+  /** Every option a list value ("London, New York") picks, in the list's order. */
+  function matchAll(options, v) {
+    if (!v) return [];
+    const items =
+      v.items ||
+      String(v.text)
+        .split(/\s*[,;\n]\s*/)
+        .filter(Boolean);
+    const picks = [];
+    for (const item of items) {
+      const idx = matchOption(options, F().val(item));
+      if (idx >= 0 && !picks.includes(idx)) picks.push(idx);
+    }
+    return picks;
+  }
+
   /**
    * Pick the option that best represents value `v`.
    * options: [{ text, value, disabled }]. Returns the index into `options`, or -1.
    */
   function matchOption(options, v) {
     if (!v || !options || !options.length) return -1;
+    // A list ("London, New York") answers a single choice with its first item that is offered.
+    if (v.kind === 'list') {
+      for (const item of v.items) {
+        const idx = matchOption(options, F().val(item));
+        if (idx >= 0) return idx;
+      }
+      return -1;
+    }
     const opts = [];
     options.forEach((o, i) => {
       if (!o || o.disabled) return;
@@ -452,6 +613,12 @@
     for (const c of cands) {
       const hit = opts.find((o) => o.n === c) || opts.find((o) => o.nv === c);
       if (hit) return hit.i;
+    }
+
+    if (v.kind === 'date' && v.date) {
+      // Terms and periods ("Spring/Summer 2027", "Q2 2027"): when the options are dates, never guess by text.
+      const r = bestDate(opts, v);
+      if (r !== null) return r;
     }
 
     if (v.kind === 'number' && v.number != null) {
@@ -526,7 +693,17 @@
     return out;
   }
 
-  const matcher = { classify, plan, questionText, canonicalOf, matchOption, formatForText, isPlaceholder };
+  const matcher = {
+    classify,
+    plan,
+    questionText,
+    canonicalOf,
+    matchOption,
+    matchAll,
+    optionSpan,
+    formatForText,
+    isPlaceholder,
+  };
   JTF.matcher = matcher;
   if (typeof module === 'object' && module.exports) module.exports = matcher;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

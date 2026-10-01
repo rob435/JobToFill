@@ -8,14 +8,18 @@ Save your details once: name, contact info, address, links, education, work hist
 
 **Job applications**
 
-- **Smart field detection.** Each field is scored using its `autocomplete` attribute, `<label>`, `aria-label`, placeholder, `name`/`id`, ATS attributes (Workday `data-automation-id`, Lever `urls[LinkedIn]`, Greenhouse `job_application[...]`) and nearby text. Tested against Greenhouse-, Lever- and Workday-style pages.
-- **Screening questions.** Answers "Are you legally authorized to work…?", "Will you require sponsorship…?", relocation, over-18, salary, notice period, start date and "How did you hear about us?". It knows the trap where _"authorized to work… without sponsorship?"_ needs a **Yes**.
-- **Dropdowns, radios and checkboxes.** "USA" matches "United States of America" or an option with value `US`, and "CA" matches "California". "No" matches "I am not a protected veteran", "BSc" matches "Bachelor's Degree", and 6 years matches the "5–10" range.
-- **Custom dropdowns.** Opens and picks options in react-select, Workday listboxes and async search boxes (school pickers).
+- **Smart field detection.** Each field is scored using its `autocomplete` attribute, `<label>`, `aria-label`, placeholder, `name`/`id`, the legend of the group it sits in, ATS attributes (Workday `data-automation-id`, Lever `urls[LinkedIn]`, Greenhouse `job_application[...]`) and nearby text. Tested against Greenhouse (classic and the new job boards, with the real react-select), Ashby, Lever and Workday-style pages.
+- **Screening questions.** Answers "Are you legally authorized to work…?", "Will you require sponsorship…?", relocation, over-18, salary, notice period, non-competes, "Do you have offers from other firms or deadlines?", start date and "How did you hear about us?". It knows the trap where _"authorized to work… without sponsorship?"_ needs a **Yes**, and leaves "If you said yes above…" boxes empty when your answer was No.
+- **Dropdowns, radios and checkboxes.** "USA" matches "United States of America" or an option with value `US`, and "CA" matches "California". "No" matches "I am not a protected veteran", "BSc" matches "Bachelor’s", and 6 years matches the "5–10" range.
+- **Dates against terms.** A May 2027 graduation picks "Spring/Summer 2027", "Spring 2027", "Q2 2027" or "Class of 2027", whichever the list offers; December picks "Fall". A year on its own counts as a June graduation.
+- **Lists.** Your preferred locations tick every matching office checkbox ("Which other locations would you relocate to?"), and a single "Preferred location" dropdown gets the first one it offers. Skills checklists ("Which programming languages do you use?") work the same way.
+- **Custom dropdowns.** Opens react-select (single and multi), Workday listboxes and async search boxes (school pickers), reads every option, picks the best match and checks the site registered it. If nothing fits it leaves the box empty instead of half-typed.
+- **Custom buttons and toggles.** Yes/No toggle buttons (Ashby), `role="radio"` / `role="checkbox"` widgets (Radix, Headless UI) and switches, not just native inputs.
 - **Multiple education and job entries.** When a form repeats its _School_ or _Job title_ section, each copy gets the next entry from your profile. "From", "To" and "Location" boxes take their meaning from the section they sit in, and split month/year boxes are handled.
-- **Resume and cover letter upload.** Your files are attached to the upload fields automatically.
+- **Resume and cover letter upload.** Your files are attached to the right upload fields, even when every button just says "Attach". A cover-letter upload never gets your resume.
 - **Custom answers.** Rules like "_why do you want to work_" → your answer. You can match with plain phrases, `a | b` alternatives or `/regex/`.
 - **Learn from this page.** After you type answers into an unusual form, one click saves them, either as profile values or as custom answers for next time.
+- **Acknowledgement boxes** ("I have read the privacy notice", "Acknowledge/Confirm"). Left for you by default, with a one-click _Always tick these_ in the popup. Marketing and talent-pool opt-ins are never ticked.
 - **Voluntary EEO questions** (gender, race, veteran, disability). These are opt-in, and "— don't fill —" is the default.
 - **Application log.** Every job application you fill is recorded, and the log can be exported as CSV.
 - **Multiple profiles.** For example "Software engineer", "Data analyst" and "Personal shopping", each with its own resume.
@@ -92,7 +96,7 @@ The demo includes Greenhouse-, Workday- and Lever-style applications, searchable
   - They only go into visible fields: off-screen "honeypot" and hidden fields are skipped.
   - Saved passwords only go to the site they belong to.
   - Cards only go to the top page, the same site, or known payment processors' frames, never to an arbitrary third-party iframe.
-- **Never submits, never ticks "I agree".** Terms and consent checkboxes are left for you.
+- **Never submits.** Acknowledgement and terms checkboxes are left for you unless you turn on _Tick acknowledgement boxes_; marketing, newsletter and talent-pool opt-ins are never ticked.
 - **Works under strict Content-Security-Policies.** The on-page toast and labels are styled through the DOM, so a site's CSP can't block them, and no page script ever sees the extension's code.
 - The extension needs access to all sites so it can fill application forms embedded from other domains (iframes). It only touches a page when you trigger it.
 
@@ -125,6 +129,8 @@ Implemented ✅ · Ideas for later 💡
 
 - Detection is heuristic. Unusual forms may need a custom answer, or one right-click _Insert from profile_. _Show detected fields_ shows what was recognized.
 - Workday-style date "spinners" and some heavily customized widgets may ignore programmatic input. JobToFill reports those as "No matching option" so you know to check them.
+- Undo can't clear a dropdown that has no clear (×) button, or remove a file once the site has replaced its upload box.
+- "Enter manually" cover-letter boxes that only appear after a click aren't opened for you.
 - Sections that only appear after clicking _Add another_ aren't added automatically yet.
 - It can't fill CAPTCHAs or closed shadow roots, and won't run on browser pages or extension stores.
 
@@ -151,7 +157,8 @@ extension/
 tests/
   unit/                node:test, no browser
   e2e/                 the real extension in Chromium (Playwright) or Firefox (Puppeteer + remote debugging)
-  fixtures/            the demo/test forms
+  fixtures/            the demo/test forms; src/*.jsx are pages built with real React widgets
+                       (react-select), bundled on request by serve.mjs
 scripts/               build, static checks, icon rendering
 ```
 

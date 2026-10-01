@@ -182,14 +182,93 @@ test('input types constrain the guess', () => {
   assert.equal(typeOf(desc({ label: 'First name' }, { kind: 'file' })), null);
 });
 
-test('single checkboxes only answer yes/no questions', () => {
-  assert.equal(typeOf(desc({ label: 'I currently work here' }, { kind: 'checkbox' })), 'exp.current');
+test('single checkboxes: yes/no questions, acknowledgements, one option of a checklist', () => {
+  const box = (signals) => typeOf(desc(signals, { kind: 'checkbox' }));
+  assert.equal(box({ label: 'I currently work here' }), 'exp.current');
+  assert.equal(box({ label: 'I am legally authorized to work in the US' }), 'job.authorized');
+  assert.equal(box({ label: 'I confirm I am authorised to work in the UK' }), 'job.authorized');
+  // Acknowledgements are recognised (and only ticked when the setting is on)…
+  assert.equal(box({ label: 'I agree to the terms and conditions' }), 'consent');
   assert.equal(
-    typeOf(desc({ label: 'I am legally authorized to work in the US' }, { kind: 'checkbox' })),
-    'job.authorized',
+    box({
+      label: 'Acknowledge/Confirm',
+      question: 'Review our Notice at Collection to learn how we will process your personal data.',
+    }),
+    'consent',
   );
-  assert.equal(typeOf(desc({ label: 'I agree to the terms and conditions' }, { kind: 'checkbox' })), null);
-  assert.equal(typeOf(desc({ label: 'Email me job alerts' }, { kind: 'checkbox' })), null);
+  assert.equal(box({ label: 'I have read and understood the candidate privacy notice' }), 'consent');
+  // …but marketing and talent-pool opt-ins never are.
+  assert.equal(box({ label: 'Email me job alerts' }), null);
+  assert.equal(box({ label: 'I agree to receive marketing emails' }), null);
+  assert.equal(box({ label: 'I consent to being contacted about future opportunities' }), null);
+  assert.equal(box({ label: 'Join our talent community' }), null);
+  assert.equal(
+    box({ label: 'London', question: 'Which other locations are you interested in relocating to?' }),
+    'job.locations',
+  );
+});
+
+test('application questions whose wording used to slip through', () => {
+  const sel = (label, ...options) =>
+    typeOf(desc({ label }, { kind: 'combobox', options: options.length ? opts(...options) : null }));
+  assert.equal(sel('What degree are you currently pursuing?', 'Bachelor’s', 'Master’s', 'PhD'), 'edu.degree');
+  assert.equal(sel('What degree are you currently pursuing?'), 'edu.degree');
+  assert.equal(sel('Which degree are you studying for?'), 'edu.degree');
+  assert.equal(sel('Type of degree'), 'edu.degree');
+  assert.notEqual(sel('Are you currently pursuing a degree?', 'Yes', 'No'), 'edu.degree');
+  assert.notEqual(sel('What degree are you currently pursuing?', 'Yes', 'No'), 'edu.degree');
+  assert.equal(sel('What is your expected graduation date?'), 'edu.end');
+  assert.equal(sel('When do you expect to graduate?'), 'edu.end');
+  assert.equal(sel('Please select your current school from the list below:'), 'edu.school');
+  assert.equal(sel('Which is your preferred internship location?'), 'job.locations');
+  assert.equal(sel('Preferred office location'), 'job.locations');
+  assert.equal(sel('Where would you like to work?'), 'job.locations');
+  assert.equal(sel('Are you willing to relocate?'), 'job.relocate');
+  assert.equal(sel('Location (City)'), 'location');
+  assert.equal(
+    sel('Do you currently have any offers from other firms or deadlines we should be aware of?'),
+    'job.otherOffers',
+  );
+  assert.equal(sel('If you said yes above, please tell us about your offers and deadlines.'), 'job.otherOffers');
+  assert.equal(sel('Non-compete/Notice period comments'), 'job.nonCompete');
+  assert.equal(sel('Are you subject to a non-compete agreement?'), 'job.nonCompete');
+  assert.equal(sel('Notice period'), 'job.noticePeriod');
+  assert.equal(
+    typeOf(
+      desc(
+        {
+          question:
+            'Other than the location posted for this role, please indicate which other locations you are interested in relocating to:',
+        },
+        { kind: 'checkboxes', options: opts('Chicago', 'New York', 'London') },
+      ),
+    ),
+    'job.locations',
+  );
+  assert.equal(
+    typeOf(
+      desc(
+        { question: 'Which programming languages do you use?' },
+        { kind: 'checkboxes', options: opts('Python', 'C++') },
+      ),
+    ),
+    'skills',
+  );
+  assert.notEqual(sel('What is your favourite programming language?'), 'skills');
+});
+
+test('uploads: an "Attach" button takes its meaning from its group, id or name', () => {
+  const file = (signals) => typeOf(desc(signals, { kind: 'file' }));
+  assert.equal(file({ label: 'Attach', question: 'Resume/CV', id: 'resume' }), 'file.resume');
+  assert.equal(file({ label: 'Attach', question: 'Cover Letter', id: 'cover_letter' }), 'file.coverLetter');
+  assert.equal(file({ label: 'Attach', id: 'cover_letter' }), 'file.coverLetter');
+  assert.equal(file({ label: 'Upload', name: 'transcript' }), null);
+  assert.equal(file({ label: 'Attach' }), 'file.resume');
+});
+
+test('a country picker inside a "Phone" group is the dialling code', () => {
+  assert.equal(typeOf(desc({ label: 'Country', group: 'Phone' }, { kind: 'combobox' })), 'phone.countryCode');
+  assert.equal(typeOf(desc({ label: 'Country', group: 'Address' }, { kind: 'combobox' })), 'address.country');
 });
 
 test('options refine the guess', () => {

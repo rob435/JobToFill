@@ -84,6 +84,11 @@ const TOGGLES = [
     'Operate custom dropdowns',
     'Opens searchable dropdowns (Workday, Greenhouse, react-select…) and picks the matching option.',
   ],
+  [
+    'consents',
+    'Tick acknowledgement boxes',
+    'Privacy-notice and “I confirm” checkboxes. Marketing and talent-pool opt-ins are never ticked. Off: they are left for you.',
+  ],
   ['logApplications', 'Keep an application log', 'Remember each job application page you filled.'],
 ];
 

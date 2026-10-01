@@ -123,6 +123,14 @@ const FORMS = {
           f('job.sponsorship', 'Need visa sponsorship (now or later)?', { type: 'select', options: YES_NO }),
           f('job.relocate', 'Willing to relocate?', { type: 'select', options: YES_NO }),
           f('job.over18', 'At least 18 years old?', { type: 'select', options: YES_NO }),
+          f('job.otherOffers', 'Other offers or deadlines?', {
+            placeholder: 'No — or: Yes, Acme, deadline 1 Nov',
+            hint: 'Start with Yes or No; the rest goes into the “please tell us more” box.',
+          }),
+          f('job.nonCompete', 'Non-compete or restrictions', {
+            placeholder: 'e.g. None',
+            hint: 'Questions about non-competes and garden leave.',
+          }),
         ],
       },
       {
@@ -136,6 +144,11 @@ const FORMS = {
           f('job.noticePeriod', 'Notice period', { placeholder: 'e.g. 2 weeks' }),
           f('job.startDate', 'Available from', { placeholder: 'Immediately, or 2026-11-01' }),
           f('job.referralSource', 'How did you hear about us?', { placeholder: 'e.g. LinkedIn' }),
+          f('job.locations', 'Preferred locations', {
+            wide: true,
+            placeholder: 'London, New York, Remote',
+            hint: 'Best first. Ticks matching office checkboxes, and a dropdown gets the first one it offers.',
+          }),
         ],
       },
     ],

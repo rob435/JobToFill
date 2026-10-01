@@ -25,6 +25,15 @@ export default [
     languageOptions: { sourceType: 'module', globals: { ...globals.node, ...extension } },
   },
   {
+    // Fixture pages that use real React widgets (bundled by tests/fixtures/serve.mjs).
+    files: ['tests/fixtures/src/**/*.jsx'],
+    languageOptions: {
+      sourceType: 'module',
+      globals: globals.browser,
+      parserOptions: { ecmaFeatures: { jsx: true } },
+    },
+  },
+  {
     files: ['tests/**/*.js'],
     languageOptions: { sourceType: 'commonjs', globals: { ...globals.node, chrome: 'writable' } },
   },

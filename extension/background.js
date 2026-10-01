@@ -146,6 +146,7 @@ function mergeReports(frames) {
     skipped: 0,
     failed: 0,
     unknown: 0,
+    consents: 0,
     missing: [],
     missingTypes: [],
     unmatched: [],
@@ -156,7 +157,7 @@ function mergeReports(frames) {
   };
   for (const f of frames) {
     if (typeof f.filled !== 'number') continue;
-    for (const key of ['filled', 'detected', 'skipped', 'failed', 'unknown']) summary[key] += f[key] || 0;
+    for (const key of ['filled', 'detected', 'skipped', 'failed', 'unknown', 'consents']) summary[key] += f[key] || 0;
     for (const key of ['missing', 'missingTypes', 'unmatched', 'notes']) summary[key].push(...(f[key] || []));
     summary.undoable = summary.undoable || !!f.undoable;
     summary.jobContext = summary.jobContext || (f.jobContext && f.filled > 0);
@@ -165,12 +166,17 @@ function mergeReports(frames) {
   return summary;
 }
 
+function consentText(n) {
+  return `${n === 1 ? 'One acknowledgement box is' : `${n} acknowledgement boxes are`} left for you to tick.`;
+}
+
 function summaryText(s) {
   if (s.error) return s.error;
   if (!s.detected) return 'No fillable fields found on this page.';
   const lines = [`Filled ${s.filled} field${s.filled === 1 ? '' : 's'}.`];
   if (s.missing.length)
     lines.push(`Add to your profile: ${s.missing.slice(0, 5).join(', ')}${s.missing.length > 5 ? '…' : ''}`);
+  if (s.consents) lines.push(consentText(s.consents));
   lines.push(...s.notes.slice(0, 2));
   return lines.join('\n');
 }
@@ -287,8 +293,10 @@ const HANDLERS = {
   'jtf:fill': (msg) => fillTab(msg.tabId, { toast: !!msg.toast }),
   'jtf:undo': async (msg) => ({ undone: sum(await callFrames(msg.tabId, 'undo'), 'undone') }),
   'jtf:inspect': async (msg) => {
-    const { profile } = await store.getActive();
-    const frames = await callFrames(msg.tabId, 'inspect', [{ profile, docs: await store.docInfo(profile.id) }]);
+    const { profile, settings } = await store.getActive();
+    const frames = await callFrames(msg.tabId, 'inspect', [
+      { profile, settings, docs: await store.docInfo(profile.id) },
+    ]);
     return { on: frames.some((f) => f.on), detected: sum(frames, 'detected') };
   },
   'jtf:learn': async (msg) => {

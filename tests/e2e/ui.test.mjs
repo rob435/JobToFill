@@ -198,3 +198,19 @@ test('popup fills the page it points at and shows a summary', async () => {
   assert.deepEqual(errors, []);
   await Promise.all([form.close(), popup.close()]);
 });
+
+test('popup offers to tick acknowledgement boxes, then does', async () => {
+  const form = await h.open('greenhouse-remix.html');
+  await form.waitForSelector('#first_name');
+  const tabId = await h.tabId(form);
+  const popup = await openExt(`popup/popup.html?tab=${tabId}`);
+  await popup.click('#fill');
+  await popup.waitForSelector('text=/acknowledgement box is left for you/');
+  assert.equal(await form.isChecked('input[name="question_1004[]"]'), false);
+  await popup.click('text=Always tick these');
+  await form.waitForFunction(() => document.querySelector('input[name="question_1004[]"]').checked);
+  assert.equal((await h.bg(() => globalThis.JTF.store.getSettings())).consents, true);
+  await h.bg(() => globalThis.JTF.store.saveSettings({ consents: false }));
+  assert.deepEqual(errors, []);
+  await Promise.all([form.close(), popup.close()]);
+});

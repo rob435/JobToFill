@@ -51,8 +51,11 @@
         over18: '',
         salary: '',
         noticePeriod: '',
+        nonCompete: '',
         startDate: '',
         referralSource: '',
+        locations: '',
+        otherOffers: '',
       },
       eeo: { gender: '', race: '', hispanic: '', veteran: '', disability: '' },
       education: [blankEducation()],
@@ -120,6 +123,25 @@
     });
   }
 
+  /** "London, New York; Remote" -> a value whose items are tried in order of preference. */
+  function listVal(text) {
+    if (U.isBlank(text)) return null;
+    const items = String(text)
+      .split(/\s*(?:[,;\n]|\s\/\s)\s*/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return val(text, { kind: 'list', items, canonical: null });
+  }
+
+  /** Links as forms expect them: a scheme, and no LinkedIn tracking parameters. */
+  function linkVal(text) {
+    if (U.isBlank(text)) return null;
+    let url = String(text).trim();
+    if (!/^[a-z][a-z\d+.-]*:/i.test(url) && /^[\w-]+(\.[\w-]+)+(\/|$)/.test(url)) url = 'https://' + url;
+    if (/^https?:\/\/([\w-]+\.)*linkedin\.com\//i.test(url)) url = url.replace(/[?#].*$/, '');
+    return val(url);
+  }
+
   function numberVal(text) {
     if (U.isBlank(text)) return null;
     const m = String(text)
@@ -129,7 +151,11 @@
     return val(text, { kind: 'number', number });
   }
 
-  function dateVal(raw, part) {
+  /**
+   * A date, or one part of it. `typicalMonth` stands in for a missing month when the
+   * date has to be matched against terms like "Spring 2027" (June for an end date).
+   */
+  function dateVal(raw, part, typicalMonth) {
     if (U.isBlank(raw)) return null;
     const d = U.parseDate(raw);
     if (!d) return part ? null : val(raw);
@@ -155,7 +181,16 @@
       if (!d.day) return null;
       return val(String(d.day), { kind: 'day', part, date: d, candidates: [U.pad2(d.day), String(d.day)] });
     }
-    return val(raw, { kind: 'date', date: d });
+    const month = d.month ? U.monthName(d.month) : '';
+    const words = month ? [`${month} ${d.year}`, `${month.slice(0, 3)} ${d.year}`] : [];
+    const numeric = d.month ? [`${U.pad2(d.month)}/${d.year}`, `${d.year}-${U.pad2(d.month)}`] : [];
+    return val(raw, {
+      kind: 'date',
+      date: d,
+      typicalMonth: typicalMonth || null,
+      candidates: [raw, ...words, ...numeric, String(d.year)],
+      search: String(d.year),
+    });
   }
 
   function degreeVal(text) {
@@ -203,7 +238,7 @@
         if (!e) return null;
         if (kind === 'date') {
           if (key === 'endDate' && e.current) return null;
-          return dateVal(e[key], ctx.part);
+          return dateVal(e[key], ctx.part, key === 'endDate' ? 6 : 9);
         }
         if (kind === 'bool') return val(e[key] ? 'Yes' : 'No');
         if (kind === 'degree') return degreeVal(e[key]);
@@ -296,15 +331,19 @@
       },
     },
 
-    'links.linkedin': simple('LinkedIn', 'links.linkedin'),
-    'links.github': simple('GitHub', 'links.github'),
+    'links.linkedin': simple('LinkedIn', 'links.linkedin', linkVal),
+    'links.github': simple('GitHub', 'links.github', linkVal),
     'links.portfolio': {
       label: 'Portfolio',
       path: 'links.portfolio',
-      get: (p) => val(p.links.portfolio || p.links.website),
+      get: (p) => linkVal(p.links.portfolio || p.links.website),
     },
-    'links.website': { label: 'Website', path: 'links.website', get: (p) => val(p.links.website || p.links.portfolio) },
-    'links.twitter': simple('Twitter / X', 'links.twitter'),
+    'links.website': {
+      label: 'Website',
+      path: 'links.website',
+      get: (p) => linkVal(p.links.website || p.links.portfolio),
+    },
+    'links.twitter': simple('Twitter / X', 'links.twitter', linkVal),
 
     'job.currentCompany': {
       label: 'Current company',
@@ -327,10 +366,24 @@
     'job.over18': simple('Over 18', 'job.over18'),
     'job.salary': simple('Salary expectation', 'job.salary', numberVal),
     'job.noticePeriod': simple('Notice period', 'job.noticePeriod'),
+    'job.nonCompete': {
+      label: 'Non-compete / notice period',
+      path: 'job.nonCompete',
+      get(p, ctx) {
+        // "Non-compete/Notice period comments" asks for both in one box.
+        const nonCompete = String(p.job.nonCompete || '').trim();
+        const notice = /\bnotice\b/.test(ctx.question || '') ? String(p.job.noticePeriod || '').trim() : '';
+        if (nonCompete && notice && LONG_TEXT.includes(ctx.kind))
+          return val(`${nonCompete.replace(/[.\s]+$/, '')}. Notice period: ${notice}`);
+        return val(nonCompete || notice);
+      },
+    },
+    'job.locations': simple('Preferred locations', 'job.locations', listVal),
+    'job.otherOffers': simple('Other offers / deadlines', 'job.otherOffers'),
     'job.startDate': {
       label: 'Available start date',
       path: 'job.startDate',
-      get: (p, ctx) => dateVal(p.job.startDate, ctx.part),
+      get: (p, ctx) => dateVal(p.job.startDate, ctx.part, 9),
     },
     'job.referralSource': simple('How you heard about the job', 'job.referralSource'),
 
@@ -357,10 +410,22 @@
     'exp.current': entry('Currently work here', 'experience', 'current', 'bool'),
     'exp.description': entry('Job description', 'experience', 'description'),
 
-    skills: simple('Skills', 'skills'),
-    languages: simple('Languages', 'languages'),
+    skills: {
+      label: 'Skills',
+      path: 'skills',
+      // A checklist ("Which of these do you know?") takes the skills one by one.
+      get: (p, ctx) => (ctx.kind === 'checkboxes' || ctx.kind === 'checkbox' ? listVal : val)(p.skills),
+    },
+    languages: {
+      label: 'Languages',
+      path: 'languages',
+      get: (p, ctx) => (ctx.kind === 'checkboxes' || ctx.kind === 'checkbox' ? listVal : val)(p.languages),
+    },
     summary: simple('Summary', 'summary'),
     coverLetter: simple('Cover letter', 'coverLetter'),
+
+    // Ticked only when "Tick acknowledgement boxes" is on in settings; otherwise left for you.
+    consent: { label: 'Acknowledgement', consent: true, get: (p, ctx) => (ctx.consents ? val('Yes') : null) },
 
     'file.resume': { label: 'Resume file', file: 'resume', get: () => null },
     'file.coverLetter': { label: 'Cover letter file', file: 'coverLetter', get: () => null },
@@ -482,6 +547,16 @@
 
   const R = (type, re, opts) => Object.assign({ type, re }, opts || {});
 
+  const CONSENT =
+    /acknowledg|\bi (have )?(read|reviewed|understood)\b|\bi (hereby )?(confirm|agree|accept|consent|certify|attest|declare|understand)\b|\bconsent\b|privacy (notice|policy|statement)|notice at collection|data (protection|privacy|processing) (notice|policy|statement)|terms (and|&) conditions|terms of (use|service)|\bgdpr\b|candidate (privacy|data) (notice|policy)/;
+  const OPT_IN =
+    /marketing|newsletter|promotion|\bsms\b|text messages?|whats ?app|job alerts?|talent (community|network|pool)|future (opportunit|roles?|jobs?|vacanc|positions?|openings?)|other (roles|positions|opportunities|openings)|keep (me|my)|contact me|subscribe|\bupdates\b|share my (data|information|details) with/;
+
+  function hasYesNoOptions(desc) {
+    const opts = (desc.options || []).filter((o) => !JTF.matcher.isPlaceholder(U.normalize(o.text)));
+    return opts.length > 0 && opts.length <= 3 && opts.every((o) => JTF.matcher.canonicalOf(o.text));
+  }
+
   // Expiry dates of passports, visas and licences are not card expiry dates.
   const NOT_ID_DOCUMENT = /passport|visa|permit|licen[cs]e|certif|document|\bid\b/;
 
@@ -497,6 +572,9 @@
     R('file.resume', /resume|\bcv\b|curriculum|lebenslauf|attach|upload|document|\bfile\b/, {
       kinds: ['file'],
       not: /photo|picture|image|avatar|headshot|transcript|portfolio|certificat|passport|\bid\b|writing sample|cover/,
+      // An "Attach" button whose id or group says "cover letter" is not the resume upload.
+      notAny:
+        /cover ?letter|motivation(al)? letter|letter of motivation|anschreiben|lettre de motivation|transcript|writing sample|headshot|photo|passport/,
     }),
 
     // Passwords
@@ -552,6 +630,10 @@
       'job.authorized',
       /(authori[sz]ed|eligible|entitled|permitted|allowed|able) to (lawfully |legally )?work|work (authori[sz]ation|permit|eligibility)|employment (authori[sz]ation|eligibility)|eligib(le|ility) (for|to) (employment|work)|authori[sz]ation to work|right to work|legal right to|legally (work|employed)/,
     ),
+    R(
+      'job.locations',
+      /\blocations?\b.*\b(interested|prefer|willing|open to|relocat|consider|like to work|want to work)|\b(preferred|desired|target|ideal) (work |office |job |internship |role )?(locations?|offices?|cities)|\bwhich (other )?(offices?|locations?|cities)\b|\b(office|location|city) preferences?\b|where would you (like|prefer|want) to (work|be based)/,
+    ),
     R('job.relocate', /relocat/),
     R(
       'job.over18',
@@ -565,7 +647,12 @@
       'job.salary',
       /salary|compensation|pay (expectation|range|requirement)|desired (pay|rate|wage)|expected (pay|wage|rate|ctc)|\bctc\b|remuneration|\bwage\b|rate expectation|hourly rate|base pay/,
     ),
+    R('job.nonCompete', /non ?compete|non ?solicit|restrictive (covenant|agreement|clause)|garden leave/),
     R('job.noticePeriod', /notice ?period|notice (required|do you need)|how much notice|weeks notice/),
+    R(
+      'job.otherOffers',
+      /\b(other|competing|outstanding|existing|pending) (job |internship |employment )?offers?\b|\boffers? (from|at|with) (other|another|any other) (firms?|compan|employers?|organi)|\boffers? (and|or|&) deadlines?|\bdeadlines? (we|that we) should\b|\bany (other )?(offers|deadlines)\b|\bexploding offer/,
+    ),
     R(
       'job.startDate',
       /when (can|could|would) you (start|begin|join)|available (start|to start|to begin|from)|\bavailability\b|earliest (possible )?(start|date)|date (you are )?available|desired start|expected start|join(ing)? date|how soon/,
@@ -582,6 +669,9 @@
       'job.currentTitle',
       /current (job )?(title|position|role|designation|occupation)|present (title|position|role)|most recent (job )?(title|position|role)|^headline$|professional headline/,
     ),
+
+    // Acknowledgements ("I have read the privacy notice", "Acknowledge/Confirm"), never marketing opt-ins
+    R('consent', CONSENT, { kinds: ['checkbox'], not: OPT_IN }),
 
     // Voluntary self-identification
     R('eeo.hispanic', /hispanic|latin[oax]\b/, { kinds: CHOICE }),
@@ -628,8 +718,18 @@
         not: /high school (diploma|graduate|completion)|degree|major|gpa|\byear\b|\bdate\b|\bstart|\bend\b|graduat|\blocation\b|\bcity\b|\bstate\b|country|did you|have you|are you|do you|e ?mail|address|transcript|currently (attend|enrolled)/,
       },
     ),
+    // "What degree are you currently pursuing?" asks for a degree; "Are you pursuing a degree?" is yes/no.
+    R(
+      'edu.degree',
+      /\b(what|which) (type of |kind of )?degree\b|\b(type|kind|name) of (the |your )?degree\b|\bdegree (type|name|title|program(me)?)\b|\bdegree (are you|you are|you re|will you be) (currently )?(pursuing|studying|completing|enrolled|working|seeking|undertaking|earning|obtaining)/,
+      {
+        not: /major|field|subject|discipline|\byear\b|\bdate\b|minimum|equivalent/,
+        test: (desc) => !hasYesNoOptions(desc),
+      },
+    ),
     R('edu.degree', /\bdegree\b|qualification|diploma|\baward\b/, {
       not: /major|field|subject|discipline|\byear\b|\bdate\b|level of|highest|degree of|\bdid you|have you|do you|are you|minimum|equivalent/,
+      test: (desc) => !hasYesNoOptions(desc),
     }),
     R(
       'edu.field',
@@ -795,6 +895,12 @@
         not: /linked ?in|url|link|git|photo|picture|image|\bname\b|role summary|job summary/,
         kinds: LONG_TEXT,
       },
+    ),
+    R(
+      'skills',
+      /\b(programming|coding|scripting|computer|software) languages?\b|\b(languages?|technologies|tools|frameworks) (and|or|&) (frameworks|tools|technologies|libraries)\b|\bwhich (of the following )?(technologies|tools|frameworks|programming)/,
+      // "Which languages do you use?" wants the list; "your favourite language" wants one answer.
+      { not: /\brate your|years|favou?rite|\bbest\b|primary|\bmain\b|strongest|\bmost\b|preferred/ },
     ),
     R('skills', /\bskills?\b|technologies|tech(nical)? stack|competenc|expertise|\btools\b|proficienc(y|ies)/, {
       not: /language|\bdo you\b|have you|rate your|years/,

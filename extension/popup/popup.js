@@ -96,8 +96,29 @@ function renderResult(r) {
     ),
     r.missing.length ? resultLine('Missing from your profile:', r.missing) : null,
     r.unmatched.length ? resultLine('No matching option:', r.unmatched) : null,
+    r.consents ? consentLine(r.consents) : null,
     ...r.notes.map((note) => el('p', { className: 'result-list', textContent: note })),
     actions.children.length ? actions : null,
+  );
+}
+
+/** "Privacy notice" style checkboxes are left alone unless the person opts in, right here or in settings. */
+function consentLine(n) {
+  return el(
+    'p',
+    { className: 'result-list' },
+    `${n === 1 ? 'One acknowledgement box is' : `${n} acknowledgement boxes are`} left for you to tick. `,
+    el('button', {
+      className: 'link',
+      type: 'button',
+      textContent: 'Always tick these',
+      title:
+        'Tick privacy-notice and “I confirm” boxes from now on (never marketing opt-ins). You can turn this off in settings.',
+      onclick: async () => {
+        await store.saveSettings({ consents: true });
+        await fill();
+      },
+    }),
   );
 }
 

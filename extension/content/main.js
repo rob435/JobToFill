@@ -24,6 +24,9 @@
     return { fields, results: planned.results, context: planned.context };
   }
 
+  // "If you said yes above, please tell us more": only worth filling when the answer was yes.
+  const FOLLOW_UP = /^if (yes|so|you (said|answered|selected|chose|checked|ticked) yes)\b/;
+
   function labelFor(field, r) {
     if (r && r.type === 'custom') return U.cleanLabel(JTF.matcher.questionText(field.desc), 60);
     if (r && r.type) return JTF.fields.labelOf(r.type);
@@ -127,8 +130,8 @@
 
   async function fill(payload) {
     const { profile, settings } = payload;
-    JTF.fill.clearHighlights();
-    state.history = [];
+    // A fill that changes nothing keeps the previous one undoable.
+    const history = [];
     const { fields, results, context } = scan(profile);
 
     // A username box alone doesn't need the vault; password and card boxes do.
@@ -171,6 +174,7 @@
       unmatched: [],
       notes,
       unknown: 0,
+      consents: 0,
     };
     const docCache = {};
     for (let i = 0; i < fields.length; i++) {
@@ -183,6 +187,11 @@
       report.detected++;
       const def = JTF.fields.DEFS[r.type];
       const label = labelFor(field, r);
+      const question = U.normalize(JTF.matcher.questionText(field.desc));
+      if (def && def.consent && !settings.consents) {
+        if (!JTF.fill.hasValue(field)) report.consents++;
+        continue;
+      }
       let v;
       if (def && def.file) {
         v = await documentValue(r.type, payload, docCache);
@@ -196,9 +205,12 @@
             kind: field.kind,
             secrets,
             answer: r.answer,
+            question,
+            consents: !!settings.consents,
           }),
         );
       }
+      if (v && r.type !== 'custom' && FOLLOW_UP.test(question) && v.canonical !== 'yes') continue;
       if (!v) {
         if (!(def && def.secret)) {
           report.missing.push(label);
@@ -209,7 +221,7 @@
       const res = await JTF.fill.apply(field, v, {
         overwrite: settings.overwrite,
         comboboxes: settings.comboboxes !== false,
-        history: state.history,
+        history,
       });
       if (res.status === 'filled') {
         report.filled++;
@@ -224,6 +236,7 @@
     report.missing = [...new Set(report.missing)];
     report.missingTypes = [...new Set(report.missingTypes)];
     report.unmatched = [...new Set(report.unmatched)];
+    if (history.length) state.history = history;
     report.undoable = state.history.length > 0;
     return report;
   }
@@ -292,12 +305,14 @@
         text = labelFor(field, r) + (r.index ? ` #${r.index + 1}` : '') + (r.part ? ` (${r.part})` : '');
         if (def.file) status = payload.docs && payload.docs[def.file] ? 'ok' : 'empty';
         else if (def.secret) status = 'vault';
+        else if (def.consent) status = payload.settings && payload.settings.consents ? 'ok' : 'unknown';
         else {
           const ctx = Object.assign({}, context, {
             index: r.index || 0,
             part: r.part,
             kind: field.kind,
             answer: r.answer,
+            question: U.normalize(JTF.matcher.questionText(field.desc)),
           });
           status = JTF.fields.resolve(r.type, profile, ctx) ? 'ok' : 'empty';
         }

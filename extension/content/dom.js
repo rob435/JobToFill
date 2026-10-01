@@ -8,8 +8,11 @@
   const JTF = (root.JTF = root.JTF || {});
   const U = JTF.util;
 
-  const CONTROL_SELECTOR = 'input, select, textarea, [role="combobox"], [aria-haspopup="listbox"]';
-  const COUNTED_SELECTOR = 'input:not([type="hidden"]), select, textarea, [role="combobox"], [aria-haspopup="listbox"]';
+  // Choices built from ARIA widgets instead of <input>s: Radix/Headless UI radios, toggle-button
+  // groups like Ashby's Yes/No, custom checkboxes and switches.
+  const ARIA_CHOICE = '[role="radio"], [role="checkbox"], [role="switch"], button[aria-pressed]';
+  const CONTROL_SELECTOR = `input, select, textarea, [role="combobox"], [aria-haspopup="listbox"], ${ARIA_CHOICE}`;
+  const COUNTED_SELECTOR = `input:not([type="hidden"]), select, textarea, [role="combobox"], [aria-haspopup="listbox"], ${ARIA_CHOICE}`;
   const SKIP_INPUT_TYPES = new Set([
     'hidden',
     'submit',
@@ -154,10 +157,17 @@
     return '';
   }
 
+  /** Hidden helper inputs (react-select's required shim, the checkbox behind ARIA buttons) aren't fields. */
+  function isShim(c) {
+    if (c.localName !== 'input') return false;
+    if (c.getAttribute('aria-hidden') === 'true') return true;
+    return c.tabIndex < 0 && !!c.parentElement && !!c.parentElement.querySelector(ARIA_CHOICE);
+  }
+
   function foreignControls(container, members) {
     let n = 0;
     for (const c of container.querySelectorAll(COUNTED_SELECTOR)) {
-      if (members.has(c)) continue;
+      if (members.has(c) || isShim(c)) continue;
       if ([...members].some((m) => m.contains(c) || c.contains(m))) continue;
       n++;
     }
@@ -198,8 +208,7 @@
     }
     const fieldset = first.closest('fieldset');
     if (fieldset && members.every((m) => fieldset.contains(m))) {
-      const legend = fieldset.querySelector('legend');
-      const t = legend && textOf(legend);
+      const t = fieldsetTitle(fieldset);
       if (t) return U.cleanLabel(t);
     }
     const set = new Set(members);
@@ -215,9 +224,29 @@
     return contextLabel(start, set);
   }
 
-  function optionLabel(el) {
-    return explicitLabel(el) || el.getAttribute('aria-label') || nextText(el) || el.value || '';
+  /** A fieldset's question: its <legend>, or a leading label or heading that is not an option's label. */
+  function fieldsetTitle(fieldset) {
+    const legend = Array.from(fieldset.children).find((c) => c.localName === 'legend');
+    if (legend) return textOf(legend);
+    for (const c of fieldset.children) {
+      if (c.matches(CONTROL_SELECTOR) || c.querySelector(CONTROL_SELECTOR)) break;
+      if (/^(label|h[1-6]|p|div|span)$/.test(c.localName) && !(c.control && fieldset.contains(c.control))) {
+        const t = textOf(c);
+        if (t) return t;
+      }
+    }
+    return '';
   }
+
+  function optionLabel(el) {
+    const own = el.localName === 'input' ? '' : textOf(el);
+    return explicitLabel(el) || el.getAttribute('aria-label') || own || nextText(el) || el.value || '';
+  }
+
+  const optionValue = (el) =>
+    el.localName === 'input'
+      ? el.value
+      : el.getAttribute('data-option') || el.getAttribute('data-value') || el.getAttribute('value') || '';
 
   function describedBy(el) {
     return (el.getAttribute('aria-describedby') || '')
@@ -229,6 +258,20 @@
       })
       .join(' ')
       .slice(0, 200);
+  }
+
+  /**
+   * The legend of the small fieldset or ARIA group a control sits in: "Phone" around a
+   * country picker and a number box, "Cover Letter" around an "Attach" button, or the
+   * question above a lone "Acknowledge/Confirm" checkbox. Big sections don't count.
+   */
+  function groupLabel(el) {
+    const group = el.closest('fieldset, [role="group"], [role="radiogroup"]');
+    if (!group || group.querySelectorAll(COUNTED_SELECTOR).length > 4) return '';
+    let t = '';
+    if (group.localName === 'fieldset') t = fieldsetTitle(group);
+    if (!t) t = explicitLabel(group) || group.getAttribute('aria-label') || '';
+    return U.cleanLabel(t, 200);
   }
 
   function ancestorHints(el) {
@@ -251,8 +294,25 @@
     return role === 'combobox' || ac === 'list' || ac === 'both' || el.getAttribute('aria-haspopup') === 'listbox';
   }
 
+  const isAriaChoice = (el) => el.localName !== 'input' && el.matches(ARIA_CHOICE);
+
+  /** Toggle buttons only count as a choice when they come in a group: "Yes" "No". */
+  function pressedGroup(el) {
+    const parent = el.parentElement;
+    // Bold / Italic in an editor toolbar are not an answer.
+    if (!parent || el.closest('[role="toolbar"], [role="menubar"], [role="tablist"], [contenteditable]')) return [];
+    const list = Array.from(parent.children).filter((c) => c.matches('button[aria-pressed]'));
+    return list.length >= 2 && list.length <= 12 ? list : [];
+  }
+
   function kindOf(el) {
     const tag = el.localName;
+    if (isAriaChoice(el)) {
+      // A wrapper around a real input is handled through the input.
+      if (el.querySelector('input[type="radio"], input[type="checkbox"]')) return null;
+      if (el.matches('button[aria-pressed]')) return pressedGroup(el).length ? 'radio' : null;
+      return el.getAttribute('role') === 'radio' ? 'radio' : 'checkbox';
+    }
     if (tag === 'select') return 'select';
     if (tag === 'textarea') return 'textarea';
     if (tag === 'input') {
@@ -273,6 +333,8 @@
     if (el.closest('[data-jtf-ui]')) return false;
     if (kind === 'file') return true;
     if (kind === 'radio' || kind === 'checkbox') {
+      // The hidden input behind an ARIA widget (Radix, Ashby's Yes/No) is a shim: use the widget.
+      if (!isAriaChoice(el) && isShim(el) && el.parentElement.querySelector(ARIA_CHOICE)) return false;
       return (
         isVisible(el, { ignoreOpacity: true }) || labelsOf(el).some((l) => isVisible(l)) || isVisible(el.parentElement)
       );
@@ -293,7 +355,21 @@
     return out;
   }
 
+  function ariaMembers(el, kind) {
+    let list;
+    if (el.matches('button[aria-pressed]')) list = pressedGroup(el);
+    else {
+      const role = el.getAttribute('role');
+      const group = el.closest(role === 'radio' ? '[role="radiogroup"]' : '[role="group"], fieldset');
+      const scope = group || el.parentElement;
+      list = scope ? Array.from(scope.querySelectorAll(`[role="${role}"]`)) : [el];
+      if (!group && list.length > 12) list = [el];
+    }
+    return list.filter((m) => isUsable(m, kind));
+  }
+
   function groupMembers(el) {
+    if (isAriaChoice(el)) return ariaMembers(el, el.matches('button[aria-pressed]') ? 'radio' : kindOf(el));
     const scope = el.form || el.getRootNode();
     const type = el.type;
     const selector = `input[type="${type}"][name="${CSS.escape(el.name)}"]`;
@@ -316,7 +392,7 @@
     if (kind === 'radio' || kind === 'checkboxes') {
       s.question = groupQuestion(members);
       s.name = el.getAttribute('name') || '';
-      desc.options = members.map((m) => ({ text: optionLabel(m), value: m.value }));
+      desc.options = members.map((m) => ({ text: U.cleanLabel(optionLabel(m), 200), value: optionValue(m) }));
     } else {
       s.label = explicitLabel(el);
       s.aria = el.getAttribute('aria-label') || '';
@@ -326,6 +402,16 @@
       s.title = el.getAttribute('title') || '';
       if (kind === 'checkbox' && !s.label) s.label = nextText(el);
       if (!s.label && !s.aria) s.nearby = contextLabel(el, new Set([el]));
+      const group = groupLabel(el);
+      if (group && U.normalize(group) !== U.normalize(s.label || s.aria)) {
+        // For an upload or a lone checkbox the group's legend is the question; elsewhere it is context.
+        if (kind === 'file' || kind === 'checkbox') s.question = group;
+        else s.group = group;
+      }
+      if (kind === 'checkbox') {
+        if (!s.label && isAriaChoice(el)) s.label = U.cleanLabel(textOf(el));
+        desc.options = [{ text: s.label || s.aria || '', value: optionValue(el) }];
+      }
       if (kind === 'select')
         desc.options = Array.from(el.options).map((o) => ({ text: o.text, value: o.value, disabled: o.disabled }));
     }
@@ -345,7 +431,7 @@
       if (seen.has(el)) continue;
       const kind = kindOf(el);
       if (!kind || !isUsable(el, kind)) continue;
-      if ((kind === 'radio' || kind === 'checkbox') && el.name) {
+      if ((kind === 'radio' || kind === 'checkbox') && (el.name || isAriaChoice(el))) {
         const members = groupMembers(el);
         members.forEach((m) => seen.add(m));
         if (kind === 'radio' || members.length > 1) {

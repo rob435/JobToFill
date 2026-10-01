@@ -214,3 +214,120 @@ test('canonicalOf', () => {
   assert.equal(c('Norway'), null);
   assert.equal(c('LinkedIn'), null);
 });
+
+test('short degree lists with curly apostrophes', () => {
+  const p = profile();
+  const degrees = opts('Bachelor’s', 'Master’s', 'PhD', 'Postdoc');
+  for (const [stored, want] of [
+    ['BSc Computer Science', 'Bachelor’s'],
+    ["Bachelor's", 'Bachelor’s'],
+    ['MEng', 'Master’s'],
+    ['MSc', 'Master’s'],
+    ['DPhil', 'PhD'],
+  ]) {
+    p.education[0].degree = stored;
+    assert.equal(pick(degrees, fields.resolve('edu.degree', p, { jobContext: true, index: 0 })), want, stored);
+  }
+});
+
+test('graduation dates pick the term or period that covers them', () => {
+  const p = profile();
+  const terms = opts(
+    'Spring 2025',
+    'Fall 2025',
+    'Winter 2026',
+    'Spring/Summer 2026',
+    'Fall 2026',
+    'Winter 2027',
+    'Spring/Summer 2027',
+    'Fall 2027',
+    'Winter 2028',
+  );
+  const grad = (endDate, options) => {
+    p.education[0].endDate = endDate;
+    return pick(options, fields.resolve('edu.end', p, { jobContext: true, index: 0 }));
+  };
+  assert.equal(grad('2027-05', terms), 'Spring/Summer 2027');
+  assert.equal(grad('2027-07', terms), 'Spring/Summer 2027');
+  assert.equal(grad('2027', terms), 'Spring/Summer 2027', 'a year alone means a typical June graduation');
+  assert.equal(grad('2026-12', terms), 'Fall 2026');
+  assert.equal(grad('2027-01', terms), 'Winter 2027');
+  assert.equal(grad('2030-06', terms), null, 'no option near that date: leave it');
+
+  const seasons = opts('Spring 2027', 'Summer 2027', 'Fall 2027');
+  assert.equal(grad('2027-05', seasons), 'Spring 2027');
+  assert.equal(grad('2027-07', seasons), 'Summer 2027');
+  assert.equal(grad('2026-12', opts('Fall 2026', 'Spring 2027')), 'Fall 2026');
+  assert.equal(grad('2027-06', opts('2026', '2027', '2028')), '2027');
+  assert.equal(grad('2027-06', opts('May 2027', 'June 2027', 'July 2027')), 'June 2027');
+  assert.equal(grad('2027-06', opts('Q1 2027', 'Q2 2027', 'Q3 2027')), 'Q2 2027');
+  assert.equal(grad('2027-06', opts('Class of 2026', 'Class of 2027')), 'Class of 2027');
+  assert.equal(grad('2031-06', opts('2028', '2029', '2030 or later')), '2030 or later');
+  assert.equal(grad('2024-06', opts('Before 2025', '2025', '2026')), 'Before 2025');
+  assert.equal(grad('2027-05', opts("Spring '26", "Spring '27")), "Spring '27");
+});
+
+test('optionSpan reads terms, months, quarters and open ranges', () => {
+  const span = (t) => {
+    const s = matcher.optionSpan(t);
+    return s && s.map((x) => (Number.isFinite(x) ? `${Math.floor(x / 12)}-${(x % 12) + 1}` : String(x)));
+  };
+  assert.deepEqual(span('Spring/Summer 2027'), ['2027-3', '2027-8']);
+  assert.deepEqual(span('Fall/Winter 2026'), ['2026-9', '2027-2']);
+  assert.deepEqual(span('2027-05'), ['2027-5', '2027-5']);
+  assert.deepEqual(span('2026-27'), ['2026-9', '2027-8']);
+  assert.deepEqual(span('Sep 2026 - May 2027'), ['2026-9', '2027-5']);
+  assert.deepEqual(span('2029 or later'), ['2029-1', 'Infinity']);
+  for (const notADate of ['Yes', 'Other', 'Bachelor’s', '3-5 years', '10+', 'London'])
+    assert.equal(span(notADate), null);
+});
+
+test('lists: every matching checkbox, or the first preferred option a dropdown offers', () => {
+  const p = profile();
+  p.job.locations = 'London, New York; Remote';
+  const v = fields.resolve('job.locations', p, { jobContext: true });
+  assert.deepEqual(v.items, ['London', 'New York', 'Remote']);
+  const cities = opts('Chicago', 'New York', 'London', 'Bristol', 'Hong Kong');
+  assert.deepEqual(
+    matcher.matchAll(cities, v).map((i) => cities[i].text),
+    ['London', 'New York'],
+  );
+  assert.equal(pick(opts('Chicago', 'New York', 'London'), v), 'London', 'first choice wins');
+  assert.equal(pick(opts('Chicago', 'New York (NYC)'), v), 'New York (NYC)');
+  assert.equal(pick(opts('Chicago', 'Sydney'), v), null);
+
+  p.skills = 'Python, C++, SQL';
+  const skills = fields.resolve('skills', p, { jobContext: true, kind: 'checkboxes' });
+  const langs = opts('Java', 'Python', 'C++', 'Rust');
+  assert.deepEqual(
+    matcher.matchAll(langs, skills).map((i) => langs[i].text),
+    ['Python', 'C++'],
+  );
+  assert.equal(fields.resolve('skills', p, { jobContext: true, kind: 'textarea' }).text, 'Python, C++, SQL');
+});
+
+test('links: a scheme is added and LinkedIn tracking parameters are dropped', () => {
+  const p = profile();
+  p.links.linkedin = 'https://www.linkedin.com/in/robin-l/?isSelfProfile=true';
+  assert.equal(fields.resolve('links.linkedin', p, {}).text, 'https://www.linkedin.com/in/robin-l/');
+  p.links.linkedin = 'linkedin.com/in/robin';
+  assert.equal(fields.resolve('links.linkedin', p, {}).text, 'https://linkedin.com/in/robin');
+  p.links.website = 'https://robin.dev/?ref=cv';
+  assert.equal(fields.resolve('links.website', p, {}).text, 'https://robin.dev/?ref=cv', 'other sites are kept as is');
+});
+
+test('non-compete and notice period share one box when the question asks for both', () => {
+  const p = profile();
+  const ask = (kind, question) => {
+    const v = fields.resolve('job.nonCompete', p, { kind, question });
+    return v && v.text;
+  };
+  p.job.nonCompete = 'None';
+  p.job.noticePeriod = '2 weeks';
+  assert.equal(ask('text', 'non compete notice period comments'), 'None. Notice period: 2 weeks');
+  assert.equal(ask('text', 'are you subject to a non compete'), 'None');
+  assert.equal(ask('combobox', 'non compete notice period'), 'None');
+  p.job.nonCompete = '';
+  assert.equal(ask('text', 'non compete notice period comments'), '2 weeks');
+  assert.equal(ask('text', 'are you subject to a non compete'), null);
+});

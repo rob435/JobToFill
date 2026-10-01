@@ -135,6 +135,113 @@ test('searchable dropdowns: react-select style, async search, free-text autocomp
   await page.close();
 });
 
+/** The replica's own React state: what the site registered, not just what the DOM shows. */
+const reactState = async (page) => JSON.parse(await text(page, '#state'));
+
+test('Greenhouse job board with real react-select: terms, multi-select, checklists, uploads, consent', async () => {
+  const original = await h.profile();
+  await h.setProfile({
+    education: [
+      {
+        school: 'University of Glasgow',
+        degree: 'BSc Computer Science',
+        field: 'Computer Science',
+        gpa: '',
+        location: 'Glasgow',
+        startDate: '2023-09',
+        endDate: '2027-05',
+      },
+    ],
+    job: { locations: 'London, New York', otherOffers: 'No', nonCompete: 'None' },
+    links: { linkedin: 'https://www.linkedin.com/in/ada/?isSelfProfile=true' },
+  });
+  try {
+    const page = await h.open('greenhouse-remix.html');
+    await page.waitForSelector('#first_name');
+    const r = await h.fill(page);
+    assert.equal(r.error, undefined);
+    const s = await reactState(page);
+    assert.equal(s.first, 'Ada');
+    assert.equal(s.email, 'ada@example.com');
+    assert.equal(s.country, 'United States +1', 'the country picker in the Phone group is the dialling code');
+    assert.equal(s.phone, '415 555 0100');
+    assert.equal(s.location, 'San Francisco, California, United States');
+    assert.equal(s.resume, 'Ada_Lovelace_CV.pdf');
+    assert.equal(s.coverLetter, undefined, 'the cover letter "Attach" button does not get the resume');
+    assert.equal(s.linkedin, 'https://www.linkedin.com/in/ada/');
+    assert.equal(s.nonCompete, 'None. Notice period: 2 weeks');
+    assert.equal(s.sponsorship, 'No');
+    assert.equal(s.school, 'University of Glasgow', 'picked from 2,466 options');
+    assert.deepEqual(s.degree, ['Bachelor’s']);
+    assert.equal(s.graduation, 'Spring/Summer 2027');
+    assert.equal(s.offers, 'No');
+    assert.equal(s.offerDetails, undefined, '"If you said yes above" stays empty after a No');
+    assert.deepEqual(s.relocation.sort(), ['London', 'New York']);
+    assert.deepEqual(s.offices, ['London', 'New York'], 'every preferred location in a multi-select');
+    assert.equal(s.source, 'Social Media (e.g., LinkedIn, Reddit, Discord, Facebook, X, Instagram)');
+    assert.deepEqual(s.notice, [], 'acknowledgements are left for you by default');
+    assert.equal(r.consents, 1);
+    assert.deepEqual(r.unmatched, []);
+    assert.ok(r.missing.includes('Cover letter file'), JSON.stringify(r.missing));
+    assert.equal(await page.$$eval('#question_1007', (els) => els[0].value), '', 'no stray search text');
+
+    // Filling again changes nothing: every widget type reports the answer it already has.
+    const refill = await h.fill(page);
+    assert.equal(refill.filled, 0, JSON.stringify(refill));
+    assert.deepEqual(await reactState(page), s);
+
+    // "Learn from this page" reads react-select choices, single and multi.
+    const edu = (await h.profile()).education[0];
+    await h.setProfile({ education: [{ ...edu, school: '', degree: '' }] });
+    const { suggestions } = await h.handler('jtf:learn', page);
+    const learned = Object.fromEntries(suggestions.filter((x) => x.kind === 'profile').map((x) => [x.path, x.value]));
+    assert.equal(learned['education.0.school'], 'University of Glasgow');
+    assert.equal(learned['education.0.degree'], 'Bachelor’s');
+    await h.setProfile({ education: [edu] });
+
+    await h.handler('jtf:undo', page);
+    const undone = await reactState(page);
+    assert.equal(undone.first, '');
+    assert.equal(undone.school, null, 'clearable dropdowns are cleared');
+    assert.deepEqual(undone.degree, []);
+    assert.deepEqual(undone.relocation, []);
+    await page.close();
+
+    await h.setSettings({ consents: true });
+    const again = await h.open('greenhouse-remix.html');
+    await again.waitForSelector('#first_name');
+    const r2 = await h.fill(again);
+    assert.equal(r2.consents, 0);
+    assert.equal((await reactState(again)).notice.length, 1, 'ticked once the setting is on');
+    await again.close();
+  } finally {
+    await h.setSettings({ consents: false });
+    await h.setProfile({ education: original.education, job: original.job, links: original.links });
+  }
+});
+
+test('Ashby-style form: Yes/No toggle buttons, ARIA radios and checkboxes, label-titled fieldsets', async () => {
+  const page = await h.open('ashby.html');
+  const r = await h.fill(page);
+  assert.equal(r.error, undefined);
+  const s = JSON.parse(await text(page, '#state'));
+  assert.equal(await value(page, '#_systemfield_name'), 'Ada Lovelace');
+  assert.equal(await value(page, '#_systemfield_email'), 'ada@example.com');
+  assert.equal(await value(page, '#loc'), 'San Francisco, CA', 'label points nowhere: the question text is used');
+  assert.equal(await value(page, '#start'), '11/02/2026');
+  assert.equal(s.auth, 'yes', 'toggle button pressed, not the hidden checkbox');
+  assert.equal(s.sponsor, 'no', 'the question, not its description, decides');
+  assert.equal(s.tz, 'no', 'an answer already given is left alone');
+  assert.equal(s.relocate, 'yes', 'role="radio" buttons');
+  assert.equal(s.adult, true, 'role="checkbox" button');
+  assert.equal(s.news, undefined, 'marketing opt-in left alone');
+  assert.equal(await checked(page, '#g2'), true, 'radio group titled by a <label> inside the fieldset');
+  assert.equal(await checked(page, '#arb'), false, 'acknowledgements are left for you by default');
+  assert.equal(r.consents, 1);
+  assert.equal(await page.$$eval('.bubble:checked', (els) => els.length), 0, 'hidden bubble inputs untouched');
+  await page.close();
+});
+
 test('cross-origin iframe (embedded application) is filled', async () => {
   const page = await h.open('embed.html');
   const frame = await frameWith(page, '127.0.0.1', '#first_name');

@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Senior Engineer – Ashby-style application</title>
+    <style>
+      body {
+        font: 15px/1.4 system-ui, sans-serif;
+        margin: 32px auto;
+        max-width: 720px;
+      }
+      .entry {
+        margin: 16px 0;
+      }
+      .entry > label,
+      fieldset > label {
+        display: block;
+        font-weight: 600;
+      }
+      .desc {
+        color: #666;
+        font-size: 13px;
+      }
+      fieldset {
+        border: 0;
+        padding: 0;
+        margin: 16px 0;
+      }
+      .yesno button {
+        padding: 6px 18px;
+        border: 1px solid #bbb;
+        background: #fff;
+      }
+      .yesno button[aria-pressed='true'] {
+        background: #4f46e5;
+        color: #fff;
+      }
+      .yesno input,
+      .bubble {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+        margin: 0;
+        width: 14px;
+        height: 14px;
+      }
+      [role='radio'],
+      [role='checkbox'] {
+        border: 1px solid #888;
+        background: #fff;
+        padding: 4px 10px;
+      }
+      [aria-checked='true'] {
+        background: #16a34a;
+        color: #fff;
+      }
+      .visually-hidden {
+        clip: rect(0 0 0 0);
+        clip-path: inset(50%);
+        height: 1px;
+        overflow: hidden;
+        position: absolute;
+        width: 1px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Senior Engineer</h1>
+    <!-- Modelled on jobs.ashbyhq.com: labels point at ids that don't exist, Yes/No are toggle buttons over a
+         hidden checkbox, checkbox groups are fieldsets titled by a <label>. -->
+    <div id="app">
+      <div class="entry">
+        <label for="_systemfield_name">Legal Name</label>
+        <input id="_systemfield_name" name="_systemfield_name" placeholder="Type here..." />
+      </div>
+      <div class="entry">
+        <label for="_systemfield_email">Email</label>
+        <input id="_systemfield_email" type="email" placeholder="hello@example.com..." />
+      </div>
+      <div class="entry">
+        <label for="_systemfield_location">Where are you currently located?</label>
+        <div><input id="loc" placeholder="Start typing..." aria-autocomplete="list" aria-haspopup="listbox" role="combobox" /></div>
+      </div>
+      <div class="entry">
+        <label for="q-start">When can you start a new role?</label>
+        <div class="react-datepicker-wrapper"><input id="start" type="text" placeholder="Pick date..." /></div>
+      </div>
+      <div class="entry" data-q="auth">
+        <label for="q-auth">Are you authorized to work in the country where the job is located?</label>
+        <div class="yesno">
+          <button aria-pressed="false" data-option="yes">Yes</button><button aria-pressed="false" data-option="no">No</button
+          ><input type="checkbox" tabindex="-1" name="q-auth" />
+        </div>
+      </div>
+      <div class="entry" data-q="sponsor">
+        <label for="q-sponsor">Will you now or in the future require sponsorship for employment visa status in this country?</label>
+        <div class="desc"><p>We may provide immigration and sponsorship support to new employees based on their circumstances.</p></div>
+        <div class="yesno">
+          <button aria-pressed="false" data-option="yes">Yes</button><button aria-pressed="false" data-option="no">No</button
+          ><input type="checkbox" tabindex="-1" name="q-sponsor" />
+        </div>
+      </div>
+      <div class="entry" data-q="tz">
+        <label for="q-tz">Are you based in a EU or equivalent timezone?</label>
+        <div class="yesno">
+          <button aria-pressed="false" data-option="yes">Yes</button><button aria-pressed="true" data-option="no">No</button
+          ><input type="checkbox" tabindex="-1" name="q-tz" />
+        </div>
+      </div>
+      <fieldset>
+        <label for="q-arb">Applicant Arbitration Agreement Acknowledgement</label>
+        <div class="desc"><p><a href="#">Applicant Arbitration Agreement</a></p></div>
+        <div>
+          <span><input type="checkbox" id="arb" name="I acknowledge that I have read the Arbitration Agreement." /></span
+          ><label for="arb">I acknowledge that I have opened, read, and understood the Arbitration Agreement.</label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <label for="q-gender">Gender</label>
+        <div class="desc"><p>Input gender</p></div>
+        <div><input type="radio" id="g1" name="gender" value="Male" /><label for="g1">Male</label></div>
+        <div><input type="radio" id="g2" name="gender" value="Female" /><label for="g2">Female</label></div>
+        <div><input type="radio" id="g3" name="gender" value="Decline" /><label for="g3">Decline to self-identify</label></div>
+      </fieldset>
+
+      <!-- Radix UI style: role="radio" buttons with hidden "bubble" inputs, a role="checkbox" button -->
+      <div class="entry">
+        <span id="relocate-label">Are you open to relocating?</span>
+        <div role="radiogroup" aria-labelledby="relocate-label" id="relocate">
+          <button type="button" role="radio" aria-checked="false" value="yes">Yes</button>
+          <input class="bubble" type="radio" aria-hidden="true" tabindex="-1" name="relocate" value="yes" />
+          <button type="button" role="radio" aria-checked="false" value="no">No</button>
+          <input class="bubble" type="radio" aria-hidden="true" tabindex="-1" name="relocate" value="no" />
+        </div>
+      </div>
+      <div class="entry">
+        <button type="button" role="checkbox" aria-checked="false" id="adult"></button>
+        <label for="adult">I am at least 18 years old</label>
+      </div>
+      <div class="entry">
+        <button type="button" role="checkbox" aria-checked="false" id="news"></button>
+        <label for="news">Send me news about future openings</label>
+      </div>
+    </div>
+    <pre id="state"></pre>
+    <script>
+      // Behave like the real widgets: state lives in JS, not in the hidden inputs.
+      const state = {};
+      const render = () => (document.getElementById('state').textContent = JSON.stringify(state));
+      for (const box of document.querySelectorAll('.yesno')) {
+        const q = box.closest('[data-q]').dataset.q;
+        const pressed = box.querySelector('[aria-pressed="true"]');
+        if (pressed) state[q] = pressed.dataset.option;
+        for (const b of box.querySelectorAll('button')) {
+          b.addEventListener('click', () => {
+            for (const o of box.querySelectorAll('button')) o.setAttribute('aria-pressed', String(o === b));
+            box.querySelector('input').checked = b.dataset.option === 'yes';
+            state[q] = b.dataset.option;
+            render();
+          });
+        }
+      }
+      for (const r of document.querySelectorAll('#relocate [role="radio"]')) {
+        r.addEventListener('click', () => {
+          for (const o of document.querySelectorAll('#relocate [role="radio"]')) o.setAttribute('aria-checked', String(o === r));
+          state.relocate = r.value;
+          render();
+        });
+      }
+      for (const c of document.querySelectorAll('button[role="checkbox"]')) {
+        c.addEventListener('click', () => {
+          const on = c.getAttribute('aria-checked') !== 'true';
+          c.setAttribute('aria-checked', String(on));
+          state[c.id] = on;
+          render();
+        });
+      }
+      render();
+    </script>
+  </body>
+</html>

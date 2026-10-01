@@ -18,11 +18,15 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "esbuild": "^0.25.12",
     "eslint": "^10.11.0",
     "globals": "^17.13.0",
     "playwright": "1.56.1",
     "prettier": "^3.9.9",
     "puppeteer-core": "^25.12.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-select": "^5.10.2",
     "web-ext": "^10.7.0"
   },
   "engines": {
