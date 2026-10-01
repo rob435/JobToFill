@@ -343,7 +343,7 @@
     ' "values": ["what the company says it values, if anything"],',
     ' "hiringManager": "a named contact person for applications, if any",',
     ' "asks": "anything the posting asks applicants to cover in a cover letter or application, if anything",',
-    ' "eligibility": ["hard requirements on who may apply, quoted closely: graduation dates or year of study, degree level or subject, minimum grades, right to work or visa, security clearance, required languages"]}',
+    ' "eligibility": ["only MUST-have restrictions on who may apply, quoted closely: graduation dates or year of study, degree level or subject, minimum grades, right to work or visa, security clearance, required languages. Leave out anything that widens who can apply (\\"international students are encouraged\\", \\"we also accept placement students\\") and anything preferred or nice to have"]}',
   ].join('\n');
 
   function analysePrompt(posting, context) {
@@ -517,7 +517,7 @@
         {
           role: 'system',
           content:
-            'You check whether a candidate meets a job’s hard requirements. Flag only clear mismatches or requirements the material shows nothing about that are usually make-or-break (clearance, visas, graduation window). Don’t flag soft skills. A requirement that lists alternatives (“C++, Java or Python”) is met by any one of them. Write each detail to the candidate as “you”. Reply with JSON only: {"issues": [{"requirement": "the requirement, short", "detail": "why it may not fit, citing the candidate’s facts, one sentence"}]}; an empty list when everything fits.',
+            'You check whether a candidate meets a job’s hard requirements. Flag only clear mismatches, or must-have requirements the material says nothing about that are usually make-or-break (clearance, visas, graduation window). Never flag a statement that allows or encourages applicants (“international students are encouraged to apply”, “we also accept…”), or one the candidate meets. Don’t flag soft skills. A requirement that lists alternatives (“C++, Java or Python”) is met by any one of them. Write each detail to the candidate as “you”. Reply with JSON only: {"issues": [{"requirement": "the requirement, short", "detail": "why it may not fit, citing the candidate’s facts, one sentence"}]}; an empty list when everything fits.',
         },
         {
           role: 'user',
