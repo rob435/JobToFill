@@ -1115,7 +1115,7 @@
     bodyLead: 11.6,
     sectionGap: 11,
     ruleGap: 3.5,
-    afterRule: 13,
+    afterRule: 14.5,
     entryGap: 5,
     bulletIndent: 7,
     textIndent: 16,
