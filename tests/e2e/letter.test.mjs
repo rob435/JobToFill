@@ -254,3 +254,46 @@ test('studio: a job that cannot be found asks for the description', async () => 
   await studio.close();
   await page.close();
 });
+
+test('settings: example letters are read from PDFs and the company they were for is noted', async () => {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([595, 842]);
+  const font = await doc.embedFont(StandardFonts.TimesRoman);
+  const lines = [
+    'Dear Contoso Recruitment Team,',
+    'I am applying for the Summer Internship in Leeds. I am a second-year Mathematics student at the',
+    'University of Leeds. Last summer I built a stock tool for a food bank that matches donations',
+    'against its stock list each night and flags anything that went missing between delivery and shelf.',
+    'The volunteers now spend twenty minutes on the stock check instead of two hours, and the tool has',
+    'run every night since without anyone looking after it. I would welcome the chance to bring the same',
+    'care to your operations team next summer, where getting the details right matters every day.',
+    'Thank you for considering my application.',
+    'Yours sincerely,',
+    'Ada Lovelace',
+  ];
+  lines.forEach((line, i) => page.drawText(line, { x: 60, y: 780 - i * 16, size: 11, font }));
+  const bytes = Buffer.from(await doc.save());
+
+  const settings = await h.extPage('options/options.html#letters');
+  await until(settings.call, () => !!document.querySelector('input[type=file][accept*=".pdf"][multiple]'));
+  await settings.call(async (b64) => {
+    const input = document.querySelector('input[type=file][accept*=".pdf"][multiple]');
+    const data = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const dt = new DataTransfer();
+    dt.items.add(new File([data], 'contoso_letter.pdf', { type: 'application/pdf' }));
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change'));
+  }, bytes.toString('base64'));
+  const row = await until(settings.call, () => {
+    const cells = [...document.querySelectorAll('td')].map((td) => td.textContent);
+    return cells.includes('contoso_letter.pdf') && cells.join(' | ');
+  });
+  assert.match(row, /contoso_letter\.pdf \| \d+ words \| Contoso/);
+  const kit = await h.bg(async () => {
+    const { store } = globalThis.JTF;
+    return store.getKit((await store.getActive()).profile.id);
+  });
+  const sample = kit.samples.find((x) => x.name === 'contoso_letter.pdf');
+  assert.match(sample.text, /food bank that matches donations/);
+  await settings.close();
+});
