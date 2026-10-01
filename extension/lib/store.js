@@ -1,5 +1,5 @@
 /*
- * JobToFill — profile, settings, document and history storage (chrome.storage.local).
+ * JobToFill — profile, settings, document and history storage (storage.local).
  *
  * Layout:
  *   profiles      { [id]: profile }
@@ -26,13 +26,13 @@
 
   const DOC_TYPES = ['resume', 'coverLetter'];
   const HISTORY_LIMIT = 500;
-  const area = () => root.chrome.storage.local;
+  const area = () => JTF.api.storage.local;
 
   // Read-modify-write operations run one at a time within a context so they don't drop each other's changes.
   let queue = Promise.resolve();
   function exclusive(fn) {
-    return function (...args) {
-      const run = queue.then(() => fn.apply(this, args));
+    return (...args) => {
+      const run = queue.then(() => fn(...args));
       queue = run.catch(() => {});
       return run;
     };
@@ -88,7 +88,7 @@
 
   const createProfile = exclusive(async function createProfile(name, copyFrom) {
     const p = copyFrom
-      ? Object.assign(JSON.parse(JSON.stringify(copyFrom)), { id: JTF.util.uid(), name })
+      ? Object.assign(structuredClone(copyFrom), { id: JTF.util.uid(), name })
       : JTF.fields.createProfile(name);
     return putProfile(p);
   });
@@ -163,8 +163,12 @@
     const opts = Object.assign({ documents: true, vault: true, history: true }, options || {});
     const all = await loadAll();
     const out = {
-      app: 'JobToFill', format: 1, exportedAt: new Date().toISOString(),
-      profiles: all.profiles, profileOrder: all.order, settings: all.settings,
+      app: 'JobToFill',
+      format: 1,
+      exportedAt: new Date().toISOString(),
+      profiles: all.profiles,
+      profileOrder: all.order,
+      settings: all.settings,
     };
     if (opts.documents) {
       out.documents = {};
@@ -196,9 +200,25 @@
   });
 
   const store = {
-    DEFAULT_SETTINGS, DOC_TYPES, loadAll, getActive, getSettings, saveSettings, saveProfile, createProfile,
-    deleteProfile, setActive, getDoc, setDoc, removeDoc, docInfo, getHistory, addHistory, clearHistory,
-    exportData, importData,
+    DEFAULT_SETTINGS,
+    DOC_TYPES,
+    loadAll,
+    getActive,
+    getSettings,
+    saveSettings,
+    saveProfile,
+    createProfile,
+    deleteProfile,
+    setActive,
+    getDoc,
+    setDoc,
+    removeDoc,
+    docInfo,
+    getHistory,
+    addHistory,
+    clearHistory,
+    exportData,
+    importData,
   };
   JTF.store = store;
   if (typeof module === 'object' && module.exports) module.exports = store;

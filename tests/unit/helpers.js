@@ -15,10 +15,18 @@ function memoryArea() {
     return out;
   };
   return {
-    async get(keys) { return pick(keys); },
-    async set(items) { for (const [k, v] of Object.entries(items)) data[k] = structuredClone(v); },
-    async remove(keys) { for (const k of [].concat(keys)) delete data[k]; },
-    async clear() { data = {}; },
+    async get(keys) {
+      return pick(keys);
+    },
+    async set(items) {
+      for (const [k, v] of Object.entries(items)) data[k] = structuredClone(v);
+    },
+    async remove(keys) {
+      for (const k of [].concat(keys)) delete data[k];
+    },
+    async clear() {
+      data = {};
+    },
     _dump: () => data,
   };
 }
@@ -36,7 +44,18 @@ function load() {
 
 /** Build a matcher descriptor the way content/dom.js would. */
 function desc(signals, extra) {
-  return Object.assign({ kind: 'text', inputType: 'text', autocomplete: '', maxLength: 0, placeholderRaw: '', options: null, signals: typeof signals === 'string' ? { label: signals } : signals }, extra || {});
+  return Object.assign(
+    {
+      kind: 'text',
+      inputType: 'text',
+      autocomplete: '',
+      maxLength: 0,
+      placeholderRaw: '',
+      options: null,
+      signals: typeof signals === 'string' ? { label: signals } : signals,
+    },
+    extra || {},
+  );
 }
 
 const opts = (...texts) => texts.map((t) => (Array.isArray(t) ? { text: t[0], value: t[1] } : { text: t, value: t }));

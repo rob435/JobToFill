@@ -7,11 +7,13 @@
   'use strict';
   const JTF = (root.JTF = root.JTF || {});
 
+  // prettier-ignore
   const MONTHS = [
     'january', 'february', 'march', 'april', 'may', 'june',
     'july', 'august', 'september', 'october', 'november', 'december',
   ];
 
+  // prettier-ignore
   const STOPWORDS = new Set([
     'a', 'an', 'the', 'of', 'and', 'or', 'in', 'on', 'for', 'to', 'with', 'at', 'by',
     'is', 'are', 'am', 'be', 'you', 'your', 'i', 'my', 'me', 'do', 'please', 'select',
@@ -38,12 +40,17 @@
   function cleanLabel(input, max = 300) {
     if (!input) return '';
     let s = String(input).replace(/\s+/g, ' ').trim();
-    s = s.replace(/\s*\((required|optional)\)\s*$/i, '').replace(/[\s*:]+$/, '').replace(/^\*+\s*/, '');
+    s = s
+      .replace(/\s*\((required|optional)\)\s*$/i, '')
+      .replace(/[\s*:]+$/, '')
+      .replace(/^\*+\s*/, '');
     return s.length > max ? s.slice(0, max).trim() + '…' : s;
   }
 
   function tokens(input) {
-    return normalize(input).split(' ').filter((t) => t && !STOPWORDS.has(t));
+    return normalize(input)
+      .split(' ')
+      .filter((t) => t && !STOPWORDS.has(t));
   }
 
   function pad2(n) {
@@ -106,14 +113,38 @@
   function hostMatches(frameHost, savedHost) {
     if (!frameHost || !savedHost) return false;
     const a = frameHost.toLowerCase().replace(/^www\./, '');
-    const b = savedHost.toLowerCase().replace(/^\*\./, '').replace(/^www\./, '');
+    const b = savedHost
+      .toLowerCase()
+      .replace(/^\*\./, '')
+      .replace(/^www\./, '');
     return a === b || a.endsWith('.' + b);
   }
 
+  /** Is this Firefox? (Only Firefox has runtime.getBrowserInfo.) */
+  function isFirefox() {
+    const api = root.browser || root.chrome;
+    return !!(api && api.runtime && typeof api.runtime.getBrowserInfo === 'function');
+  }
+
   const util = {
-    MONTHS, normalize, cleanLabel, tokens, pad2, parseDate, monthName,
-    getPath, setPath, uid, isBlank, mergeDefaults, hostMatches,
+    MONTHS,
+    normalize,
+    cleanLabel,
+    tokens,
+    pad2,
+    parseDate,
+    monthName,
+    getPath,
+    setPath,
+    uid,
+    isBlank,
+    mergeDefaults,
+    hostMatches,
+    isFirefox,
   };
   JTF.util = util;
+
+  // The promise-based extension API: `browser` in Firefox, `chrome` in Chromium browsers.
+  Object.defineProperty(JTF, 'api', { configurable: true, get: () => root.browser || root.chrome });
   if (typeof module === 'object' && module.exports) module.exports = util;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

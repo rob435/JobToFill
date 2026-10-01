@@ -1,0 +1,6 @@
+node_modules/
+dist/
+package-lock.json
+extension/icons/
+# Test pages deliberately mimic real-world markup.
+tests/fixtures/*.html

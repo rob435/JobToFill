@@ -1,63 +1,101 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>JobToFill</title>
-  <link rel="stylesheet" href="../ui/theme.css">
-  <link rel="stylesheet" href="popup.css">
-</head>
-<body>
-  <header class="bar">
-    <img src="../icons/icon32.png" alt="" width="22" height="22">
-    <strong>JobToFill</strong>
-    <select id="profile" aria-label="Active profile" title="Active profile"></select>
-  </header>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>JobToFill</title>
+    <link rel="stylesheet" href="../ui/theme.css" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <img src="../icons/icon32.png" alt="" width="22" height="22" />
+      <strong>JobToFill</strong>
+      <select id="profile" aria-label="Active profile" title="Active profile" hidden></select>
+    </header>
 
-  <main>
-    <button id="fill" class="primary big">
-      <span>Fill this page</span>
-      <kbd id="shortcut" hidden></kbd>
-    </button>
-    <p id="page-note" class="note" hidden></p>
+    <main>
+      <section id="access" class="card warn" hidden>
+        <p><strong>Allow JobToFill on websites</strong><br />Needed once so it can fill forms, including ones embedded from other sites.</p>
+        <button id="access-allow" class="primary small" type="button">Allow</button>
+      </section>
 
-    <section id="result" class="card" hidden aria-live="polite"></section>
-
-    <div class="tools">
-      <button id="inspect" class="tool" title="Label every field with what JobToFill thinks it is">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4a7 7 0 1 0 4.4 12.4l4.1 4.1 1.4-1.4-4.1-4.1A7 7 0 0 0 11 4Zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z"/></svg>
-        <span>Show detected fields</span>
+      <button id="fill" class="primary big" type="button">
+        <span>Fill this page</span>
+        <kbd id="shortcut" hidden></kbd>
       </button>
-      <button id="learn" class="tool" title="Save answers you typed on this page for next time">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 1 9l11 6 9-4.9V17h2V9L12 3Zm-7 9.2V16c0 2.2 3.1 4 7 4s7-1.8 7-4v-3.8l-7 3.8-7-3.8Z"/></svg>
-        <span>Learn from this page</span>
-      </button>
-    </div>
+      <p id="page-note" class="note" hidden>Open a job application or checkout page to fill it.</p>
 
-    <section id="learn-panel" class="card" hidden>
-      <div class="card-head">
-        <strong>Save for next time</strong>
-        <button id="learn-close" class="link" type="button">Close</button>
+      <section id="result" class="card" hidden aria-live="polite"></section>
+
+      <div class="tools">
+        <button id="inspect" class="tool" type="button" aria-pressed="false" title="Label every field with what JobToFill thinks it is">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M11 4a7 7 0 1 0 4.4 12.4l4.1 4.1 1.4-1.4-4.1-4.1A7 7 0 0 0 11 4Zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z" />
+          </svg>
+          <span>Show detected fields</span>
+        </button>
+        <button id="learn" class="tool" type="button" title="Save answers you typed on this page for next time">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3 1 9l11 6 9-4.9V17h2V9L12 3Zm-7 9.2V16c0 2.2 3.1 4 7 4s7-1.8 7-4v-3.8l-7 3.8-7-3.8Z" />
+          </svg>
+          <span>Learn from this page</span>
+        </button>
       </div>
-      <p id="learn-empty" class="muted small" hidden>Nothing new to learn here. Type your answers into the form first, then try again.</p>
-      <ul id="learn-list" class="learn-list"></ul>
-      <button id="learn-save" class="primary" hidden>Save selected</button>
-    </section>
 
-    <section id="vault" class="vault"></section>
-  </main>
+      <section id="learn-panel" class="card" hidden>
+        <div class="card-head">
+          <strong>Save for next time</strong>
+          <button id="learn-close" class="link" type="button">Close</button>
+        </div>
+        <p id="learn-empty" class="muted small" hidden>Nothing new to learn here. Type your answers into the form first, then try again.</p>
+        <ul id="learn-list" class="learn-list"></ul>
+        <button id="learn-save" class="primary" type="button" hidden>Save selected</button>
+      </section>
 
-  <footer>
-    <button id="open-options" class="link" type="button">Edit profile &amp; settings</button>
-    <span id="version" class="muted"></span>
-  </footer>
+      <section id="vault" class="vault">
+        <div class="vault-row" data-state="none" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 2a5 5 0 0 0-5 5v3H5v12h14V10h-2V7a5 5 0 0 0-5-5Zm-3 8V7a3 3 0 1 1 6 0v3H9Z" />
+          </svg>
+          <span class="grow">Save passwords &amp; cards in an encrypted vault</span>
+          <button id="vault-setup" class="small" type="button">Set up</button>
+        </div>
+        <form class="vault-row" data-state="locked" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 2a5 5 0 0 0-5 5v3H5v12h14V10h-2V7a5 5 0 0 0-5-5Zm-3 8V7a3 3 0 1 1 6 0v3H9Z" />
+          </svg>
+          <input
+            id="vault-password"
+            type="password"
+            placeholder="Master password"
+            autocomplete="current-password"
+            aria-label="Master password"
+          />
+          <button class="small primary" type="submit">Unlock</button>
+        </form>
+        <div class="vault-row" data-state="unlocked" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M17 2a5 5 0 0 0-5 5v3H5v12h14V10h-5V7a3 3 0 1 1 6 0v1h2V7a5 5 0 0 0-5-5Z" />
+          </svg>
+          <span class="grow">Vault unlocked: passwords &amp; cards will fill</span>
+          <button id="vault-lock" class="small" type="button">Lock</button>
+        </div>
+        <p id="vault-error" class="err" hidden></p>
+      </section>
+    </main>
 
-  <script src="../lib/util.js"></script>
-  <script src="../lib/geo.js"></script>
-  <script src="../lib/fields.js"></script>
-  <script src="../lib/matcher.js"></script>
-  <script src="../lib/vault.js"></script>
-  <script src="../lib/store.js"></script>
-  <script src="popup.js"></script>
-</body>
+    <footer>
+      <button id="open-options" class="link" type="button">Edit profile &amp; settings</button>
+      <span id="version" class="muted"></span>
+    </footer>
+
+    <script src="../lib/util.js"></script>
+    <script src="../lib/geo.js"></script>
+    <script src="../lib/fields.js"></script>
+    <script src="../lib/matcher.js"></script>
+    <script src="../lib/vault.js"></script>
+    <script src="../lib/store.js"></script>
+    <script type="module" src="popup.js"></script>
+  </body>
 </html>

@@ -1,40 +1,44 @@
-// Packages the extension for distribution:
-//   dist/jobtofill-chrome-<version>.zip   Chrome, Edge, Brave, Opera, Arc (Manifest V3, service worker)
-//   dist/jobtofill-firefox-<version>.zip  Firefox 121+ (background scripts instead of a service worker)
-// Usage: npm run build    (needs the `zip` command)
+// Packages the extension for the stores:
+//   dist/chrome/   + dist/jobtofill-chrome-<version>.zip    Chrome, Edge, Brave, Opera, Vivaldi, Arc
+//   dist/firefox/  + dist/jobtofill-firefox-<version>.zip   Firefox 142+ (desktop and Android)
+//
+// extension/manifest.json already works unpacked in both browsers; each store copy just drops
+// the keys the other browser needs so store validators report no warnings.
+// Usage: npm run build
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import webExt from 'web-ext';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const src = path.join(root, 'extension');
+const source = path.join(root, 'extension');
 const dist = path.join(root, 'dist');
-const manifest = JSON.parse(await readFile(path.join(src, 'manifest.json'), 'utf8'));
+const manifest = JSON.parse(await readFile(path.join(source, 'manifest.json'), 'utf8'));
+
+const TARGETS = {
+  chrome(m) {
+    m.background = { service_worker: m.background.service_worker };
+    delete m.browser_specific_settings;
+  },
+  firefox(m) {
+    m.background = { scripts: m.background.scripts };
+    delete m.minimum_chrome_version;
+  },
+};
 
 await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
 
-async function pack(name, transform) {
+for (const [name, transform] of Object.entries(TARGETS)) {
   const dir = path.join(dist, name);
-  await cp(src, dir, { recursive: true });
-  const m = transform(JSON.parse(JSON.stringify(manifest)));
+  await cp(source, dir, { recursive: true });
+  const m = structuredClone(manifest);
+  transform(m);
   await writeFile(path.join(dir, 'manifest.json'), JSON.stringify(m, null, 2) + '\n');
-  const zip = path.join(dist, `jobtofill-${name}-${m.version}.zip`);
-  execFileSync('zip', ['-qr', zip, '.'], { cwd: dir });
-  console.log(path.relative(root, zip));
+  const filename = `jobtofill-${name}-${m.version}.zip`;
+  await webExt.cmd.build(
+    { sourceDir: dir, artifactsDir: dist, filename, overwriteDest: true },
+    { shouldExitProgram: false },
+  );
+  console.log(`dist/${filename}`);
 }
-
-await pack('chrome', (m) => m);
-
-// Firefox runs the same code as a non-persistent background page, so the libraries the
-// service worker pulls in with importScripts() are listed as background scripts instead.
-const background = await readFile(path.join(src, 'background.js'), 'utf8');
-const libs = [...background.match(/importScripts\(([^)]*)\)/)[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
-
-await pack('firefox', (m) => {
-  m.background = { scripts: [...libs, 'background.js'] };
-  delete m.minimum_chrome_version;
-  m.browser_specific_settings = { gecko: { id: 'jobtofill@local', strict_min_version: '121.0' } };
-  return m;
-});

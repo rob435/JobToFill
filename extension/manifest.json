@@ -4,7 +4,6 @@
   "short_name": "JobToFill",
   "version": "1.0.0",
   "description": "Autofill job applications and everyday forms: contact details, address, education, work history, resumes, screening questions, passwords and cards.",
-  "minimum_chrome_version": "110",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -24,17 +23,40 @@
     "open_in_tab": true
   },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "scripts": [
+      "lib/util.js",
+      "lib/geo.js",
+      "lib/fields.js",
+      "lib/matcher.js",
+      "lib/vault.js",
+      "lib/store.js",
+      "background.js"
+    ]
   },
-  "permissions": ["storage", "unlimitedStorage", "scripting", "contextMenus", "alarms"],
+  "permissions": ["storage", "unlimitedStorage", "scripting", "activeTab", "contextMenus", "alarms"],
   "host_permissions": ["<all_urls>"],
   "commands": {
     "fill-page": {
-      "suggested_key": { "default": "Alt+Shift+F" },
+      "suggested_key": {
+        "default": "Alt+Shift+F"
+      },
       "description": "Fill the current page"
     },
     "_execute_action": {
-      "suggested_key": { "default": "Alt+Shift+J" }
+      "suggested_key": {
+        "default": "Alt+Shift+J"
+      }
+    }
+  },
+  "minimum_chrome_version": "110",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "{49b8e24e-544e-4e41-9c12-48efe5117247}",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
   }
 }

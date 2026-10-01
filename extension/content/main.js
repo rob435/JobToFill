@@ -1,7 +1,7 @@
 /*
  * JobToFill — in-page API, injected on demand into every frame of a tab.
  * The service worker calls globalThis.__jtf.<method>() through
- * chrome.scripting.executeScript; nothing runs until you ask for it.
+ * scripting.executeScript; nothing runs until you ask for it.
  */
 (function (root) {
   'use strict';
@@ -12,12 +12,15 @@
   const state = { history: [], overlay: null, ui: null };
 
   function send(message) {
-    return chrome.runtime.sendMessage(message).catch((err) => ({ error: String((err && err.message) || err) }));
+    return JTF.api.runtime.sendMessage(message).catch((err) => ({ error: String((err && err.message) || err) }));
   }
 
   function scan(profile) {
     const fields = JTF.dom.collect(document);
-    const planned = JTF.matcher.plan(fields.map((f) => f.desc), profile);
+    const planned = JTF.matcher.plan(
+      fields.map((f) => f.desc),
+      profile,
+    );
     return { fields, results: planned.results, context: planned.context };
   }
 
@@ -29,50 +32,84 @@
 
   /* ------------------------------------------------------------------- UI */
 
+  // Styled through the CSSOM (element.style) rather than <style> tags, so a page's
+  // Content-Security-Policy can't strip the toast or the inspect labels.
+  const FONT = '13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  const STYLES = {
+    host: { all: 'initial', position: 'absolute', top: '0', left: '0', width: '0', height: '0', zIndex: '2147483647' },
+    toast: {
+      position: 'fixed',
+      right: '16px',
+      bottom: '16px',
+      maxWidth: '340px',
+      display: 'flex',
+      gap: '10px',
+      alignItems: 'flex-start',
+      padding: '12px 14px',
+      borderRadius: '12px',
+      background: '#17142b',
+      color: '#f4f2ff',
+      font: FONT,
+      boxShadow: '0 10px 30px rgba(0, 0, 0, 0.25)',
+      opacity: '0',
+      transform: 'translateY(8px)',
+      transition: 'opacity 0.18s, transform 0.18s',
+    },
+    dot: { flex: 'none', width: '10px', height: '10px', marginTop: '4px', borderRadius: '50%', background: '#8b74ff' },
+    message: { flex: '1', whiteSpace: 'pre-line' },
+    button: { all: 'unset', cursor: 'pointer', color: '#b9abff', fontWeight: '600', marginLeft: '4px', font: FONT },
+    tag: {
+      position: 'absolute',
+      padding: '1px 6px',
+      borderRadius: '6px',
+      font: '600 11px/16px system-ui, sans-serif',
+      color: '#fff',
+      whiteSpace: 'nowrap',
+      pointerEvents: 'none',
+      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.3)',
+    },
+  };
+  const TAG_COLORS = { ok: '#16a34a', empty: '#d97706', vault: '#7c3aed', unknown: '#6b7280' };
+
+  function make(tag, style, text) {
+    const node = document.createElement(tag);
+    Object.assign(node.style, style);
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
   function ui() {
     if (state.ui && state.ui.host.isConnected) return state.ui;
-    const host = document.createElement('jobtofill-ui');
+    const host = make('jobtofill-ui', STYLES.host);
     host.setAttribute('data-jtf-ui', '');
-    host.style.cssText = 'all: initial; position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 2147483647;';
     const shadow = host.attachShadow({ mode: 'closed' });
-    shadow.innerHTML = `<style>
-      :host { all: initial; }
-      .toast { position: fixed; right: 16px; bottom: 16px; max-width: 340px; display: flex; gap: 10px; align-items: flex-start;
-        padding: 12px 14px; border-radius: 12px; background: #17142b; color: #f4f2ff; font: 13px/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
-        box-shadow: 0 10px 30px rgba(0,0,0,.25); opacity: 0; transform: translateY(8px); transition: opacity .18s, transform .18s; }
-      .toast.show { opacity: 1; transform: none; }
-      .dot { flex: none; width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; background: #8b74ff; }
-      .msg { flex: 1; white-space: pre-line; }
-      button { all: unset; cursor: pointer; color: #b9abff; font-weight: 600; margin-left: 4px; }
-      button:hover { text-decoration: underline; }
-      .tag { position: absolute; padding: 1px 6px; border-radius: 6px; font: 600 11px/16px system-ui, sans-serif; color: #fff;
-        white-space: nowrap; pointer-events: none; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
-      .ok { background: #16a34a; } .empty { background: #d97706; } .vault { background: #7c3aed; } .unknown { background: #6b7280; }
-    </style><div class="layer"></div>`;
-    (document.body || document.documentElement).appendChild(host);
-    state.ui = { host, shadow, layer: shadow.querySelector('.layer') };
+    const layer = make('div', {});
+    shadow.append(layer);
+    (document.body || document.documentElement).append(host);
+    state.ui = { host, shadow, layer, toast: null };
     return state.ui;
   }
 
   let toastTimer = null;
   function toast(message, opts) {
-    const { shadow } = ui();
-    const old = shadow.querySelector('.toast');
-    if (old) old.remove();
-    const el = document.createElement('div');
-    el.className = 'toast';
-    el.innerHTML = '<span class="dot"></span><span class="msg"></span>';
-    el.querySelector('.msg').textContent = message;
+    const view = ui();
+    if (view.toast) view.toast.remove();
+    const box = make('div', STYLES.toast);
+    box.setAttribute('role', 'status');
+    box.append(make('span', STYLES.dot), make('span', STYLES.message, message));
     if (opts && opts.undo && state.history.length) {
-      const btn = document.createElement('button');
-      btn.textContent = 'Undo';
-      btn.addEventListener('click', () => { api.undo(); el.remove(); });
-      el.appendChild(btn);
+      const undo = make('button', STYLES.button, 'Undo');
+      undo.addEventListener('click', () => {
+        api.undo();
+        box.remove();
+      });
+      box.append(undo);
     }
-    shadow.appendChild(el);
-    requestAnimationFrame(() => el.classList.add('show'));
+    view.shadow.append(box);
+    view.toast = box;
+    requestAnimationFrame(() => Object.assign(box.style, { opacity: '1', transform: 'none' }));
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.remove(), (opts && opts.duration) || 6000);
+    toastTimer = setTimeout(() => box.remove(), (opts && opts.duration) || 6000);
     return true;
   }
 
@@ -103,20 +140,37 @@
     let secrets = null;
     if (needs.password || needs.card) {
       if (payload.vault === 'unlocked') {
-        secrets = await send({ type: 'jtf:secrets', password: needs.password ? (context.signup ? 'signup' : 'login') : null, card: needs.card });
+        secrets = await send({
+          type: 'jtf:secrets',
+          password: needs.password ? (context.signup ? 'signup' : 'login') : null,
+          card: needs.card,
+        });
         if (secrets && secrets.error) notes.push(secrets.error);
         if (secrets && secrets.notes) notes.push(...secrets.notes);
       } else {
-        notes.push(payload.vault === 'none'
-          ? 'Passwords and cards need the vault: set it up in JobToFill settings.'
-          : 'The vault is locked, so passwords and cards were skipped.');
+        notes.push(
+          payload.vault === 'none'
+            ? 'Passwords and cards need the vault: set it up in JobToFill settings.'
+            : 'The vault is locked, so passwords and cards were skipped.',
+        );
       }
     }
 
     const report = {
-      url: location.href, host: location.hostname, title: document.title, top: root === root.top,
-      jobContext: context.jobContext, detected: 0, filled: 0, skipped: 0, failed: 0,
-      missing: [], missingTypes: [], unmatched: [], notes, unknown: 0,
+      url: location.href,
+      host: location.hostname,
+      title: document.title,
+      top: root === root.top,
+      jobContext: context.jobContext,
+      detected: 0,
+      filled: 0,
+      skipped: 0,
+      failed: 0,
+      missing: [],
+      missingTypes: [],
+      unmatched: [],
+      notes,
+      unknown: 0,
     };
     const docCache = {};
     for (let i = 0; i < fields.length; i++) {
@@ -133,9 +187,17 @@
       if (def && def.file) {
         v = await documentValue(r.type, payload, docCache);
       } else {
-        v = JTF.fields.resolve(r.type, profile, Object.assign({}, context, {
-          index: r.index || 0, part: r.part, kind: field.kind, secrets, answer: r.answer,
-        }));
+        v = JTF.fields.resolve(
+          r.type,
+          profile,
+          Object.assign({}, context, {
+            index: r.index || 0,
+            part: r.part,
+            kind: field.kind,
+            secrets,
+            answer: r.answer,
+          }),
+        );
       }
       if (!v) {
         if (!(def && def.secret)) {
@@ -145,7 +207,9 @@
         continue;
       }
       const res = await JTF.fill.apply(field, v, {
-        overwrite: settings.overwrite, comboboxes: settings.comboboxes !== false, history: state.history,
+        overwrite: settings.overwrite,
+        comboboxes: settings.comboboxes !== false,
+        history: state.history,
       });
       if (res.status === 'filled') {
         report.filled++;
@@ -179,14 +243,16 @@
       if (U.isBlank(value) || value.length > 4000) return;
       const question = JTF.matcher.questionText(field.desc);
       if (r && r.type === 'custom') {
-        if (U.normalize(r.answer) !== U.normalize(value)) out.push({ kind: 'custom', question, value, replaces: r.answerId });
+        if (U.normalize(r.answer) !== U.normalize(value))
+          out.push({ kind: 'custom', question, value, replaces: r.answerId });
         return;
       }
       const def = r && r.type ? JTF.fields.DEFS[r.type] : null;
       if (def) {
         if (def.secret || JTF.fields.DATE_TYPES.has(r.type) || r.part) return;
         let path = def.path;
-        if (!path && def.list && (profile[def.list] || [])[r.index || 0] && def.key !== 'current') path = `${def.list}.${r.index || 0}.${def.key}`;
+        if (!path && def.list && (profile[def.list] || [])[r.index || 0] && def.key !== 'current')
+          path = `${def.list}.${r.index || 0}.${def.key}`;
         if (!path || !U.isBlank(U.getPath(profile, path))) return;
         if (seen.has(path)) return;
         seen.add(path);
@@ -219,25 +285,37 @@
     fields.forEach((field, i) => {
       const r = results[i];
       const def = r && r.type ? JTF.fields.DEFS[r.type] : null;
-      let cls = 'unknown';
+      let status = 'unknown';
       let text = '?  ' + (U.cleanLabel(JTF.matcher.questionText(field.desc), 28) || field.kind);
-      if (r && r.type) {
+      if (def) {
         detected++;
         text = labelFor(field, r) + (r.index ? ` #${r.index + 1}` : '') + (r.part ? ` (${r.part})` : '');
-        if (def && (def.secret || def.file)) cls = def.file && payload.docs && payload.docs[def.file] ? 'ok' : 'vault';
+        if (def.file) status = payload.docs && payload.docs[def.file] ? 'ok' : 'empty';
+        else if (def.secret) status = 'vault';
         else {
-          const v = JTF.fields.resolve(r.type, profile, Object.assign({}, context, { index: r.index || 0, part: r.part, kind: field.kind, answer: r.answer }));
-          cls = v ? 'ok' : 'empty';
+          const ctx = Object.assign({}, context, {
+            index: r.index || 0,
+            part: r.part,
+            kind: field.kind,
+            answer: r.answer,
+          });
+          status = JTF.fields.resolve(r.type, profile, ctx) ? 'ok' : 'empty';
         }
+      } else if (r && r.type === 'custom') {
+        detected++;
+        text = labelFor(field, r);
+        status = 'ok';
       }
       const target = field.kind === 'radio' || field.kind === 'checkboxes' ? field.members[0] : field.el;
-      const rect = (JTF.dom.isVisible(target, { ignoreOpacity: true }) ? target : target.parentElement || target).getBoundingClientRect();
-      const tag = document.createElement('div');
-      tag.className = 'tag ' + cls;
-      tag.textContent = text;
-      tag.style.left = Math.max(0, rect.left + scrollX) + 'px';
-      tag.style.top = Math.max(0, rect.top + scrollY - 17) + 'px';
-      layer.appendChild(tag);
+      const anchor = JTF.dom.isVisible(target, { ignoreOpacity: true }) ? target : target.parentElement || target;
+      const rect = anchor.getBoundingClientRect();
+      const tag = make('div', STYLES.tag, text);
+      Object.assign(tag.style, {
+        background: TAG_COLORS[status],
+        left: Math.max(0, rect.left + scrollX) + 'px',
+        top: Math.max(0, rect.top + scrollY - 17) + 'px',
+      });
+      layer.append(tag);
       state.overlay.push(tag);
     });
     return { on: true, detected, total: fields.length };
@@ -271,8 +349,9 @@
   function insertPassword(password) {
     const active = JTF.dom.deepActiveElement(document);
     const scope = (active && active.form) || document;
-    const targets = Array.from(scope.querySelectorAll('input[type="password"]'))
-      .filter((el) => el === active || (!el.value && JTF.dom.isVisible(el)));
+    const targets = Array.from(scope.querySelectorAll('input[type="password"]')).filter(
+      (el) => el === active || (!el.value && JTF.dom.isVisible(el)),
+    );
     if (active && active.localName === 'input' && !targets.includes(active)) targets.unshift(active);
     targets.forEach((el) => {
       JTF.fill.typeValue(el, password);

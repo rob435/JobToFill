@@ -1,66 +1,75 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>JobToFill Settings</title>
-  <link rel="icon" href="../icons/icon32.png">
-  <link rel="stylesheet" href="../ui/theme.css">
-  <link rel="stylesheet" href="options.css">
-</head>
-<body>
-  <div class="layout">
-    <aside class="sidebar">
-      <div class="brand">
-        <img src="../icons/icon48.png" alt="" width="28" height="28">
-        <span>JobToFill</span>
-      </div>
-      <nav id="nav" aria-label="Sections">
-        <p class="nav-title">Profile</p>
-        <a href="#personal">Personal &amp; contact</a>
-        <a href="#links">Links</a>
-        <a href="#work">Work eligibility</a>
-        <a href="#education">Education</a>
-        <a href="#experience">Experience</a>
-        <a href="#writing">Skills &amp; writing</a>
-        <a href="#documents">Resume &amp; files</a>
-        <a href="#answers">Custom answers</a>
-        <a href="#eeo">Voluntary disclosures</a>
-        <p class="nav-title">Extension</p>
-        <a href="#vault">Passwords &amp; cards</a>
-        <a href="#history">Application log</a>
-        <a href="#settings">Settings</a>
-        <a href="#backup">Backup &amp; restore</a>
-      </nav>
-    </aside>
-
-    <main>
-      <header class="topbar">
-        <label class="profile-picker">
-          <span class="muted">Profile</span>
-          <select id="profile-select"></select>
-        </label>
-        <div class="profile-actions">
-          <button id="profile-new" class="small" type="button">New</button>
-          <button id="profile-dup" class="small" type="button">Duplicate</button>
-          <button id="profile-rename" class="small" type="button">Rename</button>
-          <button id="profile-delete" class="small danger" type="button">Delete</button>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>JobToFill Settings</title>
+    <link rel="icon" href="../icons/icon32.png" />
+    <link rel="stylesheet" href="../ui/theme.css" />
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="brand">
+          <img src="../icons/icon48.png" alt="" width="28" height="28" />
+          <span>JobToFill</span>
         </div>
-        <span id="save-state" class="save-state" aria-live="polite"></span>
-      </header>
+        <nav id="nav" aria-label="Sections">
+          <p class="nav-title">Profile</p>
+          <a href="#personal">Personal &amp; contact</a>
+          <a href="#links">Links</a>
+          <a href="#work">Work eligibility</a>
+          <a href="#education">Education</a>
+          <a href="#experience">Experience</a>
+          <a href="#writing">Skills &amp; writing</a>
+          <a href="#documents">Resume &amp; files</a>
+          <a href="#answers">Custom answers</a>
+          <a href="#eeo">Voluntary disclosures</a>
+          <p class="nav-title">Extension</p>
+          <a href="#vault">Passwords &amp; cards</a>
+          <a href="#history">Application log</a>
+          <a href="#settings">Settings</a>
+          <a href="#backup">Backup &amp; restore</a>
+        </nav>
+      </aside>
 
-      <div id="sections"></div>
-    </main>
-  </div>
+      <main>
+        <header class="topbar">
+          <label class="profile-picker">
+            <span class="muted">Profile</span>
+            <select id="profile-select"></select>
+          </label>
+          <div class="profile-actions">
+            <button id="profile-new" class="small" type="button">New</button>
+            <button id="profile-dup" class="small" type="button">Duplicate</button>
+            <button id="profile-rename" class="small" type="button">Rename</button>
+            <button id="profile-delete" class="small danger" type="button">Delete</button>
+          </div>
+          <span id="save-state" class="save-state" aria-live="polite"></span>
+        </header>
 
-  <datalist id="countries"></datalist>
+        <div id="access" class="banner" hidden>
+          <p>
+            <strong>Allow JobToFill on websites.</strong> Your browser needs your OK before JobToFill can fill forms, including ones
+            embedded from other sites.
+          </p>
+          <button type="button" class="primary">Allow</button>
+        </div>
 
-  <script src="../lib/util.js"></script>
-  <script src="../lib/geo.js"></script>
-  <script src="../lib/fields.js"></script>
-  <script src="../lib/matcher.js"></script>
-  <script src="../lib/vault.js"></script>
-  <script src="../lib/store.js"></script>
-  <script src="options.js"></script>
-</body>
+        <div id="sections"></div>
+      </main>
+    </div>
+
+    <datalist id="countries"></datalist>
+    <datalist id="degrees"></datalist>
+
+    <script src="../lib/util.js"></script>
+    <script src="../lib/geo.js"></script>
+    <script src="../lib/fields.js"></script>
+    <script src="../lib/matcher.js"></script>
+    <script src="../lib/vault.js"></script>
+    <script src="../lib/store.js"></script>
+    <script type="module" src="main.js"></script>
+  </body>
 </html>

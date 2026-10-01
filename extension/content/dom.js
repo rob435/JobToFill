@@ -10,10 +10,54 @@
 
   const CONTROL_SELECTOR = 'input, select, textarea, [role="combobox"], [aria-haspopup="listbox"]';
   const COUNTED_SELECTOR = 'input:not([type="hidden"]), select, textarea, [role="combobox"], [aria-haspopup="listbox"]';
-  const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'range', 'color', 'search', 'time', 'week', 'datetime-local']);
-  const PASS_THROUGH_TYPES = new Set(['email', 'tel', 'url', 'number', 'date', 'month', 'password', 'file', 'checkbox', 'radio']);
-  const SKIP_TEXT_TAGS = new Set(['script', 'style', 'noscript', 'template', 'select', 'option', 'textarea', 'input', 'button', 'svg']);
-  const ATTR_HINTS = ['data-automation-id', 'data-testid', 'data-test', 'data-qa', 'data-field', 'data-name', 'formcontrolname', 'ng-model', 'data-cy'];
+  const SKIP_INPUT_TYPES = new Set([
+    'hidden',
+    'submit',
+    'button',
+    'reset',
+    'image',
+    'range',
+    'color',
+    'search',
+    'time',
+    'week',
+    'datetime-local',
+  ]);
+  const PASS_THROUGH_TYPES = new Set([
+    'email',
+    'tel',
+    'url',
+    'number',
+    'date',
+    'month',
+    'password',
+    'file',
+    'checkbox',
+    'radio',
+  ]);
+  const SKIP_TEXT_TAGS = new Set([
+    'script',
+    'style',
+    'noscript',
+    'template',
+    'select',
+    'option',
+    'textarea',
+    'input',
+    'button',
+    'svg',
+  ]);
+  const ATTR_HINTS = [
+    'data-automation-id',
+    'data-testid',
+    'data-test',
+    'data-qa',
+    'data-field',
+    'data-name',
+    'formcontrolname',
+    'ng-model',
+    'data-cy',
+  ];
   const PLACEHOLDERISH = /^(select|choose|please select|search|type to search|start typing|-+)\b/i;
 
   /* ------------------------------------------------------------ visibility */
@@ -21,7 +65,8 @@
   function isVisible(el, opts) {
     if (!el || !el.isConnected) return false;
     const checkOpacity = !(opts && opts.ignoreOpacity);
-    if (typeof el.checkVisibility === 'function' && !el.checkVisibility({ checkOpacity, checkVisibilityCSS: true })) return false;
+    if (typeof el.checkVisibility === 'function' && !el.checkVisibility({ checkOpacity, checkVisibilityCSS: true }))
+      return false;
     const rect = el.getBoundingClientRect();
     if (rect.width < 1 || rect.height < 1) return false;
     const win = el.ownerDocument.defaultView;
@@ -50,8 +95,14 @@
     const walker = doc.createTreeWalker(node, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
       acceptNode(n) {
         if (n.nodeType === 3) return NodeFilter.FILTER_ACCEPT;
-        if (SKIP_TEXT_TAGS.has(n.localName) || n.hidden || n.getAttribute('aria-hidden') === 'true' ||
-          (n.style && n.style.display === 'none') || (skip && skip(n))) return NodeFilter.FILTER_REJECT;
+        if (
+          SKIP_TEXT_TAGS.has(n.localName) ||
+          n.hidden ||
+          n.getAttribute('aria-hidden') === 'true' ||
+          (n.style && n.style.display === 'none') ||
+          (skip && skip(n))
+        )
+          return NodeFilter.FILTER_REJECT;
         return NodeFilter.FILTER_SKIP;
       },
     });
@@ -169,9 +220,15 @@
   }
 
   function describedBy(el) {
-    return (el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)
-      .map((id) => { const ref = byId(el, id); return ref ? textOf(ref) : ''; })
-      .join(' ').slice(0, 200);
+    return (el.getAttribute('aria-describedby') || '')
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((id) => {
+        const ref = byId(el, id);
+        return ref ? textOf(ref) : '';
+      })
+      .join(' ')
+      .slice(0, 200);
   }
 
   function ancestorHints(el) {
@@ -216,7 +273,9 @@
     if (el.closest('[data-jtf-ui]')) return false;
     if (kind === 'file') return true;
     if (kind === 'radio' || kind === 'checkbox') {
-      return isVisible(el, { ignoreOpacity: true }) || labelsOf(el).some((l) => isVisible(l)) || isVisible(el.parentElement);
+      return (
+        isVisible(el, { ignoreOpacity: true }) || labelsOf(el).some((l) => isVisible(l)) || isVisible(el.parentElement)
+      );
     }
     if (kind === 'combobox') return isVisible(el, { ignoreOpacity: true }) || isVisible(el.parentElement);
     if (el.readOnly) return false;
@@ -238,7 +297,9 @@
     const scope = el.form || el.getRootNode();
     const type = el.type;
     const selector = `input[type="${type}"][name="${CSS.escape(el.name)}"]`;
-    return Array.from(scope.querySelectorAll(selector)).filter((m) => (m.form || null) === (el.form || null) && isUsable(m, type));
+    return Array.from(scope.querySelectorAll(selector)).filter(
+      (m) => (m.form || null) === (el.form || null) && isUsable(m, type),
+    );
   }
 
   function describe(el, kind, members) {
@@ -265,9 +326,12 @@
       s.title = el.getAttribute('title') || '';
       if (kind === 'checkbox' && !s.label) s.label = nextText(el);
       if (!s.label && !s.aria) s.nearby = contextLabel(el, new Set([el]));
-      if (kind === 'select') desc.options = Array.from(el.options).map((o) => ({ text: o.text, value: o.value, disabled: o.disabled }));
+      if (kind === 'select')
+        desc.options = Array.from(el.options).map((o) => ({ text: o.text, value: o.value, disabled: o.disabled }));
     }
-    s.attrs = ATTR_HINTS.map((a) => el.getAttribute(a)).filter(Boolean).join(' ');
+    s.attrs = ATTR_HINTS.map((a) => el.getAttribute(a))
+      .filter(Boolean)
+      .join(' ');
     s.ancestors = ancestorHints(el);
     s.describedby = describedBy(el);
     return desc;
@@ -304,5 +368,5 @@
     return a;
   }
 
-  JTF.dom = { collect, describe, kindOf, isVisible, textOf, explicitLabel, deepActiveElement, CONTROL_SELECTOR };
+  JTF.dom = { collect, describe, kindOf, isVisible, textOf, deepActiveElement };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

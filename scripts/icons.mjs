@@ -28,7 +28,9 @@ const browser = await chromium.launch();
 const page = await browser.newPage();
 for (const size of [16, 32, 48, 128]) {
   await page.setViewportSize({ width: size, height: size });
-  await page.setContent(`<html><body style="margin:0;background:transparent">${svg.replace('<svg ', `<svg width="${size}" height="${size}" `)}</body></html>`);
+  await page.setContent(
+    `<html><body style="margin:0;background:transparent">${svg.replace('<svg ', `<svg width="${size}" height="${size}" `)}</body></html>`,
+  );
   const png = await page.screenshot({ omitBackground: true, clip: { x: 0, y: 0, width: size, height: size } });
   await writeFile(path.join(out, `icon${size}.png`), png);
   console.log(`icon${size}.png`);

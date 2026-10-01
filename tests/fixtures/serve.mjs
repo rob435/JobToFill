@@ -6,22 +6,37 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.pdf': 'application/pdf' };
+const TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.pdf': 'application/pdf',
+};
 
 export function serve(port = 0) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
-    let file = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
-    if (file.includes('..')) { res.writeHead(400).end(); return; }
+    const file = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
+    if (file.includes('..')) {
+      res.writeHead(400).end();
+      return;
+    }
     try {
       if (file === 'index.html') {
         const pages = (await readdir(dir)).filter((f) => f.endsWith('.html'));
         res.writeHead(200, { 'content-type': TYPES['.html'] });
-        res.end(`<!doctype html><title>JobToFill demo forms</title><style>body{font:15px system-ui;margin:40px}</style><h1>JobToFill demo forms</h1><ul>${pages.map((p) => `<li><a href="${p}">${p}</a></li>`).join('')}</ul>`);
+        res.end(
+          `<!doctype html><title>JobToFill demo forms</title><style>body{font:15px system-ui;margin:40px}</style><h1>JobToFill demo forms</h1><ul>${pages.map((p) => `<li><a href="${p}">${p}</a></li>`).join('')}</ul>`,
+        );
         return;
       }
       const body = await readFile(path.join(dir, file));
-      res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
+      const headers = { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' };
+      // csp-*.html pages get a strict policy, like many real application sites.
+      if (file.startsWith('csp-'))
+        headers['content-security-policy'] =
+          "default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'";
+      res.writeHead(200, headers);
       res.end(body);
     } catch (err) {
       res.writeHead(404).end('Not found');

@@ -1,65 +1,76 @@
 # JobToFill
 
-A browser extension that fills out job applications for you, and works as a general autofill for sign-ups and checkouts too.
+A browser extension for **Chrome, Edge, Brave and Firefox** that fills out job applications for you, and works as a general autofill for sign-ups and checkouts too.
 
 Save your details once: name, contact info, address, links, education, work history, resume, answers to common screening questions, plus (optionally) passwords and payment cards in an encrypted vault. Then press **Alt+Shift+F** (or click the toolbar button) on any application page and JobToFill fills in everything it recognizes. It never submits anything; you review the form and press Submit yourself.
 
 ## Features
 
 **Job applications**
+
 - **Smart field detection.** Each field is scored using its `autocomplete` attribute, `<label>`, `aria-label`, placeholder, `name`/`id`, ATS attributes (Workday `data-automation-id`, Lever `urls[LinkedIn]`, Greenhouse `job_application[...]`) and nearby text. Tested against Greenhouse-, Lever- and Workday-style pages.
-- **Screening questions.** Answers "Are you legally authorized to work…?", "Will you require sponsorship…?", relocation, over-18, salary, notice period, start date and "How did you hear about us?". It knows the trap where *"authorized to work… without sponsorship?"* needs a **Yes**.
+- **Screening questions.** Answers "Are you legally authorized to work…?", "Will you require sponsorship…?", relocation, over-18, salary, notice period, start date and "How did you hear about us?". It knows the trap where _"authorized to work… without sponsorship?"_ needs a **Yes**.
 - **Dropdowns, radios and checkboxes.** "USA" matches "United States of America" or an option with value `US`, and "CA" matches "California". "No" matches "I am not a protected veteran", "BSc" matches "Bachelor's Degree", and 6 years matches the "5–10" range.
 - **Custom dropdowns.** Opens and picks options in react-select, Workday listboxes and async search boxes (school pickers).
-- **Multiple education and job entries.** When a form repeats its *School* or *Job title* section, each copy gets the next entry from your profile. "From", "To" and "Location" boxes take their meaning from the section they sit in, and split month/year boxes are handled.
+- **Multiple education and job entries.** When a form repeats its _School_ or _Job title_ section, each copy gets the next entry from your profile. "From", "To" and "Location" boxes take their meaning from the section they sit in, and split month/year boxes are handled.
 - **Resume and cover letter upload.** Your files are attached to the upload fields automatically.
-- **Custom answers.** Rules like "*why do you want to work*" → your answer. You can match with plain phrases, `a | b` alternatives or `/regex/`.
+- **Custom answers.** Rules like "_why do you want to work_" → your answer. You can match with plain phrases, `a | b` alternatives or `/regex/`.
 - **Learn from this page.** After you type answers into an unusual form, one click saves them, either as profile values or as custom answers for next time.
 - **Voluntary EEO questions** (gender, race, veteran, disability). These are opt-in, and "— don't fill —" is the default.
 - **Application log.** Every job application you fill is recorded, and the log can be exported as CSV.
 - **Multiple profiles.** For example "Software engineer", "Data analyst" and "Personal shopping", each with its own resume.
 
 **General autofill**
-- Checkout and shipping forms, including country/state codes, phone numbers and split names. A "Company (optional)" box on a shipping form is *not* filled with your employer.
+
+- Checkout and shipping forms, including country/state codes, phone numbers and split names. A "Company (optional)" box on a shipping form is _not_ filled with your employer.
 - **Encrypted vault** for passwords and cards (AES-256-GCM with a PBKDF2 key from your master password, auto-lock).
   - Sign-up pages: a unique strong password is generated for "Create password" + "Confirm password" and saved for that site, so a Workday account for every employer is no longer painful. Choosing a single default password instead is also an option.
   - Login pages: the saved password for that site is filled.
   - Checkout pages: the selected card is filled, including inside payment-provider iframes such as Stripe.
-- **Right-click menu.** *Fill this page*, *Insert from profile → Email / LinkedIn / …* into any box, and *Generate strong password*.
+- **Right-click menu.** _Fill this page_, _Insert from profile → Email / LinkedIn / …_ into any box, and _Generate strong password_.
 
 **Also**
+
 - Works inside cross-origin iframes (embedded Greenhouse boards) and open shadow DOM (web components).
 - **Show detected fields** labels every field with what JobToFill thinks it is: green means ready, amber means your profile lacks it, grey means unknown.
 - **Undo** puts back whatever was on the page before the fill.
-- Only empty fields are filled unless you turn on *Overwrite*, and filled fields are outlined.
+- Only empty fields are filled unless you turn on _Overwrite_, and filled fields are outlined.
 - Light and dark mode, plus import/export backups.
 
 ## Install
 
-JobToFill isn't on the Chrome Web Store yet, so load it unpacked:
+JobToFill isn't in the extension stores yet. One `extension/` folder works unpacked in every supported browser.
+
+**Chrome, Edge, Brave, Opera, Vivaldi, Arc**
 
 1. Download this repository (or `git clone` it).
-2. Open `chrome://extensions` (in Edge, `edge://extensions`; Brave, Opera, Arc and Vivaldi work the same way).
+2. Open `chrome://extensions` (`edge://extensions` in Edge).
 3. Turn on **Developer mode** and click **Load unpacked**.
 4. Choose the **`extension/`** folder.
-5. The settings page opens. Fill in your profile, and pin the toolbar icon.
 
-`npm run build` writes ready-to-upload zips to `dist/` for Chrome and Firefox.
+**Firefox 142 or newer**
 
-> **Firefox (experimental):** after `npm run build`, open `about:debugging` → *This Firefox* → *Load Temporary Add-on* and pick `dist/firefox/manifest.json`. The Firefox build uses the same code with a background page instead of a service worker. It has not been tested as thoroughly as Chrome.
+1. Download this repository (or `git clone` it).
+2. Open `about:debugging#/runtime/this-firefox`.
+3. Click **Load Temporary Add-on…** and choose **`extension/manifest.json`**.
+4. If the toolbar popup shows **Allow JobToFill on websites**, click **Allow**. Firefox asks for site access separately.
+
+Firefox removes temporary add-ons when it restarts. To keep JobToFill installed, sign `dist/jobtofill-firefox-*.zip` through [addons.mozilla.org](https://addons.mozilla.org/developers/) (it can be signed for self-distribution without being listed).
+
+In both browsers the settings page opens on install. Fill in your profile and pin the toolbar icon. `npm run build` writes store-ready zips for both browsers to `dist/`.
 
 ## Using it
 
-| Do this | How |
-| --- | --- |
-| Fill the page | **Alt+Shift+F**, the toolbar button → *Fill this page*, or right-click → *Fill this page* |
-| See what was detected | Toolbar → *Show detected fields* |
-| Save answers you typed | Toolbar → *Learn from this page* |
-| Insert one value | Right-click a box → *Insert from profile* |
-| New password on a sign-up form | Right-click the password box → *Generate strong password* (or just fill the page) |
-| Undo a fill | *Undo* in the popup or in the on-page toast |
+| Do this                        | How                                                                                       |
+| ------------------------------ | ----------------------------------------------------------------------------------------- |
+| Fill the page                  | **Alt+Shift+F**, the toolbar button → _Fill this page_, or right-click → _Fill this page_ |
+| See what was detected          | Toolbar → _Show detected fields_                                                          |
+| Save answers you typed         | Toolbar → _Learn from this page_                                                          |
+| Insert one value               | Right-click a box → _Insert from profile_                                                 |
+| New password on a sign-up form | Right-click the password box → _Generate strong password_ (or just fill the page)         |
+| Undo a fill                    | _Undo_ in the popup or in the on-page toast                                               |
 
-You can change the shortcut at `chrome://extensions/shortcuts`.
+To change the shortcut, open `chrome://extensions/shortcuts` in Chromium browsers, or in Firefox go to `about:addons`, click ⚙, then **Manage Extension Shortcuts**. The settings page links there too.
 
 ### Try it on the demo forms
 
@@ -72,9 +83,9 @@ The demo includes Greenhouse-, Workday- and Lever-style applications, searchable
 
 ## Privacy and security
 
-- **Nothing leaves your browser.** There are no servers, analytics or network requests. The profile lives in `chrome.storage.local`.
+- **Nothing leaves your browser.** There are no servers, analytics or network requests. The profile lives in the extension's local storage. The Firefox manifest declares that no data is collected.
 - **Nothing runs until you ask.** The fill code is injected into a page only when you press the shortcut or a button. It is not loaded on every site you visit.
-- **The vault is encrypted** with AES-256-GCM. The key is derived from your master password (PBKDF2-SHA256, 600,000 iterations) and is kept only in memory (`chrome.storage.session`) while unlocked. Content scripts can't read it. The vault auto-locks after inactivity (30 minutes by default) and always locks when the browser closes. Backups contain the vault still encrypted.
+- **The vault is encrypted** with AES-256-GCM. The key is derived from your master password (PBKDF2-SHA256, 600,000 iterations) and is kept only in memory (`storage.session`) while unlocked. Content scripts can't read it. The vault auto-locks after inactivity (30 minutes by default) and always locks when the browser closes. Backups contain the vault still encrypted.
 - **Secrets are guarded:**
   - Passwords and cards are only handed out during a fill you started.
   - They are only filled on HTTPS pages (or `localhost`).
@@ -82,6 +93,7 @@ The demo includes Greenhouse-, Workday- and Lever-style applications, searchable
   - Saved passwords only go to the site they belong to.
   - Cards only go to the top page, the same site, or known payment processors' frames, never to an arbitrary third-party iframe.
 - **Never submits, never ticks "I agree".** Terms and consent checkboxes are left for you.
+- **Works under strict Content-Security-Policies.** The on-page toast and labels are styled through the DOM, so a site's CSP can't block them, and no page script ever sees the extension's code.
 - The extension needs access to all sites so it can fill application forms embedded from other domains (iframes). It only touches a page when you trigger it.
 
 A dedicated password manager is still the stronger choice for your important accounts. The vault is aimed at the dozens of throwaway job-portal accounts.
@@ -96,59 +108,63 @@ Implemented ✅ · Ideas for later 💡
 - ✅ Repeated education/experience sections, split month/year dates, ranges, country/state codes
 - ✅ React/Vue/Angular-safe value setting; custom dropdown automation; iframes and shadow DOM
 - ✅ Resume/cover letter auto-attach; per-profile documents
-- ✅ Custom Q&A rules and *Learn from this page*
+- ✅ Custom Q&A rules and _Learn from this page_
 - ✅ Encrypted vault: per-site generated passwords for ATS sign-ups, cards for checkout
 - ✅ Inspect overlay, undo, application log, multiple profiles, backup/restore
+- ✅ One codebase for Chromium browsers and Firefox, tested end-to-end in both
 - 💡 **AI-drafted answers** for open questions ("Why us?") using your summary, the job description on the page and a model API key you provide
 - 💡 **Cover-letter templates** with `{company}` / `{role}` filled from the job posting
-- 💡 **Workday "Add another"**: click *Add* for each extra education/job entry automatically
-- 💡 **Auto-advance** multi-step applications (fill, then *Next*, then fill again), always stopping before *Submit*
+- 💡 **Workday "Add another"**: click _Add_ for each extra education/job entry automatically
+- 💡 **Auto-advance** multi-step applications (fill, then _Next_, then fill again), always stopping before _Submit_
 - 💡 **Resume import** to parse a PDF/DOCX or LinkedIn export into the profile
 - 💡 **Application tracker** with status (applied → interview → offer) and follow-up reminders, built on the existing log
-- 💡 Optional encrypted **sync** between browsers, and a Chrome Web Store / Firefox Add-ons release
+- 💡 Optional encrypted **sync** between browsers, and Chrome Web Store / Firefox Add-ons listings
 - 💡 More languages for label detection (rules already cover some German, French and Spanish)
 
 ## Known limitations
 
-- Detection is heuristic. Unusual forms may need a custom answer, or one right-click *Insert from profile*. *Show detected fields* shows what was recognized.
+- Detection is heuristic. Unusual forms may need a custom answer, or one right-click _Insert from profile_. _Show detected fields_ shows what was recognized.
 - Workday-style date "spinners" and some heavily customized widgets may ignore programmatic input. JobToFill reports those as "No matching option" so you know to check them.
-- Sections that only appear after clicking *Add another* aren't added automatically yet.
+- Sections that only appear after clicking _Add another_ aren't added automatically yet.
 - It can't fill CAPTCHAs or closed shadow roots, and won't run on browser pages or extension stores.
 
 ## Development
 
 ```
 extension/
-  manifest.json        Manifest V3
-  background.js        service worker: injection, fill orchestration, vault access, menus, shortcut
-  lib/                 shared, DOM-free (also run by the unit tests in Node)
+  manifest.json        Manifest V3, shared by Chromium (service worker) and Firefox (background scripts)
+  background.js        injection, fill orchestration, vault access, menus, shortcut
+  lib/                 classic scripts shared by every context (and the Node unit tests)
     fields.js          profile schema, field types, detection rules, value resolution
     matcher.js         classification, section/entry planning, option matching, formatting
     geo.js             countries (ISO codes + aliases) and US/CA/AU regions
     vault.js           encryption, password generator, lock/unlock
     store.js           profiles, settings, documents, history, backups
-    util.js
+    util.js            text normalization, dates, and JTF.api (browser.* in Firefox, chrome.* elsewhere)
   content/             injected on demand into every frame
     dom.js             finds controls (incl. shadow DOM), labels, radio groups
     fill.js            sets values the way frameworks notice, custom dropdowns, files, undo
     main.js            in-page API: fill / learn / inspect / undo / toast
-  popup/  options/  ui/  icons/
+  ui/                  shared styles and helpers for the popup and settings page (ES modules)
+  popup/               toolbar popup
+  options/             settings page: main.js (shell), profile.js, vault.js, app.js, controls.js
 tests/
   unit/                node:test, no browser
-  e2e/                 Playwright with the real extension loaded in Chromium
+  e2e/                 the real extension in Chromium (Playwright) or Firefox (Puppeteer + remote debugging)
   fixtures/            the demo/test forms
 scripts/               build, static checks, icon rendering
 ```
 
-There is no build step. Edit the files and click reload on `chrome://extensions`.
+There is no build step for development. Edit the files, then reload: **Reload** on `chrome://extensions`, or **Reload** on `about:debugging` in Firefox. `npm run chrome` / `npm run firefox` start a fresh browser with the extension loaded that reloads it automatically when files change (via [web-ext](https://github.com/mozilla/web-ext)).
 
 ```bash
 npm install
-npm run lint        # syntax + manifest/file reference checks
-npm run test:unit   # fast, no browser
-npm run test:e2e    # loads the extension in headless Chromium (HEADED=1 to watch)
-npm run build       # dist/*.zip for Chrome and Firefox
+npm run lint          # ESLint, Prettier, file checks, and Mozilla's add-on linter on the Firefox build
+npm run format        # Prettier + ESLint fixes
+npm run test:unit     # fast, no browser
+npm run test:e2e      # the extension in headless Chromium (HEADED=1 to watch)
+npm run test:firefox  # the same fill and page tests in Firefox (FIREFOX_BIN=/path/to/firefox if it isn't on PATH)
+npm run build         # dist/ zips for the Chrome Web Store and Firefox Add-ons
 ```
 
 Adding support for a new kind of field usually means adding a rule to `RULES` and a definition to `DEFS` in `extension/lib/fields.js`, plus a case in `tests/unit/classify.test.js`.
-

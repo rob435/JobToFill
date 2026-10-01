@@ -7,13 +7,23 @@
     "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "node --test \"tests/unit/*.test.js\"",
     "test:e2e": "node --test --test-concurrency=1 \"tests/e2e/*.test.mjs\"",
-    "lint": "node scripts/check.mjs",
+    "test:firefox": "BROWSER=firefox node --test --test-concurrency=1 tests/e2e/fill.test.mjs tests/e2e/pages.test.mjs",
+    "lint": "eslint . && prettier --check . && node scripts/check.mjs && npm run build --silent && web-ext lint --source-dir dist/firefox --warnings-as-errors",
+    "format": "prettier --write . && eslint --fix .",
     "build": "node scripts/build.mjs",
-    "icons": "node scripts/icons.mjs",
-    "demo": "node tests/fixtures/serve.mjs"
+    "chrome": "web-ext run --target chromium",
+    "firefox": "web-ext run --target firefox-desktop",
+    "demo": "node tests/fixtures/serve.mjs",
+    "icons": "node scripts/icons.mjs"
   },
   "devDependencies": {
-    "playwright": "1.56.1"
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.11.0",
+    "globals": "^17.13.0",
+    "playwright": "1.56.1",
+    "prettier": "^3.9.9",
+    "puppeteer-core": "^25.12.0",
+    "web-ext": "^10.7.0"
   },
   "engines": {
     "node": ">=20"

@@ -20,8 +20,17 @@
 
   // How much each piece of evidence counts. An explicit <label> beats a name attribute.
   const WEIGHTS = {
-    label: 1, question: 1, aria: 0.95, nearby: 0.8, placeholder: 0.75, attrs: 0.7,
-    name: 0.7, id: 0.65, title: 0.6, ancestors: 0.35, describedby: 0.3,
+    label: 1,
+    question: 1,
+    aria: 0.95,
+    nearby: 0.8,
+    placeholder: 0.75,
+    attrs: 0.7,
+    name: 0.7,
+    id: 0.65,
+    title: 0.6,
+    ancestors: 0.35,
+    describedby: 0.3,
   };
 
   const EMAIL_TYPES = new Set(['email', 'account.username']);
@@ -64,11 +73,16 @@
 
   function fallback(desc) {
     switch (desc.kind) {
-      case 'email': return { type: 'email', part: null, score: 0.4, source: 'type' };
-      case 'tel': return { type: 'phone', part: null, score: 0.4, source: 'type' };
-      case 'password': return { type: 'account.password', part: null, score: 0.4, source: 'type' };
-      case 'url': return { type: 'links.website', part: null, score: 0.3, source: 'type' };
-      default: return null;
+      case 'email':
+        return { type: 'email', part: null, score: 0.4, source: 'type' };
+      case 'tel':
+        return { type: 'phone', part: null, score: 0.4, source: 'type' };
+      case 'password':
+        return { type: 'account.password', part: null, score: 0.4, source: 'type' };
+      case 'url':
+        return { type: 'links.website', part: null, score: 0.3, source: 'type' };
+      default:
+        return null;
     }
   }
 
@@ -113,8 +127,7 @@
         }
       }
     }
-    const { rule, ...result } = best;
-    return refine(result, desc);
+    return refine({ type: best.type, part: best.part, score: best.score, source: best.source }, desc);
   }
 
   const MONTH_WORD = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/;
@@ -126,7 +139,11 @@
       const texts = opts.map((o) => norm(o.text));
       const share = (re) => texts.filter((t) => re.test(t)).length / texts.length;
       if (share(/^(19|20)\d{2}$/) >= 0.8) return 'year';
-      if (opts.length <= 13 && texts.filter((t) => MONTH_WORD.test(t) || /^(0?[1-9]|1[0-2])$/.test(t)).length / texts.length >= 0.8) return 'month';
+      if (
+        opts.length <= 13 &&
+        texts.filter((t) => MONTH_WORD.test(t) || /^(0?[1-9]|1[0-2])$/.test(t)).length / texts.length >= 0.8
+      )
+        return 'month';
       if (opts.length >= 28 && share(/^(0?[1-9]|[12]\d|3[01])$/) >= 0.8) return 'day';
     }
     const s = desc.signals || {};
@@ -149,7 +166,8 @@
   function refine(r, desc) {
     if (!r) return null;
     if (F().DATE_TYPES.has(r.type) && !r.part) r.part = detectPart(desc);
-    if ((r.type === 'address.country' || r.type === 'nationality') && looksLikePhoneCodes(desc.options)) r.type = 'phone.countryCode';
+    if ((r.type === 'address.country' || r.type === 'nationality') && looksLikePhoneCodes(desc.options))
+      r.type = 'phone.countryCode';
     if (desc.kind === 'email' && !EMAIL_TYPES.has(r.type)) r.type = 'email';
     if (desc.kind === 'password' && !r.type.startsWith('account.pass')) r.type = 'account.password';
     return r;
@@ -184,7 +202,8 @@
     if (!raw) return null;
     const padded = ' ' + norm(raw) + ' ';
     for (const { answer, pattern } of compiled) {
-      if (pattern.re ? pattern.re.test(raw) : pattern.phrases.some((p) => padded.includes(' ' + p + ' '))) return answer;
+      if (pattern.re ? pattern.re.test(raw) : pattern.phrases.some((p) => padded.includes(' ' + p + ' ')))
+        return answer;
     }
     return null;
   }
@@ -264,7 +283,9 @@
       jobContext: types.some((t) => F().JOB_TYPES.test(t)),
       hasCountryCodeField: types.includes('phone.countryCode'),
       passwordFields,
-      signup: passwordFields >= 2 || types.includes('account.passwordConfirm') ||
+      signup:
+        passwordFields >= 2 ||
+        types.includes('account.passwordConfirm') ||
         descs.some((d) => /\bnew-password\b/.test(d.autocomplete || '')),
     };
     return { results, context };
@@ -273,10 +294,14 @@
   /* ---------------------------------------------------------- option matching */
 
   function isPlaceholder(n) {
-    return !n || /^(select|choose|please (select|choose|specify)|pick (one|an option)|none selected|click to select)\b/.test(n);
+    return (
+      !n ||
+      /^(select|choose|please (select|choose|specify)|pick (one|an option)|none selected|click to select)\b/.test(n)
+    );
   }
 
-  const DECLINE = /\bdecline|prefer not|not (wish|want) to|(don t|do not|does not) wish|(don t|do not) want to|rather not|not to (say|answer|disclose|self identify|specify|provide|state|respond)|choose not|not disclose|undisclosed|wish not to/;
+  const DECLINE =
+    /\bdecline|prefer not|not (wish|want) to|(don t|do not|does not) wish|(don t|do not) want to|rather not|not to (say|answer|disclose|self identify|specify|provide|state|respond)|choose not|not disclose|undisclosed|wish not to/;
 
   /** Map an answer or option to yes / no / decline / male / female / nonbinary, if it is one. */
   function canonicalOf(text) {
@@ -285,18 +310,28 @@
     if (/^(yes|y|true|yep|yeah)\b/.test(t)) return 'yes';
     if (/^(no|n|false|nope)\b/.test(t)) return 'no';
     if (DECLINE.test(t)) return 'decline';
-    if (/\bnon ?binary\b|genderqueer|gender ?(non|queer|fluid|nonconforming)|\bnon conforming\b/.test(t)) return 'nonbinary';
+    if (/\bnon ?binary\b|genderqueer|gender ?(non|queer|fluid|nonconforming)|\bnon conforming\b/.test(t))
+      return 'nonbinary';
     if (/^(f|female|woman|women)$|\bfemale\b|\bwoman\b/.test(t)) return 'female';
     if (/^(m|male|man|men)$|\bmale\b|^man\b|\bcis ?man\b/.test(t)) return 'male';
-    if (/\bnot\b|\bdo not\b|\bdon t\b|\bdoes not\b|\bnone\b|\bnever\b|\bhaven t\b|\bwon t\b|\bcannot\b|\bcan t\b/.test(t)) return 'no';
+    if (
+      /\bnot\b|\bdo not\b|\bdon t\b|\bdoes not\b|\bnone\b|\bnever\b|\bhaven t\b|\bwon t\b|\bcannot\b|\bcan t\b/.test(t)
+    )
+      return 'no';
     if (/\bi am\b|\bi have\b|\bi identify\b|\bi do\b|\bi will\b|\bi can\b|\bi m\b|\bi agree\b/.test(t)) return 'yes';
     return null;
   }
 
   const DEGREE_GROUPS = [
     ['doctorate', /\bdoctor|\bph ?d\b|\bd ?phil\b|\bjd\b|\bmd\b|\bed ?d\b/],
-    ['master', /\bmaster|\bm ?sc?\b|\bm ?a\b|\bm ?eng\b|\bmba\b|\bm ?tech\b|\bm ?phil\b|\bllm\b|\bmfa\b|post ?graduate|graduate degree/],
-    ['bachelor', /\bbachelor|\bb ?sc?\b|\bb ?a\b|\bb ?eng\b|\bb ?tech\b|\bbba\b|\bb ?com\b|\bllb\b|\bbfa\b|undergraduate|\bab\b/],
+    [
+      'master',
+      /\bmaster|\bm ?sc?\b|\bm ?a\b|\bm ?eng\b|\bmba\b|\bm ?tech\b|\bm ?phil\b|\bllm\b|\bmfa\b|post ?graduate|graduate degree/,
+    ],
+    [
+      'bachelor',
+      /\bbachelor|\bb ?sc?\b|\bb ?a\b|\bb ?eng\b|\bb ?tech\b|\bbba\b|\bb ?com\b|\bllb\b|\bbfa\b|undergraduate|\bab\b/,
+    ],
     ['associate', /\bassociate|\baas\b/],
     ['highschool', /high school|secondary|\bged\b|a levels?|gcse/],
   ];
@@ -352,11 +387,15 @@
   }
 
   function parseRange(raw) {
-    const t = String(raw).toLowerCase().replace(/[,$€£]/g, '')
+    const t = String(raw)
+      .toLowerCase()
+      .replace(/[,$€£]/g, '')
       .replace(/(\d+(?:\.\d+)?)\s*k\b/g, (m, x) => String(parseFloat(x) * 1000));
     let m = t.match(/(\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?)/);
     if (m) return [+m[1], +m[2]];
-    m = t.match(/(\d+(?:\.\d+)?)\s*(?:\+|or more|and (?:above|over|up)|plus)/) || t.match(/(?:more than|over|above|at least|greater than)\s*(\d+(?:\.\d+)?)/);
+    m =
+      t.match(/(\d+(?:\.\d+)?)\s*(?:\+|or more|and (?:above|over|up)|plus)/) ||
+      t.match(/(?:more than|over|above|at least|greater than)\s*(\d+(?:\.\d+)?)/);
     if (m) return [+m[1], Infinity];
     m = t.match(/(?:less than|under|below|fewer than)\s*(\d+(?:\.\d+)?)/);
     if (m) return [0, +m[1] - 1e-9];
@@ -462,7 +501,8 @@
     if (new RegExp('m{1,2}' + S + 'y{2}').test(hint)) return [mm, y.slice(2)].join(sep);
     if (new RegExp('y{4}' + S + 'm{1,2}').test(hint)) return [y, mm].join(sep);
     if (/^\s*y{4}\s*$/.test(hint)) return y;
-    if (v.defaultFormat === 'MM/YY') return desc.maxLength && desc.maxLength >= 7 ? `${mm}/${y}` : `${mm}/${y.slice(2)}`;
+    if (v.defaultFormat === 'MM/YY')
+      return desc.maxLength && desc.maxLength >= 7 ? `${mm}/${y}` : `${mm}/${y.slice(2)}`;
     if (d.day) return [mm, dd, y].join('/');
     if (d.month) return [mm, y].join('/');
     return y;
@@ -474,7 +514,8 @@
     const max = desc.maxLength > 0 ? desc.maxLength : 0;
     let out = v.text;
     if (v.date && ['date', 'month', 'year', 'day'].includes(v.kind)) out = formatDate(v, desc);
-    else if (v.kind === 'country' && max && out.length > max) out = (max === 2 && v.iso2) || (max === 3 && v.iso3) || out;
+    else if (v.kind === 'country' && max && out.length > max)
+      out = (max === 2 && v.iso2) || (max === 3 && v.iso3) || out;
     else if (v.kind === 'region' && max && out.length > max && v.code) out = v.code;
     else if (v.kind === 'phone' && max && out.length > max) out = v.national;
     if (desc.inputType === 'number') {
@@ -485,10 +526,7 @@
     return out;
   }
 
-  const matcher = {
-    WEIGHTS, classify, plan, detectPart, questionText, compilePattern, canonicalOf,
-    matchOption, formatForText, isPlaceholder, parseRange, degreeGroup,
-  };
+  const matcher = { classify, plan, questionText, canonicalOf, matchOption, formatForText, isPlaceholder };
   JTF.matcher = matcher;
   if (typeof module === 'object' && module.exports) module.exports = matcher;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -1,138 +1,167 @@
 /*
- * JobToFill — service worker. Owns everything that needs privileges:
- * injecting the content scripts on demand, running a fill across all frames,
- * handing out vault secrets (only to the frame being filled, only over HTTPS),
- * keyboard shortcut, context menus and vault auto-lock.
+ * JobToFill — background (service worker in Chromium, event page in Firefox).
+ * Owns everything that needs privileges: injecting the content scripts on
+ * demand, running a fill across all frames, handing out vault secrets (only to
+ * the frame being filled, only over HTTPS), the keyboard shortcut, context
+ * menus and vault auto-lock.
  */
+// Chromium loads the libraries here; Firefox lists them in manifest.json "background.scripts".
 if (typeof importScripts === 'function') {
   importScripts('lib/util.js', 'lib/geo.js', 'lib/fields.js', 'lib/matcher.js', 'lib/vault.js', 'lib/store.js');
 }
 
-const { store, vault } = globalThis.JTF;
+const { store, vault, util, fields } = globalThis.JTF;
+const api = globalThis.JTF.api;
 
 const CONTENT_FILES = [
-  'lib/util.js', 'lib/geo.js', 'lib/fields.js', 'lib/matcher.js',
-  'content/dom.js', 'content/fill.js', 'content/main.js',
+  'lib/util.js',
+  'lib/geo.js',
+  'lib/fields.js',
+  'lib/matcher.js',
+  'content/dom.js',
+  'content/fill.js',
+  'content/main.js',
 ];
 
-const INSERT_ITEMS = [
-  ['name.full', 'Full name'], ['name.first', 'First name'], ['name.last', 'Last name'],
-  ['email', 'Email'], ['phone', 'Phone'], ['address.line1', 'Street address'], ['address.city', 'City'],
-  ['address.state', 'State / province'], ['address.postalCode', 'Postal code'], ['address.country', 'Country'],
-  ['links.linkedin', 'LinkedIn'], ['links.github', 'GitHub'], ['links.website', 'Website'],
-  ['edu.school', 'University / school'], ['edu.degree', 'Degree'], ['edu.field', 'Field of study'],
-  ['job.currentCompany', 'Current company'], ['job.currentTitle', 'Current title'],
-  ['summary', 'Summary'], ['coverLetter', 'Cover letter'],
+// Right-click → "Insert from profile" entries.
+// prettier-ignore
+const INSERT_TYPES = [
+  'name.full', 'name.first', 'name.last', 'email', 'phone',
+  'address.line1', 'address.city', 'address.state', 'address.postalCode', 'address.country',
+  'links.linkedin', 'links.github', 'links.website',
+  'edu.school', 'edu.degree', 'edu.field', 'job.currentCompany', 'job.currentTitle',
+  'summary', 'coverLetter',
 ];
 
-// tabId -> { count, expires, email }: secrets and documents are only served while a fill runs.
+/* ---------------------------------------------------------- active fills */
+
+// tabId -> { count, expires, email }. Secrets and documents are only served while a fill runs.
 const activeFills = new Map();
 
 function beginFill(tabId, email) {
-  const f = activeFills.get(tabId) || { count: 0 };
-  activeFills.set(tabId, { count: f.count + 1, expires: Date.now() + 120000, email });
+  const current = activeFills.get(tabId) || { count: 0 };
+  activeFills.set(tabId, { count: current.count + 1, expires: Date.now() + 120000, email });
 }
 
 function endFill(tabId) {
-  const f = activeFills.get(tabId);
-  if (!f || f.count <= 1) activeFills.delete(tabId);
-  else f.count--;
+  const current = activeFills.get(tabId);
+  if (!current || current.count <= 1) activeFills.delete(tabId);
+  else current.count--;
 }
 
-// Card fields often live in a payment provider's iframe. Cards go to the top page, frames on the
-// same site, or these processors only, never to an arbitrary third-party frame (ads, widgets).
-const PAYMENT_HOSTS = [
-  'stripe.com', 'stripe.network', 'braintreegateway.com', 'braintree-api.com', 'adyen.com', 'adyenpayments.com', 'paypal.com',
-  'checkout.com', 'squareup.com', 'squarecdn.com', 'recurly.com', 'chargify.com', 'shopifycs.com', 'shopifyinc.com', 'authorize.net',
-  'worldpay.com', 'mollie.com', 'klarna.com', 'cybersource.com', 'globalpay.com', 'paddle.com', 'chargebee.com',
-];
-
-function siteOf(host) {
-  // Good enough for "same site": the last two labels (three for co.uk-style domains).
-  const parts = host.toLowerCase().split('.');
-  const n = parts.length > 2 && parts[parts.length - 2].length <= 3 && parts[parts.length - 1].length === 2 ? 3 : 2;
-  return parts.slice(-n).join('.');
-}
-
-function cardAllowedIn(sender) {
-  if (sender.frameId === 0) return true;
-  const frameHost = new URL(sender.url).hostname;
-  const topHost = sender.tab && sender.tab.url ? new URL(sender.tab.url).hostname : '';
-  if (topHost && siteOf(frameHost) === siteOf(topHost)) return true;
-  return PAYMENT_HOSTS.some((h) => globalThis.JTF.util.hostMatches(frameHost, h));
+function fillInProgress(sender) {
+  const current = sender.tab && activeFills.get(sender.tab.id);
+  return current && current.expires > Date.now() ? current : null;
 }
 
 /* ------------------------------------------------------------- injection */
 
+/**
+ * Run a script injection in every frame of a tab (or the given frames). Firefox rejects the
+ * whole call when any frame is off-limits, so fall back to the top frame in that case.
+ */
+async function execute(tabId, frameIds, details) {
+  if (frameIds) return api.scripting.executeScript({ ...details, target: { tabId, frameIds } });
+  try {
+    return await api.scripting.executeScript({ ...details, target: { tabId, allFrames: true } });
+  } catch (err) {
+    return api.scripting.executeScript({ ...details, target: { tabId } });
+  }
+}
+
 async function ensureInjected(tabId, frameIds) {
-  const target = frameIds ? { tabId, frameIds } : { tabId, allFrames: true };
-  const probe = await chrome.scripting.executeScript({ target, func: () => !!globalThis.__jtf });
+  const probe = await execute(tabId, frameIds, { func: () => !!globalThis.__jtf });
   const missing = probe.filter((r) => !r.result).map((r) => r.frameId);
-  if (missing.length) {
-    await chrome.scripting.executeScript({ target: { tabId, frameIds: missing }, files: CONTENT_FILES });
-  }
+  if (missing.length) await execute(tabId, missing, { files: CONTENT_FILES });
 }
 
-async function runInFrames(tabId, func, args, frameIds) {
-  const target = frameIds ? { tabId, frameIds } : { tabId, allFrames: true };
-  const results = await chrome.scripting.executeScript({ target, func, args: args || [] });
-  return results.map((r) => Object.assign({ frameId: r.frameId }, r.result || {}));
+/** Call globalThis.__jtf[method](...args) in the content script of each frame. */
+async function callFrames(tabId, method, args, frameIds) {
+  await ensureInjected(tabId, frameIds);
+  const results = await execute(tabId, frameIds, {
+    func: (name, params) => globalThis.__jtf && globalThis.__jtf[name](...params),
+    args: [method, args || []],
+  });
+  return results.map((r) => ({ frameId: r.frameId, ...(r.result || {}) }));
 }
 
-function friendlyError(err) {
+const CANT_RUN = 'JobToFill can’t run on this page (browser pages and add-on stores are off-limits).';
+const NEEDS_ACCESS =
+  'JobToFill doesn’t have access to this site yet. Open the JobToFill toolbar popup and click “Allow”.';
+
+/**
+ * Turn an injection error into something a person can act on. Firefox reports both restricted
+ * pages and a missing permission as "Missing host permission", so check which one it is.
+ */
+async function explainError(err, tabId) {
   const msg = String((err && err.message) || err);
-  if (/cannot access|cannot be scripted|chrome:\/\/|extensions gallery|webstore/i.test(msg)) {
-    return 'JobToFill can’t run on this page (browser pages and the extension store are off-limits).';
-  }
-  return msg;
+  if (/cannot access|cannot be scripted|extensions gallery|webstore|privileged/i.test(msg)) return CANT_RUN;
+  if (!/permission/i.test(msg)) return msg;
+  const tab = tabId == null ? null : await api.tabs.get(tabId).catch(() => null);
+  if (!tab || !/^(https?|file):/.test(tab.url || '')) return CANT_RUN;
+  return (await api.permissions.contains({ origins: ['<all_urls>'] })) ? CANT_RUN : NEEDS_ACCESS;
 }
 
 /* ------------------------------------------------------------------ fill */
 
 async function fillTab(tabId, options) {
-  const opts = Object.assign({ toast: false }, options || {});
+  const opts = { toast: false, ...options };
   const { profile, settings } = await store.getActive();
   const payload = {
-    profile, settings,
+    profile,
+    settings,
     docs: await store.docInfo(profile.id),
     vault: await vault.status(),
   };
-  beginFill(tabId, profile.contact.email);
+
   let frames;
+  beginFill(tabId, profile.contact.email);
   try {
-    await ensureInjected(tabId);
-    frames = await runInFrames(tabId, (p) => globalThis.__jtf && globalThis.__jtf.fill(p), [payload]);
+    frames = await callFrames(tabId, 'fill', [payload]);
   } catch (err) {
-    return { error: friendlyError(err) };
+    return { error: await explainError(err, tabId) };
   } finally {
     endFill(tabId);
   }
 
-  const summary = { filled: 0, detected: 0, skipped: 0, failed: 0, unknown: 0, missing: [], missingTypes: [], unmatched: [], notes: [], frames: frames.length, undoable: false };
-  let top = null;
-  let jobContext = false;
-  for (const f of frames) {
-    if (f.frameId === 0) top = f;
-    if (typeof f.filled !== 'number') continue;
-    for (const k of ['filled', 'detected', 'skipped', 'failed', 'unknown']) summary[k] += f[k] || 0;
-    summary.missing.push(...(f.missing || []));
-    summary.missingTypes.push(...(f.missingTypes || []));
-    summary.unmatched.push(...(f.unmatched || []));
-    summary.notes.push(...(f.notes || []));
-    summary.undoable = summary.undoable || !!f.undoable;
-    jobContext = jobContext || (f.jobContext && f.filled > 0);
+  const summary = mergeReports(frames);
+  const top = frames.find((f) => f.frameId === 0);
+  if (summary.jobContext && settings.logApplications !== false && top && top.url) {
+    await store.addHistory({
+      url: top.url,
+      host: top.host,
+      title: top.title,
+      filled: summary.filled,
+      profile: profile.name,
+    });
   }
-  summary.missing = [...new Set(summary.missing)];
-  summary.missingTypes = [...new Set(summary.missingTypes)];
-  summary.unmatched = [...new Set(summary.unmatched)];
-  summary.notes = [...new Set(summary.notes)];
+  if (opts.toast && settings.toast !== false) await showToast(tabId, summaryText(summary), { undo: summary.undoable });
+  return summary;
+}
 
-  if (jobContext && settings.logApplications !== false && top && top.url) {
-    await store.addHistory({ url: top.url, host: top.host, title: top.title, filled: summary.filled, profile: profile.name });
+function mergeReports(frames) {
+  const summary = {
+    filled: 0,
+    detected: 0,
+    skipped: 0,
+    failed: 0,
+    unknown: 0,
+    missing: [],
+    missingTypes: [],
+    unmatched: [],
+    notes: [],
+    frames: frames.length,
+    undoable: false,
+    jobContext: false,
+  };
+  for (const f of frames) {
+    if (typeof f.filled !== 'number') continue;
+    for (const key of ['filled', 'detected', 'skipped', 'failed', 'unknown']) summary[key] += f[key] || 0;
+    for (const key of ['missing', 'missingTypes', 'unmatched', 'notes']) summary[key].push(...(f[key] || []));
+    summary.undoable = summary.undoable || !!f.undoable;
+    summary.jobContext = summary.jobContext || (f.jobContext && f.filled > 0);
   }
-  if (opts.toast && settings.toast !== false) {
-    await showToast(tabId, summaryText(summary), { undo: summary.undoable });
-  }
+  for (const key of ['missing', 'missingTypes', 'unmatched', 'notes']) summary[key] = [...new Set(summary[key])];
   return summary;
 }
 
@@ -140,22 +169,22 @@ function summaryText(s) {
   if (s.error) return s.error;
   if (!s.detected) return 'No fillable fields found on this page.';
   const lines = [`Filled ${s.filled} field${s.filled === 1 ? '' : 's'}.`];
-  if (s.missing.length) lines.push(`Add to your profile: ${s.missing.slice(0, 5).join(', ')}${s.missing.length > 5 ? '…' : ''}`);
-  if (s.notes.length) lines.push(...s.notes.slice(0, 2));
+  if (s.missing.length)
+    lines.push(`Add to your profile: ${s.missing.slice(0, 5).join(', ')}${s.missing.length > 5 ? '…' : ''}`);
+  lines.push(...s.notes.slice(0, 2));
   return lines.join('\n');
 }
 
-async function showToast(tabId, message, opts) {
+async function showToast(tabId, message, opts, frameIds) {
   try {
-    await ensureInjected(tabId, [0]);
-    await runInFrames(tabId, (m, o) => globalThis.__jtf && { shown: globalThis.__jtf.toast(m, o) }, [message, opts || {}], [0]);
+    await callFrames(tabId, 'toast', [message, opts || {}], frameIds || [0]);
   } catch (err) {
-    /* page can't be scripted */
+    /* the page can't be scripted */
   }
 }
 
 async function activeTabId() {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const [tab] = await api.tabs.query({ active: true, lastFocusedWindow: true });
   return tab && tab.id;
 }
 
@@ -166,45 +195,84 @@ function isSecureUrl(url) {
   return url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
 }
 
+// Card fields often live in a payment provider's iframe. Cards go to the top page, frames on the
+// same site, or these processors only — never to an arbitrary third-party frame (ads, widgets).
+// prettier-ignore
+const PAYMENT_HOSTS = [
+  'stripe.com', 'stripe.network', 'braintreegateway.com', 'braintree-api.com', 'adyen.com', 'adyenpayments.com',
+  'paypal.com', 'checkout.com', 'squareup.com', 'squarecdn.com', 'recurly.com', 'chargify.com', 'shopifycs.com',
+  'shopifyinc.com', 'authorize.net', 'worldpay.com', 'mollie.com', 'klarna.com', 'cybersource.com', 'globalpay.com',
+  'paddle.com', 'chargebee.com',
+];
+
+/** Good enough for "same site": the last two labels (three for co.uk-style domains). */
+function siteOf(host) {
+  const parts = host.toLowerCase().split('.');
+  const n = parts.length > 2 && parts[parts.length - 2].length <= 3 && parts[parts.length - 1].length === 2 ? 3 : 2;
+  return parts.slice(-n).join('.');
+}
+
+function cardAllowedIn(sender) {
+  if (sender.frameId === 0) return true;
+  const frameHost = new URL(sender.url).hostname;
+  const topHost = sender.tab && sender.tab.url ? new URL(sender.tab.url).hostname : '';
+  if (topHost && siteOf(frameHost) === siteOf(topHost)) return true;
+  return PAYMENT_HOSTS.some((h) => util.hostMatches(frameHost, h));
+}
+
+function newCredential(host, username, password) {
+  const now = Date.now();
+  return { id: util.uid(), host, username, password, createdAt: now, updatedAt: now, note: 'Generated by JobToFill' };
+}
+
 async function secretsFor(msg, sender) {
-  const fill = sender.tab && activeFills.get(sender.tab.id);
-  if (!fill || fill.expires < Date.now()) return { error: 'No fill in progress.' };
+  const fill = fillInProgress(sender);
+  if (!fill) return { error: 'No fill in progress.' };
   const url = new URL(sender.url);
-  if (!isSecureUrl(url)) return { error: `Passwords and cards are only filled on secure (https) pages — skipped ${url.hostname}.` };
-  if ((await vault.status()) !== 'unlocked') return { error: 'The vault is locked, so passwords and cards were skipped.' };
+  if (!isSecureUrl(url))
+    return { error: `Passwords and cards are only filled on secure (https) pages — skipped ${url.hostname}.` };
+  if ((await vault.status()) !== 'unlocked')
+    return { error: 'The vault is locked, so passwords and cards were skipped.' };
 
   const data = await vault.read();
   const settings = await store.getSettings();
   const out = { notes: [] };
+
   if (msg.password) {
     let cred = vault.findCredential(data, url.hostname);
     if (!cred && msg.password === 'signup' && settings.passwordStrategy === 'generate') {
-      cred = {
-        id: globalThis.JTF.util.uid(), host: url.hostname, username: fill.email || '',
-        password: vault.generatePassword(), createdAt: Date.now(), updatedAt: Date.now(), note: 'Generated by JobToFill',
-      };
+      cred = newCredential(url.hostname, fill.email || '', vault.generatePassword());
       data.credentials.push(cred);
       await vault.write(data);
       out.notes.push(`Generated a new password for ${url.hostname} and saved it in your vault.`);
     }
-    if (!cred && settings.passwordStrategy === 'default' && data.defaultPassword) cred = { username: fill.email || '', password: data.defaultPassword };
+    if (!cred && settings.passwordStrategy === 'default' && data.defaultPassword) {
+      cred = { username: fill.email || '', password: data.defaultPassword };
+    }
     if (cred) out.credential = { username: cred.username || fill.email || '', password: cred.password };
     else out.notes.push(`No saved password for ${url.hostname}.`);
   }
-  if (msg.card && !cardAllowedIn(sender)) {
-    out.notes.push(`Card not filled into a frame from ${url.hostname}.`);
-  } else if (msg.card) {
+
+  if (msg.card) {
     const card = vault.defaultCard(data);
-    if (card) out.card = { name: card.name, number: card.number, expMonth: card.expMonth, expYear: card.expYear, cvc: card.cvc };
-    else out.notes.push('No card saved in the vault.');
+    if (!cardAllowedIn(sender)) out.notes.push(`Card not filled into a frame from ${url.hostname}.`);
+    else if (!card) out.notes.push('No card saved in the vault.');
+    else
+      out.card = {
+        name: card.name,
+        number: card.number,
+        expMonth: card.expMonth,
+        expYear: card.expYear,
+        cvc: card.cvc,
+      };
   }
+
   await vault.touch();
   return out;
 }
 
 async function documentFor(msg, sender) {
-  const fill = sender.tab && activeFills.get(sender.tab.id);
-  if (!fill || fill.expires < Date.now()) return { error: 'No fill in progress.' };
+  if (!fillInProgress(sender)) return { error: 'No fill in progress.' };
   const { profile } = await store.getActive();
   const doc = await store.getDoc(profile.id, msg.which);
   return doc ? { name: doc.name, type: doc.type, dataUrl: doc.dataUrl } : { error: 'No document' };
@@ -212,141 +280,138 @@ async function documentFor(msg, sender) {
 
 /* -------------------------------------------------------------- messages */
 
-const isExtensionPage = (sender) => !!sender.url && sender.url.startsWith(chrome.runtime.getURL(''));
-const isContentScript = (sender) => !!sender.tab && !isExtensionPage(sender);
+const sum = (frames, key) => frames.reduce((n, f) => n + (f[key] || 0), 0);
 
 const HANDLERS = {
-  // From the popup / options page.
+  // From the popup and settings page.
   'jtf:fill': (msg) => fillTab(msg.tabId, { toast: !!msg.toast }),
-  'jtf:undo': async (msg) => {
-    await ensureInjected(msg.tabId);
-    const frames = await runInFrames(msg.tabId, () => globalThis.__jtf && globalThis.__jtf.undo());
-    return { undone: frames.reduce((n, f) => n + (f.undone || 0), 0) };
-  },
+  'jtf:undo': async (msg) => ({ undone: sum(await callFrames(msg.tabId, 'undo'), 'undone') }),
   'jtf:inspect': async (msg) => {
     const { profile } = await store.getActive();
-    const payload = { profile, docs: await store.docInfo(profile.id) };
-    await ensureInjected(msg.tabId);
-    const frames = await runInFrames(msg.tabId, (p) => globalThis.__jtf && globalThis.__jtf.inspect(p), [payload]);
-    return { on: frames.some((f) => f.on), detected: frames.reduce((n, f) => n + (f.detected || 0), 0) };
+    const frames = await callFrames(msg.tabId, 'inspect', [{ profile, docs: await store.docInfo(profile.id) }]);
+    return { on: frames.some((f) => f.on), detected: sum(frames, 'detected') };
   },
   'jtf:learn': async (msg) => {
     const { profile } = await store.getActive();
-    await ensureInjected(msg.tabId);
-    const frames = await runInFrames(msg.tabId, (p) => globalThis.__jtf && globalThis.__jtf.learn(p), [{ profile }]);
+    const frames = await callFrames(msg.tabId, 'learn', [{ profile }]);
     return { suggestions: frames.flatMap((f) => f.suggestions || []) };
   },
-  // From content scripts during a fill.
+  // From content scripts, during a fill.
   'jtf:secrets': secretsFor,
   'jtf:document': documentFor,
 };
 
 const CONTENT_ONLY = new Set(['jtf:secrets', 'jtf:document']);
+const isExtensionPage = (sender) => !!sender.url && sender.url.startsWith(api.runtime.getURL(''));
+const isContentScript = (sender) => !!sender.tab && !isExtensionPage(sender);
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const handler = msg && HANDLERS[msg.type];
-  if (!handler || sender.id !== chrome.runtime.id) return false;
+  if (!handler || sender.id !== api.runtime.id) return false;
   const allowed = CONTENT_ONLY.has(msg.type) ? isContentScript(sender) : isExtensionPage(sender);
   if (!allowed) return false;
   Promise.resolve()
     .then(() => handler(msg, sender))
-    .then(sendResponse, (err) => sendResponse({ error: friendlyError(err) }));
+    .then(sendResponse, async (err) => sendResponse({ error: await explainError(err, msg.tabId) }));
   return true;
 });
 
 /* --------------------------------------------------- shortcuts and menus */
 
-chrome.commands.onCommand.addListener(async (command) => {
+api.commands.onCommand.addListener(async (command) => {
   const tabId = await activeTabId();
-  if (!tabId) return;
-  if (command === 'fill-page') await fillTab(tabId, { toast: true });
+  if (tabId != null && command === 'fill-page') await fillTab(tabId, { toast: true });
 });
 
-function createMenus() {
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({ id: 'jtf-fill', title: 'Fill this page', contexts: ['page', 'editable', 'frame'] });
-    chrome.contextMenus.create({ id: 'jtf-insert', title: 'Insert from profile', contexts: ['editable'] });
-    for (const [type, title] of INSERT_ITEMS) {
-      chrome.contextMenus.create({ id: 'jtf-insert:' + type, parentId: 'jtf-insert', title, contexts: ['editable'] });
-    }
-    chrome.contextMenus.create({ id: 'jtf-genpass', title: 'Generate strong password', contexts: ['editable'] });
-  });
+async function createMenus() {
+  await api.contextMenus.removeAll();
+  const add = (props) => api.contextMenus.create(props);
+  add({ id: 'jtf-fill', title: 'Fill this page', contexts: ['page', 'editable', 'frame'] });
+  add({ id: 'jtf-insert', title: 'Insert from profile', contexts: ['editable'] });
+  for (const type of INSERT_TYPES) {
+    add({ id: 'jtf-insert:' + type, parentId: 'jtf-insert', title: fields.labelOf(type), contexts: ['editable'] });
+  }
+  add({ id: 'jtf-genpass', title: 'Generate strong password', contexts: ['editable'] });
 }
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
+api.contextMenus.onClicked.addListener((info, tab) => {
   handleMenuClick(info, tab).catch((err) => console.warn('JobToFill menu action failed:', err));
 });
 
 async function handleMenuClick(info, tab) {
   if (!tab || tab.id == null) return;
   const frameIds = [info.frameId || 0];
-  if (info.menuItemId === 'jtf-fill') {
+  const id = String(info.menuItemId);
+
+  if (id === 'jtf-fill') {
     await fillTab(tab.id, { toast: true });
-    return;
-  }
-  if (String(info.menuItemId).startsWith('jtf-insert:')) {
-    const type = String(info.menuItemId).slice('jtf-insert:'.length);
+  } else if (id.startsWith('jtf-insert:')) {
     const { profile, settings } = await store.getActive();
-    await ensureInjected(tab.id, frameIds);
-    await runInFrames(tab.id, (t, p) => globalThis.__jtf && globalThis.__jtf.fillActive(t, p), [type, { profile, settings }], frameIds);
+    await callFrames(tab.id, 'fillActive', [id.slice('jtf-insert:'.length), { profile, settings }], frameIds);
+  } else if (id === 'jtf-genpass') {
+    await generatePasswordInto(tab, info, frameIds);
+  }
+}
+
+async function generatePasswordInto(tab, info, frameIds) {
+  const status = await vault.status();
+  if (status !== 'unlocked') {
+    const message =
+      status === 'none'
+        ? 'Set up the JobToFill vault first so generated passwords are saved.'
+        : 'Unlock JobToFill (click the toolbar icon) so the new password can be saved.';
+    await showToast(tab.id, message, {}, frameIds);
     return;
   }
-  if (info.menuItemId === 'jtf-genpass') {
-    await ensureInjected(tab.id, frameIds);
-    const status = await vault.status();
-    if (status !== 'unlocked') {
-      await runInFrames(tab.id, (m) => globalThis.__jtf && { shown: globalThis.__jtf.toast(m) },
-        [status === 'none' ? 'Set up the JobToFill vault first so generated passwords are saved.' : 'Unlock JobToFill (click the toolbar icon) so the new password can be saved.'], frameIds);
-      return;
+  const host = new URL(info.frameUrl || info.pageUrl || tab.url).hostname;
+  const { profile } = await store.getActive();
+  const password = vault.generatePassword();
+  await vault.update((data) => {
+    const existing = vault.findCredential(data, host);
+    if (existing && existing.host === host) {
+      existing.previousPassword = existing.password;
+      existing.password = password;
+      existing.updatedAt = Date.now();
+    } else {
+      data.credentials.push(newCredential(host, profile.contact.email || '', password));
     }
-    const url = new URL(info.frameUrl || info.pageUrl || tab.url);
-    const { profile } = await store.getActive();
-    const password = vault.generatePassword();
-    await vault.update((data) => {
-      const existing = vault.findCredential(data, url.hostname);
-      if (existing && existing.host === url.hostname) {
-        existing.previousPassword = existing.password;
-        existing.password = password;
-        existing.updatedAt = Date.now();
-      } else {
-        data.credentials.push({
-          id: globalThis.JTF.util.uid(), host: url.hostname, username: profile.contact.email || '', password,
-          createdAt: Date.now(), updatedAt: Date.now(), note: 'Generated by JobToFill',
-        });
-      }
-    });
-    await runInFrames(tab.id, (pw, host) => {
-      if (!globalThis.__jtf) return {};
-      const res = globalThis.__jtf.insertPassword(pw);
-      globalThis.__jtf.toast(`Generated a strong password and saved it for ${host}.`);
-      return res;
-    }, [password, url.hostname], frameIds);
-  }
+  });
+  await callFrames(tab.id, 'insertPassword', [password], frameIds);
+  await showToast(tab.id, `Generated a strong password and saved it for ${host}.`, {}, frameIds);
 }
 
 /* ------------------------------------------------------------- lifecycle */
 
 async function ensureAlarm() {
-  if (!(await chrome.alarms.get('jtf-autolock'))) chrome.alarms.create('jtf-autolock', { periodInMinutes: 1 });
+  if (!(await api.alarms.get('jtf-autolock'))) api.alarms.create('jtf-autolock', { periodInMinutes: 1 });
 }
 
-chrome.alarms.onAlarm.addListener(async (alarm) => {
+api.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== 'jtf-autolock') return;
-  const settings = await store.getSettings();
-  await vault.autoLock(settings.autoLockMinutes);
+  await vault.autoLock((await store.getSettings()).autoLockMinutes);
 });
 
-chrome.runtime.onInstalled.addListener(async (details) => {
-  createMenus();
+api.runtime.onInstalled.addListener(async (details) => {
+  await createMenus();
   await ensureAlarm();
   await store.loadAll();
-  if (details.reason === 'install') chrome.runtime.openOptionsPage();
+  if (details.reason === 'install') api.runtime.openOptionsPage();
 });
 
-chrome.runtime.onStartup.addListener(() => {
-  createMenus();
-  ensureAlarm();
+api.runtime.onStartup.addListener(async () => {
+  await createMenus();
+  await ensureAlarm();
 });
 
-// Exposed for debugging from the service-worker console and for the E2E tests.
-globalThis.JTFBackground = { fillTab, ensureInjected, runInFrames, handleMenuClick, secretsFor, summaryText, cardAllowedIn, siteOf, handlers: HANDLERS };
+// For debugging from the background console, and for the end-to-end tests.
+globalThis.JTFBackground = {
+  fillTab,
+  callFrames,
+  ensureInjected,
+  handleMenuClick,
+  secretsFor,
+  summaryText,
+  cardAllowedIn,
+  siteOf,
+  handlers: HANDLERS,
+};

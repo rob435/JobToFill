@@ -29,8 +29,13 @@
     const view = el.ownerDocument.defaultView;
     const rect = el.getBoundingClientRect();
     const init = {
-      bubbles: true, cancelable: true, composed: true, view, button: 0,
-      clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view,
+      button: 0,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
     };
     el.dispatchEvent(new PointerEvent('pointerdown', init));
     el.dispatchEvent(new MouseEvent('mousedown', init));
@@ -41,8 +46,12 @@
 
   function nativeSetter(el) {
     const view = el.ownerDocument.defaultView;
-    const proto = el.localName === 'textarea' ? view.HTMLTextAreaElement.prototype
-      : el.localName === 'select' ? view.HTMLSelectElement.prototype : view.HTMLInputElement.prototype;
+    const proto =
+      el.localName === 'textarea'
+        ? view.HTMLTextAreaElement.prototype
+        : el.localName === 'select'
+          ? view.HTMLSelectElement.prototype
+          : view.HTMLInputElement.prototype;
     return Object.getOwnPropertyDescriptor(proto, 'value').set;
   }
 
@@ -91,7 +100,9 @@
   function selectedChip(el) {
     let a = el.parentElement;
     for (let i = 0; a && i < 5; i++, a = a.parentElement) {
-      const others = Array.from(a.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]')).filter((c) => c !== el && !c.contains(el));
+      const others = Array.from(
+        a.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]'),
+      ).filter((c) => c !== el && !c.contains(el));
       if (others.length) return null;
       const chip = a.querySelector(CHIP);
       if (chip) return chip;
@@ -103,14 +114,26 @@
   function hasValue(field) {
     const { el, kind, members } = field;
     switch (kind) {
-      case 'select': return !isUntouchedSelect(el);
-      case 'radio': return members.some((m) => m.checked && !m.defaultChecked);
-      case 'checkboxes': return members.some((m) => m.checked !== m.defaultChecked);
-      case 'checkbox': return el.checked;
-      case 'file': return el.files && el.files.length > 0;
-      case 'combo': { const t = comboText(el); return !!t && !M().isPlaceholder(JTF.util.normalize(t)); }
-      case 'combobox': return !!el.value.trim() || !!selectedChip(el);
-      default: { const v = (el.value || '').trim(); return !!v && !/^https?:\/\/$/.test(v); }
+      case 'select':
+        return !isUntouchedSelect(el);
+      case 'radio':
+        return members.some((m) => m.checked && !m.defaultChecked);
+      case 'checkboxes':
+        return members.some((m) => m.checked !== m.defaultChecked);
+      case 'checkbox':
+        return el.checked;
+      case 'file':
+        return el.files && el.files.length > 0;
+      case 'combo': {
+        const t = comboText(el);
+        return !!t && !M().isPlaceholder(JTF.util.normalize(t));
+      }
+      case 'combobox':
+        return !!el.value.trim() || !!selectedChip(el);
+      default: {
+        const v = (el.value || '').trim();
+        return !!v && !/^https?:\/\/$/.test(v);
+      }
     }
   }
 
@@ -118,18 +141,33 @@
   function currentValue(field) {
     const { el, kind, members } = field;
     switch (kind) {
-      case 'select': return isUntouchedSelect(el) ? '' : (el.options[el.selectedIndex] || {}).text || '';
-      case 'radio': { const m = members.find((x) => x.checked); return m ? field.desc.options[members.indexOf(m)].text : ''; }
-      case 'checkboxes': return members.filter((m) => m.checked).map((m) => field.desc.options[members.indexOf(m)].text).join(', ');
-      case 'checkbox': return el.checked ? 'Yes' : '';
-      case 'file': case 'password': return '';
-      case 'combo': { const t = comboText(el); return M().isPlaceholder(JTF.util.normalize(t)) ? '' : t; }
+      case 'select':
+        return isUntouchedSelect(el) ? '' : (el.options[el.selectedIndex] || {}).text || '';
+      case 'radio': {
+        const m = members.find((x) => x.checked);
+        return m ? field.desc.options[members.indexOf(m)].text : '';
+      }
+      case 'checkboxes':
+        return members
+          .filter((m) => m.checked)
+          .map((m) => field.desc.options[members.indexOf(m)].text)
+          .join(', ');
+      case 'checkbox':
+        return el.checked ? 'Yes' : '';
+      case 'file':
+      case 'password':
+        return '';
+      case 'combo': {
+        const t = comboText(el);
+        return M().isPlaceholder(JTF.util.normalize(t)) ? '' : t;
+      }
       case 'combobox': {
         if (el.value.trim()) return el.value.trim();
         const chip = selectedChip(el);
         return chip ? dom().textOf(chip) : '';
       }
-      default: return (el.value || '').trim();
+      default:
+        return (el.value || '').trim();
     }
   }
 
@@ -138,7 +176,11 @@
   function listboxFor(el) {
     const rootNode = el.getRootNode();
     const doc = el.ownerDocument;
-    const ids = [el.getAttribute('aria-controls'), el.getAttribute('aria-owns')].filter(Boolean).join(' ').split(/\s+/).filter(Boolean);
+    const ids = [el.getAttribute('aria-controls'), el.getAttribute('aria-owns')]
+      .filter(Boolean)
+      .join(' ')
+      .split(/\s+/)
+      .filter(Boolean);
     for (const id of ids) {
       const lb = (rootNode.getElementById && rootNode.getElementById(id)) || doc.getElementById(id);
       if (lb && dom().isVisible(lb)) return lb;
@@ -207,7 +249,9 @@
     if (idx < 0 && searchable) {
       const query = v.search || v.text;
       setNativeValue(el, query);
-      el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: query }));
+      el.dispatchEvent(
+        new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: query }),
+      );
       typed = true;
       opts = await waitForOptions(el, 2000);
       idx = pickOption(opts, v);
@@ -216,7 +260,9 @@
         const full = M().formatForText(v, field.desc) || query;
         if (full !== query) {
           setNativeValue(el, full);
-          el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: full }));
+          el.dispatchEvent(
+            new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: full }),
+          );
         }
         fire(el, 'change');
         el.blur();
@@ -293,7 +339,9 @@
           return { status: 'filled', target: members[idx] };
         }
         case 'checkboxes': {
-          const wanted = String(v.text).split(/\s*[,;\n]\s*/).filter(Boolean);
+          const wanted = String(v.text)
+            .split(/\s*[,;\n]\s*/)
+            .filter(Boolean);
           const picks = new Set();
           for (const w of wanted) {
             const idx = M().matchOption(desc.options, JTF.fields.val(w));
@@ -350,7 +398,9 @@
           h.el.selectedIndex = h.prev;
           fire(h.el, 'change');
         } else if (h.kind === 'radio' || h.kind === 'checkboxes') {
-          h.members.forEach((m, i) => { if (m.checked !== h.prev[i]) setChecked(m, h.prev[i]); });
+          h.members.forEach((m, i) => {
+            if (m.checked !== h.prev[i]) setChecked(m, h.prev[i]);
+          });
         } else if (h.kind === 'checkbox') {
           setChecked(h.el, h.prev);
         } else if (h.kind === 'file') {
@@ -375,7 +425,12 @@
   const highlighted = [];
 
   function highlight(el) {
-    const target = el.type === 'radio' || el.type === 'checkbox' ? (el.labels && el.labels[0]) || el : el.type === 'file' ? el.parentElement || el : el;
+    const target =
+      el.type === 'radio' || el.type === 'checkbox'
+        ? (el.labels && el.labels[0]) || el
+        : el.type === 'file'
+          ? el.parentElement || el
+          : el;
     if (!target || !target.style || highlighted.some((h) => h.target === target)) return;
     highlighted.push({ target, outline: target.style.outline, offset: target.style.outlineOffset });
     target.style.outline = `2px solid ${HIGHLIGHT}`;
@@ -398,5 +453,5 @@
     while (highlighted.length) clearOne(highlighted[0].target);
   }
 
-  JTF.fill = { apply, undo, hasValue, currentValue, highlight, clearHighlights, typeValue, setNativeValue, setChecked };
+  JTF.fill = { apply, undo, hasValue, currentValue, highlight, clearHighlights, typeValue };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

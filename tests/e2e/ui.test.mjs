@@ -1,28 +1,33 @@
-// End-to-end: the settings page and the toolbar popup.
-import { test, before, after } from 'node:test';
+// End-to-end, Chromium only: detailed Playwright interactions with the settings page and the popup.
+// (pages.test.mjs covers the same pages in both browsers.)
+import { test as base, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { isFirefox, launch } from './harness.mjs';
+
+const test = (name, fn) => base(name, { skip: isFirefox && 'uses Playwright page APIs' }, fn);
 
 let h;
 const errors = [];
 
 before(async () => {
-  h = await launch();
+  if (!isFirefox) h = await launch();
 });
 
 after(async () => {
-  await h.close();
+  if (h) await h.close();
 });
 
 async function openExt(path) {
   const page = await h.context.newPage();
   page.on('pageerror', (e) => errors.push(`${path}: ${e.message}`));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(`${path}: ${m.text()}`); });
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(`${path}: ${m.text()}`);
+  });
   await page.goto(h.extUrl(path));
   return page;
 }
 
-const profile = () => h.sw.evaluate(async () => (await globalThis.JTF.store.getActive()).profile);
+const profile = () => h.bg(async () => (await globalThis.JTF.store.getActive()).profile);
 
 test('every settings section renders without errors', async () => {
   const page = await openExt('options/options.html');
@@ -30,7 +35,10 @@ test('every settings section renders without errors', async () => {
   assert.ok(sections.length >= 12);
   for (const s of sections) {
     await page.click(`#nav a[href="#${s}"]`);
-    await page.waitForFunction((name) => document.querySelector('#sections').dataset.section === name && document.querySelector('#sections h1'), s);
+    await page.waitForFunction(
+      (name) => document.querySelector('#sections').dataset.section === name && document.querySelector('#sections h1'),
+      s,
+    );
     assert.equal(await page.getAttribute(`#nav a[href="#${s}"]`, 'aria-current'), 'page');
   }
   assert.deepEqual(errors, []);
@@ -72,7 +80,9 @@ test('multiple profiles: create, switch, delete', async () => {
   const page = await openExt('options/options.html#personal');
   page.once('dialog', (d) => d.accept('Shopping'));
   await page.click('#profile-new');
-  await page.waitForFunction(() => document.querySelector('#profile-select').selectedOptions[0]?.textContent === 'Shopping');
+  await page.waitForFunction(
+    () => document.querySelector('#profile-select').selectedOptions[0]?.textContent === 'Shopping',
+  );
   assert.equal((await profile()).name, 'Shopping');
   page.once('dialog', (d) => d.accept());
   await page.click('#profile-delete');
@@ -83,9 +93,13 @@ test('multiple profiles: create, switch, delete', async () => {
 
 test('resume upload is stored per profile', async () => {
   const page = await openExt('options/options.html#documents');
-  await page.setInputFiles('input[name="doc-resume"]', { name: 'Grace_CV.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 test') });
+  await page.setInputFiles('input[name="doc-resume"]', {
+    name: 'Grace_CV.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.4 test'),
+  });
   await page.waitForSelector('text=Grace_CV.pdf');
-  const info = await h.sw.evaluate(async () => {
+  const info = await h.bg(async () => {
     const { profile } = await globalThis.JTF.store.getActive();
     return globalThis.JTF.store.docInfo(profile.id);
   });
@@ -99,7 +113,7 @@ test('vault: create, add a card and a login, lock and unlock from the settings p
   await page.fill('input[name=master2]', 'my long master password');
   await page.click('text=Create vault');
   await page.waitForSelector('text=Saved logins (0)');
-  assert.equal(await h.sw.evaluate(() => globalThis.JTF.vault.status()), 'unlocked');
+  assert.equal(await h.bg(() => globalThis.JTF.vault.status()), 'unlocked');
 
   await page.fill('input[name=cardNumber]', '4242 4242 4242 4242');
   await page.fill('input[name=cardExpMonth]', '7');
@@ -112,7 +126,7 @@ test('vault: create, add a card and a login, lock and unlock from the settings p
   await page.click('text=Add login');
   await page.waitForSelector('text=acme.wd5.myworkdayjobs.com');
 
-  const data = await h.sw.evaluate(() => globalThis.JTF.vault.read());
+  const data = await h.bg(() => globalThis.JTF.vault.read());
   assert.equal(data.cards[0].number, '4242424242424242');
   assert.equal(data.cards[0].expMonth, 7);
   assert.equal(data.credentials[0].host, 'acme.wd5.myworkdayjobs.com');
@@ -135,7 +149,7 @@ test('settings toggles persist', async () => {
   await page.check('input[name=overwrite]');
   await page.selectOption('select[name=autoLockMinutes]', '5');
   await page.waitForTimeout(200);
-  const s = await h.sw.evaluate(() => globalThis.JTF.store.getSettings());
+  const s = await h.bg(() => globalThis.JTF.store.getSettings());
   assert.equal(s.overwrite, true);
   assert.equal(s.autoLockMinutes, 5);
   await page.uncheck('input[name=overwrite]');
@@ -157,7 +171,7 @@ test('popup fills the page it points at and shows a summary', async () => {
   const form = await h.open('greenhouse.html');
   const tabId = await h.tabId(form);
   const popup = await openExt(`popup/popup.html?tab=${tabId}`);
-  await popup.waitForSelector('#vault button:has-text("Lock")');
+  await popup.waitForSelector('#vault-lock');
   await popup.click('#fill');
   await popup.waitForSelector('#result .count');
   // This profile only has a name and email, so the summary should also list what is missing.
@@ -179,8 +193,8 @@ test('popup fills the page it points at and shows a summary', async () => {
   const p = await profile();
   assert.ok(p.customAnswers.some((a) => a.answer === 'Because of the mission.'));
 
-  await popup.click('#vault button:has-text("Lock")');
-  await popup.waitForSelector('#vault input[type=password]');
+  await popup.click('#vault-lock');
+  await popup.waitForSelector('#vault-password');
   assert.deepEqual(errors, []);
   await Promise.all([form.close(), popup.close()]);
 });

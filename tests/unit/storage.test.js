@@ -23,7 +23,9 @@ test('vault: setup, lock, unlock, update, change password, reset', async () => {
   await assert.rejects(vault.setup('short'), /at least 8/);
   await vault.setup('master password 1', { iterations: 1000 });
   assert.equal(await vault.status(), 'unlocked');
-  await vault.update((d) => { d.credentials.push({ id: 'c1', host: 'acme.myworkdayjobs.com', username: 'ada', password: 'pw1' }); });
+  await vault.update((d) => {
+    d.credentials.push({ id: 'c1', host: 'acme.myworkdayjobs.com', username: 'ada', password: 'pw1' });
+  });
   const stored = JSON.stringify(await chrome.storage.local.get('vault'));
   assert.ok(!stored.includes('pw1'), 'secrets are not stored in plain text');
 
@@ -54,7 +56,13 @@ test('vault: auto-lock after inactivity', async () => {
 });
 
 test('vault: credential lookup prefers the most specific host', () => {
-  const data = { credentials: [{ host: 'example.com', password: 'a' }, { host: 'careers.example.com', password: 'b' }, { host: 'other.com', password: 'c' }] };
+  const data = {
+    credentials: [
+      { host: 'example.com', password: 'a' },
+      { host: 'careers.example.com', password: 'b' },
+      { host: 'other.com', password: 'c' },
+    ],
+  };
   assert.equal(vault.findCredential(data, 'careers.example.com').password, 'b');
   assert.equal(vault.findCredential(data, 'jobs.example.com').password, 'a');
   assert.equal(vault.findCredential(data, 'www.other.com').password, 'c');
@@ -98,7 +106,10 @@ test('store: concurrent saves do not drop each other', async () => {
 });
 
 test('store: profiles are upgraded to the current schema', async () => {
-  await chrome.storage.local.set({ profiles: { old: { id: 'old', name: 'Old', personal: { firstName: 'Ada' }, education: [{ school: 'X' }] } }, profileOrder: ['old'] });
+  await chrome.storage.local.set({
+    profiles: { old: { id: 'old', name: 'Old', personal: { firstName: 'Ada' }, education: [{ school: 'X' }] } },
+    profileOrder: ['old'],
+  });
   const { profile } = await store.getActive();
   assert.equal(profile.personal.firstName, 'Ada');
   assert.equal(profile.personal.lastName, '');
@@ -121,7 +132,12 @@ test('store: export / import round trip with documents', async () => {
   const { profile } = await store.getActive();
   profile.personal.firstName = 'Grace';
   await store.saveProfile(profile);
-  await store.setDoc(profile.id, 'resume', { name: 'cv.pdf', type: 'application/pdf', size: 3, dataUrl: 'data:application/pdf;base64,AAAA' });
+  await store.setDoc(profile.id, 'resume', {
+    name: 'cv.pdf',
+    type: 'application/pdf',
+    size: 3,
+    dataUrl: 'data:application/pdf;base64,AAAA',
+  });
   assert.deepEqual((await store.docInfo(profile.id)).resume.name, 'cv.pdf');
   const backup = JSON.parse(JSON.stringify(await store.exportData()));
 

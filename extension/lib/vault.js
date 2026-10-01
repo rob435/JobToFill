@@ -3,7 +3,7 @@
  *
  * The vault is a JSON document encrypted with AES-256-GCM. The key is derived
  * from your master password with PBKDF2-SHA256 and is never written to disk:
- * while unlocked it lives only in chrome.storage.session (memory, extension
+ * while unlocked it lives only in storage.session (memory, extension
  * pages and the service worker only; content scripts cannot read it).
  */
 (function (root) {
@@ -104,8 +104,8 @@
 
   /* ---------------------------------------------------------- storage-backed */
 
-  const local = () => root.chrome.storage.local;
-  const session = () => root.chrome.storage.session;
+  const local = () => JTF.api.storage.local;
+  const session = () => JTF.api.storage.session;
 
   async function getBlob() {
     const got = await local().get(LOCAL_KEY);
@@ -153,7 +153,7 @@
     try {
       await decryptJson(key, blob.data);
     } catch (err) {
-      throw new Error('Wrong master password.');
+      throw new Error('Wrong master password.', { cause: err });
     }
     await rememberKey(key);
   }
@@ -185,12 +185,12 @@
     await touch();
   }
 
-  /** Read-modify-write: `fn` may mutate the data or return a replacement. */
+  /** Read, let `fn` mutate the decrypted data in place, write it back. */
   async function update(fn) {
     const data = await read();
-    const out = (await fn(data)) || data;
-    await write(out);
-    return out;
+    await fn(data);
+    await write(data);
+    return data;
   }
 
   async function changePassword(newPassword) {
@@ -237,10 +237,23 @@
   }
 
   const vault = {
-    LOCAL_KEY, SESSION_KEY, DEFAULT_ITERATIONS,
-    deriveKey, encryptJson, decryptJson, emptyData, generatePassword, b64, unb64,
-    status, setup, unlock, lock, touch, read, write, update, changePassword, reset, autoLock,
-    findCredential, defaultCard,
+    deriveKey,
+    encryptJson,
+    decryptJson,
+    generatePassword,
+    status,
+    setup,
+    unlock,
+    lock,
+    touch,
+    read,
+    write,
+    update,
+    changePassword,
+    reset,
+    autoLock,
+    findCredential,
+    defaultCard,
   };
   JTF.vault = vault;
   if (typeof module === 'object' && module.exports) module.exports = vault;

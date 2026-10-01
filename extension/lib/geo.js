@@ -7,6 +7,7 @@
   const JTF = (root.JTF = root.JTF || {});
 
   // [ISO 3166-1 alpha-2, alpha-3, English name, ...aliases]
+  // prettier-ignore
   const COUNTRIES = [
     ['AF', 'AFG', 'Afghanistan'], ['AX', 'ALA', 'Åland Islands', 'Aland Islands'], ['AL', 'ALB', 'Albania'],
     ['DZ', 'DZA', 'Algeria'], ['AS', 'ASM', 'American Samoa'], ['AD', 'AND', 'Andorra'], ['AO', 'AGO', 'Angola'],
@@ -92,6 +93,7 @@
   ];
 
   // [code, name, ...aliases] keyed by ISO alpha-2 country code.
+  // prettier-ignore
   const REGIONS = {
     US: [
       ['AL', 'Alabama'], ['AK', 'Alaska'], ['AZ', 'Arizona'], ['AR', 'Arkansas'], ['CA', 'California'], ['CO', 'Colorado'],
