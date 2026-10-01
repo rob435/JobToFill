@@ -118,7 +118,11 @@ async function chromiumDriver() {
     async extPage(file) {
       const page = await context.newPage();
       await page.goto(`${origin}/${file}`);
-      return { page, call: (fn, arg) => page.evaluate(fn, arg), close: () => page.close() };
+      return {
+        page,
+        call: (fn, arg) => page.evaluate(fn, arg),
+        close: () => page.close(),
+      };
     },
     async close() {
       await context.close();
@@ -158,6 +162,9 @@ async function firefoxDriver() {
       'devtools.debugger.remote-enabled': true,
       'devtools.chrome.enabled': true,
       'devtools.debugger.prompt-connection': false,
+      // As in a Firefox without data-collection consent: the cover letter writer then doesn't stop
+      // to ask (tests can't click a browser permission prompt).
+      'extensions.dataCollectionPermissions.enabled': false,
     },
   });
   await browser.installExtension(EXTENSION);

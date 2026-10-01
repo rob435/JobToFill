@@ -54,7 +54,16 @@
       .trim()
       .replace(/\/+$/, '')
       .replace(/\/chat\/completions$/, '');
-    return { ...c, base, model: String(c.model || p.model || '').trim(), label: p.label };
+    // Errors name the provider; for a custom one, by its address ("api.example.com").
+    let label = p.label;
+    if (c.provider === 'custom' || !PROVIDERS[c.provider]) {
+      try {
+        label = new URL(base).hostname;
+      } catch (err) {
+        label = 'your AI provider';
+      }
+    }
+    return { ...c, base, model: String(c.model || p.model || '').trim(), label };
   }
 
   function problem(config) {

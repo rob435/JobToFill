@@ -5,7 +5,7 @@ import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
-import { PROFILE, isFirefox, launch, until } from './harness.mjs';
+import { PROFILE, launch, until } from './harness.mjs';
 
 const CV_LINES = [
   'Ada Lovelace',
@@ -123,7 +123,7 @@ after(async () => {
   ai.server.close();
 });
 
-test('studio: finds the job, writes a checked letter, attaches it and a tailored CV', { skip: isFirefox }, async () => {
+test('studio: finds the job, writes a checked letter, attaches it and a tailored CV', async () => {
   const apply = await h.open('letters/apply.html?job=R-1234');
   const tabId = await h.tabId(apply);
   const studio = await h.extPage(`studio/studio.html?tab=${tabId}`);
@@ -237,7 +237,7 @@ test('studio: finds the job, writes a checked letter, attaches it and a tailored
   await apply.close();
 });
 
-test('studio: a job that cannot be found asks for the description', { skip: isFirefox }, async () => {
+test('studio: a job that cannot be found asks for the description', async () => {
   const page = await h.open('signup.html');
   const studio = await h.extPage(`studio/studio.html?tab=${await h.tabId(page)}`);
   await until(studio.call, () => !document.querySelector('#job-manual').hidden, null, 30000);
