@@ -547,6 +547,9 @@ async function saveEntry(extra) {
     },
     letter: state.result.letter,
     header: state.result.header,
+    options: state.result.options,
+    analysis: state.analysis,
+    unsupported: state.result.check.unsupported || [],
     text: L.asText(state.result),
     pdf: pdf
       ? {
@@ -650,6 +653,68 @@ async function tailorCv() {
   }
 }
 
+/* ------------------------------------------------------ earlier letters */
+
+/** A letter this profile already wrote for the same job (same page, job ID or posting). */
+async function previousLetter() {
+  const ids = new Set([...((state.context && state.context.jobIds) || []), ...(state.job.posting.jobIds || [])]);
+  const postingUrl = state.job.posting.url;
+  return (
+    (await store.getLetters()).find(
+      (l) =>
+        l.profileId === state.profile.id &&
+        l.letter &&
+        l.analysis &&
+        ((state.context && l.url === state.context.url) ||
+          (postingUrl && l.posting && l.posting.url === postingUrl) ||
+          (l.jobIds || []).some((id) => id && id.length >= 4 && ids.has(id))),
+    ) || null
+  );
+}
+
+/** Ask with buttons in the progress card; resolves true to reuse the earlier letter. */
+function offerPrevious(previous) {
+  return new Promise((resolve) => {
+    const when = new Date(previous.createdAt).toLocaleString();
+    const box = el(
+      'div',
+      { className: 'row', id: 'previous' },
+      el('span', { textContent: `You wrote a letter for this job on ${when}.` }),
+      el('button', {
+        type: 'button',
+        className: 'primary small',
+        textContent: 'Open it',
+        onclick: () => (box.remove(), resolve(true)),
+      }),
+      el('button', {
+        type: 'button',
+        className: 'small',
+        textContent: 'Write a new one',
+        onclick: () => (box.remove(), resolve(false)),
+      }),
+    );
+    $('#progress-card').append(box);
+  });
+}
+
+async function reopen(previous) {
+  state.entry = previous;
+  state.analysis = previous.analysis;
+  state.result = {
+    letter: previous.letter,
+    header: previous.header,
+    options: previous.options || { minWords: 320, maxWords: 420 },
+    check: { errors: [], warnings: [], unsupported: previous.unsupported || [] },
+  };
+  state.kit = await store.getKit(state.profile.id);
+  state.cvText = (await readCv()).text;
+  for (const id of ['cv', 'analyse', 'write', 'check']) step(id, 'done', id === 'write' ? 'your earlier letter' : '');
+  await renderLetterPdf();
+  step('pdf', 'done', 'one page');
+  fillEditor();
+  $('#stop').hidden = true;
+}
+
 /* ---------------------------------------------------------- eligibility */
 
 async function checkEligibility(signal) {
@@ -702,6 +767,12 @@ async function run(from = 'job') {
         found.verdict === 'unsure' ? 'warn' : 'done',
         VERDICTS[found.verdict] ? VERDICTS[found.verdict][1] : '',
       );
+      // Already wrote one for this job? Offer it (with any edits) instead of paying for a new one.
+      const previous = await previousLetter();
+      if (previous && (await offerPrevious(previous))) {
+        await reopen(previous);
+        return;
+      }
     }
     if (signal.aborted) return;
 

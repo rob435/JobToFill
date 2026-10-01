@@ -237,6 +237,27 @@ test('studio: finds the job, writes a checked letter, attaches it and a tailored
   await apply.close();
 });
 
+test('studio: reopening the same application offers the letter already written', async () => {
+  const apply = await h.open('letters/apply.html?job=R-1234');
+  const studio = await h.extPage(`studio/studio.html?tab=${await h.tabId(apply)}`);
+  const before = ai.calls.filter((c) => /write job application cover letters/.test(c.json.messages[0].content)).length;
+  await until(studio.call, () => !!document.querySelector('#previous'), null, 30000);
+  assert.match(
+    await studio.call(() => document.querySelector('#previous').textContent),
+    /You wrote a letter for this job/,
+  );
+  await studio.call(() =>
+    [...document.querySelectorAll('#previous button')].find((b) => b.textContent === 'Open it').click(),
+  );
+  await until(studio.call, () => !document.querySelector('#editor').hidden, null, 15000);
+  assert.match(await studio.call(() => document.querySelector('#body').value), /checks 40,000 trades a night/);
+  const after = ai.calls.filter((c) => /write job application cover letters/.test(c.json.messages[0].content)).length;
+  assert.equal(after, before, 'no new letter was written');
+  assert.ok(await studio.call(() => document.querySelector('#preview').src.startsWith('blob:')));
+  await studio.close();
+  await apply.close();
+});
+
 test('studio: a job that cannot be found asks for the description', async () => {
   const page = await h.open('signup.html');
   const studio = await h.extPage(`studio/studio.html?tab=${await h.tabId(page)}`);
