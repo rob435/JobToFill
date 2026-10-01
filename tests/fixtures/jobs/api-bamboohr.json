@@ -1,0 +1,34 @@
+{
+  "meta": {},
+  "result": {
+    "jobOpening": {
+      "jobOpeningShareUrl": "https://eastdilsecured.bamboohr.com/careers/170",
+      "jobOpeningName": "2027 Analyst (London)",
+      "jobOpeningStatus": "Open",
+      "jobCategoryId": null,
+      "departmentId": "18595",
+      "departmentLabel": "Analytics",
+      "employmentStatusLabel": "Full-Time",
+      "employmentType": null,
+      "location": {
+        "city": "London",
+        "state": null,
+        "postalCode": "W1J 8DJ",
+        "addressCountry": "United Kingdom"
+      },
+      "atsLocation": {
+        "country": null,
+        "countryId": null,
+        "state": null,
+        "city": null
+      },
+      "description": "<p>Eastdil Secured advises clients on commercial real estate sales, financings and capital raising. Analysts in London join deal teams straight away and help run transactions from first pitch to closing.</p><h3>What you'll do</h3><ul><li>Build cash-flow models and valuation analyses for real estate assets</li><li>Prepare marketing materials and investor presentations</li><li>Research markets, tenants and comparable transactions</li></ul><h3>What we're looking for</h3><ul><li><p>Graduating in 2027 with a strong academic record in any subject</p></li><li><p>Excellent Excel skills and attention to detail</p></li><li><p>Interest in real estate and capital markets</p></li></ul>",
+      "compensation": null,
+      "datePosted": "2026-08-19",
+      "minimumExperience": null,
+      "locationType": "0",
+      "seekPromoted": false,
+      "aiProcessingDisclosureEnabled": false
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "additionalPlain": "Salary\nThe graduate salary is £37,500, reviewed after the first year.",
+  "additional": "<div><strong>Salary</strong></div><div>The graduate salary is £37,500, reviewed after the first year.</div>",
+  "categories": {
+    "commitment": "Full-Time",
+    "location": "Cheltenham",
+    "team": "Operational Research",
+    "allLocations": ["Cheltenham"]
+  },
+  "createdAt": 1787646411406,
+  "descriptionPlain": "",
+  "description": "<div>CoreTech Security helps organisations defend critical systems by researching how they can be attacked. Our graduate researchers join small teams that study real products, find weaknesses before others do and explain the findings to the engineers who build them.</div><div><br></div><div>You will be trained from first principles over your first months, with time set aside each week for learning and personal research projects. No previous security job is needed: we care far more about curiosity and persistence than about a particular degree.</div>",
+  "id": "1e68e7e1-b61e-40a4-96bf-31d85cda9335",
+  "lists": [
+    {
+      "text": "Skills you may have",
+      "content": "<li>An interest in how software vulnerabilities are found and fixed</li><li>Some programming in C, Python or a similar language</li><li>Comfort reading other people’s code</li>"
+    },
+    {
+      "text": "What you will learn",
+      "content": "<li>Reverse engineering of embedded and desktop software</li><li>Writing clear technical reports for clients</li>"
+    }
+  ],
+  "text": "Junior Cyber Security Researcher - September 2027",
+  "country": "GB",
+  "workplaceType": "onsite",
+  "opening": "",
+  "openingPlain": "",
+  "descriptionBody": "<div>CoreTech Security helps organisations defend critical systems by researching how they can be attacked. Our graduate researchers join small teams that study real products, find weaknesses before others do and explain the findings to the engineers who build them.</div><div><br></div><div>You will be trained from first principles over your first months, with time set aside each week for learning and personal research projects. No previous security job is needed: we care far more about curiosity and persistence than about a particular degree.</div>",
+  "descriptionBodyPlain": "",
+  "hostedUrl": "https://jobs.eu.lever.co/coretechsecurity/1e68e7e1-b61e-40a4-96bf-31d85cda9335",
+  "applyUrl": "https://jobs.eu.lever.co/coretechsecurity/1e68e7e1-b61e-40a4-96bf-31d85cda9335/apply"
+}

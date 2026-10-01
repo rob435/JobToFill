@@ -365,11 +365,16 @@
     }
 
     // Eightfold: {co}.eightfold.ai/careers?pid={id} | /careers/job/{id} | /careers/apply?pid=
-    if (/(^|\.)eightfold\.ai$/.test(host) || (lower[0] === 'careers' && qp.get('pid') && /^\d+$/.test(qp.get('pid')))) {
+    if (
+      /(^|\.)eightfold\.ai$/.test(host) ||
+      (lower[0] === 'careers' && qp.get('pid') && /^\d+$/.test(qp.get('pid'))) ||
+      (lower[0] === 'careers' && lower[1] === 'job' && /^\d{10,}$/.test(parts[2] || ''))
+    ) {
       const j = lower.indexOf('job');
       const id = qp.get('pid') || (j >= 0 && /^\d+$/.test(parts[j + 1] || '') ? parts[j + 1] : null);
       const stage = has('apply') ? 'application' : id ? 'description' : 'unknown';
-      return set('eightfold', host.split('.')[0], id, stage, { domain: qp.get('domain') || null });
+      const company = /eightfold\.ai$/.test(host) ? host.split('.')[0] : companyFromHost(host);
+      return set('eightfold', company, id, stage, { domain: qp.get('domain') || null });
     }
 
     // Avature: {co}.avature.net/{lang}/{portal}/JobDetail/{slug?}/{id}; apply: ApplicationMethods?jobId=, Login?jobId=
@@ -504,7 +509,11 @@
       const v = u.searchParams.get(key);
       if (v && /\d/.test(v) && v.length <= 40 && !/^(19|20)\d\d$/.test(v)) ids.push(v);
     }
-    for (const seg of u.pathname.split('/').map(safeDecode)) {
+    const segs = u.pathname.split('/').map(safeDecode);
+    for (let i = 0; i < segs.length; i++) {
+      const seg = segs[i];
+      // Oracle's site name ("CX_1001") and similar portal names are not job IDs.
+      if (i > 0 && /^(sites?|portal|board)$/i.test(segs[i - 1])) continue;
       const uuid = seg.match(UUID_RE);
       if (uuid) ids.push(uuid[0].toLowerCase());
       for (const mm of seg.matchAll(
@@ -514,7 +523,7 @@
       if (/^\d{5,}$/.test(seg)) ids.push(seg);
       const lead = seg.match(/^(\d{6,})-/);
       if (lead) ids.push(lead[1]);
-      const trail = seg.match(/[-_](\d{4,})$/);
+      const trail = seg.match(/[A-Za-z]{3}.*[-_](\d{4,})$/);
       if (trail && !/^(19|20)\d\d$/.test(trail[1])) ids.push(trail[1]);
       const wd = seg.match(/_([A-Z]{1,5}[-_]?\d{3,}(?:-\d+)?)$/);
       if (wd) ids.push(wd[1]);
@@ -642,9 +651,15 @@
         break;
       case 'phenom':
         if (a.stage === 'application' && a.jobSeqNo) {
+          // jobSeqNo = site code + job ID + "EXTERNAL" + locale: "MAMCGLOBAL" "R_364008" "EXTERNAL" "ENGLOBAL".
           const [country, lang] = u.pathname.split('/').filter(Boolean);
-          const seq = a.jobSeqNo.match(/^[A-Z]+?([A-Z]*[_-]?\d[\w-]*?)(?:[A-Z]{2,}[A-Z]*)$/);
-          if (seq) add(`${u.origin}/${country}/${lang}/job/${seq[1]}`, 'the job page');
+          const core = a.jobSeqNo.replace(/(EXTERNAL|INTERNAL)[A-Z_]*$/i, '');
+          const ids = uniq([
+            (core.match(/GLOBAL([A-Z0-9][\w-]*)$/) || [])[1],
+            (core.match(/((?:JR|REQ|R)[-_]?\d{3,}[A-Z]{0,3})$/) || [])[1],
+            (core.match(/(\d{3,}[A-Z]{0,3})$/) || [])[1],
+          ]).slice(0, 2);
+          for (const id of ids) add(`${u.origin}/${country}/${lang}/job/${id}`, 'the job page');
         }
         break;
       case 'recruitee':
@@ -986,13 +1001,13 @@
   // prettier-ignore
   const DOM_RULES = [
     { ats: 'greenhouse', title: ['.job__title h1', '.job__title', '#header .app-title', '.app-title', 'h1.section-header'], company: ['#header .company-name', '.company-name'], location: ['.job__location', '#header .location', '.location'], description: ['.job__description', '#content .job-post-content', '#content'] },
-    { ats: 'lever', title: ['.posting-headline h2', '.posting-header h2'], company: [], location: ['.posting-categories .location', '.posting-category.location'], description: ['.posting-page [data-qa="job-description"]', '.posting-page .section.page-centered'], all: true, skip: '.last-section-apply' },
+    { ats: 'lever', title: ['.posting-headline h2', '.posting-header h2'], company: [], location: ['.posting-categories .location', '.posting-category.location', '.posting-header .posting-categories > :first-child'], description: ['.posting-page [data-qa="job-description"]', '.posting-page .section.page-centered'], all: true, skip: '.last-section-apply' },
     { ats: 'ashby', title: ['h1[class*="_title_"]', '.ashby-job-posting-heading'], company: [], location: ['[class*="_location_"]'], description: ['[class*="_descriptionText_"]', '.ashby-job-posting-right-pane'] },
     { ats: 'workday', title: ['[data-automation-id="jobPostingHeader"]'], company: [], location: ['[data-automation-id="locations"] dd', '[data-automation-id="locations"]'], description: ['[data-automation-id="jobPostingDescription"]'] },
     { ats: 'smartrecruiters', title: ['h1.job-title', '.job-title'], company: ['.header-logo img[alt]'], location: ['.job-details .job-location', '[itemprop="jobLocation"]'], description: ['.job-sections', '[itemprop="description"]'] },
     { ats: 'workable', title: ['[data-ui="job-title"]', 'h1[data-ui="job-title"]'], company: [], location: ['[data-ui="job-location"]'], description: ['[data-ui="job-description"]', '[data-ui="job-requirements"]', '[data-ui="job-benefits"]'], all: true },
     { ats: 'icims', title: ['.iCIMS_Header h1', 'h1.iCIMS_Header', '.iCIMS_JobHeaderTag h1', '.iCIMS_Header'], company: [], location: ['.iCIMS_JobHeaderGroup .header.left span:not(.field-label)'], description: ['.iCIMS_JobContent', '.iCIMS_InfoMsg_Job'], all: true },
-    { ats: 'oracle', title: ['.job-details__title', 'h1.heading'], company: [], location: ['.job-details__subtitle', '.job-meta__subitem'], description: ['.job-details__description-content'], all: true },
+    { ats: 'oracle', title: ['.job-details__title', 'h1.heading', '.app-header__current-page-title-container > :first-child'], company: [], location: ['.job-details__subtitle', '.job-meta__subitem', '.posting-locations .text-color-primary li', '.posting-locations .text-color-primary'], description: ['.job-details__description-content'], all: true },
     { ats: 'successfactors', title: ['[data-careersite-propertyid="title"]', '#job-title', '.jobTitle'], company: [], location: ['[data-careersite-propertyid="city"]', '[data-careersite-propertyid="location"]', '.jobGeoLocation'], description: ['[data-careersite-propertyid="description"]', '.jobdescription', '.job-description', '#job-description'] },
     { ats: 'taleo', title: ['.subtitle', '[id*="reqTitleLinkAction"]'], company: [], location: ['[id*="reqBasicLocation"]'], description: ['.editablesection', '#requisitionDescriptionInterface'] },
     { ats: 'eightfold', title: ['.position-title', 'h1[class*="position-title"]'], company: [], location: ['.position-location'], description: ['.position-job-description', '[class*="job-description"]'] },
@@ -1003,11 +1018,11 @@
     { ats: null, title: ['[itemprop="title"]', '.job-title', '.jobTitle', '.posting-title'], company: [], location: ['.job-location', '.location'], description: ['.job-description', '.jobDescription', '#job-description', '#jobDescription', '.job-details', '.job-detail', '.job-content', '.posting-description', '.vacancy-description', '[class*="JobDescription"]'] },
   ];
 
-  function firstText(doc, selectors, max = 200) {
+  function firstText(doc, selectors, max = 200, ok) {
     for (const s of selectors || []) {
       for (const el of qa(doc, s)) {
         const t = clean(s.endsWith('[alt]') ? el.getAttribute('alt') : el.textContent, max);
-        if (t) return t;
+        if (t && (!ok || ok(t))) return t;
       }
     }
     return '';
@@ -1037,7 +1052,7 @@
       if (words(description) < 40) continue;
       return makePosting({
         url,
-        title: firstText(doc, rule.title),
+        title: firstText(doc, rule.title, 200, notGeneric),
         company: firstText(doc, rule.company, 120),
         location: firstText(doc, rule.location, 150),
         description,
@@ -1239,7 +1254,8 @@
   /* --------------------------------------------------------- page headings */
 
   const GENERIC_TITLE =
-    /^(apply|application|apply now|apply for this (job|position|role)|job application|start your application|my information|personal (information|details)|sign in|log in|login|create (an )?account|careers?|jobs?|job search|search jobs|welcome|home|current vacancies|open positions|join us|thank you|are you still with us\??|work summary|job application form|candidate (home|experience)|review|submit|resume|cv)\b/i;
+    /^(apply|application|apply now|apply for this (job|position|role)|job application|start your application|my information|personal (information|details)|sign in|log in|login|create (an )?account|careers?|jobs?|job search|search jobs|welcome|home|current vacancies|open positions|join us|thank you|are you still with us\??|work summary|job application form|candidate (home|experience)|review|submit|resume|cv|error\b|\d{3}\b|internal server error|access denied|forbidden|too many requests|just a moment|attention required|page not found|listings|search results|current openings)\b/i;
+  const notGeneric = (t) => !GENERIC_TITLE.test(t);
   const SITE_PIECE =
     /^(workday|careers?|jobs?|job board|lever|greenhouse|ashby|smartrecruiters|workable|icims|taleo|avature|eightfold|oracle|apply|application|home|job details?|job description|careers? (site|page|portal)|candidate experience( page)?)$/i;
 
@@ -1289,7 +1305,7 @@
 
   /** Title and company from document.title patterns, cross-checked with the page's headings. */
   function titleParts(docTitle, headings) {
-    const t = clean(docTitle, 300)
+    const t = clean(String(docTitle || '').replace(/<!--[\s\S]*?-->/g, ''), 300)
       .replace(
         /^(job application for|application for|apply for|apply to|applying for|apply|application|job)\s*[:\-–—]?\s+/i,
         '',
@@ -1310,6 +1326,9 @@
     const others = pieces.filter((_, i) => i !== titleIdx);
     const companyPiece = others.find((p) => /careers?|jobs/i.test(p)) || others[others.length - 1] || '';
     const company = cleanCompany(companyPiece);
+    // "2027 | EMEA | London | Sales & Trading | Apprentice Programme | Goldman Sachs": the title has pipes in it.
+    if (ti < 0 && pieces.length >= 3 && words(pieces[titleIdx].replace(/\d+/g, '')) < 1)
+      return { title: pieces.filter((p) => p !== companyPiece).join(' | '), company };
     m = pieces[titleIdx].match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
     if (m) return { title: m[1].trim(), company: company || cleanCompany(m[2]) };
     return { title: pieces[titleIdx], company };
@@ -1332,11 +1351,22 @@
 
   /* ------------------------------------------------------- fromDocument */
 
+  // "The requested job could not be found", "This position is no longer available"…
+  const GONE =
+    /\b(job|position|posting|vacancy|role|opportunity|page|requisition|advert)\b.{0,60}\b(could ?n[o']t be found|can ?n[o']t be found|not (be )?found|no longer (available|accepting|exists|active|open|online)|has (now )?(been )?(closed|expired|filled|removed|deleted)|is (closed|expired|not currently active|not available)|does not exist)|^\s*(404|page not found|job not found|not found)\b/i;
+
   /** The job posting on this page (best structured source first), or null. */
   function fromDocument(doc, url) {
     if (!doc) return null;
     const pageUrl = url || (doc.location && doc.location.href) || '';
     const a = ats(pageUrl);
+    const top = [
+      doc.title || '',
+      ...qa(doc, 'h1, h2, h3, [role="alert"], .error, .alert')
+        .slice(0, 6)
+        .map((h) => clean(h.textContent, 200)),
+    ];
+    if (top.some((t) => GONE.test(t))) return null;
     let posting = null;
     for (const step of [
       fromJsonLd,
@@ -1357,6 +1387,12 @@
       }
     }
     if (!posting) return null;
+    // A search page's text is a list of jobs, not one.
+    if (
+      posting.source === 'page-text' &&
+      (LIST_PAGE.test(pageUrl.replace(/^\w+:\/\/[^/]+/, '')) || (a.stage === 'unknown' && a.name))
+    )
+      return null;
     // Fill what the chosen source left out from the page itself.
     const heads = headingTexts(doc);
     const parts = titleParts(doc.title || '', heads);
@@ -1578,7 +1614,8 @@
       default:
         break;
     }
-    if (!p) {
+    // Unknown data only: a known board's answer without this job must not yield another job from it.
+    if (!p && !(kind && ['ashby', 'greenhouse', 'lever', 'workday', 'smartrecruiters', 'oracle'].includes(kind))) {
       const found = findPostingInJson(json);
       if (!found || words(found.description) < 40) return null;
       p = {
@@ -1590,7 +1627,8 @@
         description: found.description,
       };
     }
-    if (!p.description || words(p.description) < 20) return null;
+    if (!p || !p.description || words(p.description) < 20) return null;
+    if (kind && kind === a.name && a.jobId) p.jobIds = [...(p.jobIds || []), a.jobId];
     if (!p.company && a.company) p.company = prettyCompany(a.company, [p.description.slice(0, 3000)]);
     return makePosting({
       ...p,
@@ -1634,6 +1672,8 @@
       if (seen.has(key) || ACTION_LINK.test(href)) continue;
       const text = clean(el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || '', 120);
       const la = ats(href);
+      // A board's home page or a search is never the job itself.
+      if ((la.name && !la.jobId && la.stage === 'unknown') || LIST_PAGE.test(u.pathname + u.search)) continue;
       let weight = 0;
       if (LINK_TEXT.test(text) || LINK_TEXT.test(el.getAttribute('aria-label') || '')) weight = 0.75;
       if (
@@ -1712,7 +1752,7 @@
     let atsLocation = '';
     for (const rule of DOM_RULES) {
       if (rule.ats && rule.ats !== a.name) continue;
-      atsTitle = atsTitle || firstText(doc, rule.title);
+      atsTitle = atsTitle || firstText(doc, rule.title, 200, notGeneric);
       atsCompany = atsCompany || firstText(doc, rule.company, 120);
       atsLocation = atsLocation || firstText(doc, rule.location, 150);
     }
@@ -1783,12 +1823,19 @@
   /** Places to look for the description, best first. */
   function candidates(context) {
     const ctx = context || {};
+    const ctxAts = ctx.ats && 'stage' in ctx.ats ? ctx.ats : ats(ctx.url || '');
     const out = new Map();
     const add = (url, reason, weight, extra) => {
       const u = parseUrl(url);
       if (!u || !/^https?:$/.test(u.protocol)) return;
       const key = (extra && extra.request ? 'api:' : '') + urlKey(u.href);
-      if (!extra && key === urlKey(ctx.url) && !(ctx.pasted && urlKey(ctx.pasted) === key)) return;
+      const isPasted = ctx.pasted && urlKey(ctx.pasted) === urlKey(u.href);
+      if (!extra && key === urlKey(ctx.url) && !isPasted) return;
+      // A board's home page or a search lists jobs; it never is one.
+      if (!isPasted && !(extra && extra.request)) {
+        const la = ats(u.href);
+        if ((la.name && !la.jobId && la.stage === 'unknown') || LIST_PAGE.test(u.pathname + u.search)) return;
+      }
       const prev = out.get(key);
       if (!prev || prev.weight < weight) out.set(key, { url: u.href, reason, weight, ...(extra || {}) });
     };
@@ -1825,7 +1872,7 @@
       add(ctx.canonical, 'the page’s canonical address', 0.6);
     if (ctx.referrer && isJobReferrer(ctx, ctx.referrer)) add(ctx.referrer, 'the page you came from', 0.55);
     // A job page that hasn't rendered its description yet: its server HTML may carry JSON-LD.
-    if (!ctx.posting && ctx.ats && ctx.ats.stage === 'description' && !ctx.pasted)
+    if (!ctx.posting && ctxAts.stage === 'description' && !ctx.pasted)
       out.set('self:' + urlKey(ctx.url), { url: ctx.url, reason: 'this page as the server sends it', weight: 0.45 });
     return Array.from(out.values()).sort((x, y) => y.weight - x.weight);
   }
@@ -1843,7 +1890,8 @@
     for (const id of (ctx.jobIds || []).filter((x) => idKey(x).length >= 4).slice(0, 2))
       out.push({ text: String(id), startTime, maxResults: 25 });
     const core = titleCore(ctx.title);
-    if (core.length) out.push({ text: clean(ctx.title, 80).replace(/[|–—:()[\]]+/g, ' '), startTime, maxResults: 40 });
+    if (core.length)
+      out.push({ text: clean(String(ctx.title).replace(/[|–—:()[\]]+/g, ' '), 80), startTime, maxResults: 40 });
     if (ctx.company) out.push({ text: ctx.company, startTime, maxResults: 60 });
     else if (ctx.ats && ctx.ats.company) out.push({ text: ctx.ats.company, startTime, maxResults: 60 });
     return out;
@@ -1974,6 +2022,15 @@
     return U.tokens(name).filter((t) => !COMPANY_FILLER.has(t));
   }
 
+  /** Is `abbr` made of the starts of `toks`, in order ("jpmc" ← jp morgan chase, "gs" ← goldman sachs)? */
+  function abbreviates(abbr, toks, i = 0) {
+    if (!abbr) return i >= Math.min(toks.length, 2);
+    if (i >= toks.length) return false;
+    for (let n = Math.min(abbr.length, toks[i].length); n >= 1; n--)
+      if (toks[i].startsWith(abbr.slice(0, n)) && abbreviates(abbr.slice(n), toks, i + 1)) return true;
+    return false;
+  }
+
   /** true / false / null (unknown) — are these the same employer? */
   function companyMatch(a, b) {
     const A = companyTokens(a);
@@ -1985,13 +2042,8 @@
     if ((ca.length >= 4 && cb.includes(ca)) || (cb.length >= 4 && ca.includes(cb))) return true;
     if (A.some((t) => t.length >= 3 && B.includes(t))) return true;
     // Initials: "JPMC" ↔ "JP Morgan Chase", "GS" ↔ "Goldman Sachs".
-    const ia = A.map((t) => t[0]).join('');
-    const ib = B.map((t) => t[0]).join('');
-    if (
-      (A.length === 1 && ca.length <= 5 && ib.startsWith(ca)) ||
-      (B.length === 1 && cb.length <= 5 && ia.startsWith(cb))
-    )
-      return true;
+    if (A.length === 1 && ca.length <= 6 && abbreviates(ca, B)) return true;
+    if (B.length === 1 && cb.length <= 6 && abbreviates(cb, A)) return true;
     return false;
   }
 
@@ -2001,11 +2053,20 @@
     ),
   );
 
+  // prettier-ignore
+  const PLACE_ALIASES = { nyc: 'new york', sf: 'san francisco', bangalore: 'bengaluru', bombay: 'mumbai', gurgaon: 'gurugram', munchen: 'munich', koln: 'cologne', wien: 'vienna', zurich: 'zurich', geneve: 'geneva', milano: 'milan', roma: 'rome', praha: 'prague', warszawa: 'warsaw', lisboa: 'lisbon', 'hong kong sar': 'hong kong', dc: 'washington' };
+
+  function placeTokens(s) {
+    const n = U.normalize(s);
+    const aliased = n.replace(/[\p{L}]+(?: sar)?/gu, (w) => PLACE_ALIASES[w] || w);
+    return U.tokens(aliased).filter((t) => t.length > 2 && !LOCATION_FILLER.has(t));
+  }
+
   function locationMatch(a, b) {
     if (!a || !b) return null;
     if (/remote|multiple|various|anywhere/i.test(a) || /remote|multiple|various|anywhere/i.test(b)) return null;
-    const A = U.tokens(a).filter((t) => t.length > 2 && !LOCATION_FILLER.has(t));
-    const B = U.tokens(b).filter((t) => t.length > 2 && !LOCATION_FILLER.has(t));
+    const A = placeTokens(a);
+    const B = placeTokens(b);
     if (!A.length || !B.length) return null;
     return A.some((t) => B.includes(t));
   }
@@ -2058,6 +2119,29 @@
       reasons.unshift(`different job ID (${ctxAts.jobId} vs ${pAts.jobId})`);
       return { score: 0.05, verdict: 'different', reasons };
     }
+    // Both addresses (or the posting's own data) name a job ID of the same kind, and they differ.
+    const strongCtx = uniq([
+      ctxAts.jobId,
+      ...urlJobIds(ctx.url || ''),
+      ...(ctx.canonical ? urlJobIds(ctx.canonical) : []),
+    ]);
+    const strongPost = uniq([pAts.jobId, ...(posting.jobIds || []).map(String)]);
+    const sameSite =
+      sameBoard ||
+      (parseUrl(ctx.url || '') &&
+        parseUrl(posting.url || '') &&
+        companyFromHost(parseUrl(ctx.url).hostname) === companyFromHost(parseUrl(posting.url).hostname));
+    const clash =
+      c !== false &&
+      sameSite &&
+      strongCtx.find((x) =>
+        strongPost.some((y) => idShape(x) === idShape(y) && idKey(x).length >= 4 && !idsMatch(x, y)),
+      );
+    if (clash) {
+      const theirs = strongPost.find((y) => idShape(clash) === idShape(y));
+      reasons.unshift(`different job ID (${clash} vs ${theirs})`);
+      return { score: 0.1, verdict: 'different', reasons };
+    }
     if (t == null) {
       reasons.push('not enough on the application page to compare');
       return { score: c === true ? 0.4 : 0.25, verdict: 'unsure', reasons };
@@ -2068,9 +2152,12 @@
           100,
       ) / 100;
     const titleTokens = keyTokens(ctx.title, tCtx).length;
+    // A different single place (not "London, Paris or remote") means another vacancy, even with the same title.
+    const specific = (x) => x && placeTokens(x).length <= 4 && !/[/;]|\bor\b/i.test(x);
     let verdict = 'unsure';
     if (t >= 0.92 && c === true && l !== false && (l === true || titleTokens >= 3)) verdict = 'same';
     else if (t < 0.35 || (c === false && t < 0.75) || (l === false && t < 0.6)) verdict = 'different';
+    else if (l === false && c !== false && specific(ctx.location) && specific(posting.location)) verdict = 'different';
     return { score, verdict, reasons };
   }
 

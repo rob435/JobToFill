@@ -1,0 +1,82 @@
+{
+  "id": "744000152107209",
+  "name": "Junior Consultant Summer Internship 2027",
+  "uuid": "77ec9d81-b9cd-4cfd-8415-e9c83f20253d",
+  "jobId": "4657f3dd-816d-4c8a-ad3b-f48f96b114a0",
+  "jobAdId": "2c580b6c-2758-4389-8b31-820e1c0672e7",
+  "defaultJobAd": true,
+  "refNumber": "REF4557P",
+  "company": {
+    "name": "Roland Berger",
+    "identifier": "RolandBerger"
+  },
+  "location": {
+    "city": "London",
+    "region": "England",
+    "country": "gb",
+    "remote": false,
+    "hybrid": false,
+    "latitude": "51.5072178",
+    "longitude": "-0.1275862",
+    "fullLocation": "London, England, United Kingdom"
+  },
+  "customField": [
+    {
+      "fieldId": "5d9336bc46c05d6ef6110327",
+      "fieldLabel": "Department",
+      "valueId": "1629270",
+      "valueLabel": "Not specified (default)"
+    }
+  ],
+  "releasedDate": "2026-09-28T08:25:32.489Z",
+  "postingUrl": "https://jobs.smartrecruiters.com/RolandBerger/744000152107209-junior-consultant-summer-internship-2027",
+  "applyUrl": "https://jobs.smartrecruiters.com/RolandBerger/744000152107209-junior-consultant-summer-internship-2027?oga=true",
+  "referralUrl": "https://jobs.smartrecruiters.com/external-referrals/company/RolandBerger/publication/77ec9d81-b9cd-4cfd-8415-e9c83f20253d?dcr_ci=RolandBerger",
+  "jobAd": {
+    "sections": {
+      "companyDescription": {
+        "title": "Company Description",
+        "text": "<p>Roland Berger is a global strategy consultancy with offices in more than thirty countries, advising clients across industry and the public sector.</p>"
+      },
+      "jobDescription": {
+        "title": "Job Description",
+        "text": "<p>As a summer intern you will join a project team in London for ten weeks and work on a live client engagement. You will research markets, build analyses in Excel and PowerPoint, and help shape recommendations that are presented to senior client staff.</p><ul><li>Gather and analyse market and company data</li><li>Interview experts and summarise what you learn</li><li>Prepare slides for workshops and steering meetings</li></ul>"
+      },
+      "qualifications": {
+        "title": "Qualifications",
+        "text": "<p>The internship is for students in the final years of a bachelor’s or master’s degree in any subject.</p><ul><li>Excellent academic record</li><li>Strong analytical and problem-solving skills</li><li>Fluent English; another European language is a plus</li></ul>"
+      },
+      "additionalInformation": {
+        "title": "Additional Information",
+        "text": "<p>Please upload your CV and transcripts. Applications are reviewed on a rolling basis.</p>"
+      }
+    }
+  },
+  "active": true,
+  "visibility": "PUBLIC",
+  "industry": {
+    "id": "management_consulting",
+    "label": "Management Consulting"
+  },
+  "function": {
+    "id": "consulting",
+    "label": "Consulting"
+  },
+  "department": {
+    "id": 1629270,
+    "label": "Not specified (default)"
+  },
+  "experienceLevel": {
+    "id": "entry_level",
+    "label": "Entry Level"
+  },
+  "typeOfEmployment": {
+    "id": "intern",
+    "label": "Intern"
+  },
+  "language": {
+    "code": "en",
+    "label": "English",
+    "labelNative": "English (US)"
+  }
+}

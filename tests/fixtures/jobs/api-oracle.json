@@ -1,0 +1,41 @@
+{
+  "items": [
+    {
+      "Id": "210765547",
+      "Title": "2027 Internal Audit Analyst Program - Summer Intern Opportunity",
+      "Category": "Seasonal Employee",
+      "RequisitionType": "Campus",
+      "RequisitionId": 300091120446584,
+      "ExternalPostedStartDate": "2026-07-08T15:10:04+00:00",
+      "JobSchedule": "Full time",
+      "ExternalPostedEndDate": "2026-10-31T04:00:00+00:00",
+      "ContentLocale": "en",
+      "PrimaryLocation": "Jersey City, NJ, United States",
+      "PrimaryLocationCountry": "US",
+      "ExternalQualificationsStr": "",
+      "ExternalResponsibilitiesStr": "",
+      "WorkplaceType": "",
+      "BusinessUnit": "Corporate Sector",
+      "JobFunction": "Administration",
+      "secondaryLocations": [
+        {
+          "RequisitionLocationId": 300091120446682,
+          "Name": "Plano, TX, United States",
+          "CountryCode": "US"
+        },
+        {
+          "RequisitionLocationId": 300091120446683,
+          "Name": "Columbus, OH, United States",
+          "CountryCode": "US"
+        }
+      ],
+      "ExternalDescriptionStr": "<p>The Internal Audit summer analyst programme gives students ten weeks inside the team that independently reviews how the firm manages risk. You will join an audit team, test controls in a business area and report what you find to experienced auditors.</p><h3>What you'll do</h3><ul><li>Plan and carry out testing of key processes and controls</li><li>Use data analytics tools to look for exceptions across large populations</li><li>Write clear findings and discuss them with business stakeholders</li></ul><h3>What we're looking for</h3><ul><li><p>Pursuing a bachelor’s or master’s degree, graduating between December 2027 and June 2028</p></li><li><p>Strong analytical skills and a questioning mindset</p></li><li><p>Good written and spoken communication</p></li></ul>",
+      "CorporateDescriptionStr": "<div>JPMorganChase is one of the oldest financial institutions, serving millions of consumers and many of the world’s best-known companies.</div>",
+      "OrganizationDescriptionStr": "<div>Our corporate functions cover areas such as finance, risk, human resources and audit.</div>"
+    }
+  ],
+  "count": 1,
+  "hasMore": false,
+  "limit": 25,
+  "offset": 0
+}

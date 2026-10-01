@@ -1,0 +1,34 @@
+{
+  "id": 6092221,
+  "shortcode": "5D9349562D",
+  "title": "Graduate Management Consultant - Summer 2027",
+  "remote": false,
+  "location": {
+    "country": "United Kingdom",
+    "countryCode": "GB",
+    "city": "London",
+    "region": "England"
+  },
+  "locations": [
+    {
+      "country": "United Kingdom",
+      "countryCode": "GB",
+      "city": "London",
+      "region": "England",
+      "hidden": false
+    }
+  ],
+  "state": "published",
+  "isInternal": false,
+  "code": "",
+  "published": "2026-09-11T00:00:00.000Z",
+  "type": "full",
+  "language": "en",
+  "department": ["Advisory"],
+  "accountUid": "0ab2d547-1373-4a84-8cfa-79cb263b5567",
+  "approvalStatus": "approved",
+  "workplace": "on_site",
+  "description": "<p>Rystad Energy’s graduate consultants work on research and advisory projects for energy companies, investors and governments. You will start with a structured training programme and then join client projects from day one, building models and writing up insights.</p><h3>What you'll do</h3><ul><li>Analyse supply, demand and cost data across oil, gas and renewables</li><li>Build Excel models and turn the results into clear client presentations</li><li>Work with experienced consultants on proposals and project delivery</li></ul><h3>What we're looking for</h3><ul><li><p>A recent or upcoming degree in engineering, economics, finance or a similar field</p></li><li><p>Strong numerical skills and attention to detail</p></li><li><p>Interest in the energy transition and the businesses behind it</p></li></ul>",
+  "requirements": "",
+  "benefits": ""
+}

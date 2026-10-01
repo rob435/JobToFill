@@ -1,0 +1,45 @@
+{
+  "jobPostingInfo": {
+    "id": "bd31cc604c251001a33006e395260000",
+    "title": "Quant Research Internship",
+    "jobDescription": "<p>Our quant research interns spend the summer working on a real research problem alongside experienced researchers. You will analyse large, noisy data sets, test ideas rigorously and present what you find to the wider group at the end of the programme.</p><h3>What you'll do</h3><ul><li>Explore new data sources and turn them into predictive signals</li><li>Write research code in Python and review results with a mentor</li><li>Attend lectures on statistics, machine learning and market structure</li></ul><h3>What we're looking for</h3><ul><li><p>A degree in mathematics, statistics, physics, computer science or similar, finishing in 2027 or later</p></li><li><p>Strong programming skills and a careful, evidence-led approach</p></li><li><p>Intellectual curiosity and the ability to explain complex ideas simply</p></li></ul>",
+    "location": "London, UK",
+    "postedOn": "Posted 30+ Days Ago",
+    "startDate": "2026-07-31",
+    "timeType": "Full time",
+    "jobReqId": "R3691",
+    "jobPostingId": "Quant-Research-Internship_R3691",
+    "jobPostingSiteId": "G-Research",
+    "country": {
+      "descriptor": "United Kingdom",
+      "id": "29247e57dbaf46fb855b224e03170bc7"
+    },
+    "canApply": true,
+    "posted": true,
+    "includeResumeParsing": true,
+    "jobRequisitionLocation": {
+      "descriptor": "London",
+      "country": {
+        "descriptor": "United Kingdom",
+        "id": "29247e57dbaf46fb855b224e03170bc7",
+        "alpha2Code": "GB"
+      }
+    },
+    "externalUrl": "https://gresearch.wd103.myworkdayjobs.com/G-Research/job/London-UK/Quant-Research-Internship_R3691"
+  },
+  "hiringOrganization": {
+    "name": "Braunford LLP",
+    "url": ""
+  },
+  "similarJobs": [
+    {
+      "title": "Quantitative Researcher – Experienced",
+      "externalPath": "/job/London-UK/Quantitative-Researcher---Experienced_R2519",
+      "timeType": "Full time",
+      "locationsText": "London, UK",
+      "postedOn": "Posted 30+ Days Ago",
+      "startDate": "2026-07-29"
+    }
+  ],
+  "userAuthenticated": false
+}

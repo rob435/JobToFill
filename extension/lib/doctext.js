@@ -122,7 +122,18 @@
   }
 
   async function extract(input, opts = {}) {
-    const bytes = toBytes(input);
+    try {
+      return await detectAndExtract(toBytes(input), opts);
+    } catch (err) {
+      if (err && err.userFacing) throw err;
+      // Anything unexpected means the file is not what it claims to be.
+      const e = fail(MSG.corrupt);
+      e.cause = err;
+      throw e;
+    }
+  }
+
+  async function detectAndExtract(bytes, opts) {
     const type = String(opts.type || '').toLowerCase();
     const name = String(opts.name || '').toLowerCase();
     const ext = (name.match(/\.([a-z0-9]+)$/) || [])[1] || '';
@@ -135,11 +146,16 @@
     if (startsWith(bytes, '\xd0\xcf\x11\xe0')) throw fail(MSG.doc);
     if (startsWith(bytes, '{\\rtf')) return finish({ text: rtfText(bin(bytes)), kind: 'text', pages: 1, warnings: [] });
 
+    if ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff)) {
+      // UTF-16 text (Windows Notepad "Unicode").
+      const text = new TextDecoder(bytes[0] === 0xff ? 'utf-16le' : 'utf-16be').decode(bytes.subarray(2));
+      return finish({ text, kind: 'text', pages: 1, warnings: [] });
+    }
     if (type === 'application/pdf' || ext === 'pdf') throw fail(MSG.corrupt);
     if (/wordprocessingml|opendocument/.test(type) || ext === 'docx' || ext === 'odt') throw fail(MSG.corrupt);
     if (type === 'application/msword' || ext === 'doc') throw fail(MSG.doc);
     if (looksLikeText(bytes) || /^text\//.test(type) || /^(txt|md|markdown|text)$/.test(ext)) {
-      let text = utf8.decode(bytes).replace(/^﻿/, '');
+      let text = utf8.decode(bytes).replace(/^\uFEFF/, '');
       if (/html?$/.test(ext) || type === 'text/html') text = htmlText(text);
       return finish({ text, kind: 'text', pages: 1, warnings: [] });
     }
@@ -150,14 +166,14 @@
     const n = Math.min(bytes.length, 4096);
     for (let i = 0; i < n; i++) {
       const c = bytes[i];
-      if (c === 0 || (c < 9 && c !== 0)) return false;
+      if (c < 9 || (c > 13 && c < 27)) return false; // NUL and other controls: binary
     }
     try {
       new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, Math.min(bytes.length, 65536)));
       return true;
     } catch (err) {
       // A cut-off multi-byte sequence at the 64 KB boundary is still text.
-      return bytes.length > 65536 && /truncat|incomplete/i.test(String(err && err.message)) ? true : false;
+      return bytes.length > 65536 && /truncat|incomplete/i.test(String(err && err.message));
     }
   }
 
@@ -170,14 +186,26 @@
     if (/;base64$/i.test(meta)) {
       let s;
       try {
-        s = atob(payload.replace(/[^A-Za-z0-9+/=_-]/g, '').replace(/-/g, '+').replace(/_/g, '/'));
+        s = atob(
+          payload
+            .replace(/[^A-Za-z0-9+/=_-]/g, '')
+            .replace(/-/g, '+')
+            .replace(/_/g, '/'),
+        );
       } catch {
         throw fail(MSG.corrupt);
       }
       bytes = new Uint8Array(s.length);
       for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);
     } else {
-      bytes = new TextEncoder().encode(decodeURIComponent(payload));
+      // Percent-encoded payload: %XX are raw bytes, everything else is UTF-8 text.
+      const out = [];
+      const enc = new TextEncoder();
+      for (const part of payload.split(/(%[0-9a-f]{2})/i)) {
+        if (/^%[0-9a-f]{2}$/i.test(part)) out.push(parseInt(part.slice(1), 16));
+        else if (part) out.push(...enc.encode(part));
+      }
+      bytes = Uint8Array.from(out);
     }
     const type = opts.type || meta.replace(/;base64$/i, '').split(';')[0];
     return extract(bytes, { ...opts, type });
@@ -187,22 +215,45 @@
 
   function finish(out) {
     out.text = normalizeText(out.text);
-    if (!out.text && out.kind !== 'text') throw fail(out.kind === 'pdf' ? MSG.scanned : 'This document contains no text.');
+    if (!out.text && out.kind !== 'text')
+      throw fail(out.kind === 'pdf' ? MSG.scanned : 'This document contains no text.');
     return out;
   }
 
+  // Marks a wide horizontal gap (columns, right-aligned dates); becomes three spaces after collapsing.
+  const GAP = '\ue000';
+
   function normalizeText(text) {
-    return String(text || '')
+    const t = String(text || '')
       .replace(/\r\n?/g, '\n')
-      .replace(/­[ \t]*\n[ \t]*/g, '') // soft hyphen at a line break joins the word
-      .replace(/­/g, '')
+      .replace(/\u00ad[ \t]*\n[ \t]*/g, '') // soft hyphen at a line break joins the word
+      .replace(/\u00ad/g, '')
       .normalize('NFKC')
-      .replace(/[​‌‍⁠﻿]/g, '')
+      .replace(/\u200b|\u200c|\u200d|\u2060|\ufeff/g, '')
       .replace(/[^\S\n\t]+/g, ' ')
+      .replace(/ ?\ue000[ \ue000]*/g, '   ')
       .replace(/[ \t]+$/gm, '')
       .replace(/^ +/gm, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
+    return dehyphenate(t);
+  }
+
+  // Words that usually start a real compound ("second-year", "self-taught") when broken at a line end.
+  const COMPOUND =
+    /^(self|well|second|first|third|final|full|part|long|short|high|low|real|non|cross|multi|end|open|state|world|year|time|data|team|user|client|hands|problem|detail|fast|one|two|three|four|five|six|best|co|e|front|back|cutting|top|fine|half|life|mid|semi|ex|up|post|pre|sub|test|cost|sales|people|market|object|event|anti|large|small|big|all)$/i;
+
+  /**
+   * Re-joins words split across lines: "com-\nmercial" -> "commercial" (as pdftotext does),
+   * but keeps the hyphen for likely compounds ("second-\nyear" -> "second-year").
+   */
+  function dehyphenate(text) {
+    if (!/\p{L}-\n\p{Ll}/u.test(text)) return text;
+    const hyphenated = new Set((text.match(/\p{L}+-\p{L}+/gu) || []).map((w) => w.toLowerCase()));
+    return text.replace(/(\p{L}+)-\n(\p{Ll}\S*)( ?)/gu, (m, a, b, sp) => {
+      const word = COMPOUND.test(a) || hyphenated.has((a + '-' + b).toLowerCase()) ? `${a}-${b}` : a + b;
+      return sp ? word + '\n' : word;
+    });
   }
 
   function htmlText(html) {
@@ -348,7 +399,7 @@
         const n = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
         return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : '';
       }
-      return { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'", nbsp: ' ' }[e.toLowerCase()];
+      return { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'", nbsp: '\u00a0' }[e.toLowerCase()];
     });
   }
 
@@ -359,7 +410,14 @@
   function docxXmlText(xml) {
     const lines = [];
     const tagRe = /<(\/?)([\w.]+:)?([\w.]+)([^>]*?)(\/?)>|([^<]+)/g;
+    // The WordprocessingML namespace is almost always bound to "w:", but not necessarily.
+    const nsm =
+      /xmlns:(\w+)="http:\/\/(?:schemas\.openxmlformats\.org\/wordprocessingml\/2006\/main|purl\.oclc\.org\/ooxml\/wordprocessingml\/main)"/.exec(
+        xml.slice(0, 5000),
+      );
+    const W = (nsm ? nsm[1] : 'w') + ':';
     let para = null; // current paragraph text
+    let inTabs = false;
     const paraStack = [];
     let skip = 0; // inside w:del, mc:Fallback, w:instrText …
     let inText = false;
@@ -383,7 +441,7 @@
         if (!selfClose) skip += close ? -1 : 1;
         continue;
       }
-      if (ns !== 'w:') continue;
+      if (ns !== W) continue;
       if (tag === 'del' || tag === 'instrText' || tag === 'delText' || tag === 'moveFrom') {
         if (!selfClose) skip += close ? -1 : 1;
         continue;
@@ -406,8 +464,11 @@
         case 'numPr':
           if (para && !close) para.list = true;
           break;
+        case 'tabs':
+          if (!selfClose) inTabs = !close; // tab-stop definitions, not tab characters
+          break;
         case 'tab':
-          if (para && !close && !/^\s*$/.test(attrs) === false) para.text += '\t';
+          if (para && !close && !inTabs) para.text += '\t';
           break;
         case 'br':
         case 'cr':
@@ -803,7 +864,14 @@
 
   // ---------------------------------------------------------------- PDF document
 
-  const isDict = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof PStr) && !(v instanceof Ref) && !(v instanceof Stream) && !(v instanceof Op);
+  const isDict = (v) =>
+    v !== null &&
+    typeof v === 'object' &&
+    !Array.isArray(v) &&
+    !(v instanceof PStr) &&
+    !(v instanceof Ref) &&
+    !(v instanceof Stream) &&
+    !(v instanceof Op);
 
   class PdfDoc {
     constructor(bytes) {
@@ -818,7 +886,7 @@
     }
 
     async init() {
-      let ok = false;
+      let ok;
       try {
         ok = await this.readXrefChain();
       } catch {
@@ -948,7 +1016,8 @@
       }
       for (const off of xrefStreams) {
         const o = this.parseAt(off);
-        if (o && o.value instanceof Stream) for (const k in o.value.dict) if (!this.trailer[k]) this.trailer[k] = o.value.dict[k];
+        if (o && o.value instanceof Stream)
+          for (const k in o.value.dict) if (!this.trailer[k]) this.trailer[k] = o.value.dict[k];
       }
       if (!this.trailer.Root || !this.xref.has(this.trailer.Root.num)) {
         // Find the catalog by its /Type.
@@ -1181,7 +1250,7 @@
 
   function runLength(data) {
     const out = [];
-    for (let i = 0; i < data.length; ) {
+    for (let i = 0; i < data.length;) {
       const n = data[i++];
       if (n === 128) break;
       if (n < 128) {
@@ -1235,16 +1304,276 @@
   }
 
   // ---------------------------------------------------------------- encryption
+  // Standard security handler with an empty user password: PDFs that only restrict
+  // printing/copying open without a password, so we can read them like a viewer would.
 
-  async function makeCrypt() {
-    throw fail(MSG.password);
+  // prettier-ignore
+  const PDF_PAD = Uint8Array.from([
+    0x28, 0xbf, 0x4e, 0x5e, 0x4e, 0x75, 0x8a, 0x41, 0x64, 0x00, 0x4e, 0x56, 0xff, 0xfa, 0x01, 0x08,
+    0x2e, 0x2e, 0x00, 0xb6, 0xd0, 0x68, 0x3e, 0x80, 0x2f, 0x0c, 0xa9, 0xfe, 0x64, 0x53, 0x69, 0x7a,
+  ]);
+
+  const MD5_S = [7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21];
+  const MD5_K = Array.from({ length: 64 }, (_, i) => Math.floor(Math.abs(Math.sin(i + 1)) * 2 ** 32) >>> 0);
+
+  /** MD5 (not in WebCrypto, but required by the PDF key derivation). */
+  function md5(data) {
+    const n = data.length;
+    const len = ((n + 8) >> 6) * 64 + 64;
+    const buf = new Uint8Array(len);
+    buf.set(data);
+    buf[n] = 0x80;
+    const bits = n * 8;
+    for (let i = 0; i < 4; i++) buf[len - 8 + i] = (bits >>> (8 * i)) & 255;
+    buf[len - 4] = Math.floor(n / 2 ** 29) & 255;
+    let a0 = 0x67452301;
+    let b0 = 0xefcdab89;
+    let c0 = 0x98badcfe;
+    let d0 = 0x10325476;
+    const M = new Uint32Array(16);
+    for (let off = 0; off < len; off += 64) {
+      for (let i = 0; i < 16; i++) M[i] = u32(buf, off + i * 4);
+      let a = a0;
+      let b = b0;
+      let c = c0;
+      let d = d0;
+      for (let i = 0; i < 64; i++) {
+        let f;
+        let g;
+        if (i < 16) {
+          f = (b & c) | (~b & d);
+          g = i;
+        } else if (i < 32) {
+          f = (d & b) | (~d & c);
+          g = (5 * i + 1) & 15;
+        } else if (i < 48) {
+          f = b ^ c ^ d;
+          g = (3 * i + 5) & 15;
+        } else {
+          f = c ^ (b | ~d);
+          g = (7 * i) & 15;
+        }
+        const s = MD5_S[(i >> 4) * 4 + (i & 3)];
+        const t = (a + f + MD5_K[i] + M[g]) >>> 0;
+        a = d;
+        d = c;
+        c = b;
+        b = (b + ((t << s) | (t >>> (32 - s)))) >>> 0;
+      }
+      a0 = (a0 + a) >>> 0;
+      b0 = (b0 + b) >>> 0;
+      c0 = (c0 + c) >>> 0;
+      d0 = (d0 + d) >>> 0;
+    }
+    const out = new Uint8Array(16);
+    [a0, b0, c0, d0].forEach((v, i) => {
+      for (let k = 0; k < 4; k++) out[i * 4 + k] = (v >>> (8 * k)) & 255;
+    });
+    return out;
+  }
+
+  function rc4(key, data) {
+    const s = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) s[i] = i;
+    for (let i = 0, j = 0; i < 256; i++) {
+      j = (j + s[i] + key[i % key.length]) & 255;
+      const t = s[i];
+      s[i] = s[j];
+      s[j] = t;
+    }
+    const out = new Uint8Array(data.length);
+    for (let k = 0, i = 0, j = 0; k < data.length; k++) {
+      i = (i + 1) & 255;
+      j = (j + s[i]) & 255;
+      const t = s[i];
+      s[i] = s[j];
+      s[j] = t;
+      out[k] = data[k] ^ s[(s[i] + s[j]) & 255];
+    }
+    return out;
+  }
+
+  const join = (...parts) =>
+    concat(
+      parts,
+      parts.reduce((n, p) => n + p.length, 0),
+    );
+  const strBytes = (v) => (v instanceof PStr ? Uint8Array.from(v.v, (c) => c.charCodeAt(0)) : new Uint8Array(0));
+  const equal = (a, b, n) => {
+    if (a.length < n || b.length < n) return false;
+    for (let i = 0; i < n; i++) if (a[i] !== b[i]) return false;
+    return true;
+  };
+
+  async function aesKey(key, usage) {
+    return crypto.subtle.importKey('raw', key, { name: 'AES-CBC' }, false, usage);
+  }
+
+  /** AES-CBC encrypt without padding (WebCrypto always pads; drop the extra block). */
+  async function aesEncryptRaw(key, iv, data) {
+    const k = await aesKey(key, ['encrypt']);
+    return new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv }, k, data)).subarray(0, data.length);
+  }
+
+  /** AES-CBC decrypt that tolerates missing/invalid PKCS#7 padding. */
+  async function aesDecrypt(key, iv, data, padded = true) {
+    data = data.subarray(0, data.length - (data.length % 16));
+    if (!data.length) return data;
+    const k = await aesKey(key, ['encrypt', 'decrypt']);
+    if (padded) {
+      try {
+        return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, k, data));
+      } catch {
+        // fall through: decrypt as unpadded
+      }
+    }
+    // Append a block that decrypts to valid padding so WebCrypto accepts the input.
+    const last = data.subarray(data.length - 16);
+    const extra = new Uint8Array(
+      await crypto.subtle.encrypt({ name: 'AES-CBC', iv: last }, k, new Uint8Array(16).fill(16)),
+    );
+    return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, k, join(data, extra.subarray(0, 16))));
+  }
+
+  /** ISO 32000-2 Algorithm 2.B (revision 6 password hash). */
+  async function hashR6(pw, salt, udata) {
+    let K = new Uint8Array(await crypto.subtle.digest('SHA-256', join(pw, salt, udata)));
+    for (let i = 0; i < 1000; i++) {
+      const unit = join(pw, K, udata);
+      const K1 = new Uint8Array(unit.length * 64);
+      for (let r = 0; r < 64; r++) K1.set(unit, r * unit.length);
+      const E = await aesEncryptRaw(K.subarray(0, 16), K.subarray(16, 32), K1);
+      let sum = 0;
+      for (let k = 0; k < 16; k++) sum += E[k];
+      K = new Uint8Array(await crypto.subtle.digest(['SHA-256', 'SHA-384', 'SHA-512'][sum % 3], E));
+      if (i >= 63 && E[E.length - 1] <= i - 32) break;
+    }
+    return K.subarray(0, 32);
+  }
+
+  async function makeCrypt(doc, enc) {
+    if (!isDict(enc) || enc.Filter !== '/Standard') throw fail(MSG.password);
+    const V = (await doc.get(enc.V)) || 0;
+    const R = (await doc.get(enc.R)) || 2;
+    const O = strBytes(await doc.get(enc.O));
+    const U = strBytes(await doc.get(enc.U));
+    const P = (await doc.get(enc.P)) | 0;
+    const ids = await doc.get(doc.trailer.ID);
+    const id0 = Array.isArray(ids) ? strBytes(await doc.get(ids[0])) : new Uint8Array(0);
+    const cf = isDict(enc.CF) ? enc.CF : {};
+    const method = (name) => {
+      if (V < 4) return 'rc4';
+      if (!name || name === '/Identity') return 'none';
+      const d = cf[name.slice(1)];
+      const m = isDict(d) ? d.CFM : null;
+      return m === '/AESV2' ? 'aes' : m === '/AESV3' ? 'aes256' : m === '/None' ? 'none' : 'rc4';
+    };
+    const stm = method(enc.StmF);
+    const str = method(enc.StrF);
+    const empty = new Uint8Array(0);
+    let key = null;
+
+    if (R >= 5) {
+      // AES-256: the empty password is checked against U (user) and O (owner).
+      const hash = (pw, salt, udata) =>
+        R >= 6
+          ? hashR6(pw, salt, udata)
+          : crypto.subtle.digest('SHA-256', join(pw, salt, udata)).then((h) => new Uint8Array(h));
+      const UE = strBytes(await doc.get(enc.UE));
+      const OE = strBytes(await doc.get(enc.OE));
+      const u48 = U.subarray(0, 48);
+      if (U.length >= 48 && equal(await hash(empty, U.subarray(32, 40), empty), U, 32)) {
+        key = await aesDecrypt(await hash(empty, U.subarray(40, 48), empty), new Uint8Array(16), UE, false);
+      } else if (O.length >= 48 && equal(await hash(empty, O.subarray(32, 40), u48), O, 32)) {
+        key = await aesDecrypt(await hash(empty, O.subarray(40, 48), u48), new Uint8Array(16), OE, false);
+      }
+      if (!key || key.length < 32) throw fail(MSG.password);
+      key = key.subarray(0, 32);
+    } else {
+      const n = V === 1 ? 5 : Math.max(5, Math.min(16, ((await doc.get(enc.Length)) || 40) / 8));
+      const p4 = Uint8Array.from([P & 255, (P >> 8) & 255, (P >> 16) & 255, (P >>> 24) & 255]);
+      const meta = R >= 4 && enc.EncryptMetadata === false ? Uint8Array.from([255, 255, 255, 255]) : empty;
+      const fileKey = (padded) => {
+        let h = md5(join(padded, O.subarray(0, 32), p4, id0, meta));
+        if (R >= 3) for (let i = 0; i < 50; i++) h = md5(h.subarray(0, n));
+        return h.subarray(0, n);
+      };
+      const check = (k) => {
+        if (R === 2) return equal(rc4(k, PDF_PAD), U, 32);
+        let x = rc4(k, md5(join(PDF_PAD, id0)));
+        for (let i = 1; i <= 19; i++)
+          x = rc4(
+            k.map((b) => b ^ i),
+            x,
+          );
+        return equal(x, U, 16);
+      };
+      const k1 = fileKey(PDF_PAD);
+      if (check(k1)) key = k1;
+      else {
+        // Empty owner password: recover the user password from O (Algorithm 7).
+        let h = md5(PDF_PAD);
+        if (R >= 3) for (let i = 0; i < 50; i++) h = md5(h);
+        const rk = h.subarray(0, n);
+        let pw = O.subarray(0, 32);
+        if (R === 2) pw = rc4(rk, pw);
+        else
+          for (let i = 19; i >= 0; i--)
+            pw = rc4(
+              rk.map((b) => b ^ i),
+              pw,
+            );
+        const k2 = fileKey(pw);
+        if (check(k2)) key = k2;
+      }
+      if (!key) throw fail(MSG.password);
+    }
+
+    const objKey = (num, gen, aes) => {
+      if (R >= 5) return key;
+      const k = md5(
+        join(
+          key,
+          Uint8Array.from([num & 255, (num >> 8) & 255, (num >> 16) & 255, gen & 255, (gen >> 8) & 255]),
+          aes ? Uint8Array.from([0x73, 0x41, 0x6c, 0x54]) : empty,
+        ),
+      );
+      return k.subarray(0, Math.min(16, key.length + 5));
+    };
+    const run = async (m, data, num, gen) => {
+      if (m === 'none') return data;
+      if (m === 'rc4') return rc4(objKey(num, gen, false), data);
+      if (data.length < 16) return empty;
+      return aesDecrypt(objKey(num, gen, true), data.subarray(0, 16), data.subarray(16));
+    };
+    const walk = async (v, num, gen, depth) => {
+      if (depth > 50) return v;
+      if (v instanceof PStr) return new PStr(bin(await run(str, strBytes(v), num, gen)));
+      if (Array.isArray(v)) {
+        for (let i = 0; i < v.length; i++) v[i] = await walk(v[i], num, gen, depth + 1);
+      } else if (v instanceof Stream) {
+        await walk(v.dict, num, gen, depth + 1);
+      } else if (isDict(v)) {
+        for (const k in v) v[k] = await walk(v[k], num, gen, depth + 1);
+      }
+      return v;
+    };
+    return {
+      decryptObject: (v, num, gen) => (v instanceof Stream && v.dict.Type === '/XRef' ? v : walk(v, num, gen, 0)),
+      async decryptStream(s, data) {
+        s.decrypted = true;
+        if (s.dict.Type === '/XRef') return data;
+        const filters = [].concat(s.dict.Filter || []);
+        if (filters.includes('/Crypt')) return data; // per-stream Identity crypt filter
+        return run(stm, data, s.num, s.gen);
+      },
+    };
   }
 
   // ---------------------------------------------------------------- encodings & glyph names
 
   // Codes 128–159 of WinAnsiEncoding; 160–255 are Latin-1.
-  const WIN_HIGH =
-    '€\0‚ƒ„…†‡ˆ‰Š‹Œ\0Ž\0\0‘’“”•–—˜™š›œ\0žŸ';
+  const WIN_HIGH = '€\0‚ƒ„…†‡ˆ‰Š‹Œ\0Ž\0\0‘’“”•–—˜™š›œ\0žŸ';
   const WIN_ANSI = [];
   for (let c = 0; c < 256; c++) {
     WIN_ANSI[c] = c >= 32 && c < 127 ? String.fromCharCode(c) : c >= 160 ? String.fromCharCode(c) : '';
@@ -1282,27 +1611,28 @@
   const DINGBATS_ENC = table(32, DINGBATS_TABLE);
 
   // Adobe Glyph List subset: name -> code point (hex). Accented Latin names are derived below.
-  const AGL_DATA = 'space:20 exclam:21 quotedbl:22 numbersign:23 dollar:24 percent:25 ampersand:26 quotesingle:27 parenleft:28 parenright:29 asterisk:2a plus:2b comma:2c hyphen:2d period:2e slash:2f zero:30 one:31 two:32 three:33 four:34 five:35 six:36 seven:37 eight:38 nine:39 colon:3a semicolon:3b less:3c equal:3d greater:3e question:3f at:40 bracketleft:5b backslash:5c bracketright:5d asciicircum:5e underscore:5f grave:60 braceleft:7b bar:7c braceright:7d asciitilde:7e nbspace:a0 nonbreakingspace:a0 exclamdown:a1 cent:a2 sterling:a3 currency:a4 yen:a5 brokenbar:a6 section:a7 dieresis:a8 copyright:a9 ordfeminine:aa guillemotleft:ab logicalnot:ac registered:ae macron:af degree:b0 plusminus:b1 acute:b4 mu:b5 paragraph:b6 middot:b7 periodcentered:b7 cedilla:b8 ordmasculine:ba guillemotright:bb onequarter:bc onehalf:bd threequarters:be questiondown:bf AE:c6 Eth:d0 multiply:d7 Oslash:d8 Thorn:de germandbls:df ae:e6 eth:f0 divide:f7 oslash:f8 thorn:fe Cdot:10a cdot:10b Dcroat:110 Dslash:110 dcroat:111 dslash:111 Edot:116 edot:117 Gdot:120 gdot:121 Hbar:126 hbar:127 Idot:130 dotlessi:131 IJ:132 ij:133 Ldot:13f ldot:140 Lslash:141 lslash:142 Eng:14a eng:14b Odblacute:150 odblacute:151 OE:152 oe:153 Tcommaaccent:162 tcommaaccent:163 Tbar:166 tbar:167 Udblacute:170 udblacute:171 Zdot:17b zdot:17c longs:17f slong:17f florin:192 dotlessj:237 circumflex:2c6 caron:2c7 breve:2d8 dotaccent:2d9 ring:2da ogonek:2db tilde:2dc hungarumlaut:2dd Alpha:391 Beta:392 Gamma:393 Deltagreek:394 Epsilon:395 Zeta:396 Eta:397 Theta:398 Iota:399 Kappa:39a Lambda:39b Mu:39c Nu:39d Xi:39e Omicron:39f Pi:3a0 Rho:3a1 Sigma:3a3 Tau:3a4 Upsilon:3a5 Phi:3a6 Chi:3a7 Psi:3a8 Omegagreek:3a9 Iotadieresis:3aa Upsilondieresis:3ab alphatonos:3ac epsilontonos:3ad etatonos:3ae iotatonos:3af upsilondieresistonos:3b0 alpha:3b1 beta:3b2 gamma:3b3 delta:3b4 epsilon:3b5 zeta:3b6 eta:3b7 theta:3b8 iota:3b9 kappa:3ba lambda:3bb mugreek:3bc nu:3bd xi:3be omicron:3bf pi:3c0 rho:3c1 sigma1:3c2 sigmafinal:3c2 sigma:3c3 tau:3c4 upsilon:3c5 phi:3c6 chi:3c7 psi:3c8 omega:3c9 endash:2013 emdash:2014 quoteleft:2018 quoteright:2019 quotesinglbase:201a quotedblleft:201c quotedblright:201d quotedblbase:201e dagger:2020 daggerdbl:2021 bullet:2022 ellipsis:2026 perthousand:2030 minute:2032 second:2033 guilsinglleft:2039 guilsinglright:203a exclamdbl:203c overline:203e fraction:2044 Euro:20ac euro:20ac numero:2116 trademark:2122 Omega:2126 arrowleft:2190 arrowup:2191 arrowright:2192 arrowdown:2193 arrowboth:2194 arrowupdn:2195 partialdiff:2202 Delta:2206 product:220f summation:2211 minus:2212 radical:221a infinity:221e integral:222b approxequal:2248 notequal:2260 lessequal:2264 greaterequal:2265 blacksquare:25a0 filledbox:25a0 lozenge:25ca circle:25cb blackcircle:25cf';
+  const AGL_DATA =
+    'space:20 exclam:21 quotedbl:22 numbersign:23 dollar:24 percent:25 ampersand:26 quotesingle:27 parenleft:28 parenright:29 asterisk:2a plus:2b comma:2c hyphen:2d period:2e slash:2f zero:30 one:31 two:32 three:33 four:34 five:35 six:36 seven:37 eight:38 nine:39 colon:3a semicolon:3b less:3c equal:3d greater:3e question:3f at:40 bracketleft:5b backslash:5c bracketright:5d asciicircum:5e underscore:5f grave:60 braceleft:7b bar:7c braceright:7d asciitilde:7e nbspace:a0 nonbreakingspace:a0 exclamdown:a1 cent:a2 sterling:a3 currency:a4 yen:a5 brokenbar:a6 section:a7 dieresis:a8 copyright:a9 ordfeminine:aa guillemotleft:ab logicalnot:ac registered:ae macron:af degree:b0 plusminus:b1 acute:b4 mu:b5 paragraph:b6 middot:b7 periodcentered:b7 cedilla:b8 ordmasculine:ba guillemotright:bb onequarter:bc onehalf:bd threequarters:be questiondown:bf AE:c6 Eth:d0 multiply:d7 Oslash:d8 Thorn:de germandbls:df ae:e6 eth:f0 divide:f7 oslash:f8 thorn:fe Cdot:10a cdot:10b Dcroat:110 Dslash:110 dcroat:111 dslash:111 Edot:116 edot:117 Gdot:120 gdot:121 Hbar:126 hbar:127 Idot:130 dotlessi:131 IJ:132 ij:133 Ldot:13f ldot:140 Lslash:141 lslash:142 Eng:14a eng:14b Odblacute:150 odblacute:151 OE:152 oe:153 Tcommaaccent:162 tcommaaccent:163 Tbar:166 tbar:167 Udblacute:170 udblacute:171 Zdot:17b zdot:17c longs:17f slong:17f florin:192 dotlessj:237 circumflex:2c6 caron:2c7 breve:2d8 dotaccent:2d9 ring:2da ogonek:2db tilde:2dc hungarumlaut:2dd Alpha:391 Beta:392 Gamma:393 Deltagreek:394 Epsilon:395 Zeta:396 Eta:397 Theta:398 Iota:399 Kappa:39a Lambda:39b Mu:39c Nu:39d Xi:39e Omicron:39f Pi:3a0 Rho:3a1 Sigma:3a3 Tau:3a4 Upsilon:3a5 Phi:3a6 Chi:3a7 Psi:3a8 Omegagreek:3a9 Iotadieresis:3aa Upsilondieresis:3ab alphatonos:3ac epsilontonos:3ad etatonos:3ae iotatonos:3af upsilondieresistonos:3b0 alpha:3b1 beta:3b2 gamma:3b3 delta:3b4 epsilon:3b5 zeta:3b6 eta:3b7 theta:3b8 iota:3b9 kappa:3ba lambda:3bb mugreek:3bc nu:3bd xi:3be omicron:3bf pi:3c0 rho:3c1 sigma1:3c2 sigmafinal:3c2 sigma:3c3 tau:3c4 upsilon:3c5 phi:3c6 chi:3c7 psi:3c8 omega:3c9 endash:2013 emdash:2014 quoteleft:2018 quoteright:2019 quotesinglbase:201a quotedblleft:201c quotedblright:201d quotedblbase:201e dagger:2020 daggerdbl:2021 bullet:2022 ellipsis:2026 perthousand:2030 minute:2032 second:2033 guilsinglleft:2039 guilsinglright:203a exclamdbl:203c overline:203e fraction:2044 Euro:20ac euro:20ac numero:2116 trademark:2122 Omega:2126 arrowleft:2190 arrowup:2191 arrowright:2192 arrowdown:2193 arrowboth:2194 arrowupdn:2195 partialdiff:2202 Delta:2206 product:220f summation:2211 minus:2212 radical:221a infinity:221e integral:222b approxequal:2248 notequal:2260 lessequal:2264 greaterequal:2265 blacksquare:25a0 filledbox:25a0 lozenge:25ca circle:25cb blackcircle:25cf';
   const AGL = new Map();
   for (const pair of AGL_DATA.split(' ')) {
     const i = pair.lastIndexOf(':');
     if (i > 0) AGL.set(pair.slice(0, i), String.fromCodePoint(parseInt(pair.slice(i + 1), 16)));
   }
   const ACCENTS = {
-    acute: '́',
-    grave: '̀',
-    circumflex: '̂',
-    dieresis: '̈',
-    tilde: '̃',
-    ring: '̊',
-    cedilla: '̧',
-    caron: '̌',
-    macron: '̄',
-    breve: '̆',
-    dotaccent: '̇',
-    ogonek: '̨',
-    hungarumlaut: '̋',
-    commaaccent: '̦',
+    acute: '\u0301',
+    grave: '\u0300',
+    circumflex: '\u0302',
+    dieresis: '\u0308',
+    tilde: '\u0303',
+    ring: '\u030a',
+    cedilla: '\u0327',
+    caron: '\u030c',
+    macron: '\u0304',
+    breve: '\u0306',
+    dotaccent: '\u0307',
+    ogonek: '\u0328',
+    hungarumlaut: '\u030b',
+    commaaccent: '\u0326',
   };
   const LIGATURES = { ff: 'ff', fi: 'fi', fl: 'fl', ffi: 'ffi', ffl: 'ffl', st: 'st', ft: 'ft', IJ: 'IJ', ij: 'ij' };
 
@@ -1313,7 +1643,11 @@
     if (LIGATURES[name]) return LIGATURES[name];
     if (/^[A-Za-z]$/.test(name)) return name;
     let m = /^uni((?:[0-9A-Fa-f]{4})+)$/.exec(name);
-    if (m) return m[1].match(/.{4}/g).map((h) => String.fromCharCode(parseInt(h, 16))).join('');
+    if (m)
+      return m[1]
+        .match(/.{4}/g)
+        .map((h) => String.fromCharCode(parseInt(h, 16)))
+        .join('');
     m = /^u([0-9A-Fa-f]{4,6})$/.exec(name);
     if (m) {
       const cp = parseInt(m[1], 16);
@@ -1323,9 +1657,10 @@
     const dot = name.indexOf('.');
     if (dot > 0) return glyphToUnicode(name.slice(0, dot));
     if (name.includes('_')) return name.split('_').map(glyphToUnicode).join('');
-    m = /^([A-Za-z]|AE|ae|OE|oe|dotlessi)(acute|grave|circumflex|dieresis|tilde|ring|cedilla|caron|macron|breve|dotaccent|ogonek|hungarumlaut|commaaccent)$/.exec(
-      name,
-    );
+    m =
+      /^([A-Za-z]|AE|ae|OE|oe|dotlessi)(acute|grave|circumflex|dieresis|tilde|ring|cedilla|caron|macron|breve|dotaccent|ogonek|hungarumlaut|commaaccent)$/.exec(
+        name,
+      );
     if (m) return (glyphToUnicode(m[1]) + ACCENTS[m[2]]).normalize('NFC');
     // TeX names that are not in the AGL.
     if (name === 'dotlessi') return 'ı';
@@ -1348,7 +1683,8 @@
     const utf16 = (s) => {
       if (s.length === 1) return s; // some writers emit single-byte targets
       let out = '';
-      for (let i = 0; i + 1 < s.length; i += 2) out += String.fromCharCode((s.charCodeAt(i) << 8) | s.charCodeAt(i + 1));
+      for (let i = 0; i + 1 < s.length; i += 2)
+        out += String.fromCharCode((s.charCodeAt(i) << 8) | s.charCodeAt(i + 1));
       return out;
     };
     let mode = '';
@@ -1360,7 +1696,13 @@
         continue;
       }
       const w = t.name;
-      if (w === 'begincodespacerange' || w === 'beginbfchar' || w === 'beginbfrange' || w === 'begincidrange' || w === 'begincidchar') {
+      if (
+        w === 'begincodespacerange' ||
+        w === 'beginbfchar' ||
+        w === 'beginbfrange' ||
+        w === 'begincidrange' ||
+        w === 'begincidchar'
+      ) {
         mode = w;
         operands.length = 0;
         continue;
@@ -1369,7 +1711,8 @@
         for (let i = 0; i + 1 < operands.length; i += 2) {
           const lo = operands[i];
           const hi = operands[i + 1];
-          if (lo instanceof PStr && hi instanceof PStr) cmap.spaces.push({ n: lo.v.length, lo: code(lo.v), hi: code(hi.v) });
+          if (lo instanceof PStr && hi instanceof PStr)
+            cmap.spaces.push({ n: lo.v.length, lo: code(lo.v), hi: code(hi.v) });
         }
       } else if (w === 'endbfchar') {
         for (let i = 0; i + 1 < operands.length; i += 2) {
@@ -1443,7 +1786,10 @@
       toUnicode: null,
       base: '',
     };
-    if (!isDict(font)) return f;
+    if (!isDict(font)) {
+      f.uni = DEFAULT_FONT.uni; // missing font resource: assume WinAnsi
+      return f;
+    }
     const subtype = font.Subtype;
     f.base = typeof font.BaseFont === 'string' ? font.BaseFont.slice(1).replace(/^[A-Z]{6}\+/, '') : '';
     const tu = await doc.get(font.ToUnicode);
@@ -1460,17 +1806,30 @@
       if (enc instanceof Stream) {
         const cm = parseCMap(await doc.decodeStream(enc));
         if (cm.spaces.length) f.spaces = cm.spaces;
-      } else if (typeof enc === 'string' && !/Identity|UCS2|UTF16/.test(enc)) {
+      } else if (typeof enc === 'string' && /UCS2|UTF16/.test(enc)) {
+        f.ucs2 = true; // codes are Unicode already
+      } else if (typeof enc === 'string' && !/Identity/.test(enc)) {
         // Predefined CJK CMaps mix 1- and 2-byte codes; the ToUnicode codespace usually describes them.
         if (f.toUnicode && f.toUnicode.spaces.length) f.spaces = f.toUnicode.spaces;
       }
       let desc = await doc.get(font.DescendantFonts);
       desc = await doc.get(Array.isArray(desc) ? desc[0] : desc);
+      if (isDict(desc) && !f.toUnicode && !f.ucs2) {
+        // No ToUnicode: map CID → GID → Unicode through the embedded TrueType cmap, if any.
+        const fd = await doc.get(desc.FontDescriptor);
+        const ff = isDict(fd) ? await doc.get(fd.FontFile2 || fd.FontFile3) : null;
+        const glyphs = ff instanceof Stream ? trueTypeGlyphMap(await doc.decodeStream(ff)) : null;
+        if (glyphs) {
+          const c2g = await doc.get(desc.CIDToGIDMap);
+          f.glyphs = glyphs;
+          f.cidToGid = c2g instanceof Stream ? await doc.decodeStream(c2g) : null;
+        }
+      }
       if (isDict(desc)) {
         f.dw = typeof desc.DW === 'number' ? desc.DW : 1000;
         const W = await doc.get(desc.W);
         if (Array.isArray(W)) {
-          for (let i = 0; i < W.length && i < 200000; ) {
+          for (let i = 0; i < W.length && i < 200000;) {
             const first = await doc.get(W[i]);
             const next = await doc.get(W[i + 1]);
             if (Array.isArray(next)) {
@@ -1479,7 +1838,8 @@
             } else {
               const last = next;
               const w = await doc.get(W[i + 2]);
-              if (typeof last === 'number' && last - first < 65536) for (let c = first; c <= last; c++) f.widths.set(c, w);
+              if (typeof last === 'number' && last - first < 65536)
+                for (let c = first; c <= last; c++) f.widths.set(c, w);
               i += 3;
             }
           }
@@ -1503,7 +1863,8 @@
         const w = await doc.get(widths[i]);
         if (typeof w === 'number') f.widths.set(first + i, w);
       }
-      f.dw = 0;
+      const fdesc = await doc.get(font.FontDescriptor);
+      f.dw = isDict(fdesc) ? +(await doc.get(fdesc.MissingWidth)) || 0 : 0;
     } else {
       const std = stdWidths(f.base);
       if (std) {
@@ -1512,7 +1873,7 @@
       }
     }
     // Base encoding, then /Differences on top.
-    let enc = await doc.get(font.Encoding);
+    const enc = await doc.get(font.Encoding);
     let table = null;
     const diffs = new Map();
     if (typeof enc === 'string') table = ENCODINGS[enc.slice(1)];
@@ -1540,7 +1901,6 @@
       if (diffs.has(c) && !u && table[c]) u = table[c];
       if (u) f.uni.set(c, u);
     }
-    enc = null;
     return f;
   }
 
@@ -1590,7 +1950,8 @@
     const italic = /Italic|Oblique/i.test(key);
     if (/Courier/i.test(key)) key = 'Courier';
     else if (/Helvetica|Arial/i.test(key)) key = bold ? 'Helvetica-Bold' : 'Helvetica';
-    else if (/Times/i.test(key)) key = 'Times-' + (bold && italic ? 'BoldItalic' : bold ? 'Bold' : italic ? 'Italic' : 'Roman');
+    else if (/Times/i.test(key))
+      key = 'Times-' + (bold && italic ? 'BoldItalic' : bold ? 'Bold' : italic ? 'Italic' : 'Roman');
     else return null;
     if (stdWidthCache.has(key)) return stdWidthCache.get(key);
     const m = new Map();
@@ -1615,7 +1976,7 @@
     constructor(doc) {
       this.doc = doc;
       this.runs = [];
-      this.fonts = new Map(); // font dict ref/num -> decoder
+      this.fonts = doc.fonts || (doc.fonts = new Map()); // font ref/dict -> decoder, shared by pages
       this.ops = 0;
     }
 
@@ -1630,7 +1991,6 @@
     }
 
     async run(bytes, resources, ctm, depth) {
-      const doc = this.doc;
       const lx = new Lexer(bytes, 0, false);
       const st = {
         ctm,
@@ -1645,6 +2005,7 @@
         tlm: [1, 0, 0, 1, 0, 0],
       };
       const stack = [];
+      const marked = []; // marked-content stack: { start, text } when /ActualText replaces the glyphs
       const ops = [];
       for (;;) {
         const t = lx.read();
@@ -1738,9 +2099,35 @@
           case 'BI':
             skipInlineImage(lx);
             break;
+          case 'BMC':
+          case 'BDC':
+            if (marked.length < 64)
+              marked.push(await this.actualText(resources, op === 'BDC' ? a[a.length - 1] : null));
+            break;
+          case 'EMC':
+            this.applyActualText(marked.pop());
+            break;
         }
         ops.length = 0;
       }
+    }
+
+    async actualText(resources, props) {
+      if (typeof props === 'string') {
+        const all = isDict(resources) ? await this.doc.get(resources.Properties) : null;
+        props = isDict(all) ? await this.doc.get(all[props.slice(1)]) : null;
+      }
+      const at = isDict(props) ? await this.doc.get(props.ActualText) : null;
+      return at instanceof PStr ? { start: this.runs.length, text: textString(at.v) } : null;
+    }
+
+    /** Replaces the runs drawn inside a marked-content span by its /ActualText (ligatures, hyphens). */
+    applyActualText(m) {
+      if (!m || this.runs.length <= m.start) return;
+      const first = this.runs[m.start];
+      const last = this.runs[this.runs.length - 1];
+      this.runs.length = m.start;
+      if (m.text) this.runs.push({ ...first, ex: last.ex, ey: last.ey, text: m.text });
     }
 
     async xobject(resources, name, ctm, depth) {
@@ -1763,7 +2150,7 @@
       for (const c of codes) {
         const w = f.widths.has(c.code) ? f.widths.get(c.code) : f.dw;
         let u = f.toUnicode ? cmapLookup(f.toUnicode, c.code) : undefined;
-        if (u === undefined) u = f.twoByte ? '' : f.uni.get(c.code) || '';
+        if (u === undefined) u = f.twoByte ? cidText(f, c.code) : f.uni.get(c.code) || '';
         text += u;
         adv += ((w * f.scale) / 1000) * fs + st.tc + (c.len === 1 && c.code === 32 ? st.tw : 0);
       }
@@ -1774,11 +2161,106 @@
       st.tm = mul([1, 0, 0, 1, adv, 0], st.tm);
       const trm2 = mul(st.tm, st.ctm);
       const size = Math.abs(fs * f.vscale) * Math.hypot(trm[2], trm[3]) || 1;
-      if (text) this.runs.push({ x: x0, y: y0, x2: trm2[4] + st.rise * trm2[2], text, size, dx: trm[0], dy: trm[1] });
+      if (text) {
+        this.runs.push({ x: x0, y: y0, ex: trm2[4] + st.rise * trm2[2], ey: trm2[5] + st.rise * trm2[3], text, size });
+      }
     }
   }
 
-  const DEFAULT_FONT = { twoByte: false, spaces: null, uni: new Map(WIN_ANSI.map((u, i) => [i, u])), widths: new Map(), dw: 500, scale: 1, vscale: 1, toUnicode: null };
+  function cidText(f, cid) {
+    if (f.ucs2) return String.fromCharCode(cid);
+    if (!f.glyphs) return '';
+    const m = f.cidToGid;
+    const gid = m ? (m.length >= 2 * cid + 2 ? (m[2 * cid] << 8) | m[2 * cid + 1] : 0) : cid;
+    return f.glyphs.get(gid) || '';
+  }
+
+  /** GID → Unicode from an embedded TrueType/OpenType 'cmap' table (Unicode subtables only). */
+  function trueTypeGlyphMap(data) {
+    const rd16 = (o) => (data[o] << 8) | data[o + 1];
+    const rd32 = (o) => ((data[o] << 24) | (data[o + 1] << 16) | (data[o + 2] << 8) | data[o + 3]) >>> 0;
+    if (data.length < 12) return null;
+    let cmap = -1;
+    for (let i = 0, n = rd16(4); i < n && 28 + i * 16 <= data.length; i++) {
+      const r = 12 + i * 16;
+      if (bin(data, r, r + 4) === 'cmap') cmap = rd32(r + 8);
+    }
+    if (cmap < 0 || cmap + 4 > data.length) return null;
+    const subs = [];
+    for (let i = 0, n = rd16(cmap + 2); i < n && cmap + 12 + i * 8 <= data.length; i++) {
+      const r = cmap + 4 + i * 8;
+      const pid = rd16(r);
+      const eid = rd16(r + 2);
+      const rank = pid === 3 && eid === 10 ? 0 : pid === 0 ? 1 : pid === 3 && eid === 1 ? 2 : -1;
+      if (rank >= 0) subs.push({ rank, off: cmap + rd32(r + 4) });
+    }
+    subs.sort((a, b) => a.rank - b.rank);
+    const map = new Map();
+    const add = (g, c) => {
+      if (g && !map.has(g) && c > 0 && c <= 0x10ffff) map.set(g, String.fromCodePoint(c));
+    };
+    for (const { off } of subs) {
+      if (off + 16 > data.length) continue;
+      const fmt = rd16(off);
+      if (fmt === 4) {
+        const seg2 = rd16(off + 6);
+        const ends = off + 14;
+        const starts = ends + seg2 + 2;
+        const deltas = starts + seg2;
+        const ranges = deltas + seg2;
+        if (ranges + seg2 > data.length) continue;
+        for (let k = 0; k < seg2; k += 2) {
+          const end = rd16(ends + k);
+          const start = rd16(starts + k);
+          const delta = rd16(deltas + k);
+          const ro = rd16(ranges + k);
+          for (let c = start; c <= end && c < 0xffff; c++) {
+            if (!ro) add((c + delta) & 0xffff, c);
+            else {
+              const at = ranges + k + ro + (c - start) * 2;
+              if (at + 2 > data.length) break;
+              const g = rd16(at);
+              if (g) add((g + delta) & 0xffff, c);
+            }
+          }
+        }
+      } else if (fmt === 12) {
+        for (let i = 0, n = Math.min(rd32(off + 12), 50000); i < n && off + 28 + i * 12 <= data.length; i++) {
+          const r = off + 16 + i * 12;
+          const sc = rd32(r);
+          const ec = Math.min(rd32(r + 4), sc + 65535);
+          for (let c = sc; c <= ec; c++) add(rd32(r + 8) + c - sc, c);
+        }
+      }
+      if (map.size) break;
+    }
+    return map.size ? map : null;
+  }
+
+  /** PDF "text string": UTF-16BE with BOM, UTF-8 with BOM, or PDFDocEncoding (≈ Latin-1). */
+  function textString(s) {
+    if (s.charCodeAt(0) === 0xfe && s.charCodeAt(1) === 0xff) {
+      let out = '';
+      for (let i = 2; i + 1 < s.length; i += 2)
+        out += String.fromCharCode((s.charCodeAt(i) << 8) | s.charCodeAt(i + 1));
+      return out;
+    }
+    if (s.startsWith('\xef\xbb\xbf')) return utf8.decode(Uint8Array.from(s.slice(3), (c) => c.charCodeAt(0)));
+    let out = '';
+    for (let i = 0; i < s.length; i++) out += WIN_ANSI[s.charCodeAt(i)] || s[i];
+    return out;
+  }
+
+  const DEFAULT_FONT = {
+    twoByte: false,
+    spaces: null,
+    uni: new Map(WIN_ANSI.map((u, i) => [i, u])),
+    widths: new Map(),
+    dw: 500,
+    scale: 1,
+    vscale: 1,
+    toUnicode: null,
+  };
 
   function splitCodes(f, s) {
     const out = [];
@@ -1787,7 +2269,7 @@
       return out;
     }
     const spaces = f.spaces;
-    for (let i = 0; i < s.length; ) {
+    for (let i = 0; i < s.length;) {
       let took = 0;
       if (spaces) {
         let v = 0;
@@ -1808,13 +2290,29 @@
 
   function skipInlineImage(lx) {
     const b = lx.b;
-    // Skip the image dictionary up to ID, then binary data up to a delimited EI.
+    // Skip the image dictionary up to ID, then the binary data up to a delimited EI.
+    const dict = Object.create(null);
+    let key = null;
     for (let n = 0; n < 200; n++) {
       const t = lx.read();
       if (t === EOF) return;
       if (t instanceof Op && t.name === 'ID') break;
+      if (key === null && typeof t === 'string' && t[0] === '/') key = t.slice(1);
+      else if (key !== null) {
+        dict[key] = t;
+        key = null;
+      }
     }
     let p = lx.p + 1;
+    // Unfiltered data has a known size, which may itself contain " EI ".
+    const w = dict.W || dict.Width;
+    const h = dict.H || dict.Height;
+    if (!(dict.F || dict.Filter) && w > 0 && h > 0) {
+      const bpc = dict.IM || dict.ImageMask ? 1 : dict.BPC || dict.BitsPerComponent || 8;
+      const cs = dict.CS || dict.ColorSpace;
+      const comps = cs === '/RGB' || cs === '/DeviceRGB' ? 3 : cs === '/CMYK' || cs === '/DeviceCMYK' ? 4 : 1;
+      p += Math.ceil((w * comps * bpc) / 8) * h;
+    }
     for (; p + 1 < b.length; p++) {
       if (b[p] === 0x45 && b[p + 1] === 0x49 && WS[b[p - 1]] && (p + 2 >= b.length || WS[b[p + 2]])) break;
     }
@@ -1823,22 +2321,181 @@
 
   // ---------------------------------------------------------------- layout
 
-  function layoutPage(runs) {
-    if (!runs.length) return '';
-    // Visual order: baseline top→bottom, then x.
+  /**
+   * Turns positioned text runs into lines. Runs are first rotated into reading
+   * orientation (page /Rotate and rotated text), grouped by baseline, split into
+   * columns when a tall gutter separates independent text, then joined left→right.
+   */
+  function layoutPage(runs, rotate) {
+    const groups = new Map(); // reading direction -> runs
+    const rot = (((rotate || 0) % 360) + 360) % 360;
+    for (const r of runs) {
+      let [x, y, ex, ey] = [r.x, r.y, r.ex, r.ey];
+      if (rot === 90) [x, y, ex, ey] = [y, -x, ey, -ex];
+      else if (rot === 180) [x, y, ex, ey] = [-x, -y, -ex, -ey];
+      else if (rot === 270) [x, y, ex, ey] = [-y, x, -ey, ex];
+      const dx = ex - x;
+      const dy = ey - y;
+      let dir = 0;
+      if (Math.abs(dy) > Math.abs(dx)) dir = dy > 0 ? 1 : 3;
+      else if (dx < 0) dir = 2;
+      // Rotate each direction into a frame where it reads left→right.
+      if (dir === 1) [x, y, ex] = [y, -x, ey];
+      else if (dir === 2) [x, y, ex] = [-x, -y, -ex];
+      else if (dir === 3) [x, y, ex] = [-y, x, -ey];
+      if (!groups.has(dir)) groups.set(dir, []);
+      groups.get(dir).push({ x, y, x2: Math.max(ex, x), text: r.text, size: r.size });
+    }
+    // Upright text first; sideways captions and sidebars after it.
+    return [0, 1, 3, 2]
+      .filter((d) => groups.has(d))
+      .map((d) => layoutBlock(toLines(groups.get(d)), 0))
+      .filter(Boolean)
+      .join('\n\n');
+  }
+
+  function toLines(runs) {
     runs.sort((a, b) => b.y - a.y || a.x - b.x);
     const lines = [];
     for (const r of runs) {
-      const line = lines[lines.length - 1];
-      if (line && Math.abs(line.y - r.y) <= 0.3 * Math.max(line.size, r.size)) {
+      // Compare with the last few lines too: superscripts and sub-lines interleave in y order.
+      let line = null;
+      for (let k = lines.length - 1; k >= 0 && k >= lines.length - 3; k--) {
+        const l = lines[k];
+        // Smaller text slightly off the baseline is a superscript/subscript of this line.
+        const tol =
+          r.size < 0.85 * l.size
+            ? 0.45 * l.size
+            : 0.3 * Math.min(Math.max(l.size, r.size), 2 * Math.min(l.size, r.size));
+        if (Math.abs(l.y - r.y) <= tol) {
+          line = l;
+          break;
+        }
+      }
+      if (line) {
         line.runs.push(r);
         line.size = Math.max(line.size, r.size);
       } else lines.push({ y: r.y, size: r.size, runs: [r] });
     }
+    for (const l of lines) {
+      l.runs.sort((a, b) => a.x - b.x);
+      // Segments: runs separated by less than ~1 em belong to the same phrase.
+      l.segs = [];
+      for (const r of l.runs) {
+        const s = l.segs[l.segs.length - 1];
+        if (s && r.x - s.x2 < Math.max(s.size, r.size)) {
+          s.x2 = Math.max(s.x2, r.x2);
+          s.chars += r.text.length;
+        } else l.segs.push({ x: r.x, x2: r.x2, size: r.size, chars: r.text.length });
+      }
+    }
+    return lines;
+  }
+
+  /** Finds a vertical gutter that splits a tall stretch of lines into two independent columns. */
+  function findGutter(lines) {
+    if (lines.length < 6) return null;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (const l of lines) {
+      minX = Math.min(minX, l.segs[0].x);
+      maxX = Math.max(maxX, l.segs[l.segs.length - 1].x2);
+    }
+    const width = maxX - minX;
+    const height = lines[0].y - lines[lines.length - 1].y;
+    if (width <= 0 || height <= 0) return null;
+    const cands = new Set();
+    for (const l of lines) {
+      for (let i = 0; i + 1 < l.segs.length; i++) cands.add(Math.round((l.segs[i].x2 + l.segs[i + 1].x) / 2));
+    }
+    let best = null;
+    for (const g of cands) {
+      if (g < minX + 0.1 * width || g > maxX - 0.1 * width) continue;
+      let start = 0;
+      for (let i = 0; i <= lines.length; i++) {
+        const crosses = i < lines.length && lines[i].segs.some((s) => s.x < g && s.x2 > g);
+        if (!crosses) continue;
+        if (i - start >= 6) best = scoreGutter(lines, start, i, g, width, height, best);
+        start = i + 1;
+      }
+      if (lines.length - start >= 6) best = scoreGutter(lines, start, lines.length, g, width, height, best);
+    }
+    return best;
+  }
+
+  function scoreGutter(lines, from, to, g, width, height, best) {
+    const h = lines[from].y - lines[to - 1].y;
+    if (h < 0.4 * height) return best;
+    let nL = 0;
+    let nR = 0;
+    let both = 0;
+    let lMin = Infinity;
+    let lMax = -Infinity;
+    let rMin = Infinity;
+    let rMax = -Infinity;
+    const rightEdges = [];
+    const leftEdges = [];
+    for (let i = from; i < to; i++) {
+      let l = false;
+      let r = false;
+      for (const s of lines[i].segs) {
+        if (s.x2 <= g) {
+          l = true;
+          lMin = Math.min(lMin, s.x);
+          lMax = Math.max(lMax, s.x2);
+        } else {
+          if (!r) leftEdges.push(s.x);
+          r = true;
+          rMin = Math.min(rMin, s.x);
+          rMax = Math.max(rMax, s.x2);
+          rightEdges.push(s.x2);
+        }
+      }
+      nL += l;
+      nR += r;
+      both += l && r;
+    }
+    if (nL < 3 || nR < 3) return best;
+    const spread = (v) => Math.max(...v) - Math.min(...v);
+    // Right-aligned dates/locations beside titles are one row each, not a column of their own.
+    const rightAligned = spread(rightEdges) < 2 && spread(leftEdges) > 4;
+    const paired = both / Math.min(nL, nR);
+    const wide = rMax - rMin >= 0.3 * width && lMax - lMin >= 0.2 * width;
+    if (rightAligned || (paired >= 0.6 && !wide)) return best;
+    const score = to - from;
+    return !best || score > best.score ? { g, from, to, score } : best;
+  }
+
+  function layoutBlock(lines, depth) {
+    if (!lines.length) return '';
+    const gut = depth < 3 ? findGutter(lines) : null;
+    if (gut) {
+      const pick = (side) =>
+        lines
+          .slice(gut.from, gut.to)
+          .map((l) => ({ ...l, runs: l.runs.filter((r) => (side ? r.x >= gut.g : r.x < gut.g)) }))
+          .filter((l) => l.runs.length)
+          .map((l) => regroup(l));
+      return [
+        layoutBlock(lines.slice(0, gut.from), depth + 1),
+        layoutBlock(pick(false), depth + 1),
+        layoutBlock(pick(true), depth + 1),
+        layoutBlock(lines.slice(gut.to), depth + 1),
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+    }
+    // Paragraph breaks: a gap clearly larger than this block's usual line spacing.
+    const gaps = [];
+    for (let i = 1; i < lines.length; i++) {
+      const dy = lines[i - 1].y - lines[i].y;
+      if (dy > 0 && dy < 3 * lines[i].size) gaps.push(dy);
+    }
+    gaps.sort((a, b) => a - b);
+    const usual = gaps.length >= 3 ? gaps[Math.floor(gaps.length / 4)] : 0; // lower quartile: plain line spacing
     let out = '';
     let prev = null;
     for (const line of lines) {
-      line.runs.sort((a, b) => a.x - b.x);
       let s = '';
       let last = null;
       for (const r of line.runs) {
@@ -1846,7 +2503,7 @@
           const em = Math.max(last.size, r.size);
           const gap = r.x - last.x2;
           if (r.text === last.text && Math.abs(r.x - last.x) < 0.2 * em) continue; // fake-bold overprint
-          if (gap > 2 * em) s += '   ';
+          if (gap > 2 * em) s += GAP;
           else if (gap > 0.2 * em && !/\s$/.test(s) && !/^\s/.test(r.text)) s += ' ';
         }
         s += r.text;
@@ -1854,12 +2511,23 @@
       }
       if (prev) {
         const dy = prev.y - line.y;
-        out += dy > 1.5 * 1.2 * Math.max(prev.size, line.size) ? '\n\n' : '\n';
+        const size = Math.max(prev.size, line.size);
+        out += dy > (usual ? Math.max(1.3 * usual, 1.2 * size) : 1.8 * size) ? '\n\n' : '\n';
       }
       out += s;
       prev = line;
     }
     return out;
+  }
+
+  function regroup(line) {
+    const segs = [];
+    for (const r of line.runs) {
+      const s = segs[segs.length - 1];
+      if (s && r.x - s.x2 < Math.max(s.size, r.size)) s.x2 = Math.max(s.x2, r.x2);
+      else segs.push({ x: r.x, x2: r.x2, size: r.size, chars: r.text.length });
+    }
+    return { ...line, segs };
   }
 
   // ---------------------------------------------------------------- PDF entry
@@ -1884,14 +2552,17 @@
         const s = await doc.get(c);
         if (s instanceof Stream) chunks.push(await doc.decodeStream(s), new Uint8Array([10]));
       }
-      const data = concat(chunks, chunks.reduce((n, c) => n + c.length, 0));
+      const data = concat(
+        chunks,
+        chunks.reduce((n, c) => n + c.length, 0),
+      );
       try {
         await pt.run(data, page.resources, [1, 0, 0, 1, 0, 0], 0);
       } catch (err) {
         if (err && err.userFacing) throw err;
         doc.warnings.push('Some text on a page could not be read.');
       }
-      texts.push(layoutPage(pt.runs));
+      texts.push(layoutPage(pt.runs, page.rotate));
     }
     const text = texts.join('\n\n');
     if (!text.replace(/\s/g, '')) throw fail(MSG.scanned);

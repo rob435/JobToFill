@@ -1,0 +1,40 @@
+{
+  "absolute_url": "https://boards.greenhouse.io/point72/jobs/8845395002?gh_jid=8845395002",
+  "internal_job_id": 6541208002,
+  "location": {
+    "name": "London, UK"
+  },
+  "metadata": [
+    {
+      "id": 4076300002,
+      "name": "Time Type",
+      "value": "Part Time",
+      "value_type": "single_select"
+    }
+  ],
+  "id": 8845395002,
+  "updated_at": "2026-09-29T10:41:39-04:00",
+  "requisition_id": "7878",
+  "title": "2027 Point72 Academy Spring Insight Programme – UK",
+  "company_name": "Point72 ",
+  "first_published": "2026-09-29T10:41:39-04:00",
+  "language": "en",
+  "content": "&lt;p&gt;The Spring Insight Programme is a short, paid introduction to investing at Point72 for first-year university students in the UK. Over two weeks you will meet investment professionals, learn how a multi-strategy fund is run and work through practical exercises with a small group of peers.&lt;/p&gt;&lt;h3&gt;What you'll do&lt;/h3&gt;&lt;ul&gt;&lt;li&gt;Join workshops on fundamental equity research, macro investing and the technology behind the firm&lt;/li&gt;&lt;li&gt;Work in a team on a stock pitch and present it to portfolio managers&lt;/li&gt;&lt;li&gt;Hear from people across investing, risk and operations about their careers&lt;/li&gt;&lt;/ul&gt;&lt;h3&gt;What we're looking for&lt;/h3&gt;&lt;ul&gt;&lt;li&gt;&lt;p&gt;First-year undergraduates of any degree discipline at a UK university&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;A genuine curiosity about markets, businesses and how prices move&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;Clear communication and the ability to work well in a group&lt;/p&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;Successful participants may be invited to interview for the summer internship the following year.&lt;/p&gt;",
+  "departments": [
+    {
+      "id": 4012345002,
+      "name": "Academy",
+      "child_ids": [],
+      "parent_id": null
+    }
+  ],
+  "offices": [
+    {
+      "id": 4023456002,
+      "name": "UK",
+      "location": "England, United Kingdom",
+      "child_ids": [],
+      "parent_id": null
+    }
+  ]
+}

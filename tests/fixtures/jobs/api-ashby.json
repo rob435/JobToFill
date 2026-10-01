@@ -1,0 +1,56 @@
+{
+  "apiVersion": "1",
+  "jobs": [
+    {
+      "id": "a4bd5818-3b58-4e6d-880c-2c4ca2d989f6",
+      "title": "Forward Deployed Engineer",
+      "department": "Engineering",
+      "team": "Engineering",
+      "employmentType": "FullTime",
+      "location": "San Francisco",
+      "secondaryLocations": [],
+      "publishedAt": "2025-09-09T04:47:44.859+00:00",
+      "isListed": true,
+      "isRemote": false,
+      "workplaceType": "OnSite",
+      "jobUrl": "https://jobs.ashbyhq.com/kastle/a4bd5818-3b58-4e6d-880c-2c4ca2d989f6",
+      "applyUrl": "https://jobs.ashbyhq.com/kastle/a4bd5818-3b58-4e6d-880c-2c4ca2d989f6/application",
+      "descriptionHtml": "<p>Forward Deployed Engineer at Kastle: work with customers and engineers to roll out our banking agents. This text is a short placeholder for another role on the same board.</p>",
+      "descriptionPlain": ""
+    },
+    {
+      "id": "6f32db51-de45-472f-a9c8-d9419d3634ee",
+      "title": "Software Engineer - Intern",
+      "department": "Intern",
+      "team": "Intern",
+      "employmentType": "FullTime",
+      "location": "San Francisco",
+      "secondaryLocations": [],
+      "publishedAt": "2026-08-07T01:31:31.243+00:00",
+      "isListed": true,
+      "isRemote": false,
+      "workplaceType": "OnSite",
+      "jobUrl": "https://jobs.ashbyhq.com/kastle/6f32db51-de45-472f-a9c8-d9419d3634ee",
+      "applyUrl": "https://jobs.ashbyhq.com/kastle/6f32db51-de45-472f-a9c8-d9419d3634ee/application",
+      "descriptionHtml": "<p>Kastle builds AI agents that take on routine work inside banks and lenders. As a software engineering intern you will ship features used by real customers, pairing with full-time engineers on the product and the systems behind it.</p><h3>What you'll do</h3><ul><li>Build and test features across our TypeScript front end and Python services</li><li>Help design evaluation tools that measure how well our agents perform</li><li>Take part in code review, planning and customer calls</li></ul><h3>What we're looking for</h3><ul><li><p>Studying computer science or a related subject, graduating in 2027 or 2028</p></li><li><p>Experience building software through projects, internships or open source</p></li><li><p>Able to spend the summer in our San Francisco office</p></li></ul>",
+      "descriptionPlain": ""
+    },
+    {
+      "id": "a65585b2-6a98-4c5c-8557-b7e0c3a4679e",
+      "title": "Staff Engineer",
+      "department": "Engineering",
+      "team": "Engineering",
+      "employmentType": "FullTime",
+      "location": "San Francisco",
+      "secondaryLocations": [],
+      "publishedAt": "2025-09-09T04:47:15.094+00:00",
+      "isListed": true,
+      "isRemote": false,
+      "workplaceType": "OnSite",
+      "jobUrl": "https://jobs.ashbyhq.com/kastle/a65585b2-6a98-4c5c-8557-b7e0c3a4679e",
+      "applyUrl": "https://jobs.ashbyhq.com/kastle/a65585b2-6a98-4c5c-8557-b7e0c3a4679e/application",
+      "descriptionHtml": "<p>Staff Engineer at Kastle: work with customers and engineers to roll out our banking agents. This text is a short placeholder for another role on the same board.</p>",
+      "descriptionPlain": ""
+    }
+  ]
+}
