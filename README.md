@@ -39,7 +39,7 @@ Save your details once: name, contact info, address, links, education, work hist
 - **Show detected fields** labels every field with what JobToFill thinks it is: green means ready, amber means your profile lacks it, grey means unknown.
 - **Undo** puts back whatever was on the page before the fill.
 - Only empty fields are filled unless you turn on _Overwrite_, and filled fields are outlined.
-- Light and dark mode, plus import/export backups.
+- Light and dark mode, an automatic backup file, and import/export.
 
 ## Install
 
@@ -52,6 +52,8 @@ JobToFill isn't in the extension stores yet. One `extension/` folder works unpac
 3. Turn on **Developer mode** and click **Load unpacked**.
 4. Choose the **`extension/`** folder.
 
+To update after `git pull`, click the reload arrow on JobToFill's card; there's no need to remove it. The manifest pins the extension ID, so moving the folder and loading it from the new place keeps your details too.
+
 **Firefox 142 or newer**
 
 1. Download this repository (or `git clone` it).
@@ -59,9 +61,17 @@ JobToFill isn't in the extension stores yet. One `extension/` folder works unpac
 3. Click **Load Temporary Add-on…** and choose **`extension/manifest.json`**.
 4. If the toolbar popup shows **Allow JobToFill on websites**, click **Allow**. Firefox asks for site access separately.
 
-Firefox removes temporary add-ons when it restarts. To keep JobToFill installed, sign `dist/jobtofill-firefox-*.zip` through [addons.mozilla.org](https://addons.mozilla.org/developers/) (it can be signed for self-distribution without being listed).
+Firefox removes temporary add-ons when it restarts. To keep JobToFill installed for good, sign it for yourself (free, it won't be listed publicly): create API keys under [addons.mozilla.org › Developer Hub › Manage API Keys](https://addons.mozilla.org/developers/addon/api/key/), then run
+
+```bash
+WEB_EXT_API_KEY=user:… WEB_EXT_API_SECRET=… npm run sign:firefox
+```
+
+and install the `.xpi` it writes to `dist/` from `about:addons` › ⚙ › **Install Add-on From File…**.
 
 In both browsers the settings page opens on install. Fill in your profile and pin the toolbar icon. `npm run build` writes store-ready zips for both browsers to `dist/`.
+
+**Your details survive re-installs.** Removing an extension deletes everything it stored (and so does Firefox's restart for temporary add-ons). JobToFill therefore keeps a copy in **Downloads › JobToFill › jobtofill-backup.json**, rewritten half a minute after each change. When it is added again and starts out empty, the settings page and the popup offer to restore that file in one click. Automatic backups can be switched off under _Backup & restore_.
 
 ## Using it
 
@@ -87,8 +97,9 @@ The demo includes Greenhouse-, Workday- and Lever-style applications, searchable
 
 ## Privacy and security
 
-- **Nothing leaves your browser.** There are no servers, analytics or network requests. The profile lives in the extension's local storage. The Firefox manifest declares that no data is collected.
+- **Nothing leaves your browser.** There are no servers, analytics or network requests. The profile lives in the extension's local storage, plus the backup file in your own Downloads folder. The Firefox manifest declares that no data is collected.
 - **Nothing runs until you ask.** The fill code is injected into a page only when you press the shortcut or a button. It is not loaded on every site you visit.
+- **The backup file is yours.** It is written only to your Downloads folder and contains your profile as plain JSON (the vault stays encrypted). Turn it off under _Backup & restore_ if you'd rather not keep one.
 - **The vault is encrypted** with AES-256-GCM. The key is derived from your master password (PBKDF2-SHA256, 600,000 iterations) and is kept only in memory (`storage.session`) while unlocked. Content scripts can't read it. The vault auto-locks after inactivity (30 minutes by default) and always locks when the browser closes. Backups contain the vault still encrypted.
 - **Secrets are guarded:**
   - Passwords and cards are only handed out during a fill you started.
@@ -172,6 +183,7 @@ npm run test:unit     # fast, no browser
 npm run test:e2e      # the extension in headless Chromium (HEADED=1 to watch)
 npm run test:firefox  # the same fill and page tests in Firefox (FIREFOX_BIN=/path/to/firefox if it isn't on PATH)
 npm run build         # dist/ zips for the Chrome Web Store and Firefox Add-ons
+npm run sign:firefox  # a signed .xpi for a permanent Firefox install (needs AMO API keys, see Install)
 ```
 
 Adding support for a new kind of field usually means adding a rule to `RULES` and a definition to `DEFS` in `extension/lib/fields.js`, plus a case in `tests/unit/classify.test.js`.

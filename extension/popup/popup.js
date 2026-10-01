@@ -261,10 +261,14 @@ async function init() {
   $('#vault-lock').addEventListener('click', async () => (await vault.lock(), renderVault()));
   $('#vault [data-state="locked"]').addEventListener('submit', unlock);
   $('#access-allow').addEventListener('click', allowAccess);
+  $('#restore-open').addEventListener('click', () => openOptions('backup'));
   $('#profile').addEventListener('change', async (e) => {
     await store.setActive(e.target.value);
     $('#result').hidden = true;
   });
+
+  // After a re-add, the background found the old backup file and is waiting for a restore.
+  $('#restore').hidden = !(await store.getBackupInfo()).paused;
 
   await Promise.all([renderProfiles(), renderVault(), renderAccess()]);
 }

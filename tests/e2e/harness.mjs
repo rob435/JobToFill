@@ -192,6 +192,8 @@ export async function launch() {
   const port = server.address().port;
   const driver = isFirefox ? await firefoxDriver() : await chromiumDriver();
   await driver.bg(() => globalThis.JTF.store.loadAll());
+  // Tests that want the automatic backup file switch it on themselves.
+  await driver.bg(() => globalThis.JTF.store.saveSettings({ autoBackup: false }));
 
   const h = {
     ...driver,

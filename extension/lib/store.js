@@ -8,6 +8,7 @@
  *   doc:<id>:<which>  { name, type, size, dataUrl, updatedAt }   (resume / coverLetter files)
  *   history       [{ date, url, host, title, filled }]  newest first
  *   vault         encrypted blob, managed by vault.js
+ *   backupInfo    { at, path, error, paused, previous, dismissed }  the automatic backup file (background.js)
  */
 (function (root) {
   'use strict';
@@ -20,6 +21,7 @@
     toast: true,
     comboboxes: true,
     consents: false,
+    autoBackup: true,
     passwordStrategy: 'generate',
     autoLockMinutes: 30,
     logApplications: true,
@@ -158,6 +160,53 @@
     await area().set({ history: [] });
   }
 
+  /* ---------------------------------------------------------------- backups */
+
+  /** Is any leaf of `value` filled in, compared with the blank template `def`? */
+  function filledIn(value, def) {
+    if (Array.isArray(value)) return value.some((v) => filledIn(v, Array.isArray(def) ? def[0] : undefined));
+    if (value && typeof value === 'object')
+      return Object.keys(value).some(
+        (k) => k !== 'id' && filledIn(value[k], def && typeof def === 'object' ? def[k] : undefined),
+      );
+    if (typeof value === 'string') return value.trim() !== '' && value !== def;
+    if (typeof value === 'boolean') return value && value !== def;
+    return value != null && value !== def;
+  }
+
+  /**
+   * Has anything been entered that is worth backing up? A fresh install has one blank profile,
+   * and its backup must never replace a real one.
+   */
+  async function hasData() {
+    const { profiles, order } = await loadAll();
+    const template = JTF.fields.createProfile();
+    if (order.length > 1) return true;
+    if (order.some((id) => filledIn({ ...profiles[id], id: undefined, name: undefined }, template))) return true;
+    const all = await area().get(null);
+    return !!all.vault || Object.keys(all).some((k) => k.startsWith('doc:'));
+  }
+
+  /**
+   * Is this item from the browser's download list (which outlives the extension) a backup file?
+   * Matched by name, or as JSON this extension saved itself in case the browser renamed it.
+   */
+  function isBackupDownload(item) {
+    if (!item || item.state !== 'complete') return false;
+    if (/jobtofill-backup[^/\\]*\.json$/.test(item.filename || '')) return true;
+    return item.byExtensionId === JTF.api.runtime.id && item.mime === 'application/json';
+  }
+
+  async function getBackupInfo() {
+    return (await area().get('backupInfo')).backupInfo || {};
+  }
+
+  const setBackupInfo = exclusive(async function setBackupInfo(patch) {
+    const info = Object.assign(await getBackupInfo(), patch);
+    await area().set({ backupInfo: info });
+    return info;
+  });
+
   /* ---------------------------------------------------------- import/export */
 
   async function exportData(options) {
@@ -220,6 +269,10 @@
     clearHistory,
     exportData,
     importData,
+    hasData,
+    isBackupDownload,
+    getBackupInfo,
+    setBackupInfo,
   };
   JTF.store = store;
   if (typeof module === 'object' && module.exports) module.exports = store;

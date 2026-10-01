@@ -128,6 +128,42 @@ test('store: history merges refills of the same page', async () => {
   assert.equal(h[1].filled, 5);
 });
 
+test('store: hasData tells a fresh install from a filled-in one', async () => {
+  assert.equal(await store.hasData(), false, 'one blank profile');
+  const { profile } = await store.getActive();
+  profile.name = 'Renamed';
+  profile.contact.phoneType = 'Mobile';
+  await store.saveProfile(profile);
+  assert.equal(await store.hasData(), false, 'a profile name and default choices are not data');
+  profile.education[0].school = 'University of Glasgow';
+  await store.saveProfile(profile);
+  assert.equal(await store.hasData(), true);
+
+  installChrome();
+  await store.createProfile('Second');
+  assert.equal(await store.hasData(), true, 'more than one profile');
+  installChrome();
+  const blank = (await store.getActive()).profile;
+  await store.setDoc(blank.id, 'resume', { name: 'cv.pdf', type: 'application/pdf', size: 3, dataUrl: 'data:,x' });
+  assert.equal(await store.hasData(), true, 'a resume file');
+  installChrome();
+  await chrome.storage.local.set({ vault: { version: 1 } });
+  assert.equal(await store.hasData(), true, 'a vault');
+});
+
+test('store: backup info merges, and backup downloads are recognised', async () => {
+  await store.setBackupInfo({ at: 1, path: '/d/JobToFill/jobtofill-backup.json' });
+  await store.setBackupInfo({ paused: true });
+  assert.deepEqual(await store.getBackupInfo(), { at: 1, path: '/d/JobToFill/jobtofill-backup.json', paused: true });
+  const item = (filename, extra) => ({ state: 'complete', filename, mime: 'application/json', ...extra });
+  assert.equal(store.isBackupDownload(item('C:\\Users\\me\\Downloads\\JobToFill\\jobtofill-backup.json')), true);
+  assert.equal(store.isBackupDownload(item('/home/me/Downloads/jobtofill-backup-2026-10-01.json')), true);
+  assert.equal(store.isBackupDownload(item('/tmp/0a1b2c', { byExtensionId: 'jobtofill-test' })), true, 'renamed');
+  assert.equal(store.isBackupDownload(item('/tmp/0a1b2c', { byExtensionId: 'someone-else' })), false);
+  assert.equal(store.isBackupDownload(item('/home/me/Downloads/report.json')), false);
+  assert.equal(store.isBackupDownload(item('/x/jobtofill-backup.json', { state: 'interrupted' })), false);
+});
+
 test('store: export / import round trip with documents', async () => {
   const { profile } = await store.getActive();
   profile.personal.firstName = 'Grace';

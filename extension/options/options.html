@@ -57,6 +57,13 @@
           <button type="button" class="primary">Allow</button>
         </div>
 
+        <div id="restore" class="banner info" hidden>
+          <p><strong>Used JobToFill before?</strong> <span id="restore-text"></span></p>
+          <button id="restore-pick" type="button" class="primary">Restore from backup…</button>
+          <button id="restore-skip" type="button">Start fresh</button>
+          <input id="restore-file" type="file" accept="application/json,.json" hidden />
+        </div>
+
         <div id="sections"></div>
       </main>
     </div>

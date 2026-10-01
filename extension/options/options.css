@@ -227,6 +227,13 @@ main {
   margin: 0;
   flex: 1;
 }
+.banner.info {
+  border-color: var(--primary);
+  background: var(--primary-weak);
+}
+.banner code {
+  overflow-wrap: anywhere;
+}
 
 .doc-card {
   display: flex;

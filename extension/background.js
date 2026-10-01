@@ -3,7 +3,7 @@
  * Owns everything that needs privileges: injecting the content scripts on
  * demand, running a fill across all frames, handing out vault secrets (only to
  * the frame being filled, only over HTTPS), the keyboard shortcut, context
- * menus and vault auto-lock.
+ * menus, vault auto-lock and the automatic backup file.
  */
 // Chromium loads the libraries here; Firefox lists them in manifest.json "background.scripts".
 if (typeof importScripts === 'function') {
@@ -284,6 +284,87 @@ async function documentFor(msg, sender) {
   return doc ? { name: doc.name, type: doc.type, dataUrl: doc.dataUrl } : { error: 'No document' };
 }
 
+/* --------------------------------------------------------------- backups */
+
+// Extension storage is deleted when an extension is removed, and Firefox removes temporary add-ons
+// every time it restarts. So a copy of everything (the vault still encrypted) is kept in
+// Downloads/JobToFill, rewritten shortly after each change, and offered back when JobToFill
+// starts out empty.
+const BACKUP_FILE = 'JobToFill/jobtofill-backup.json';
+const BACKUP_KEYS = /^(profiles|profileOrder|settings|vault|doc:.+)$/;
+
+api.storage.onChanged.addListener((changes, areaName) => {
+  // Re-created on every change, so the file is written once things have been quiet for half a minute.
+  if (areaName === 'local' && Object.keys(changes).some((k) => BACKUP_KEYS.test(k)))
+    api.alarms.create('jtf-backup', { delayInMinutes: 0.5 });
+});
+
+/** Firefox's background page can make blob URLs; Chromium's service worker can't, so it gets a data URL. */
+function jsonUrl(json) {
+  if (typeof URL.createObjectURL === 'function')
+    return URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+  const bytes = new TextEncoder().encode(json);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return 'data:application/json;base64,' + btoa(bin);
+}
+
+async function finishedDownload(id) {
+  for (let i = 0; i < 150; i++) {
+    const [item] = await api.downloads.search({ id });
+    if (!item || item.state !== 'in_progress') return item || null;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return null;
+}
+
+/** Earlier writes of the backup file, newest first (the browser's download list outlives the extension). */
+async function backupDownloads() {
+  return (await api.downloads.search({ orderBy: ['-startTime'] })).filter(store.isBackupDownload);
+}
+
+/**
+ * Write the backup file. Skipped while automatic backups are off or a restore is pending, unless
+ * `force` (the "Back up now" button), and always when there is nothing to back up yet.
+ */
+async function writeBackup(options) {
+  const force = !!(options && options.force);
+  const [settings, info] = await Promise.all([store.getSettings(), store.getBackupInfo()]);
+  if (!force && settings.autoBackup === false) return { skipped: 'off' };
+  if (!force && info.paused) return { skipped: 'restore pending' };
+  if (!(await store.hasData())) return { skipped: 'nothing to back up yet' };
+
+  const url = jsonUrl(JSON.stringify(await store.exportData()));
+  try {
+    const id = await api.downloads.download({ url, filename: BACKUP_FILE, conflictAction: 'overwrite', saveAs: false });
+    const item = await finishedDownload(id);
+    if (!item || item.state !== 'complete') throw new Error((item && item.error) || 'The backup file was not written.');
+    // Keep the download list to one entry for the backup file.
+    for (const old of await backupDownloads()) if (old.id !== id) await api.downloads.erase({ id: old.id });
+    await store.setBackupInfo({ at: Date.now(), path: item.filename, error: null, paused: false });
+    return { ok: true, path: item.filename };
+  } catch (err) {
+    const error = String((err && err.message) || err);
+    await store.setBackupInfo({ error, errorAt: Date.now() });
+    return { error };
+  } finally {
+    if (url.startsWith('blob:')) setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+}
+
+/**
+ * On a fresh install, look for a backup an earlier install wrote. If there is one, hold automatic
+ * backups (so the empty new profile can't replace it) until the person restores it or starts fresh.
+ */
+async function lookForPreviousBackup() {
+  if (await store.hasData()) return null;
+  const [found] = (await backupDownloads()).filter((item) => item.exists !== false);
+  if (!found) return null;
+  const previous = { path: found.filename, at: Date.parse(found.endTime || found.startTime) || null };
+  await store.setBackupInfo({ previous, paused: true, dismissed: false });
+  return previous;
+}
+
 /* -------------------------------------------------------------- messages */
 
 const sum = (frames, key) => frames.reduce((n, f) => n + (f[key] || 0), 0);
@@ -299,6 +380,7 @@ const HANDLERS = {
     ]);
     return { on: frames.some((f) => f.on), detected: sum(frames, 'detected') };
   },
+  'jtf:backup': () => writeBackup({ force: true }),
   'jtf:learn': async (msg) => {
     const { profile } = await store.getActive();
     const frames = await callFrames(msg.tabId, 'learn', [{ profile }]);
@@ -395,15 +477,18 @@ async function ensureAlarm() {
 }
 
 api.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name !== 'jtf-autolock') return;
-  await vault.autoLock((await store.getSettings()).autoLockMinutes);
+  if (alarm.name === 'jtf-autolock') await vault.autoLock((await store.getSettings()).autoLockMinutes);
+  else if (alarm.name === 'jtf-backup') await writeBackup();
 });
 
 api.runtime.onInstalled.addListener(async (details) => {
   await createMenus();
   await ensureAlarm();
   await store.loadAll();
-  if (details.reason === 'install') api.runtime.openOptionsPage();
+  if (details.reason === 'install') {
+    await lookForPreviousBackup().catch((err) => console.warn('JobToFill: could not look for a backup:', err));
+    api.runtime.openOptionsPage();
+  }
 });
 
 api.runtime.onStartup.addListener(async () => {
@@ -421,5 +506,7 @@ globalThis.JTFBackground = {
   summaryText,
   cardAllowedIn,
   siteOf,
+  writeBackup,
+  lookForPreviousBackup,
   handlers: HANDLERS,
 };

@@ -32,7 +32,7 @@ function memoryArea() {
 }
 
 function installChrome() {
-  globalThis.chrome = { storage: { local: memoryArea(), session: memoryArea() } };
+  globalThis.chrome = { runtime: { id: 'jobtofill-test' }, storage: { local: memoryArea(), session: memoryArea() } };
   return globalThis.chrome;
 }
 

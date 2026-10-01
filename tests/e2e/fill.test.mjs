@@ -1,7 +1,19 @@
 // End-to-end: the real extension filling realistic application pages, in Chromium or Firefox.
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PROFILE, RESUME_PDF, checked, frameWith, launch, selectedText, text, typeInto, value } from './harness.mjs';
+import { readFile } from 'node:fs/promises';
+import {
+  PROFILE,
+  RESUME_PDF,
+  checked,
+  frameWith,
+  launch,
+  selectedText,
+  text,
+  typeInto,
+  until,
+  value,
+} from './harness.mjs';
 
 let h;
 
@@ -542,4 +554,50 @@ test('restricted pages report a friendly error', async () => {
   const r = await h.bg((id) => globalThis.JTFBackground.fillTab(id), tabId);
   assert.match(r.error, /can’t run on this page/);
   await settings.close();
+});
+
+test('automatic backup: kept in Downloads/JobToFill and offered back after the extension is removed', async () => {
+  const bg = (fn, arg) => h.bg(fn, arg);
+  await h.setSettings({ autoBackup: true });
+  const saved = await bg(() => globalThis.JTF.store.exportData());
+  try {
+    await h.setProfile({ personal: { pronouns: 'she/her' } });
+    assert.ok(await bg(() => globalThis.JTF.api.alarms.get('jtf-backup')), 'a change schedules the backup');
+    // Run it now rather than waiting the half minute.
+    const first = await bg(() => globalThis.JTFBackground.writeBackup());
+    assert.ok(first.ok, JSON.stringify(first));
+    const file = JSON.parse(await readFile(first.path, 'utf8'));
+    assert.equal(file.app, 'JobToFill');
+    assert.equal(file.profiles[file.profileOrder[0]].personal.firstName, 'Ada');
+    assert.ok(Object.keys(file.documents).length >= 1, 'the resume is in it');
+    const second = await bg(() => globalThis.JTFBackground.writeBackup());
+    assert.ok(second.ok);
+    const entries = await bg(() =>
+      globalThis.JTF.api.downloads
+        .search({ orderBy: ['-startTime'] })
+        .then((list) => list.filter(globalThis.JTF.store.isBackupDownload).length),
+    );
+    assert.equal(entries, 1, 'one entry in the download list, rewritten each time');
+
+    // Removing the extension wipes its storage. The next install finds the file and holds backups
+    // so the empty new profile can't overwrite it.
+    await bg(async () => {
+      await globalThis.JTF.api.storage.local.clear();
+      await globalThis.JTF.store.loadAll();
+    });
+    const previous = await bg(() => globalThis.JTFBackground.lookForPreviousBackup());
+    assert.equal(previous && previous.path, second.path);
+    assert.deepEqual(await bg(() => globalThis.JTFBackground.writeBackup()), { skipped: 'restore pending' });
+    const settings = await h.extPage('options/options.html');
+    const banner = await until(settings.call, () => {
+      const el = document.querySelector('#restore');
+      return el && !el.hidden && document.querySelector('#restore-text').textContent;
+    });
+    assert.ok(banner.includes(second.path), banner);
+    await settings.close();
+  } finally {
+    await bg((data) => globalThis.JTF.store.importData(data), saved);
+    await bg(() => globalThis.JTF.store.setBackupInfo({ paused: false, dismissed: true, previous: null }));
+    await h.setSettings({ autoBackup: false });
+  }
 });

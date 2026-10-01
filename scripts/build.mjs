@@ -3,7 +3,8 @@
 //   dist/firefox/  + dist/jobtofill-firefox-<version>.zip   Firefox 142+ (desktop and Android)
 //
 // extension/manifest.json already works unpacked in both browsers; each store copy just drops
-// the keys the other browser needs so store validators report no warnings.
+// the keys the other browser needs so store validators report no warnings. "key" only pins the
+// extension ID of the unpacked folder (so moving it keeps your data); the stores assign their own.
 // Usage: npm run build
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -17,10 +18,12 @@ const manifest = JSON.parse(await readFile(path.join(source, 'manifest.json'), '
 
 const TARGETS = {
   chrome(m) {
+    delete m.key;
     m.background = { service_worker: m.background.service_worker };
     delete m.browser_specific_settings;
   },
   firefox(m) {
+    delete m.key;
     m.background = { scripts: m.background.scripts };
     delete m.minimum_chrome_version;
   },

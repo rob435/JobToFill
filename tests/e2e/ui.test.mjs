@@ -2,6 +2,9 @@
 // (pages.test.mjs covers the same pages in both browsers.)
 import { test as base, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { isFirefox, launch } from './harness.mjs';
 
 const test = (name, fn) => base(name, { skip: isFirefox && 'uses Playwright page APIs' }, fn);
@@ -213,4 +216,54 @@ test('popup offers to tick acknowledgement boxes, then does', async () => {
   await h.bg(() => globalThis.JTF.store.saveSettings({ consents: false }));
   assert.deepEqual(errors, []);
   await Promise.all([form.close(), popup.close()]);
+});
+
+test('backup section: "Back up now" writes the file and shows where', async () => {
+  await h.bg(async () => {
+    const { profile } = await globalThis.JTF.store.getActive();
+    profile.personal.lastName = 'Hopper';
+    await globalThis.JTF.store.saveProfile(profile);
+  });
+  const page = await openExt('options/options.html#backup');
+  await page.waitForSelector('#backup-status');
+  await page.click('text=Back up now');
+  await page.waitForSelector('#backup-status:has-text("Last saved")');
+  assert.equal(await page.isVisible('text=Show file'), true);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('after JobToFill is removed and added again, the settings page restores the backup file', async () => {
+  const data = await h.bg(async () => {
+    const { profile } = await globalThis.JTF.store.getActive();
+    profile.personal.lastName = 'Hopper';
+    await globalThis.JTF.store.saveProfile(profile);
+    return globalThis.JTF.store.exportData();
+  });
+  const file = path.join(await mkdtemp(path.join(os.tmpdir(), 'jtf-restore-')), 'jobtofill-backup.json');
+  await writeFile(file, JSON.stringify(data));
+  // Removing the extension leaves its storage empty; the install check found the old file.
+  await h.bg(async () => {
+    await globalThis.JTF.api.storage.local.clear();
+    await globalThis.JTF.store.loadAll();
+    await globalThis.JTF.store.setBackupInfo({
+      previous: { path: '/home/me/Downloads/JobToFill/jobtofill-backup.json', at: Date.now() },
+      paused: true,
+    });
+  });
+  assert.equal((await profile()).personal.lastName, '');
+  const popup = await openExt('popup/popup.html');
+  await popup.waitForSelector('#restore:not([hidden])');
+  await popup.close();
+
+  const page = await openExt('options/options.html');
+  await page.waitForSelector('#restore:not([hidden])');
+  assert.match(await page.textContent('#restore'), /Downloads\/JobToFill\/jobtofill-backup\.json/);
+  await Promise.all([page.waitForEvent('load'), page.setInputFiles('#restore-file', file)]);
+  await page.waitForSelector('#restore', { state: 'hidden' });
+  assert.equal((await profile()).personal.lastName, 'Hopper');
+  const info = await h.bg(() => globalThis.JTF.store.getBackupInfo());
+  assert.equal(info.paused, false, 'automatic backups resume');
+  assert.deepEqual(errors, []);
+  await page.close();
 });

@@ -1,5 +1,5 @@
 /* JobToFill settings — application log, settings and backup sections. */
-import { download, el, fillShortcut, isFirefox, openShortcutSettings, plural } from '../ui/common.js';
+import { api, download, el, fillShortcut, isFirefox, openShortcutSettings, plural } from '../ui/common.js';
 import { group, sectionHead, table } from './controls.js';
 
 const { store } = globalThis.JTF;
@@ -163,7 +163,79 @@ export async function renderSettings() {
 
 /* ------------------------------------------------------------- backup */
 
-export function renderBackup({ saveNow, reload }) {
+/** Automatic backup: the file the background keeps in Downloads/JobToFill, and its status. */
+async function autoBackupGroup(saveNow) {
+  const settings = await store.getSettings();
+  const status = el('p', { className: 'muted', id: 'backup-status' });
+  const show = el('button', { type: 'button', className: 'small ghost', textContent: 'Show file', hidden: true });
+
+  const describe = async () => {
+    const info = await store.getBackupInfo();
+    if (info.error && (!info.at || info.errorAt > info.at)) {
+      status.className = 'error';
+      status.textContent = `The last backup failed: ${info.error}`;
+    } else if (info.at) {
+      status.className = 'muted';
+      status.textContent = `Last saved ${new Date(info.at).toLocaleString()} to ${info.path}`;
+    } else {
+      status.className = 'muted';
+      status.textContent = 'Nothing saved yet: the file is written once your profile has something in it.';
+    }
+    show.hidden = !info.at;
+  };
+  show.onclick = async () => {
+    const [item] = (await api.downloads.search({ orderBy: ['-startTime'] })).filter(store.isBackupDownload);
+    if (item) api.downloads.show(item.id);
+  };
+  const now = el('button', {
+    type: 'button',
+    className: 'small',
+    textContent: 'Back up now',
+    onclick: async () => {
+      await saveNow();
+      status.className = 'muted';
+      status.textContent = 'Saving…';
+      const r = await api.runtime.sendMessage({ type: 'jtf:backup' });
+      if (r && r.skipped) status.textContent = 'Nothing to back up yet: fill in your profile first.';
+      else await describe();
+    },
+  });
+  await describe();
+
+  return group(
+    'Automatic backup',
+    'Removing JobToFill from the browser deletes everything it stored (and Firefox removes temporary add-ons when it restarts). With this on, a copy is kept up to date in your Downloads folder, and JobToFill offers to restore it when it starts out empty.',
+    el(
+      'div',
+      { className: 'stack' },
+      el(
+        'label',
+        { className: 'check top' },
+        el('input', {
+          type: 'checkbox',
+          name: 'autoBackup',
+          checked: settings.autoBackup !== false,
+          onchange: (e) => store.saveSettings({ autoBackup: e.target.checked }),
+        }),
+        el(
+          'span',
+          {},
+          el('strong', { textContent: 'Keep a backup file up to date' }),
+          el('br'),
+          el('span', {
+            className: 'muted',
+            textContent:
+              'Downloads › JobToFill › jobtofill-backup.json, saved half a minute after a change. The vault stays encrypted.',
+          }),
+        ),
+      ),
+      status,
+      el('div', { className: 'row' }, now, show),
+    ),
+  );
+}
+
+export async function renderBackup({ saveNow, reload }) {
   const include = { documents: true, vault: true, history: true };
   const check = (key, label) =>
     el(
@@ -182,6 +254,7 @@ export function renderBackup({ saveNow, reload }) {
       const data = JSON.parse(await file.text());
       if (!confirm('Replace your current profiles and settings with this backup?')) return;
       await store.importData(data);
+      await store.setBackupInfo({ paused: false, dismissed: true, previous: null });
       await reload();
     } catch (err) {
       message.className = 'error';
@@ -199,8 +272,9 @@ export function renderBackup({ saveNow, reload }) {
   return [
     sectionHead(
       'Backup & restore',
-      'Move your profiles to another browser or keep a copy. Backups are plain JSON; the vault inside stays encrypted with your master password.',
+      'Keep your details safe when JobToFill is removed or re-added, or move them to another browser. Backups are plain JSON; the vault inside stays encrypted with your master password.',
     ),
+    await autoBackupGroup(saveNow),
     group(
       'Export',
       null,

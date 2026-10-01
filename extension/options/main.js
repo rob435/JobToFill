@@ -1,4 +1,4 @@
-/* JobToFill settings page — shell: profile bar, navigation, autosave, site-access banner. */
+/* JobToFill settings page — shell: profile bar, navigation, autosave, site-access and restore banners. */
 import { $, $$, api, el, hasSiteAccess, requestSiteAccess } from '../ui/common.js';
 import { renderBackup, renderHistory, renderSettings } from './app.js';
 import { DEGREES, PROFILE_SECTIONS } from './profile.js';
@@ -118,11 +118,49 @@ async function renderAccessBanner() {
   };
 }
 
+/* -------------------------------------------------------------- restore */
+
+/**
+ * After JobToFill is removed and added again its storage starts empty. Offer the backup file the
+ * background keeps in Downloads/JobToFill (and that an earlier install may have left behind).
+ */
+async function renderRestoreBanner() {
+  const banner = $('#restore');
+  const info = await store.getBackupInfo();
+  banner.hidden = !info.paused && (info.dismissed || (await store.hasData()));
+  if (banner.hidden) return;
+  const where = info.previous
+    ? `Your details were backed up to ${info.previous.path}${info.previous.at ? ` on ${new Date(info.previous.at).toLocaleDateString()}` : ''}. Restore them to carry on where you left off.`
+    : 'Restore your details from the backup file JobToFill keeps in Downloads › JobToFill › jobtofill-backup.json.';
+  $('#restore-text').textContent = where;
+  const finish = async () => {
+    await store.setBackupInfo({ paused: false, dismissed: true, previous: null });
+    banner.hidden = true;
+  };
+  $('#restore-skip').onclick = finish;
+  $('#restore-pick').onclick = () => $('#restore-file').click();
+  $('#restore-file').onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      await store.importData(JSON.parse(await file.text()));
+    } catch (err) {
+      $('#restore-text').textContent = `That file couldn’t be restored: ${err.message}`;
+      return;
+    }
+    await finish();
+    location.reload();
+  };
+}
+
 /* ----------------------------------------------------------------- init */
 
 function onStorageChanged(changes, area) {
+  if (area !== 'local') return;
+  // A backup was found, restored or written while this page is open.
+  if (changes.backupInfo || changes.profiles) renderRestoreBanner();
   // The popup's "learn" feature or another tab changed the profile: reload unless mid-edit.
-  if (area !== 'local' || saveTimer || !(changes.profiles || changes.profileOrder)) return;
+  if (saveTimer || !(changes.profiles || changes.profileOrder)) return;
   const next = changes.profiles && changes.profiles.newValue && changes.profiles.newValue[state.profile.id];
   if (next && JSON.stringify(next) === JSON.stringify(state.profile)) return;
   const active = document.activeElement;
@@ -141,6 +179,7 @@ async function init() {
   api.storage.onChanged.addListener(onStorageChanged);
 
   await renderAccessBanner();
+  await renderRestoreBanner();
   await load();
 }
 
