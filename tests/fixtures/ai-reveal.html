@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Quant Research Intern - Acme Capital</title>
+  </head>
+  <body>
+    <h1>Quant Research Intern</h1>
+    <form id="application">
+      <label for="name">Full name</label><input id="name" name="name" />
+      <label for="linkedin">LinkedIn profile</label><input id="linkedin" name="linkedin" />
+
+      <label for="internship">Have you completed an internship at a financial firm?</label>
+      <select id="internship" name="internship">
+        <option value="">Select...</option>
+        <option>Yes</option>
+        <option>No</option>
+      </select>
+
+      <div id="details-row" hidden>
+        <label for="details">If yes, which firm was it and what did you work on?</label>
+        <textarea id="details" name="details"></textarea>
+      </div>
+    </form>
+    <script src="ai-reveal.js"></script>
+  </body>
+</html>

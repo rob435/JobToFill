@@ -36,6 +36,9 @@ function mockAi() {
               if (/product/i.test(q.question)) return { id: q.id, answer: 'Rates and inflation', basis: 'posting' };
               if (/hear about/i.test(q.question)) return { id: q.id, answer: 'Online job board', basis: 'material' };
               if (/sat/i.test(q.question)) return { id: q.id, answer: 'Did not take', basis: 'inferred' };
+              if (/internship at a financial firm/i.test(q.question)) return { id: q.id, answer: 'Yes' };
+              if (/^if yes, which firm/i.test(q.question))
+                return { id: q.id, answer: 'Analytical Engines Inc, where I built a reconciliation tool in Python.' };
               return { id: q.id, skip: true, reason: 'not in the material' };
             }),
           };
@@ -202,5 +205,15 @@ test('a page that isn’t a job application (a checkout) never goes to the AI', 
   assert.equal(r.pending, 0);
   assert.equal(r.ai, undefined);
   assert.equal(ai.calls.length, before);
+  await page.close();
+});
+
+test('a question an AI answer brings up ("If yes, which firm…") is answered in a second round', async () => {
+  const page = await h.open('ai-reveal.html');
+  const r = await fillAndWait(page);
+  assert.equal(r.ai.status, 'done', JSON.stringify(r.ai));
+  assert.equal(await selectedText(page, '#internship'), 'Yes');
+  assert.equal(await value(page, '#details'), 'Analytical Engines Inc, where I built a reconciliation tool in Python.');
+  assert.equal(r.ai.filled, 2, JSON.stringify(r.ai.items));
   await page.close();
 });

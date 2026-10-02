@@ -777,8 +777,95 @@ function aiSummaryText(run) {
 }
 
 /**
- * Answer the questions a fill left empty (`pending`: the frames' reports, each with its frameId) and put the
- * answers into the form. Answers already written for this application are reused; new ones are saved.
+ * One round of AI answers: reuse what this application already has, write the rest, put them into the form,
+ * save the new ones. `pending`: the frames' reports, each with its frameId. Returns what was answered.
+ */
+async function answerRound(tabId, pending, ctx) {
+  const { profile, settings, config, controller, report, tab } = ctx;
+  // Ids are per frame: the model gets them unique.
+  const items = pending.map((p) => ({ ...p, id: `${p.frameId}:${p.id}` }));
+  const byId = new Map(items.map((it) => [it.id, it]));
+  const { reused, rest } = answers.reuse(items, await store.answersFor({ profileId: profile.id, tabId, url: tab.url }));
+  let written = { answers: [], skipped: [], calls: 0 };
+  if (rest.length) {
+    if (!ctx.job) {
+      report({ stage: 'job' });
+      ctx.job = (await jobFor(tabId).catch(() => null)) || {};
+    }
+    report({ stage: 'writing', company: ctx.job.company || '' });
+    const kit = await store.getKit(profile.id);
+    const [cvText, bank] = await Promise.all([cvTextFor(profile, kit), store.answerBank(profile.id)]);
+    const chat = async (messages, options) => {
+      const r = await llm.chat(config, { messages, ...options, signal: controller.signal });
+      if (r.usage && typeof r.usage.cost === 'number') ctx.cost = (ctx.cost || 0) + r.usage.cost;
+      return r;
+    };
+    written = await answers.answer(chat, { profile, kit, cvText, job: ctx.job, bank, today: Date.now() }, rest, {
+      signal: controller.signal,
+      onProgress: (stage) => report({ stage }),
+    });
+  }
+  if (controller.signal.aborted) throw Object.assign(new Error('Stopped.'), { name: 'AbortError' });
+
+  report({ stage: 'filling' });
+  const all = [...reused, ...written.answers];
+  const frameOf = (id) => id.split(':')[0];
+  const localId = (id) => id.split(':').slice(1).join(':');
+  const status = new Map();
+  let filled = 0;
+  for (const frameId of [...new Set(all.map((a) => frameOf(a.id)))]) {
+    const list = all
+      .filter((a) => frameOf(a.id) === frameId)
+      .map((a) => ({ ...a, id: localId(a.id), question: byId.get(a.id).question }));
+    const out = await callFrames(tabId, 'applyAnswers', [list, { settings }], [Number(frameId)]).catch(() => []);
+    for (const f of out) {
+      filled += f.filled || 0;
+      for (const r of f.results || []) status.set(`${frameId}:${r.id}`, r.status);
+    }
+  }
+  if (written.answers.length)
+    await store.saveAnswers({
+      profileId: profile.id,
+      url: tab.url,
+      host: hostOf(tab.url),
+      tabId,
+      company: ctx.job.company || '',
+      role: ctx.job.title || '',
+      items: written.answers.map((a) => {
+        const it = byId.get(a.id);
+        return {
+          key: answers.questionKey(it),
+          question: it.question,
+          kind: a.kind,
+          value: a.value,
+          basis: a.basis,
+          warnings: a.warnings,
+        };
+      }),
+    });
+  return {
+    keys: items.map((it) => answers.questionKey(it)),
+    answered: all.length,
+    filled,
+    items: all.map((a) => ({
+      question: byId.get(a.id).question,
+      value: a.value,
+      basis: a.basis,
+      warnings: a.warnings || [],
+      reused: !!a.reused,
+      filled: status.get(a.id) === 'filled',
+    })),
+    skipped: written.skipped.map((x) => ({
+      question: (byId.get(x.id) || {}).question || '',
+      reason: x.reason,
+      withheld: x.withheld || null,
+    })),
+  };
+}
+
+/**
+ * Answer the questions a fill left empty and put the answers into the form. An answer can bring up a question
+ * of its own ("Other" → "Please specify"): those get one more round.
  */
 async function answerWithAi(tabId, pending, opts = {}) {
   const prior = aiRuns.get(tabId);
@@ -800,96 +887,52 @@ async function answerWithAi(tabId, pending, opts = {}) {
     Object.assign(run, patch);
     broadcast(tabId, run);
   };
-  // Ids are per frame: the model gets them unique.
-  const items = pending.map((p) => ({ ...p, id: `${p.frameId}:${p.id}` }));
-  const byId = new Map(items.map((it) => [it.id, it]));
   await callFrames(tabId, 'hold', [240000], [0]).catch(() => {});
   try {
     const { profile, settings } = await store.getActive();
-    const config = await store.aiConfig();
-    const tab = await api.tabs.get(tabId);
-    const where = { profileId: profile.id, tabId, url: tab.url };
-    const { reused, rest } = answers.reuse(items, await store.answersFor(where));
-    let written = { answers: [], skipped: [], calls: 0 };
-    let job = null;
-    if (rest.length) {
-      report({ stage: 'job' });
-      job = await jobFor(tabId).catch(() => null);
-      report({ stage: 'writing', company: (job && job.company) || '' });
-      const kit = await store.getKit(profile.id);
-      const [cvText, bank] = await Promise.all([cvTextFor(profile, kit), store.answerBank(profile.id)]);
-      let cost = 0;
-      const chat = async (messages, options) => {
-        const r = await llm.chat(config, { messages, ...options, signal: controller.signal });
-        if (r.usage && typeof r.usage.cost === 'number') cost += r.usage.cost;
-        return r;
-      };
-      written = await answers.answer(chat, { profile, kit, cvText, job: job || {}, bank, today: Date.now() }, rest, {
-        signal: controller.signal,
-        onProgress: (stage) => report({ stage }),
-      });
-      run.cost = cost;
-    }
-    if (controller.signal.aborted) throw Object.assign(new Error('Stopped.'), { name: 'AbortError' });
-
-    report({ stage: 'filling' });
-    const all = [...reused, ...written.answers];
-    const frameOf = (id) => id.split(':')[0];
-    const localId = (id) => id.split(':').slice(1).join(':');
-    const status = new Map();
-    let filled = 0;
-    for (const frameId of [...new Set(all.map((a) => frameOf(a.id)))]) {
-      const list = all
-        .filter((a) => frameOf(a.id) === frameId)
-        .map((a) => ({ ...a, id: localId(a.id), question: byId.get(a.id).question }));
-      const out = await callFrames(tabId, 'applyAnswers', [list, { settings }], [Number(frameId)]).catch(() => []);
-      for (const f of out) {
-        filled += f.filled || 0;
-        for (const r of f.results || []) status.set(`${frameId}:${r.id}`, r.status);
+    const ctx = {
+      profile,
+      settings,
+      config: await store.aiConfig(),
+      controller,
+      report,
+      tab: await api.tabs.get(tabId),
+      job: null,
+      cost: 0,
+    };
+    const first = await answerRound(tabId, pending, ctx);
+    const total = { ...first };
+    if (first.filled) {
+      // Give the page a moment to show what the answers revealed, then answer only questions not asked before.
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      const frames = await callFrames(tabId, 'pending', [{ profile, settings, ai: true }]).catch(() => []);
+      const seen = new Set(first.keys);
+      const fresh = frames
+        .flatMap((f) => (f.items || []).map((item) => ({ ...item, frameId: f.frameId })))
+        .filter((item) => !seen.has(answers.questionKey(item)));
+      if (fresh.length) {
+        report({ asked: run.asked + fresh.length, items: first.items });
+        const next = await answerRound(tabId, fresh, ctx);
+        Object.assign(total, {
+          answered: first.answered + next.answered,
+          filled: first.filled + next.filled,
+          items: [...first.items, ...next.items],
+          skipped: [...first.skipped, ...next.skipped],
+        });
       }
     }
-    if (written.answers.length)
-      await store.saveAnswers({
-        profileId: profile.id,
-        url: tab.url,
-        host: hostOf(tab.url),
-        tabId,
-        company: (job && job.company) || '',
-        role: (job && job.title) || '',
-        items: written.answers.map((a) => {
-          const it = byId.get(a.id);
-          return {
-            key: answers.questionKey(it),
-            question: it.question,
-            kind: a.kind,
-            value: a.value,
-            basis: a.basis,
-            warnings: a.warnings,
-          };
-        }),
-      });
     report({
       status: 'done',
       stage: 'done',
-      answered: all.length,
-      filled,
-      items: all.map((a) => ({
-        question: byId.get(a.id).question,
-        value: a.value,
-        basis: a.basis,
-        warnings: a.warnings || [],
-        reused: !!a.reused,
-        filled: status.get(a.id) === 'filled',
-      })),
-      skipped: written.skipped.map((x) => ({
-        question: (byId.get(x.id) || {}).question || '',
-        reason: x.reason,
-        withheld: x.withheld || null,
-      })),
-      company: (job && job.company) || '',
+      answered: total.answered,
+      filled: total.filled,
+      items: total.items,
+      skipped: total.skipped,
+      company: (ctx.job && ctx.job.company) || '',
+      cost: ctx.cost,
       finishedAt: Date.now(),
     });
-    if (opts.toast) await showToast(tabId, aiSummaryText(run), { undo: filled > 0 });
+    if (opts.toast) await showToast(tabId, aiSummaryText(run), { undo: total.filled > 0 });
     return runView(run);
   } catch (err) {
     const error = err && err.name === 'AbortError' ? 'Stopped.' : String((err && err.message) || err);

@@ -24,6 +24,7 @@
   const norm = (s) => U.normalize(s);
 
   const BATCH = 10;
+  const LONG_LIST = 60;
 
   /* ---------------------------------------------------------- what to ask */
 
@@ -229,7 +230,12 @@
     const q = { id: item.id, question: U.cleanLabel(item.question, 600), type: kind };
     if (item.help && norm(item.help) !== norm(item.question)) q.help = U.cleanLabel(item.help, 300);
     if (item.section) q.section = U.cleanLabel(item.section, 100);
-    if (item.options && item.options.length) q.options = item.options.slice(0, 80).map((o) => U.cleanLabel(o, 200));
+    if (item.options && item.options.length) {
+      q.options = item.options.slice(0, LONG_LIST).map((o) => U.cleanLabel(o, 200));
+      // A long list (universities, countries): a sample, and the answer is checked against all of it.
+      if (item.options.length > LONG_LIST)
+        q.moreOptions = `${item.options.length - LONG_LIST} more not shown: answer with the exact option you mean`;
+    }
     const limit = ['essay', 'text'].includes(kind) ? limitText(item, kind) : '';
     if (limit) q.limit = limit;
     if (item.required) q.required = true;
