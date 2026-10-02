@@ -628,6 +628,18 @@ test('applicationContext: a company’s own form with a requisition ID and a job
   assert.equal(c.posting, null);
 });
 
+test('applicationContext: a candidate portal’s home page (where a sign-in redirect lands) has no posting', () => {
+  const page = `<html><head><title>HSBC Candidate Portal</title></head><body><main>
+    <h1>HSBC Candidate Portal</h1><h2>What we look for</h2>
+    <p>We are looking for people who bring curiosity, integrity and resilience to everything they do, and who want to grow a career with a global bank. Our programmes offer training, mentoring and real responsibility from the start.</p>
+    <h2>Benefits</h2><ul><li>Competitive pay and pension</li><li>Hybrid working and flexible hours</li><li>Volunteering days and wellbeing support for you and your family</li></ul>
+    <p>Sign in to see your applications, track your progress and update your details at any time during the process.</p>
+  </main></body></html>`;
+  const c = jp.applicationContext(parseHTML(page).document, 'https://apply.careers.hsbc.com/');
+  assert.equal(c.posting, null);
+  assert.equal(c.title, '', 'a portal name is not a job title');
+});
+
 test('applicationContext: no document, or a page with nothing about a job', () => {
   const empty = jp.applicationContext(null, 'https://example.com/apply');
   assert.deepEqual([empty.title, empty.posting, empty.links], ['', null, []]);

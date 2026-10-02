@@ -1317,7 +1317,7 @@
   /* --------------------------------------------------------- page headings */
 
   const GENERIC_TITLE =
-    /^(apply|application|apply now|apply for this (job|position|role)|job application|start your application|my information|personal (information|details)|sign in|log in|login|create (an )?account|careers?|jobs?|job search|search jobs|welcome|home|current vacancies|open positions|join us|thank you|are you still with us\??|work summary|job application form|candidate (home|experience)|review|submit|resume|cv|error\b|\d{3}\b|internal server error|access denied|forbidden|too many requests|just a moment|attention required|page not found|listings|search results|current openings)\b/i;
+    /^(apply|application|apply now|apply for this (job|position|role)|job application|start your application|my information|personal (information|details)|sign in|log in|login|create (an )?account|careers?|jobs?|job search|search jobs|welcome|home|current vacancies|open positions|join us|thank you|are you still with us\??|work summary|job application form|candidate (home|experience)|review|submit|resume|cv|error\b|\d{3}\b|internal server error|access denied|forbidden|too many requests|just a moment|attention required|page not found|listings|search results|current openings|(\w+ )?candidate portal|(join )?(our )?talent (community|network|pool)|sign up|your personal space|who we are|my (profile|account|applications?)|dashboard|create (a |your )?profile|register)\b/i;
   const notGeneric = (t) => !GENERIC_TITLE.test(t);
   const SITE_PIECE =
     /^(workday|careers?|jobs?|job board|lever|greenhouse|ashby|smartrecruiters|workable|icims|taleo|avature|eightfold|oracle|apply|application|home|job details?|job description|careers? (site|page|portal)|candidate experience( page)?)$/i;
@@ -1410,7 +1410,8 @@
     return qa(doc, 'h1, h2')
       .slice(0, 8)
       .map((h) => clean(h.textContent, 200))
-      .filter((t) => t && !GENERIC_TITLE.test(t));
+      .filter((t) => t && !GENERIC_TITLE.test(t))
+      .filter((t) => !(words(t) < 6 && (JOB_HEADING.test(t) || SECTION_HEADING.test(t)))); // "What we look for"
   }
 
   function metaContent(doc, names) {
@@ -1487,7 +1488,9 @@
       }
     }
     if (!posting || saysGone(doc, /json-ld|microdata/.test(posting.source))) return null;
-    // A search page's text is a list of jobs, not one.
+    // A search page's text is a list of jobs, not one; a home page's text is not a job either.
+    if (posting.source === 'page-text' && (parseUrl(pageUrl) || { pathname: '/' }).pathname.replace(/\/+$/, '') === '')
+      return null;
     if (
       posting.source === 'page-text' &&
       (LIST_PAGE.test(pageUrl.replace(/^\w+:\/\/[^/]+/, '')) || (a.stage === 'unknown' && a.name))
@@ -2307,12 +2310,15 @@
     const results = [];
 
     // The description is already on this page (Greenhouse, Lever and many company sites show it above the form).
+    const ctxAts0 = ctx.ats && 'stage' in ctx.ats ? ctx.ats : ats(ctx.url || '');
+    const aboutOneJob = (ctx.jobIds || []).length > 0 || ctxAts0.stage !== 'unknown';
     if (
       !ctx.pasted &&
       ctx.posting &&
       ctx.posting.description &&
       (ctx.posting.confidence || 0) >= 0.6 &&
-      words(ctx.posting.description) >= 80
+      words(ctx.posting.description) >= 80 &&
+      (ctx.posting.source !== 'page-text' || aboutOneJob)
     ) {
       const cmp = compare(ctx, ctx.posting);
       if (cmp.verdict !== 'different')
