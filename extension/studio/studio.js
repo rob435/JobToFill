@@ -565,10 +565,43 @@ async function saveEntry(extra) {
   return state.entry;
 }
 
+/** Does the tab still show this application (same site; no other job's ID in the address)? */
+async function stillSameJob(url) {
+  const context = state.context;
+  if (!context || !context.url || !url) return true;
+  let before;
+  let now;
+  try {
+    before = new URL(context.url);
+    now = new URL(url);
+  } catch (err) {
+    return true;
+  }
+  if (before.hostname !== now.hostname) return false;
+  const ids = [...(context.jobIds || []), ...((state.job && state.job.posting && state.job.posting.jobIds) || [])];
+  const nowIds = (jobpage.ats(url) || {}).jobId;
+  return !nowIds || !ids.length || ids.some((id) => String(id).toLowerCase() === String(nowIds).toLowerCase());
+}
+
 async function useForApplication() {
   const status = $('#use-status');
   if (tabId == null) {
     status.textContent = 'Saved. Download it to upload by hand.';
+    return;
+  }
+  // The tab may have moved on to another job since the letter was written.
+  const tab = await api.tabs.get(tabId).catch(() => null);
+  if (!tab) {
+    status.textContent = 'The application tab is closed. Download the PDF to upload it by hand.';
+    return;
+  }
+  if (
+    !(await stillSameJob(tab.url)) &&
+    !confirm(
+      `That tab now shows ${tab.url}\n\nAttach the letter for ${state.analysis.company || 'this job'} there anyway?`,
+    )
+  ) {
+    status.textContent = 'Not attached: the tab shows a different page.';
     return;
   }
   status.textContent = 'Attaching…';
@@ -723,7 +756,17 @@ async function checkEligibility(signal) {
   try {
     const issues = await L.eligibility(chat, state.analysis, state.profile, state.kit, state.cvText, { signal });
     if (signal.aborted) return;
+    const lang = L.postingLanguage(state.job.posting.description);
+    const notes = L.LANG_NAMES[lang]
+      ? [
+          el('li', {
+            className: 'warn',
+            textContent: `This posting is in ${L.LANG_NAMES[lang]}. The letter is in English; check the employer accepts English applications.`,
+          }),
+        ]
+      : [];
     list.replaceChildren(
+      ...notes,
       ...(issues.length
         ? issues.map((i) =>
             el('li', { className: 'warn', textContent: `Check you can apply: ${i.requirement}. ${i.detail}` }),
@@ -783,6 +826,8 @@ async function run(from = 'job') {
       const cv = await readCv();
       state.cvText = cv.text;
       step('cv', cv.text ? 'done' : 'warn', cv.text ? `${L.words(cv.text)} words` : cv.note);
+      if (!L.fullName(state.profile))
+        throw new Error('Add your name in Settings › Personal & contact first: it goes at the top of the letter.');
       if (!L.hasSubstance(state.profile, state.kit, state.cvText))
         throw new Error(
           'There isn’t enough about you to write from yet. Upload your CV (Settings › Resume & files) or add notes in Settings › Cover letters.',

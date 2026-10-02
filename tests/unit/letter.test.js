@@ -214,6 +214,10 @@ test('letter: tailor() rejects invented facts in a CV', async () => {
   const cv = (bullets, skills, org = 'Northwind') => ({
     sections: [
       {
+        title: 'Education',
+        entries: [{ heading: 'University of Leeds', right: '2024 – 2027', subheading: 'BSc Mathematics', bullets: [] }],
+      },
+      {
         title: 'Experience',
         entries: [{ heading: org, right: 'Jun 2025 – Aug 2025', subheading: 'Data intern', bullets }],
       },
@@ -314,4 +318,94 @@ test('ai: custom providers need an https address', () => {
     ai.resolve({ provider: 'custom', baseUrl: 'https://x.example/v1/chat/completions' }).base,
     'https://x.example/v1',
   );
+});
+
+test('letter: a tailored CV may not drop a school or employer', () => {
+  const cvText = 'University of Leeds, BSc Mathematics, 2024 – 2027\nNorthwind, Data intern, 2025\nSkills: Python';
+  const tailored = {
+    sections: [{ title: 'Experience', entries: [{ heading: 'Northwind', bullets: ['Data work in Python'] }] }],
+  };
+  const check = L.checkCv(tailored, {
+    cvText,
+    sources: '',
+    orgs: ['University of Leeds', 'Northwind', 'Acme (not in the CV)'],
+  });
+  assert.match(check.errors.join('\n'), /missing: University of Leeds\./);
+});
+
+test('letter: odd reply shapes still give a letter', () => {
+  const defaults = { salutation: 'Dear X,', closing: 'Yours sincerely,' };
+  const nested = L.cleanLetter({ letter: { Salutation: 'Dear Acme Team,', Paragraphs: ['One.', 'Two.'] } }, defaults);
+  assert.deepEqual([nested.salutation, nested.paragraphs], ['Dear Acme Team,', ['One.', 'Two.']]);
+  const asString = L.cleanLetter({ paragraphs: 'First paragraph.\n\nSecond paragraph.' }, defaults);
+  assert.deepEqual(asString.paragraphs, ['First paragraph.', 'Second paragraph.']);
+  const asObjects = L.cleanLetter({ paragraphs: [{ text: 'A.' }, { content: 'B.' }] }, defaults);
+  assert.deepEqual(asObjects.paragraphs, ['A.', 'B.']);
+  assert.deepEqual(L.cleanLetter(['not', 'an', 'object'], defaults).paragraphs, []);
+});
+
+test('letter: the candidate’s own instructions count as facts; a failed audit is reported', async () => {
+  const told = structuredClone(good);
+  told.paragraphs[2] = 'I am also fluent in French, which I used for 2 years as a volunteer translator.';
+  let calls = 0;
+  const chat = async (messages) => {
+    calls++;
+    if (/strict fact-checker/.test(messages[0].content)) throw new Error('provider down');
+    return { json: told };
+  };
+  const analysis = L.cleanAnalysis({ company: 'Acme Capital', role: 'Operations Summer Analyst' }, posting, {});
+  const result = await L.write(chat, {
+    profile,
+    kit,
+    cvText: '',
+    posting,
+    analysis,
+    today: Date.parse('2025-10-01'),
+    instructions: 'Mention that I am fluent in French and volunteered as a translator for 2 years.',
+  });
+  assert.deepEqual(result.check.errors, [], 'the 2 years come from the instruction');
+  assert.match(result.check.warnings.join(), /second fact check couldn’t run/);
+  assert.equal(calls, 2, 'one draft, one (failed) audit');
+});
+
+test('letter: postings in other languages are recognised', () => {
+  assert.equal(L.postingLanguage(posting.description), 'en');
+  const de =
+    'Wir suchen für unser Team in Frankfurt eine Praktikantin oder einen Praktikanten. Ihre Aufgaben: Sie unterstützen das Team bei der Analyse und Sie arbeiten mit unseren Kunden. Das bringen Sie mit: ein Studium der Wirtschaftswissenschaften und Freude an der Arbeit mit Zahlen. Wir bieten Ihnen eine spannende Aufgabe und die Möglichkeit, Verantwortung zu übernehmen.';
+  assert.equal(L.postingLanguage(de), 'de');
+  const fr =
+    'Nous recherchons pour notre équipe à Paris un stagiaire. Vos missions : vous participez à l’analyse des données et vous travaillez avec les équipes de nos clients. Votre profil : une formation en finance et le goût du travail en équipe. Nous vous offrons un environnement stimulant et des responsabilités dès votre arrivée dans les bureaux.';
+  assert.equal(L.postingLanguage(fr), 'fr');
+});
+
+test('ai: JSON after thinking text, with trailing commas, still parses', () => {
+  assert.deepEqual(ai.parseJson('<think>maybe {a:1}</think>\n{"ok": true, "list": [1, 2,],}'), {
+    ok: true,
+    list: [1, 2],
+  });
+  assert.deepEqual(ai.parseJson('Here you go:\n```json\n{"a": "b"}\n```'), { a: 'b' });
+  assert.throws(() => ai.parseJson('no json here'), /not valid JSON/);
+});
+
+test('ai: a rate limit waits for Retry-After before trying again', async () => {
+  let n = 0;
+  const started = Date.now();
+  const fetch = async () => {
+    n++;
+    if (n === 1)
+      return {
+        ok: false,
+        status: 429,
+        headers: { get: (h) => (h === 'retry-after' ? '1' : null) },
+        text: async () => '{}',
+      };
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }),
+    };
+  };
+  const r = await ai.chat(cfg, { messages: [], json: true, fetch });
+  assert.deepEqual(r.json, { ok: true });
+  assert.ok(Date.now() - started >= 950, 'waited about a second');
 });

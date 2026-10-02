@@ -105,7 +105,11 @@
         },
       );
     if (status === 429)
-      return new AIError(`${c.label} is rate-limiting requests. Try again in a minute.`, { status, retry: true });
+      return new AIError(`${c.label} is rate-limiting requests. Try again in a minute.`, {
+        status,
+        retry: true,
+        code: 'rate',
+      });
     if (status >= 500)
       return new AIError(`${c.label} had a problem (${status}). Try again shortly.`, { status, retry: true });
     return new AIError(`${c.label} returned an error (${status})${detail ? ': ' + detail : ''}`, { status });
@@ -114,26 +118,37 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   /** Pull a JSON object out of a reply that may be wrapped in a code fence or chatter. */
+  /** Small, safe repairs for JSON that is almost right: trailing commas, curly quotes around keys. */
+  function repairJson(s) {
+    return s
+      .replace(/,\s*([}\]])/g, '$1')
+      .replace(/[“”]([A-Za-z_]+)[“”]\s*:/g, '"$1":')
+      .replace(/^\uFEFF/, '');
+  }
+
+  /**
+   * Pull a JSON object out of a reply that may be wrapped in a code fence, preceded by the model's
+   * thinking (<think>…</think>) or chatter, or carry a trailing comma.
+   */
   function parseJson(text) {
     if (text == null) throw new AIError('The model returned nothing.', { retry: true });
     const s = String(text)
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
       .trim()
       .replace(/^```(?:json)?\s*/i, '')
       .replace(/\s*```$/, '');
-    try {
-      return JSON.parse(s);
-    } catch (err) {
-      const start = s.indexOf('{');
-      const end = s.lastIndexOf('}');
-      if (start >= 0 && end > start) {
+    const start = s.indexOf('{');
+    const end = s.lastIndexOf('}');
+    const tries = [s, start >= 0 && end > start ? s.slice(start, end + 1) : null].filter(Boolean);
+    for (const t of tries)
+      for (const candidate of [t, repairJson(t)]) {
         try {
-          return JSON.parse(s.slice(start, end + 1));
-        } catch (err2) {
-          /* fall through */
+          return JSON.parse(candidate);
+        } catch (err) {
+          /* next */
         }
       }
-      throw new AIError('The model’s reply was not valid JSON.', { retry: true, code: 'json' });
-    }
+    throw new AIError('The model’s reply was not valid JSON.', { retry: true, code: 'json' });
   }
 
   async function post(c, body, signal, fetchImpl) {
@@ -169,7 +184,13 @@
       } catch (err) {
         data = raw;
       }
-      if (!res.ok) throw explain(res.status, data, c);
+      if (!res.ok) {
+        const err = explain(res.status, data, c);
+        // Honour the provider's Retry-After (seconds), within reason.
+        const after = res.headers && typeof res.headers.get === 'function' && Number(res.headers.get('retry-after'));
+        if (after > 0) err.waitMs = Math.min(after * 1000, 20000);
+        throw err;
+      }
       // OpenRouter reports upstream failures inside a 200 response.
       if (data && data.error) throw explain(data.error.code || 502, data, c);
       return data;
@@ -232,7 +253,7 @@
           continue;
         }
         if (!(err instanceof AIError) || !err.retry || attempt === RETRY_DELAYS.length) throw err;
-        await sleep(RETRY_DELAYS[attempt]);
+        await sleep(err.waitMs || RETRY_DELAYS[attempt]);
       }
     }
     throw lastErr;
