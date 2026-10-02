@@ -349,7 +349,29 @@
     }
   };
 
-  /** Is saved entry `e` the application at `url` (same page, or the next step of it in the same tab)? */
+  // Job ids in an address: long numbers and UUIDs (Greenhouse 4988792101, Lever and Ashby UUIDs, Workday R-12345).
+  const JOB_ID = /\d{5,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+  const jobIdsIn = (url) => [
+    ...new Set(
+      (
+        String(url || '')
+          .replace(/[?#].*$/, '')
+          .match(JOB_ID) || []
+      ).map((x) => x.toLowerCase()),
+    ),
+  ];
+
+  /** Do two addresses name different jobs (each has job ids, and they share none)? */
+  function otherJob(a, b) {
+    const x = jobIdsIn(a);
+    const y = jobIdsIn(b);
+    return x.length > 0 && y.length > 0 && !x.some((id) => y.includes(id));
+  }
+
+  /**
+   * Is saved entry `e` the application at `url`: the same page, or the next step of it in the same tab (never a
+   * page whose address names another job, as when one tab moves from one Greenhouse job to the next)?
+   */
   function sameApplication(e, { profileId, tabId, url }, now) {
     if (profileId && e.profileId !== profileId) return false;
     if (!url || !e.url) return false;
@@ -361,6 +383,7 @@
     }
     if (e.host !== u.hostname) return false;
     if (pathOf(e.url) === pathOf(url)) return true;
+    if (otherJob(e.url, url)) return false;
     return tabId != null && e.tabId === tabId && now - (e.at || 0) < ANSWERS_TAB_TTL;
   }
 
@@ -594,6 +617,7 @@
     answerBank,
     getTabJob,
     setTabJob,
+    otherJob,
     getHistory,
     addHistory,
     clearHistory,

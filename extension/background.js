@@ -695,8 +695,9 @@ async function jobFor(tabId) {
   const tab = await api.tabs.get(tabId).catch(() => null);
   const url = (tab && tab.url) || '';
   const host = hostOf(url);
+  // The job found for this tab before, unless the tab has moved on to another job (another job id in the address).
   const cached = await store.getTabJob(tabId);
-  if (cached && cached.host === host && cached.job) return cached.job;
+  if (cached && cached.host === host && cached.job && !store.otherJob(cached.url, url)) return cached.job;
 
   let job;
   const letter = await store.letterFor({ tabId, url, trail: await readTrail(tabId) });

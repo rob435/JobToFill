@@ -225,7 +225,7 @@ async function main() {
       if (entry.controls < 3) throw new Error('no application form reached');
       const tabId = await tabIdOf(h, page);
       entry.fill = await h.bg((id) => globalThis.JTFBackground.fillTab(id), tabId);
-      if (args.ai) entry.ai = await h.bg((id) => globalThis.JTFBackground.answerWithAi(id, { wait: true }), tabId);
+      if (args.ai) entry.ai = await h.bg((id) => globalThis.JTFBackground.answerPage(id, { wait: true }), tabId);
       await sleep(1500);
       const frames = await surveyFrames(h, tabId, SURVEY_PROFILE);
       entry.fields = frames.flatMap((f) => f.fields.map((x) => ({ ...x, frame: f.url })));
