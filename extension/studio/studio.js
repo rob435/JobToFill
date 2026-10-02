@@ -838,6 +838,14 @@ async function run(from = 'job') {
       current = 'analyse';
       step('analyse', 'active');
       state.analysis = await L.analyse(chat, state.job.posting, state.context, { signal });
+      // The page the finder settled on may not be a job description at all (a privacy notice, a job list).
+      if (!state.analysis.isPosting) {
+        step('analyse', 'warn', 'that page isn’t a job description');
+        $('#job-manual').hidden = false;
+        throw new Error(
+          'The text JobToFill found doesn’t read like a job description (it may be a privacy notice or a list of jobs). Paste the job’s address or its description above.',
+        );
+      }
       step('analyse', 'done', [state.analysis.role, state.analysis.company].filter(Boolean).join(' at '));
       // Runs alongside the writing: does the person meet the hard requirements?
       checkEligibility(signal);

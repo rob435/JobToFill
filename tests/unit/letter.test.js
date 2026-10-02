@@ -420,3 +420,11 @@ test('letter: HTML entities from pages never reach the letter', () => {
   assert.equal(a.role, '2027 | FICC & Equities');
   assert.equal(a.company, 'Goldman Sachs & Co.');
 });
+
+test('letter: analysis says when the text is not a job posting', async () => {
+  const chat = async () => ({ json: { isPosting: false, company: 'Verition', role: 'Your Privacy' } });
+  const notJob = { title: 'Your Privacy', company: 'Verition', description: 'We use cookies. '.repeat(30) };
+  assert.equal((await L.analyse(chat, notJob, {})).isPosting, false);
+  const yes = async () => ({ json: { company: 'Acme', role: 'Analyst' } });
+  assert.equal((await L.analyse(yes, posting, {})).isPosting, true, 'missing means yes');
+});
