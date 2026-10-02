@@ -276,6 +276,35 @@ test('studio: a job that cannot be found asks for the description', async () => 
   await page.close();
 });
 
+test('job context: the job page a tab showed before is remembered, also in tabs it opens', async () => {
+  const page = await h.open('letters/posting.html');
+  const posting = page.url();
+  // An application site that drops the job from its address.
+  await page.goto(h.url('signup.html'));
+  const trail = async (p) => (await h.handler('jtf:job-context', p)).trail || [];
+  await until(async () => (await trail(page)).some((t) => t.url === posting), null, null, 10000);
+  const first = (await trail(page))[0];
+  assert.equal(first.url, posting);
+  assert.ok(first.at <= Date.now());
+  assert.ok(!(await trail(page)).some((t) => /signup/.test(t.url)), 'the page itself is left out');
+
+  // "Apply" opening the form in a new tab: it starts with its opener's trail.
+  const child = await h.bg(
+    async ([url, opener]) => (await globalThis.JTF.api.tabs.create({ url, openerTabId: opener, active: false })).id,
+    [h.url('signup.html?step=2'), await h.tabId(page)],
+  );
+  const childTrail = () =>
+    h.bg(async (id) => (await globalThis.JTFBackground.handlers['jtf:job-context']({ tabId: id }, {})).trail, child);
+  await until(
+    async () => ((await childTrail().catch(() => [])) || []).some((t) => t.url === posting),
+    null,
+    null,
+    15000,
+  );
+  await h.bg((id) => globalThis.JTF.api.tabs.remove(id), child);
+  await page.close();
+});
+
 test('settings: example letters are read from PDFs and the company they were for is noted', async () => {
   const doc = await PDFDocument.create();
   const page = doc.addPage([595, 842]);

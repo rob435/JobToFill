@@ -406,6 +406,77 @@ async function readJobPages(tabId, frameIds) {
   return callFrames(tabId, 'jobContext', [], frameIds);
 }
 
+/*
+ * The job pages each tab showed before, newest first. Many application sites drop the job from
+ * their address (SuccessFactors sends everyone to apply.careers.hsbc.com/), so the job page the user
+ * clicked "Apply" on is often the only way back to the posting, and this works without the history
+ * permission. Only pages that look job related are kept, at most a dozen for a few hours, in session
+ * storage: in memory only, gone when the browser closes, never sent anywhere.
+ */
+const TRAIL_MAX = 12;
+const TRAIL_AGE = 3 * 3600e3;
+const JOBBY =
+  /job|career|vacanc|position|opening|role|intern|graduate|placement|apply|recruit|talent|hiring|posting|requisition|stellen|emploi|empleo|lavoro|vagas|greenhouse|lever\.co|ashby|workday|myworkday|icims|smartrecruiters|successfactors|taleo|oraclecloud|workable|teamtailor|recruitee|jobvite|bamboohr|breezy|pinpoint|eightfold|avature|phenom/i;
+const trailKey = (tabId) => `trail:${tabId}`;
+const trailArea = () => (api.storage && api.storage.session) || null;
+const trailQueue = new Map();
+
+async function readTrail(tabId) {
+  const area = trailArea();
+  if (!area || tabId == null) return [];
+  const got = await area.get(trailKey(tabId)).catch(() => ({}));
+  const now = Date.now();
+  return (got[trailKey(tabId)] || []).filter((t) => t && t.url && now - t.at < TRAIL_AGE);
+}
+
+/** Changes to one tab's trail run one after another (a navigation fires several updates at once). */
+function editTrail(tabId, change) {
+  const area = trailArea();
+  if (!area) return Promise.resolve();
+  const run = () =>
+    readTrail(tabId)
+      .then((list) => {
+        const next = change(list);
+        return next && area.set({ [trailKey(tabId)]: next.slice(0, TRAIL_MAX) });
+      })
+      .catch(() => {});
+  const done = (trailQueue.get(tabId) || Promise.resolve()).then(run);
+  trailQueue.set(tabId, done);
+  done.then(() => trailQueue.get(tabId) === done && trailQueue.delete(tabId));
+  return done;
+}
+
+function noteVisit(tab, withTitle) {
+  if (!tab || tab.incognito || !/^https?:\/\//.test(tab.url || '')) return;
+  const url = tab.url.split('#')[0];
+  const title = withTitle && tab.title && tab.title !== tab.url ? String(tab.title).slice(0, 200) : '';
+  if (!JOBBY.test(url) && !JOBBY.test(title)) return;
+  editTrail(tab.id, (list) => {
+    const old = list.find((t) => t.url === url);
+    if (old && old.title === (title || old.title) && Date.now() - old.at < 60e3 && list[0] === old) return null;
+    const entry = { url, title: title || (old && old.title) || '', at: Date.now() };
+    return [entry, ...list.filter((t) => t.url !== url)];
+  });
+}
+
+api.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (info.url) noteVisit(tab, false);
+  else if (info.title || info.status === 'complete') noteVisit(tab, true);
+});
+// "Apply" often opens the form in a new tab: it starts with the trail of the tab it came from.
+// (Chromium leaves openerTabId out of onCreated for some new tabs, so it's looked up again.)
+api.tabs.onCreated.addListener(async (tab) => {
+  if (tab.incognito) return;
+  const opener = tab.openerTabId != null ? tab.openerTabId : (await api.tabs.get(tab.id).catch(() => ({}))).openerTabId;
+  if (opener == null) return;
+  const from = await readTrail(opener);
+  if (from.length) editTrail(tab.id, (list) => [...list, ...from.filter((t) => !list.some((x) => x.url === t.url))]);
+});
+api.tabs.onRemoved.addListener((tabId) => {
+  const area = trailArea();
+  if (area) area.remove(trailKey(tabId)).catch(() => {});
+});
+
 /**
  * What the application open in a tab says about the job. The top frame describes the page; a frame
  * (iCIMS, embedded Greenhouse boards) may hold the actual posting.
@@ -423,6 +494,12 @@ async function jobContext(tabId) {
   }
   for (const f of frames) if (f !== top && f.title && !context.title) context.title = f.title;
   context.frames = frames.map((f) => f.url).filter(Boolean);
+  const here = (context.url || '').split('#')[0];
+  // The tab that opened this one too, in case it opened before that tab's trail was copied.
+  const tab = await api.tabs.get(tabId).catch(() => ({}));
+  const own = await readTrail(tabId);
+  const opened = tab.openerTabId != null ? await readTrail(tab.openerTabId) : [];
+  context.trail = [...own, ...opened.filter((t) => !own.some((x) => x.url === t.url))].filter((t) => t.url !== here);
   return context;
 }
 

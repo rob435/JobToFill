@@ -427,4 +427,29 @@ test('letter: analysis says when the text is not a job posting', async () => {
   assert.equal((await L.analyse(chat, notJob, {})).isPosting, false);
   const yes = async () => ({ json: { company: 'Acme', role: 'Analyst' } });
   assert.equal((await L.analyse(yes, posting, {})).isPosting, true, 'missing means yes');
+  const banner = { ...posting, title: 'Your Privacy' };
+  assert.equal((await L.analyse(async () => ({ json: { company: 'Acme' } }), banner, {})).role, '', 'not a role');
+  assert.equal((await L.analyse(yes, banner, {})).role, 'Analyst');
+});
+
+test('letter: finance terms and training programmes are not stock phrases or invented qualifications', () => {
+  const finance = {
+    ...ctx,
+    role: 'Graduate Programme 2027 - ACA Deal Advisory',
+    posting: 'Our team works on leveraged loans, dynamic hedging and the ACA qualification, which we sponsor.',
+  };
+  const say = (sentence) => {
+    const draft = structuredClone(good);
+    draft.paragraphs[2] = sentence;
+    return L.checkLetter(draft, finance).errors.join('\n');
+  };
+  assert.doesNotMatch(say('I want to understand how leveraged loans are priced.'), /stock phrases/);
+  assert.doesNotMatch(say('I am curious about dynamic hedging.'), /stock phrases/);
+  assert.doesNotMatch(say('I read about market dynamics every week.'), /stock phrases/);
+  assert.match(say('I would leverage my skills.'), /“leverage”/);
+  assert.match(say('I am leveraging my chess.'), /“leverage”/);
+  assert.match(say('I thrive in a dynamic team.'), /“dynamic”/);
+  assert.doesNotMatch(say('I would like to join while working towards the ACA qualification.'), /aca/i);
+  assert.doesNotMatch(say('I am applying for the 2027 ACA Graduate Programme in Deal Advisory.'), /aca/i);
+  assert.match(say('I am ACA qualified.'), /doesn’t mention aca/);
 });

@@ -186,6 +186,9 @@ function renderSetup(onDone) {
 const UNSAFE =
   /logout|log-out|signout|sign-out|unsubscribe|delete|remove|withdraw|cancel|confirm|verify|activate|reset|token=|password/i;
 
+// Job board data addresses: worth fetching, but there is no page to open in a tab.
+const DATA_URL = /\/api\/|\/wday\/cxs\/|graphql|\.json(\?|$)|[?&]format=json/i;
+
 /** fetch for the job finder: GET only, nothing that looks like an action, no cookies. */
 async function safeFetch(url, init) {
   const method = ((init && init.method) || 'GET').toUpperCase();
@@ -215,10 +218,14 @@ async function findJob() {
     now: Date.now(),
   });
 
-  // Pages built entirely by scripts come back empty when fetched: read them in a background tab.
+  // Pages built entirely by scripts come back empty when fetched, and some sites block or throttle
+  // plain fetches (403, 429, 503): read those pages in a background tab, as the user would see them.
   if (!found.posting || found.verdict === 'different') {
+    const blocked = /HTTP (401|403|429|5\d\d)|timed out|failed:/i;
     const shells = (found.tried || [])
-      .filter((t) => /empty|no posting|shell|script/i.test(t.outcome || ''))
+      .filter((t) => /empty|no posting|shell|script/i.test(t.outcome || '') || blocked.test(t.outcome || ''))
+      .filter((t) => /^https?:/.test(t.url || '') && !DATA_URL.test(t.url))
+      .filter((t, i, all) => all.findIndex((x) => x.url === t.url) === i)
       .slice(0, 2);
     for (const t of shells) {
       const page = await send({ type: 'jtf:scrape', url: t.url }).catch(() => null);

@@ -293,7 +293,25 @@
         `Don’t describe the job advert (“${narrated[0].slice(0, 60)}”); show the match through what the candidate did.`,
       );
     const lower = body.toLowerCase();
-    const cliches = CLICHES.filter((c) => lower.includes(c));
+    const advert = String(ctx.posting || '').toLowerCase();
+    // Whole words and their endings ("leveraging"), but a word the posting uses as a term ("dynamic
+    // hedging", "customer journey") is the posting's language, and "leveraged loans" is finance.
+    const TERMS = /^(loans?|finance|financing|buy-?outs?|credit|lending|etfs?|products?|positions?)$/;
+    const cliches = CLICHES.filter((c) => {
+      const one = !/\s/.test(c);
+      const stem = c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(one ? /e$/ : /$^/, '');
+      const re = new RegExp(`(^|[^\\p{L}])${stem}${one ? '\\p{L}{0,4}' : ''}(?![\\p{L}])`, 'giu');
+      const hits = [...lower.matchAll(re)];
+      if (!hits.length || !one) return hits.length > 0;
+      return hits.some((m) => {
+        const word = m[0].slice(m[1].length);
+        const at = m.index + m[1].length;
+        const before = (lower.slice(0, at).match(/([\p{L}’'-]+)\s+$/u) || [])[1];
+        const after = (lower.slice(at + word.length).match(/^\s+([\p{L}’'-]+)/u) || [])[1];
+        if ((word.startsWith('leverag') && after && TERMS.test(after)) || word === 'dynamics') return false;
+        return !(before && advert.includes(`${before} ${word}`)) && !(after && advert.includes(`${word} ${after}`));
+      });
+    });
     if (cliches.length)
       errors.push(`Replace stock phrases with plain, specific wording: ${cliches.map((c) => `“${c}”`).join(', ')}.`);
 
@@ -327,9 +345,23 @@
     // Wanting to learn a tool is fine ("I want to build up my Excel skills"); claiming it isn't.
     const sentences = body.split(/(?<=[.?!])\s+/);
     const LEARNING =
-      /\b(learn|learning|build up|develop|improve|pick up|get better|keen to|want to|would like to|hope to)\b/i;
+      /\b(learn|learning|build up|develop|improve|pick up|get better|keen to|want to|would like to|hope to|work(ing)? towards?|stud(y|ying) for|train(ing)? (for|towards?|as)|qualify as)\b/i;
+    // A qualification the programme trains you for ("the ACA Graduate Programme") isn't a claim to hold it.
+    const PROGRAMME =
+      /\b(programme|program|scheme|apprenticeship|training contract|qualification|sponsor\w*|exams?)\b/i;
+    const QUALIFICATION = new Set(['cfa', 'acca', 'aca', 'cima', 'frm', 'series 7']);
+    const role = String(ctx.role || '');
     const claimed = SKILL_RES.filter(
-      ([, re]) => !re.test(mine) && sentences.some((sentence) => re.test(sentence) && !LEARNING.test(sentence)),
+      ([name, re]) =>
+        !re.test(mine) &&
+        sentences.some(
+          (sentence) =>
+            re.test(sentence) &&
+            !LEARNING.test(sentence) &&
+            !(QUALIFICATION.has(name) && PROGRAMME.test(sentence)) &&
+            // "I am applying for the Python Developer Internship": the job's name, not a claim.
+            !(re.test(role) && /\bappl(y|ying|ication)\b/i.test(sentence)),
+        ),
     ).map(([name]) => name);
     if (claimed.length)
       wrong(
@@ -545,6 +577,9 @@
 
   /* -------------------------------------------------------------- pipeline */
 
+  const NOT_A_ROLE =
+    /^\s*(your privacy|we value your privacy|privacy( policy| notice| settings| preferences)?|cookies?( policy| settings| preferences| consent| notice)?|manage (cookies|consent|preferences)|consent|terms( of use| and conditions)?|sign in|log ?in|create (an )?account|page not found|not found|404|access denied|error|just a moment|attention required|careers?|jobs?|home)\W*$/i;
+
   function cleanAnalysis(a, posting, context) {
     const s = (v) => (typeof v === 'string' ? decodeEntities(v).trim() : '');
     const list = (v) => (Array.isArray(v) ? v.map((x) => s(String(x))).filter(Boolean) : []);
@@ -566,6 +601,8 @@
       asks: s(a.asks),
       eligibility: list(a.eligibility).slice(0, 8),
     };
+    // A page heading that isn't a job (a cookie banner read as the title) is no role at all.
+    if (NOT_A_ROLE.test(out.role)) out.role = '';
     // A "contact" that is an email address or a team isn't a person to greet.
     if (/@|team|recruit|careers|hr\b/i.test(out.hiringManager) || words(out.hiringManager) > 4) out.hiringManager = '';
     return out;
