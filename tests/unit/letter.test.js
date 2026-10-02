@@ -461,3 +461,46 @@ test('letter: a letter a few words under the target is a warning, far under is a
   assert.ok(check.warnings.some((w) => /A little short/.test(w)));
   assert.ok(L.checkLetter(good, { ...ctx, minWords: count + 60 }).errors.some((e) => /Too short/.test(e)));
 });
+
+test('ai: another provider stands in when one is out of credit or down, not when the key is wrong', async () => {
+  const both = {
+    provider: 'openrouter',
+    apiKey: 'sk-or',
+    fallback: { provider: 'deepseek', apiKey: 'sk-ds', model: '' },
+  };
+  let fetch = fakeFetch([{ status: 402, body: {} }, reply('{"a":1}')]);
+  let r = await ai.chat(both, { messages: [], json: true, fetch });
+  assert.deepEqual(r.json, { a: 1 });
+  assert.equal(fetch.seen[1].url, 'https://api.deepseek.com/chat/completions');
+  assert.equal(fetch.seen[1].body.model, 'deepseek-chat', 'its own model, not OpenRouter’s');
+  assert.equal(fetch.seen[1].headers.Authorization, 'Bearer sk-ds');
+  assert.equal(fetch.seen[1].body.reasoning, undefined, 'OpenRouter’s reasoning setting stays with OpenRouter');
+  assert.deepEqual([r.fallback.from, r.fallback.to], ['OpenRouter', 'DeepSeek']);
+  assert.match(r.fallback.reason, /out of credit/);
+
+  // Down after its retries.
+  fetch = fakeFetch([{ status: 503, body: {} }, { status: 503, body: {} }, { status: 503, body: {} }, reply('ok')]);
+  r = await ai.chat(both, { messages: [], fetch });
+  assert.equal(r.text, 'ok');
+  assert.equal(fetch.seen.length, 4);
+
+  // A rejected key is the person's to fix: no stand-in hides it.
+  fetch = fakeFetch([{ status: 401, body: {} }, reply('ok')]);
+  await assert.rejects(ai.chat(both, { messages: [], fetch }), /rejected the API key/);
+  assert.equal(fetch.seen.length, 1);
+});
+
+test('ai: DeepSeek’s own API gets replies it accepts', async () => {
+  const ds = { provider: 'deepseek', apiKey: 'sk-ds' };
+  const cut = { status: 200, body: { model: 'm', choices: [{ message: { content: '' }, finish_reason: 'length' }] } };
+  const fetch = fakeFetch([cut, structuredClone(cut), reply('x')]);
+  const r = await ai.chat(ds, { messages: [], maxTokens: 6000, fetch });
+  assert.equal(r.text, 'x');
+  assert.deepEqual(
+    fetch.seen.map((s) => s.body.max_tokens),
+    [6000, 8192, 8192],
+    'never above its 8,192 limit',
+  );
+  assert.equal(fetch.seen[0].body.model, 'deepseek-chat');
+  assert.equal(fetch.seen[0].url, 'https://api.deepseek.com/chat/completions');
+});

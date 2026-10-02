@@ -195,8 +195,8 @@ test('store: cover letter material is per profile, exported, and the API key is 
   assert.equal(kit.paper, 'a4', 'defaults fill the gaps');
   assert.equal(await store.hasData(), true, 'notes count as data worth backing up');
 
+  await store.saveAiSettings({ provider: 'deepseek', model: '' });
   await store.setAiKey('  sk-secret ');
-  await store.saveSettings({ ai: { provider: 'deepseek', model: '' } });
   assert.deepEqual(await store.aiConfig(), {
     provider: 'deepseek',
     model: '',
@@ -204,15 +204,57 @@ test('store: cover letter material is per profile, exported, and the API key is 
     apiKey: 'sk-secret',
   });
   const backup = JSON.parse(JSON.stringify(await store.exportData()));
-  assert.ok(!JSON.stringify(backup).includes('sk-secret'), 'the key never leaves the browser');
+  assert.deepEqual(backup.aiKeys, { deepseek: 'sk-secret' }, 'the key is kept in the backup file');
   assert.equal(backup.kits[`kit:${profile.id}`].notes, 'Chess captain');
 
   installChrome();
   await store.importData(backup);
   assert.equal((await store.getKit(profile.id)).notes, 'Chess captain');
-  assert.equal(await store.getAiKey(), '');
+  assert.equal(await store.getAiKey('deepseek'), 'sk-secret', 'and comes back after a reinstall');
   await store.setAiKey('');
   assert.equal(await store.getAiKey(), '');
+
+  // Switched off: the backup has no keys.
+  await store.setAiKey('sk-secret');
+  await store.saveAiSettings({ backupKeys: false });
+  assert.equal((await store.exportData()).aiKeys, undefined);
+  assert.equal((await store.exportData({ keys: true })).aiKeys.deepseek, 'sk-secret');
+});
+
+test('store: each AI provider keeps its own key and model; another key stands in when one fails', async () => {
+  installChrome();
+  // Older versions kept one key and one model, for the provider chosen then.
+  await chrome.storage.local.set({
+    aiKey: 'sk-or-old',
+    settings: { ...store.DEFAULT_SETTINGS, ai: { provider: 'openrouter', model: 'deepseek/x', baseUrl: '' } },
+  });
+  assert.deepEqual(await store.getAiKeys(), { openrouter: 'sk-or-old' });
+  assert.equal((await store.aiConfig()).model, 'deepseek/x');
+
+  await store.saveAiSettings({ provider: 'deepseek' });
+  let config = await store.aiConfig();
+  assert.equal(config.provider, 'deepseek');
+  assert.equal(config.model, '', 'the OpenRouter model doesn’t carry over');
+  assert.equal(config.apiKey, '', 'nor its key');
+  assert.deepEqual(config.fallback, { provider: 'openrouter', model: 'deepseek/x', baseUrl: '', apiKey: 'sk-or-old' });
+
+  await store.setAiKey('sk-ds', 'deepseek');
+  await store.saveAiSettings({ model: 'deepseek-reasoner' });
+  config = await store.aiConfig();
+  assert.equal(config.apiKey, 'sk-ds');
+  assert.equal(config.model, 'deepseek-reasoner');
+  assert.deepEqual(await store.getAiKeys(), { openrouter: 'sk-or-old', deepseek: 'sk-ds' });
+  assert.equal((await chrome.storage.local.get('aiKey')).aiKey, undefined, 'the old single key is moved over');
+
+  await store.saveAiSettings({ provider: 'openrouter' });
+  config = await store.aiConfig();
+  assert.equal(config.apiKey, 'sk-or-old', 'switching back finds the first key again');
+  assert.equal(config.model, 'deepseek/x');
+  assert.equal(config.fallback.provider, 'deepseek');
+  assert.equal(config.fallback.model, 'deepseek-reasoner');
+
+  await store.saveAiSettings({ fallback: false });
+  assert.equal((await store.aiConfig()).fallback, undefined);
 });
 
 test('store: a chosen letter follows its application across pages, not to other jobs', async () => {

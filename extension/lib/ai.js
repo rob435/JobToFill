@@ -22,6 +22,10 @@
       model: 'deepseek-chat',
       keyUrl: 'https://platform.deepseek.com/api_keys',
       keyHint: 'sk-…',
+      // deepseek-chat answers straight away; deepseek-reasoner thinks first (slower, dearer).
+      models: ['deepseek-chat', 'deepseek-reasoner'],
+      // Longest reply the API accepts.
+      maxTokens: 8192,
     },
     custom: {
       label: 'Other (OpenAI-compatible)',
@@ -154,7 +158,7 @@
   async function post(c, body, signal, fetchImpl) {
     const controller = new AbortController();
     const timer = setTimeout(
-      () => controller.abort(new AIError('The model took too long to answer.', { retry: true })),
+      () => controller.abort(new AIError('The model took too long to answer.', { retry: true, code: 'timeout' })),
       TIMEOUT,
     );
     const onAbort = () => controller.abort(signal.reason);
@@ -200,11 +204,8 @@
     }
   }
 
-  /**
-   * One chat completion. With `json: true` the reply is parsed (and asked for again once if it
-   * isn't valid JSON). Returns { text, json, usage, model }.
-   */
-  async function chat(
+  /** One chat completion from one provider (see chat()). */
+  async function chatWith(
     config,
     { messages, json = false, temperature = 0.4, maxTokens = 4000, reasoning, signal, fetch: fetchImpl },
   ) {
@@ -212,7 +213,8 @@
     const bad = problem(c);
     if (bad) throw new AIError(bad, { code: 'setup' });
     const doFetch = fetchImpl || root.fetch.bind(root);
-    const body = { model: c.model, messages, temperature, max_tokens: maxTokens };
+    const cap = (PROVIDERS[c.provider] && PROVIDERS[c.provider].maxTokens) || 16000;
+    const body = { model: c.model, messages, temperature, max_tokens: Math.min(maxTokens, cap) };
     if (json) body.response_format = { type: 'json_object' };
     // Reasoning models think before answering. Extraction needs none (it only costs time); writing
     // can ask for a little. Only OpenRouter takes this setting; other providers pick by model.
@@ -228,14 +230,14 @@
         const usage = data && data.usage;
         if (!text.trim()) {
           // Thinking used up the token budget: give it more room and ask again.
-          if (choice.finish_reason === 'length') body.max_tokens = Math.min(body.max_tokens * 2, 16000);
+          if (choice.finish_reason === 'length') body.max_tokens = Math.min(body.max_tokens * 2, cap);
           throw new AIError('The model returned an empty reply.', { retry: true });
         }
         if (!json) return { text: text.trim(), usage, model: data.model || c.model };
         try {
           return { text, json: parseJson(text), usage, model: data.model || c.model };
         } catch (err) {
-          if (choice.finish_reason === 'length') body.max_tokens = Math.min(body.max_tokens * 2, 16000);
+          if (choice.finish_reason === 'length') body.max_tokens = Math.min(body.max_tokens * 2, cap);
           throw err;
         }
       } catch (err) {
@@ -257,6 +259,27 @@
       }
     }
     throw lastErr;
+  }
+
+  // Problems another provider doesn't share: out of credit, rate-limited, down, unreachable, too slow.
+  const PROVIDER_TROUBLE = new Set(['credit', 'rate', 'network', 'timeout']);
+
+  /**
+   * One chat completion. With `json: true` the reply is parsed (and asked for again once if it isn't
+   * valid JSON). Returns { text, json, usage, model }. When the provider has trouble of its own and
+   * `config.fallback` names another provider with a key, that one answers instead, and the result says
+   * so in `fallback: { from, to, reason }`.
+   */
+  async function chat(config, options) {
+    try {
+      return await chatWith(config, options);
+    } catch (err) {
+      const backup = config && config.fallback;
+      const trouble = err instanceof AIError && (PROVIDER_TROUBLE.has(err.code) || err.status >= 500);
+      if (!backup || !trouble || (options && options.signal && options.signal.aborted)) throw err;
+      const r = await chatWith(backup, options);
+      return { ...r, fallback: { from: resolve(config).label, to: resolve(backup).label, reason: err.message } };
+    }
   }
 
   /** A tiny request that proves the key, address and model all work. */

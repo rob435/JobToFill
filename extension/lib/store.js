@@ -11,7 +11,7 @@
  *   backupInfo    { at, path, error, paused, previous, dismissed }  the automatic backup file (background.js)
  *   kit:<id>      cover letter material per profile: { notes, samples: [{ id, name, text }], contact, closing,
  *                 spelling, paper, cv: { updatedAt, text } (text read from the resume file) }
- *   aiKey         the AI provider's API key; never exported or backed up
+ *   aiKeys        the AI providers' API keys ({ openrouter, deepseek, custom }); in backups unless switched off
  *   letters       generated letters, newest first (see saveLetter)
  */
 (function (root) {
@@ -29,7 +29,9 @@
     passwordStrategy: 'generate',
     autoLockMinutes: 30,
     logApplications: true,
-    ai: { provider: 'openrouter', model: '', baseUrl: '' },
+    // models: the model chosen for each provider; fallback: use another provider you have a key for when
+    // this one is out of credit or down; backupKeys: keep the API keys in the backup file.
+    ai: { provider: 'openrouter', model: '', baseUrl: '', models: {}, fallback: true, backupKeys: true },
     searchHistory: false,
   };
 
@@ -164,20 +166,79 @@
     return kit;
   });
 
-  async function getAiKey() {
-    return (await area().get('aiKey')).aiKey || '';
+  const PROVIDER_IDS = ['openrouter', 'deepseek', 'custom'];
+  const aiSettings = (settings) => Object.assign({}, DEFAULT_SETTINGS.ai, (settings && settings.ai) || {});
+
+  /** The API keys, one per provider: { openrouter: 'sk-or-…', deepseek: 'sk-…' }. (Older versions kept one.) */
+  async function getAiKeys() {
+    const got = await area().get(['aiKeys', 'aiKey']);
+    const keys = {};
+    for (const [id, key] of Object.entries(got.aiKeys || {}))
+      if (PROVIDER_IDS.includes(id) && typeof key === 'string' && key.trim()) keys[id] = key.trim();
+    // The single key of older versions belongs to the provider chosen then: move it over once.
+    if (got.aiKey) {
+      const id = aiSettings(await getSettings()).provider;
+      if (!keys[id]) keys[id] = String(got.aiKey).trim();
+      await area().set({ aiKeys: keys });
+      await area().remove('aiKey');
+    }
+    return keys;
   }
 
-  async function setAiKey(key) {
+  /** The key for `provider` (by default the chosen one). */
+  async function getAiKey(provider) {
+    const id = provider || aiSettings(await getSettings()).provider;
+    return (await getAiKeys())[id] || '';
+  }
+
+  const setAiKey = exclusive(async function setAiKey(key, provider) {
+    const id = provider || aiSettings(await getSettings()).provider;
+    const keys = await getAiKeys();
     const value = String(key || '').trim();
-    if (value) await area().set({ aiKey: value });
-    else await area().remove('aiKey');
+    if (value) keys[id] = value;
+    else delete keys[id];
+    await area().set({ aiKeys: keys });
+    await area().remove('aiKey');
+  });
+
+  /** Change the AI settings: { provider, model, baseUrl, fallback, backupKeys }; the model is kept per provider. */
+  const saveAiSettings = exclusive(async function saveAiSettings(patch) {
+    const settings = await getSettings();
+    const prev = aiSettings(settings);
+    const ai = Object.assign({}, prev, patch);
+    ai.models = Object.assign({}, prev.models);
+    // Older versions kept one model: it belongs to the provider it was chosen for.
+    if (ai.models[prev.provider] == null && prev.model) ai.models[prev.provider] = prev.model;
+    if ('model' in patch) ai.models[ai.provider] = String(patch.model || '').trim();
+    else ai.model = ai.models[ai.provider] != null ? ai.models[ai.provider] : '';
+    settings.ai = ai;
+    await area().set({ settings });
+    return ai;
+  });
+
+  /** The model saved for a provider (for the chosen one, also what older versions saved). */
+  function modelFor(ai, provider) {
+    if (ai.models && ai.models[provider] != null) return ai.models[provider];
+    return provider === ai.provider ? ai.model || '' : '';
   }
 
-  /** The AI settings with the key, ready for JTF.ai. */
+  /**
+   * The AI settings with the key, ready for JTF.ai. With fallback on, another provider you have a key for
+   * comes along as `fallback`, for when the chosen one is out of credit, rate-limited or down.
+   */
   async function aiConfig() {
-    const [settings, apiKey] = await Promise.all([getSettings(), getAiKey()]);
-    return Object.assign({}, DEFAULT_SETTINGS.ai, settings.ai || {}, { apiKey });
+    const [settings, keys] = await Promise.all([getSettings(), getAiKeys()]);
+    const ai = aiSettings(settings);
+    const config = {
+      provider: ai.provider,
+      model: modelFor(ai, ai.provider),
+      // The address is only for "Other" providers; OpenRouter and DeepSeek have their own.
+      baseUrl: ai.provider === 'custom' ? ai.baseUrl || '' : '',
+      apiKey: keys[ai.provider] || '',
+    };
+    const other = ai.fallback !== false && ['openrouter', 'deepseek'].find((id) => id !== ai.provider && keys[id]);
+    if (other) config.fallback = { provider: other, model: modelFor(ai, other), baseUrl: '', apiKey: keys[other] };
+    return config;
   }
 
   async function getLetters() {
@@ -353,6 +414,12 @@
     }
     if (opts.vault) out.vault = (await area().get('vault')).vault || null;
     if (opts.history) out.history = await getHistory();
+    // The API keys come back with everything else after a reinstall, unless that's switched off.
+    const keys = opts.keys != null ? opts.keys : aiSettings(all.settings).backupKeys !== false;
+    if (keys) {
+      const aiKeys = await getAiKeys();
+      if (Object.keys(aiKeys).length) out.aiKeys = aiKeys;
+    }
     return out;
   }
 
@@ -369,6 +436,12 @@
     }
     for (const [key, kit] of Object.entries(data.kits || {})) {
       if (/^kit:[^:]+$/.test(key) && kit && typeof kit === 'object') set[key] = kit;
+    }
+    if (data.aiKeys && typeof data.aiKeys === 'object') {
+      const keys = await getAiKeys();
+      for (const [id, key] of Object.entries(data.aiKeys))
+        if (PROVIDER_IDS.includes(id) && typeof key === 'string' && key.trim()) keys[id] = key.trim();
+      set.aiKeys = keys;
     }
     await area().set(set);
     if (data.vault && JTF.vault) await JTF.vault.lock();
@@ -392,7 +465,9 @@
     getKit,
     saveKit,
     getAiKey,
+    getAiKeys,
     setAiKey,
+    saveAiSettings,
     aiConfig,
     getLetters,
     saveLetter,

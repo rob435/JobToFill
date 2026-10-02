@@ -380,3 +380,66 @@ test('settings: example letters are read from PDFs and the company they were for
   assert.match(sample.text, /food bank that matches donations/);
   await settings.close();
 });
+
+test('settings: OpenRouter and DeepSeek each keep their own key and model, and the keys are backed up', async () => {
+  const before = await h.bg(async () => {
+    const { store } = globalThis.JTF;
+    return { settings: (await store.getSettings()).ai, keys: await store.getAiKeys() };
+  });
+  try {
+    const settings = await h.extPage('options/options.html#letters');
+    await until(settings.call, () => !!document.querySelector('select[name=ai-provider]'));
+    const type = (name, value) =>
+      settings.call(
+        ([n, v]) => {
+          const input = document.querySelector(`[name=${n}]`);
+          input.value = v;
+          input.dispatchEvent(new Event('change'));
+        },
+        [name, value],
+      );
+    const read = () =>
+      settings.call(() => ({
+        key: document.querySelector('[name=ai-key]').value,
+        model: document.querySelector('[name=ai-model]').value,
+        saved: document.querySelector('[name=ai-key]').closest('label').querySelector('small.muted').textContent,
+        backup: document.querySelector('[name=ai-backup-keys]').checked,
+        fallback: document.querySelector('[name=ai-fallback]').checked,
+      }));
+    await type('ai-provider', 'openrouter');
+    await type('ai-key', 'sk-or-e2e');
+    await type('ai-model', 'deepseek/deepseek-v4.1-flash');
+    await type('ai-provider', 'deepseek');
+    await until(async () => (await read()).key === '', null, null, 5000);
+    assert.equal((await read()).model, '', 'DeepSeek starts with its own default model');
+    await type('ai-key', 'sk-ds-e2e');
+    await until(async () => /OpenRouter, DeepSeek/.test((await read()).saved), null, null, 5000);
+    await type('ai-provider', 'openrouter');
+    await until(async () => (await read()).key === 'sk-or-e2e', null, null, 5000);
+    assert.equal((await read()).model, 'deepseek/deepseek-v4.1-flash');
+    assert.equal((await read()).backup, true, 'keys are backed up unless switched off');
+    assert.equal((await read()).fallback, true);
+
+    // Still there when settings are opened again.
+    await settings.close();
+    const again = await h.extPage('options/options.html#letters');
+    await until(again.call, () => !!document.querySelector('select[name=ai-provider]'));
+    assert.equal(await again.call(() => document.querySelector('[name=ai-key]').value), 'sk-or-e2e');
+    await again.close();
+    const state = await h.bg(async () => {
+      const { store } = globalThis.JTF;
+      return { config: await store.aiConfig(), backup: (await store.exportData()).aiKeys };
+    });
+    assert.equal(state.config.provider, 'openrouter');
+    assert.equal(state.config.apiKey, 'sk-or-e2e');
+    assert.equal(state.config.fallback.provider, 'deepseek');
+    assert.equal(state.config.fallback.apiKey, 'sk-ds-e2e');
+    assert.deepEqual(state.backup, { ...before.keys, openrouter: 'sk-or-e2e', deepseek: 'sk-ds-e2e' });
+  } finally {
+    await h.bg(async (b) => {
+      const { store, api } = globalThis.JTF;
+      await api.storage.local.set({ aiKeys: b.keys });
+      await store.saveSettings({ ai: b.settings });
+    }, before);
+  }
+});

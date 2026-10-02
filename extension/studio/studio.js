@@ -36,6 +36,8 @@ const state = {
   showing: 'letter',
   controller: null,
   cost: 0,
+  tokens: 0,
+  fallback: null,
 };
 
 const send = (message) => api.runtime.sendMessage(message);
@@ -65,10 +67,15 @@ function fileName(kind) {
 /** The AI call used by JTF.letter, with the running cost shown in the top bar. */
 async function chat(messages, options) {
   const r = await ai.chat(state.config, { messages, ...options, signal: state.controller && state.controller.signal });
-  if (r.usage && typeof r.usage.cost === 'number') {
-    state.cost += r.usage.cost;
-    $('#cost').textContent = `AI cost so far: $${state.cost.toFixed(4)}`;
-  }
+  // OpenRouter reports the cost; DeepSeek's own API only the tokens.
+  if (r.usage && typeof r.usage.cost === 'number') state.cost += r.usage.cost;
+  else if (r.usage && r.usage.total_tokens) state.tokens += r.usage.total_tokens;
+  if (r.fallback) state.fallback = r.fallback;
+  const parts = [];
+  if (state.cost) parts.push(`AI cost so far: $${state.cost.toFixed(4)}`);
+  if (state.tokens) parts.push(`${state.tokens.toLocaleString()} tokens`);
+  if (state.fallback) parts.push(`${state.fallback.to} stood in: ${state.fallback.reason}`);
+  $('#cost').textContent = parts.join(' · ');
   return r;
 }
 
@@ -148,7 +155,11 @@ function renderSetup(onDone) {
     link.href = p.keyUrl || '#';
     link.textContent = p.keyUrl ? p.keyUrl.replace(/^https:\/\//, '') : 'your provider';
   };
-  provider.onchange = sync;
+  // Another provider's model and key don't carry over.
+  provider.onchange = () => {
+    $('#setup-model').value = provider.value === cfg.provider ? cfg.model || '' : '';
+    sync();
+  };
   sync();
   $('#setup-save').onclick = async () => {
     // Firefox's consent prompt only opens straight from the click.
@@ -158,7 +169,7 @@ function renderSetup(onDone) {
       provider: provider.value,
       model: $('#setup-model').value.trim(),
       baseUrl: $('#setup-base').value.trim(),
-      apiKey: $('#setup-key').value.trim() || cfg.apiKey,
+      apiKey: $('#setup-key').value.trim() || (provider.value === cfg.provider ? cfg.apiKey : ''),
     };
     if (!(await consent)) {
       status.textContent = 'JobToFill needs your permission to send this to the AI provider.';
@@ -171,8 +182,8 @@ function renderSetup(onDone) {
       status.textContent = err.message;
       return;
     }
-    await store.saveSettings({ ai: { provider: next.provider, model: next.model, baseUrl: next.baseUrl } });
-    await store.setAiKey(next.apiKey);
+    await store.saveAiSettings({ provider: next.provider, model: next.model, baseUrl: next.baseUrl });
+    await store.setAiKey(next.apiKey, next.provider);
     state.config = await store.aiConfig();
     status.textContent = 'Connected.';
     card.hidden = true;

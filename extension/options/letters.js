@@ -12,8 +12,12 @@ function readBytes(file) {
 
 async function aiGroup() {
   const settings = await store.getSettings();
-  const config = await store.aiConfig();
-  const cfg = { ...ai.DEFAULT_CONFIG, ...settings.ai };
+  const cfg = { ...store.DEFAULT_SETTINGS.ai, ...settings.ai };
+  const keys = await store.getAiKeys();
+  // The model chosen for each provider (older versions kept one, for the provider chosen then).
+  cfg.models = { ...(cfg.models || {}) };
+  if (cfg.models[cfg.provider] == null && cfg.model) cfg.models[cfg.provider] = cfg.model;
+  const modelOf = (id) => cfg.models[id] || '';
   const status = el('span', { className: 'muted', attrs: { 'aria-live': 'polite' } });
 
   const provider = el(
@@ -25,7 +29,7 @@ async function aiGroup() {
   const model = el('input', {
     type: 'text',
     name: 'ai-model',
-    value: cfg.model || '',
+    value: modelOf(cfg.provider) || '',
     autocomplete: 'off',
     spellcheck: false,
   });
@@ -41,20 +45,38 @@ async function aiGroup() {
   const key = el('input', {
     type: 'password',
     name: 'ai-key',
-    value: config.apiKey || '',
+    value: keys[cfg.provider] || '',
     autocomplete: 'off',
     spellcheck: false,
   });
   const keyLink = el('a', { target: '_blank', rel: 'noopener' });
+  const saved = el('small', { className: 'muted' });
   const baseField = el('label', { className: 'field wide' }, el('span', { textContent: 'API address' }), base);
+  const checkbox = (name, checked, text) => {
+    const box = el('input', { type: 'checkbox', name, checked });
+    return [box, el('label', { className: 'check' }, box, el('span', { textContent: text }))];
+  };
+  const [fallback, fallbackRow] = checkbox(
+    'ai-fallback',
+    cfg.fallback !== false,
+    'If it’s out of credit or down, use my other provider (OpenRouter or DeepSeek) when it has a key',
+  );
+  const [backupKeys, backupRow] = checkbox(
+    'ai-backup-keys',
+    cfg.backupKeys !== false,
+    'Keep my API keys in the backup file, so they come back if JobToFill is reinstalled',
+  );
 
+  const showSaved = () => {
+    const names = Object.keys(keys).map((id) => (ai.PROVIDERS[id] || {}).label || id);
+    saved.textContent = names.length ? `Keys saved for: ${names.join(', ')}.` : '';
+  };
   const loadModels = async () => {
-    try {
-      const ids = await ai.models({ ...cfg, ...current(), apiKey: key.value.trim() });
-      models.replaceChildren(...ids.slice(0, 400).map((id) => el('option', { value: id })));
-    } catch (err) {
-      models.replaceChildren();
-    }
+    const p = ai.PROVIDERS[provider.value];
+    const ids = await ai.models({ ...current(), apiKey: key.value.trim() }).catch(() => []);
+    models.replaceChildren(
+      ...(ids.length ? ids : p.models || []).slice(0, 400).map((id) => el('option', { value: id })),
+    );
   };
   const current = () => ({ provider: provider.value, model: model.value.trim(), baseUrl: base.value.trim() });
   const sync = () => {
@@ -64,10 +86,23 @@ async function aiGroup() {
     baseField.hidden = provider.value !== 'custom';
     keyLink.href = p.keyUrl || '#';
     keyLink.textContent = p.keyUrl ? p.keyUrl.replace(/^https:\/\//, '') : '';
+    showSaved();
   };
-  const save = async () => {
-    await store.saveSettings({ ai: current() });
-    await store.setAiKey(key.value);
+  // What's on screen belongs to the provider shown when it was typed: note it before anything waits,
+  // so a quick switch of provider can't file a key or model under the wrong one.
+  const saveSettings = async () => {
+    const now = current();
+    cfg.models = { ...cfg.models, [now.provider]: now.model };
+    await store.saveAiSettings({ ...now, fallback: fallback.checked, backupKeys: backupKeys.checked });
+    status.textContent = 'Saved.';
+  };
+  const saveKey = async () => {
+    const id = provider.value;
+    const value = key.value.trim();
+    if (value) keys[id] = value;
+    else delete keys[id];
+    showSaved();
+    await store.setAiKey(value, id);
     status.textContent = 'Saved.';
   };
   // The model list is fetched when someone goes to pick a model, not every time settings open.
@@ -77,23 +112,33 @@ async function aiGroup() {
     listed = provider.value;
     loadModels();
   });
-  provider.addEventListener('change', () => {
+  // Each provider keeps its own key and model: switching shows the ones saved for it.
+  provider.addEventListener('change', async () => {
+    key.value = keys[provider.value] || '';
+    model.value = modelOf(provider.value) || '';
+    models.replaceChildren();
+    listed = null;
     sync();
-    save();
+    cfg.provider = provider.value;
+    await store.saveAiSettings({ provider: provider.value, baseUrl: base.value.trim() });
+    status.textContent = 'Saved.';
   });
-  for (const input of [model, base, key]) input.addEventListener('change', save);
+  key.addEventListener('change', saveKey);
+  for (const input of [model, base, fallback, backupKeys]) input.addEventListener('change', saveSettings);
   sync();
 
   const test = async () => {
     const consent = requestAiConsent(); // straight from the click, as Firefox requires
-    await save();
+    await saveSettings();
+    await saveKey();
     if (!(await consent)) {
       status.textContent = 'JobToFill needs your permission to send letters’ material to the AI provider.';
       return;
     }
     status.textContent = 'Testing…';
     try {
-      const r = await ai.test(await store.aiConfig());
+      const config = await store.aiConfig();
+      const r = await ai.test({ ...config, fallback: null });
       status.textContent = `Works: ${r.model} answered in ${(r.ms / 1000).toFixed(1)} s.`;
     } catch (err) {
       status.textContent = err.message;
@@ -102,7 +147,7 @@ async function aiGroup() {
 
   return group(
     'AI model',
-    'Letters are written by the model you choose, with your own API key. DeepSeek V4.1 Flash through OpenRouter is fast and costs about a tenth of a cent per letter. The key is stored only in this browser and is left out of backups and exports.',
+    'Letters are written by the model you choose, with your own API key. DeepSeek V4.1 Flash through OpenRouter is fast and costs about a tenth of a cent per letter; DeepSeek’s own API (deepseek-chat) works too. Each provider keeps its own key and model. Keys are stored only in this browser and in your own backup file.',
     grid(
       el('label', { className: 'field' }, el('span', { textContent: 'Provider' }), provider),
       el('label', { className: 'field' }, el('span', { textContent: 'Model' }), model, models),
@@ -113,8 +158,10 @@ async function aiGroup() {
         el('span', { textContent: 'API key' }),
         key,
         el('small', {}, 'Get one at ', keyLink),
+        saved,
       ),
     ),
+    el('div', { className: 'stack' }, fallbackRow, backupRow),
     el(
       'div',
       { className: 'row spaced' },

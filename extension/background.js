@@ -318,7 +318,7 @@ async function documentFor(msg, sender) {
 // Downloads/JobToFill, rewritten shortly after each change, and offered back when JobToFill
 // starts out empty.
 const BACKUP_FILE = 'JobToFill/jobtofill-backup.json';
-const BACKUP_KEYS = /^(profiles|profileOrder|settings|vault|doc:.+|kit:.+)$/;
+const BACKUP_KEYS = /^(profiles|profileOrder|settings|vault|aiKeys|doc:.+|kit:.+)$/;
 
 api.storage.onChanged.addListener((changes, areaName) => {
   // Re-created on every change, so the file is written once things have been quiet for half a minute.
