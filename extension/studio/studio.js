@@ -802,6 +802,33 @@ async function checkEligibility(signal) {
   }
 }
 
+/** The job found here also answers the application's questions (AI answers when filling the same tab). */
+function shareJob() {
+  if (tabId == null || !state.context || !state.job || !state.job.posting) return;
+  const p = state.job.posting;
+  const a = state.analysis || {};
+  let host = state.context.host || '';
+  try {
+    host = host || new URL(state.context.url).hostname;
+  } catch (err) {
+    /* no address */
+  }
+  store
+    .setTabJob(tabId, {
+      host,
+      url: state.context.url,
+      job: {
+        company: a.company || p.company || '',
+        title: a.role || p.title || '',
+        location: a.location || p.location || '',
+        url: p.url || state.context.url,
+        description: p.description || '',
+        summary: a.summary || '',
+      },
+    })
+    .catch(() => {});
+}
+
 /* ------------------------------------------------------------- pipeline */
 
 async function run(from = 'job') {
@@ -868,6 +895,7 @@ async function run(from = 'job') {
         );
       }
       step('analyse', 'done', [state.analysis.role, state.analysis.company].filter(Boolean).join(' at '));
+      shareJob();
       // Runs alongside the writing: does the person meet the hard requirements?
       checkEligibility(signal);
     }

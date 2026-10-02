@@ -11,6 +11,8 @@
   const dom = () => JTF.dom;
 
   const HIGHLIGHT = 'rgba(124, 92, 255, 0.95)';
+  // Answers the AI wrote: a different colour, so they stand out for review.
+  const AI_HIGHLIGHT = 'rgba(234, 145, 12, 0.95)';
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   /* --------------------------------------------------------------- events */
@@ -453,6 +455,29 @@
     return chosen.length ? { status: 'filled', value: chosen.join(', ') } : { status: 'nomatch' };
   }
 
+  /**
+   * The options a custom dropdown offers, read by opening it and closing it again without choosing anything:
+   * { options: [text], multi }. A searchable box that only lists matches for what's typed gives no options.
+   */
+  async function peekOptions(field) {
+    const el = field.el;
+    if (field.kind !== 'combo' && field.kind !== 'combobox') return null;
+    const isInput = el.localName === 'input';
+    const searchable =
+      isInput && !el.readOnly && el.getAttribute('aria-readonly') !== 'true' && el.getAttribute('inputmode') !== 'none';
+    try {
+      const opts = await openMenu(el, searchable);
+      const multi = isMulti(el);
+      const options = describeOptions(opts)
+        .map((o) => JTF.util.cleanLabel(o.text, 200))
+        .filter((t) => t && !M().isPlaceholder(JTF.util.normalize(t)) && !/^no (options|results)/i.test(t));
+      return { options: [...new Set(options)], multi };
+    } finally {
+      closeMenu(el);
+      if (isInput) el.blur();
+    }
+  }
+
   function isMulti(el) {
     const lb = listboxFor(el);
     if (lb && lb.getAttribute('aria-multiselectable') === 'true') return true;
@@ -665,7 +690,7 @@
 
   const highlighted = [];
 
-  function highlight(el) {
+  function highlight(el, ai) {
     const target =
       el.type === 'radio' || el.type === 'checkbox'
         ? (el.labels && el.labels[0]) || el
@@ -674,7 +699,7 @@
           : el;
     if (!target || !target.style || highlighted.some((h) => h.target === target)) return;
     highlighted.push({ target, outline: target.style.outline, offset: target.style.outlineOffset });
-    target.style.outline = `2px solid ${HIGHLIGHT}`;
+    target.style.outline = `2px ${ai ? 'dashed' : 'solid'} ${ai ? AI_HIGHLIGHT : HIGHLIGHT}`;
     target.style.outlineOffset = '1px';
     const clear = () => clearOne(target);
     target.addEventListener('focus', clear, { once: true });
@@ -694,5 +719,5 @@
     while (highlighted.length) clearOne(highlighted[0].target);
   }
 
-  JTF.fill = { apply, undo, hasValue, currentValue, highlight, clearHighlights, typeValue };
+  JTF.fill = { apply, undo, hasValue, currentValue, highlight, clearHighlights, typeValue, peekOptions };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

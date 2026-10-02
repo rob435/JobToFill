@@ -1,5 +1,15 @@
 /* JobToFill — toolbar popup. */
-import { $, $$, api, el, fillShortcut, hasSiteAccess, plural, requestSiteAccess } from '../ui/common.js';
+import {
+  $,
+  $$,
+  api,
+  el,
+  fillShortcut,
+  hasSiteAccess,
+  plural,
+  requestAiConsent,
+  requestSiteAccess,
+} from '../ui/common.js';
 
 const { store, vault, util } = globalThis.JTF;
 
@@ -118,6 +128,151 @@ function renderResult(r) {
     ...r.notes.map((note) => el('p', { className: 'result-list', textContent: note })),
     actions.children.length ? actions : null,
   );
+  renderAi(r.ai || null);
+  // The AI step may already have moved on by the time the fill's own reply arrives.
+  if (r.ai && r.ai.status === 'running')
+    send({ type: 'jtf:ai-status' })
+      .then((st) => st && st.run && renderAi(st.run))
+      .catch(() => {});
+}
+
+/* ----------------------------------------------------------- AI answers */
+
+const STAGES = {
+  job: 'Reading the job…',
+  writing: 'Writing answers…',
+  asking: 'Writing answers…',
+  checking: 'Checking every fact…',
+  fixing: 'Fixing what didn’t pass the checks…',
+  filling: 'Filling them in…',
+};
+
+function aiButton(text, onclick, primary) {
+  return el('button', { type: 'button', className: primary ? 'small primary' : 'small', textContent: text, onclick });
+}
+
+/** Ask the background to answer what's left on the page (consent first in Firefox, straight from the click). */
+async function answerWithAi() {
+  const consent = requestAiConsent();
+  if (!(await consent)) return renderAi({ status: 'consent', asked: 0 });
+  renderAi({ status: 'running', stage: 'job', asked: 0 });
+  const r = await send({ type: 'jtf:ai-answer' });
+  if (r && r.error) renderAi({ status: 'error', error: r.error });
+  else if (r) renderAi(r);
+}
+
+/** The AI step's card: progress while it runs, then what it answered and what it left for you. */
+function renderAi(run) {
+  const box = $('#ai');
+  if (!run || (!run.asked && run.status !== 'running' && run.status !== 'error')) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const head = el('div', { className: 'card-head' });
+  const body = [];
+  if (run.status === 'running') {
+    head.append(
+      el('strong', {
+        className: 'ai-busy',
+        textContent: run.asked ? `AI: ${plural(run.asked, 'question')}` : 'AI answers',
+      }),
+      aiButton('Stop', () => send({ type: 'jtf:ai-stop' })),
+    );
+    body.push(
+      el('p', {
+        className: 'result-list',
+        textContent: (STAGES[run.stage] || 'Working…') + (run.company ? ` (${run.company})` : ''),
+      }),
+    );
+  } else if (run.status === 'setup' || run.status === 'off' || run.status === 'consent') {
+    head.append(el('strong', { textContent: `${plural(run.asked, 'question')} still empty` }));
+    const why = {
+      setup:
+        'Add an API key (OpenRouter or DeepSeek) and the AI answers questions like these from your CV and the job.',
+      off: 'AI answers are switched off in settings.',
+      consent: 'JobToFill needs your permission to send your CV and the job to your AI provider.',
+    }[run.status];
+    body.push(
+      el('p', { className: 'result-list', textContent: why }),
+      el(
+        'div',
+        { className: 'result-actions' },
+        run.status === 'setup'
+          ? aiButton('Set up AI answers', () => openOptions('letters'), true)
+          : aiButton('Answer them with AI', answerWithAi, true),
+      ),
+    );
+  } else if (run.status === 'error') {
+    head.append(el('strong', { textContent: 'AI answers' }), aiButton('Try again', answerWithAi));
+    body.push(el('p', { className: 'result-list', textContent: run.error || 'Something went wrong.' }));
+  } else {
+    const filled = run.filled || 0;
+    head.append(
+      el('strong', {
+        textContent: filled ? `AI answered ${plural(filled, 'question')}` : 'AI answers',
+      }),
+      aiButton('Again', answerWithAi),
+    );
+    if (filled)
+      body.push(
+        el('p', {
+          className: 'result-list',
+          textContent: 'Outlined in dashed orange on the page. Read each one before you submit.',
+        }),
+      );
+    const items = (run.items || []).filter((i) => i.filled);
+    if (items.length)
+      body.push(
+        el(
+          'ul',
+          { className: 'ai-list' },
+          items.map((i) =>
+            el(
+              'li',
+              {},
+              el('div', { className: 'learn-q', textContent: i.question }),
+              el('div', { className: 'ai-a', textContent: Array.isArray(i.value) ? i.value.join('; ') : i.value }),
+              i.warnings && i.warnings.length
+                ? el('div', { className: 'ai-warn', textContent: i.warnings.join(' · ') })
+                : null,
+              i.reused
+                ? el('div', { className: 'ai-note', textContent: 'written earlier for this application' })
+                : null,
+            ),
+          ),
+        ),
+      );
+    const left = (run.skipped || []).filter((x) => x.question);
+    if (left.length)
+      body.push(
+        el(
+          'details',
+          { className: 'ai-left' },
+          el('summary', { textContent: `${plural(left.length, 'question')} left for you` }),
+          el(
+            'ul',
+            {},
+            left.map((x) => el('li', {}, el('b', { textContent: x.question }), ` — ${x.reason}`)),
+          ),
+          left.some((x) => x.withheld === 'guidance' || /material|guidance/.test(x.reason))
+            ? el(
+                'p',
+                { className: 'result-list' },
+                'Tell the AI how to answer these once: ',
+                el('button', {
+                  className: 'link',
+                  type: 'button',
+                  textContent: 'answer guidance',
+                  onclick: () => openOptions('letters'),
+                }),
+                '.',
+              )
+            : null,
+        ),
+      );
+  }
+  box.replaceChildren(head, ...body);
 }
 
 /** "Privacy notice" style checkboxes are left alone unless the person opts in, right here or in settings. */
@@ -294,6 +449,16 @@ async function init() {
 
   // After a re-add, the background found the old backup file and is waiting for a restore.
   $('#restore').hidden = !(await store.getBackupInfo()).paused;
+
+  // The AI step runs on in the background: show where it is, and what it did on the last fill of this tab.
+  api.runtime.onMessage.addListener((msg) => {
+    if (msg && msg.type === 'jtf:ai-progress' && tab && msg.tabId === tab.id) renderAi(msg.run);
+  });
+  if (tab && tab.id != null) {
+    const status = await send({ type: 'jtf:ai-status' }).catch(() => null);
+    const run = status && status.run;
+    if (run && (run.status === 'running' || Date.now() - (run.finishedAt || run.startedAt) < 15 * 60000)) renderAi(run);
+  }
 
   await Promise.all([renderProfiles(), renderVault(), renderAccess()]);
 }

@@ -8,7 +8,12 @@ export default [
   js.configs.recommended,
   {
     // Classic scripts shared by the background, content scripts, extension pages and the Node tests.
-    files: ['extension/background.js', 'extension/lib/**/*.js', 'extension/content/**/*.js'],
+    files: [
+      'extension/background.js',
+      'extension/lib/**/*.js',
+      'extension/content/**/*.js',
+      'extension/offscreen/**/*.js',
+    ],
     languageOptions: { sourceType: 'script', globals: { ...extension, ...globals.serviceworker, module: 'readonly' } },
   },
   {

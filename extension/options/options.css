@@ -403,3 +403,18 @@ td a {
     margin: 16px 16px 0;
   }
 }
+
+.answers-list {
+  margin: 8px 0 0;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+.answers-list dt {
+  font-weight: 600;
+}
+.answers-list dd {
+  margin: 0 0 6px;
+  color: var(--muted);
+  white-space: pre-line;
+}

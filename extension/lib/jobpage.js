@@ -2770,6 +2770,8 @@
       locations: (p.locations || []).map((l) => field(l, 60)).slice(0, 6),
       url: p.url,
       tracker: `${p.region} ${p.industry} ${p.type} ${p.season}`,
+      // Trackr's short note on the company: background for "Why us?" answers, never the job's description.
+      about: field((p.company && p.company.description) || '', 600),
     };
   }
 

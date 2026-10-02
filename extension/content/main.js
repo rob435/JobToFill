@@ -9,7 +9,9 @@
   const JTF = root.JTF;
   const U = JTF.util;
 
-  const state = { history: [], overlay: null, ui: null };
+  // lastFill: what the latest fill changed (AI answers are added to it, so one Undo takes both back);
+  // pending: the questions it left empty, by id, for the AI's answers; hold: keeps the background awake.
+  const state = { history: [], lastFill: [], overlay: null, ui: null, pending: new Map(), hold: null };
 
   function send(message) {
     return JTF.api.runtime.sendMessage(message).catch((err) => ({ error: String((err && err.message) || err) }));
@@ -324,8 +326,197 @@
     report.missingTypes = [...new Set(report.missingTypes)];
     report.unmatched = [...new Set(report.unmatched)];
     if (history.length) state.history = history;
+    state.lastFill = history;
     report.undoable = state.history.length > 0;
+    if (!only) report.pending = await pendingQuestions(profile, context, { peek: !!payload.ai });
     return report;
+  }
+
+  /* ----------------------------------------------------------- AI answers */
+
+  // Never for the AI: what only the profile knows or the person decides (contact details, diversity answers,
+  // declarations), secrets, uploads, and a cover letter (the letter writer does those).
+  const NOT_FOR_AI =
+    /^(name\.|email$|phone|address\.|links\.|dob$|age$|pronouns$|account\.|cc\.|file\.|consent$|eeo\.|coverLetter$|job\.salary$)/;
+  const FOLLOW_ON = /^(if|please (specify|explain|state|give|provide)|other\b|specify)\b/;
+  const MAX_PENDING = 40;
+
+  /**
+   * The questions the fill left empty, for the AI to answer: ones nothing recognised, recognised ones the
+   * profile has nothing for, and choices none of whose options matched the profile's answer (`guess`). Each
+   * comes with its options (a custom dropdown is opened to read them when `peek`) and the question before it.
+   */
+  async function pendingQuestions(profile, context, { peek }) {
+    const { fields, results } = scan(profile);
+    state.pending = new Map();
+    const items = [];
+    const prevOf = (i) => (i > 0 ? { field: fields[i - 1], r: results[i - 1] } : null);
+    for (let i = 0; i < fields.length && items.length < MAX_PENDING; i++) {
+      const field = fields[i];
+      const r = results[i];
+      if (['file', 'password', 'email', 'tel', 'url'].includes(field.kind) || JTF.fill.hasValue(field)) continue;
+      const question = JTF.matcher.questionText(field.desc);
+      const q = U.normalize(question);
+      if (q.length < 3) continue;
+      let guess = null;
+      if (r && r.type === 'custom') guess = { type: 'custom', value: r.answer };
+      else if (r && r.type) {
+        const def = JTF.fields.DEFS[r.type];
+        if (NOT_FOR_AI.test(r.type) || !def || def.consent || def.secret || def.file) continue;
+        const v = JTF.fields.resolve(r.type, profile, {
+          ...context,
+          index: r.index || 0,
+          part: r.part,
+          kind: field.kind,
+          question: q,
+        });
+        // A follow-up after a "No" ("If yes, give details") or a box the profile said no to stays empty.
+        if (v && (field.kind === 'checkbox' || (FOLLOW_UP.test(q) && v.canonical !== 'yes'))) continue;
+        if (v) guess = { type: r.type, value: v.text };
+      }
+      const prev = prevOf(i);
+      const prevType = prev && prev.r && prev.r.type;
+      // "If other, please specify" after a diversity or password question belongs to it.
+      if (prevType && /^(eeo\.|account\.|cc\.)/.test(prevType) && FOLLOW_ON.test(q)) continue;
+      let options = null;
+      let multiple = field.kind === 'checkboxes';
+      if (field.desc.options && field.kind !== 'checkbox')
+        options = field.desc.options
+          .filter((o) => !o.disabled)
+          .map((o) => U.cleanLabel(o.text, 200))
+          .filter((t) => t && !JTF.matcher.isPlaceholder(U.normalize(t)));
+      else if (peek && (field.kind === 'combo' || field.kind === 'combobox')) {
+        const seen = await JTF.fill.peekOptions(field).catch(() => null);
+        // A long list (countries, universities) is searched by typing the answer.
+        if (seen && seen.options.length && seen.options.length <= 150) options = seen.options;
+        if (seen && seen.multi) multiple = true;
+      }
+      const id = String(i);
+      state.pending.set(id, field);
+      items.push({
+        id,
+        question: U.cleanLabel(question, 600),
+        help: U.cleanLabel(field.desc.signals.describedby || '', 300),
+        kind: field.kind,
+        options: options && options.length ? options : null,
+        multiple,
+        maxLength: field.desc.maxLength || 0,
+        required: !!(
+          field.el.required ||
+          field.el.getAttribute('aria-required') === 'true' ||
+          /\*\s*$/.test(field.desc.signals.label || field.desc.signals.question || '')
+        ),
+        section: U.cleanLabel(field.desc.signals.section || '', 120),
+        placeholder: U.cleanLabel(field.desc.placeholderRaw || '', 120),
+        follows: prev
+          ? {
+              question: U.cleanLabel(JTF.matcher.questionText(prev.field.desc), 200),
+              answer:
+                prevType && /^(eeo\.|account\.|cc\.)/.test(prevType)
+                  ? ''
+                  : JTF.fill.currentValue(prev.field).slice(0, 200),
+            }
+          : null,
+        guess,
+      });
+    }
+    return items;
+  }
+
+  /** The value object JTF.fill.apply takes for an AI answer. */
+  function answerValue(a) {
+    const F = JTF.fields;
+    if (Array.isArray(a.value))
+      return {
+        text: a.value.join(', '),
+        kind: 'list',
+        items: a.value.slice(),
+        candidates: a.value.slice(),
+        canonical: null,
+      };
+    if (a.kind === 'date') {
+      const date = U.parseDate(a.value);
+      if (date) return F.val(a.value, { kind: 'date', date, candidates: [a.value] });
+    }
+    if (a.kind === 'number') return F.val(a.value, { kind: 'number', number: parseFloat(a.value) });
+    // A choice is the option the AI named, and only that one.
+    const v = F.val(a.value, { candidates: [a.value], search: String(a.value).slice(0, 60) });
+    if (a.kind === 'essay' || a.kind === 'text') v.canonical = null;
+    return v;
+  }
+
+  /** Put the AI's answers into the fields they're for (found again if the page re-rendered them). */
+  async function applyAnswers(list, payload) {
+    const settings = (payload && payload.settings) || {};
+    const history = state.lastFill || [];
+    let filled = 0;
+    let fresh = null;
+    const results = [];
+    for (const a of list || []) {
+      let field = state.pending.get(String(a.id));
+      if (!field || !field.el.isConnected) {
+        fresh = fresh || JTF.dom.collect(document);
+        const want = U.normalize(a.question);
+        field = fresh.find((f) => U.normalize(JTF.matcher.questionText(f.desc)) === want) || null;
+      }
+      if (!field) {
+        results.push({ id: a.id, status: 'gone' });
+        continue;
+      }
+      // Something typed in the meantime is the person's answer.
+      if (JTF.fill.hasValue(field)) {
+        results.push({ id: a.id, status: 'skipped' });
+        continue;
+      }
+      const res = await JTF.fill.apply(field, answerValue(a), {
+        overwrite: false,
+        comboboxes: settings.comboboxes !== false,
+        history,
+      });
+      if (res.status === 'filled') {
+        filled++;
+        if (settings.highlight !== false) JTF.fill.highlight(res.target || field.el, true);
+      }
+      results.push({ id: a.id, status: res.status });
+    }
+    if (history.length) state.history = history;
+    state.lastFill = history;
+    return { filled, results, undoable: state.history.length > 0 };
+  }
+
+  /**
+   * Keep the extension's background awake while the AI writes (an open port does that in every browser):
+   * until release() or `ms` pass.
+   */
+  function hold(ms) {
+    if (state.hold) return true;
+    let port;
+    try {
+      port = JTF.api.runtime.connect({ name: 'jtf-hold' });
+    } catch (err) {
+      return false;
+    }
+    const ping = setInterval(() => {
+      try {
+        port.postMessage({ at: Date.now() });
+      } catch (err) {
+        stop();
+      }
+    }, 10000);
+    const cap = setTimeout(() => stop(), ms || 180000);
+    function stop() {
+      clearInterval(ping);
+      clearTimeout(cap);
+      if (state.hold === stop) state.hold = null;
+      try {
+        port.disconnect();
+      } catch (err) {
+        /* already closed */
+      }
+    }
+    port.onDisconnect.addListener(stop);
+    state.hold = stop;
+    return true;
   }
 
   /* ---------------------------------------------------------------- learn */
@@ -478,6 +669,16 @@
   const api = {
     version: 1,
     fill,
+    applyAnswers,
+    async pending(payload) {
+      const { context } = scan(payload.profile);
+      return { items: await pendingQuestions(payload.profile, context, { peek: !!payload.ai }) };
+    },
+    hold,
+    release() {
+      if (state.hold) state.hold();
+      return true;
+    },
     learn,
     jobContext,
     inspect,
