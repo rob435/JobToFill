@@ -27,8 +27,36 @@
   };
 
   /** Letter typography: curly apostrophes and quotes, single spaces, no stray markup. */
+  // HTML entities that slip through from a page or the model ("FICC &amp; Equities"), twice-encoded too.
+  const ENTITIES = {
+    amp: '&',
+    lt: '<',
+    gt: '>',
+    quot: '"',
+    apos: "'",
+    nbsp: ' ',
+    ndash: '–',
+    mdash: '—',
+    rsquo: '’',
+    lsquo: '‘',
+    rdquo: '”',
+    ldquo: '“',
+  };
+  function decodeEntities(s) {
+    let out = String(s || '');
+    for (let i = 0; i < 2 && /&[#a-z0-9]+;/i.test(out); i++)
+      out = out.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
+        if (e[0] === '#') {
+          const code = e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+          return code > 0 && code < 0x110000 ? String.fromCodePoint(code) : m;
+        }
+        return ENTITIES[e.toLowerCase()] || m;
+      });
+    return out;
+  }
+
   function tidy(s) {
-    return String(s || '')
+    return decodeEntities(s)
       .replace(/\r/g, '')
       .replace(/\*\*|__|^#+\s*/gm, '')
       .replace(/(\p{L})'(\p{L})/gu, '$1’$2')
@@ -515,13 +543,13 @@
   /* -------------------------------------------------------------- pipeline */
 
   function cleanAnalysis(a, posting, context) {
-    const s = (v) => (typeof v === 'string' ? v.trim() : '');
+    const s = (v) => (typeof v === 'string' ? decodeEntities(v).trim() : '');
     const list = (v) => (Array.isArray(v) ? v.map((x) => s(String(x))).filter(Boolean) : []);
     const out = {
-      company: s(a.company) || posting.company || (context && context.company) || '',
-      role: s(a.role) || posting.title || '',
+      company: s(a.company) || s(posting.company) || s(context && context.company) || '',
+      role: s(a.role) || s(posting.title) || '',
       team: s(a.team),
-      location: s(a.location) || posting.location || '',
+      location: s(a.location) || s(posting.location) || '',
       country: s(a.country),
       start: s(a.start),
       level: s(a.level),
@@ -1026,6 +1054,7 @@
     CLICHES,
     words,
     tidy,
+    decodeEntities,
     numbers,
     formatDate,
     contactLine,

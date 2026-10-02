@@ -409,3 +409,14 @@ test('ai: a rate limit waits for Retry-After before trying again', async () => {
   assert.deepEqual(r.json, { ok: true });
   assert.ok(Date.now() - started >= 950, 'waited about a second');
 });
+
+test('letter: HTML entities from pages never reach the letter', () => {
+  assert.equal(
+    L.decodeEntities('FICC &amp; Equities, Sales &amp;amp; Trading &#8211; London&nbsp;'),
+    'FICC & Equities, Sales & Trading – London ',
+  );
+  assert.equal(L.tidy('Investors&#39; money &amp; markets'), 'Investors’ money & markets');
+  const a = L.cleanAnalysis({}, { title: '2027 | FICC &amp; Equities', company: 'Goldman Sachs &amp; Co.' }, {});
+  assert.equal(a.role, '2027 | FICC & Equities');
+  assert.equal(a.company, 'Goldman Sachs & Co.');
+});
