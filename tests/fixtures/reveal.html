@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply – diversity questions that appear as you answer</title>
+  </head>
+  <body>
+    <!-- Like many UK graduate forms: the background question only appears once an ethnic group is
+         chosen, and the details box only after answering Yes. -->
+    <form id="form">
+      <label for="group">What is your ethnic group?</label>
+      <select id="group" name="ethnic_group">
+        <option value="">Please select</option>
+        <option>White</option>
+        <option>Mixed or multiple ethnic groups</option>
+        <option>Asian or Asian British</option>
+        <option>Black, Black British, Caribbean or African</option>
+        <option>Other ethnic group</option>
+        <option>Prefer not to say</option>
+      </select>
+      <div id="background-box"></div>
+      <fieldset>
+        <legend>Is a close family member a current or former government official?</legend>
+        <label><input type="radio" name="family_gov" value="yes" /> Yes</label>
+        <label><input type="radio" name="family_gov" value="no" /> No</label>
+      </fieldset>
+      <div id="details-box"></div>
+    </form>
+    <script>
+const BACKGROUNDS = {
+  'Asian or Asian British': ['Indian', 'Pakistani', 'Bangladeshi', 'Chinese', 'Any other Asian background'],
+  White: ['English, Welsh, Scottish, Northern Irish or British', 'Irish', 'Any other White background'],
+};
+document.getElementById('group').addEventListener('change', (e) => {
+  const list = BACKGROUNDS[e.target.value];
+  const box = document.getElementById('background-box');
+  box.innerHTML = '';
+  if (!list) return;
+  // Rendered a moment later, like a framework update.
+  setTimeout(() => {
+    box.innerHTML =
+      '<label for="background">Which of the following best describes your background?</label>' +
+      '<select id="background" name="ethnic_background"><option value="">Please select</option>' +
+      list.map((o) => `<option>${o}</option>`).join('') +
+      '</select>';
+  }, 150);
+});
+for (const radio of document.querySelectorAll('input[name=family_gov]'))
+  radio.addEventListener('change', () => {
+    const box = document.getElementById('details-box');
+    box.innerHTML =
+      radio.value === 'yes' && radio.checked
+        ? '<label for="gov_details">If yes, please give details</label><textarea id="gov_details"></textarea>'
+        : '';
+  });
+    </script>
+  </body>
+</html>

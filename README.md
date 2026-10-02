@@ -20,7 +20,9 @@ Save your details once: name, contact info, address, links, education, work hist
 - **Custom answers.** Rules like "_why do you want to work_" → your answer. You can match with plain phrases, `a | b` alternatives or `/regex/`.
 - **Learn from this page.** After you type answers into an unusual form, one click saves them, either as profile values or as custom answers for next time.
 - **Acknowledgement boxes** ("I have read the privacy notice", "Acknowledge/Confirm"). Left for you by default, with a one-click _Always tick these_ in the popup. Marketing and talent-pool opt-ins are never ticked.
-- **Voluntary EEO and UK social-mobility questions** (gender, race, veteran, disability; school type, free school meals, a parent's degree, household earner's job). These are opt-in, and "— don't fill —" is the default.
+- **Voluntary EEO and UK social-mobility questions.** Gender, detailed ethnicity, veteran, disability, sexual orientation, gender identity, religion, neurodivergence; school type, free school meals, a parent's degree, household earner's job, postcode at 14, care, caring, refugee background, bursaries. Pick one detailed ethnicity (e.g. _Asian – Chinese_) and each form gets its closest option: "Chinese - Chinese" on a 2011-style UK list, the subgroup on two-step forms, "East Asian" or "Asian" where that's all there is. These are opt-in, and "— don't fill —" is the default.
+- **Conflicts of interest** that banks and law firms ask: worked there before, relatives at the firm, and whether you or a close family member is a government or public official (including "politically exposed person" and state-owned companies). "If yes, please give details" boxes get your details only when you answered Yes.
+- **Questions that appear as you answer** (the ethnic background once the group is picked, "if yes" boxes, follow-ups) are filled in the same go.
 - **Application log.** Every job application you fill is recorded, and the log can be exported as CSV.
 - **Multiple profiles.** For example "Software engineer", "Data analyst" and "Personal shopping", each with its own resume.
 

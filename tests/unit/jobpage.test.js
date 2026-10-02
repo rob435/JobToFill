@@ -1817,6 +1817,12 @@ test('closed jobs: a job address that redirects to a list of open positions is r
     r.reasons.some((x) => /probably closed/.test(x)),
     r.reasons.join('; '),
   );
+  // A redirect to a sign-in page is not a closed job; the studio may read it in a tab with the user's session.
+  const login = () => ({ ...redirected(), url: 'https://www.bluerivertechnology.com/candidate/login?next=%2Fjob%2F' });
+  const r2 = await jp.find(ctx, { now: Date.now(), fetch: mockFetch({ [JOB]: login }) });
+  const t2 = r2.tried.find((x) => x.url === JOB);
+  assert.match(t2.outcome, /no posting without signing in/);
+  assert.ok(!r2.reasons.some((x) => /closed/.test(x)));
 });
 
 test('Oleeo (tal.net): opportunity pages, the apply step, and the advert inside a read-only form', () => {
@@ -2000,6 +2006,14 @@ test('lists and logos: RMK category pages are lists, and an image file name is n
     'https://myjobs.adp.com/wwtexternalcareersite/cx/job-details?reqId=5001213867100',
   );
   assert.equal(eeo.title, 'Technology & Analytics Intern- 2027');
+  // A language picker's heading is no job title.
+  const lang = jp.applicationContext(
+    parseHTML(
+      '<html><head><title>Law vacation scheme - England Vacation placement</title></head><body><div class="language-selector"><h2>View this site in your language</h2></div></body></html>',
+    ).document,
+    'https://www.pinsentmasons.com/careers/early-talent/england/vacation-placement',
+  );
+  assert.ok(!/language/i.test(lang.title), lang.title);
   // A video player inside the application page (its frame's title once became the job's title).
   const video = jp.applicationContext(
     parseHTML('<html><head><title>Vimeo</title></head><body><h1>Our people</h1></body></html>').document,
@@ -2109,4 +2123,83 @@ test('Sainoo: a French board whose job page needs scripts; its JSON answers, and
     jp.compare({ ...ctx, title: p.title, company: 'Ciclad', location: 'Lyon, France' }, paris).verdict,
     'different',
   );
+});
+
+test('a law firm’s programme page (no job ID, no board) is its own description, as likely', async () => {
+  const URL0 = 'https://www.stephensonharwood.example/careers/early-careers/london-training-contracts/';
+  const page =
+    '<html><head><title>London training contracts | Stephenson Harwood</title></head><body><nav><a href="/">Home</a></nav><main>' +
+    '<h1>London training contracts</h1><h2>About the training contract</h2><p>' +
+    'Trainees spend two years rotating through four seats across our practice groups, working on real matters for clients from day one. '.repeat(
+      3,
+    ) +
+    '</p><h2>What we look for</h2><p>' +
+    'We want curious, commercially minded people with strong academics, clear communication and a genuine interest in a career in law. '.repeat(
+      2,
+    ) +
+    '</p><h2>How to apply</h2><p>Applications for September 2029 open in October and close on 31 December; apply online through our graduate portal.</p></main></body></html>';
+  const ctx = jp.applicationContext(parseHTML(page).document, URL0);
+  assert.equal(ctx.posting.source, 'page-text');
+  const found = await jp.find(ctx, { fetch: mockFetch({}) });
+  assert.deepEqual(
+    [found.verdict, found.reasons],
+    ['likely', ['the description is on this page', 'no job ID or job board to confirm it']],
+  );
+  // The same text on the firm's home page is not offered.
+  const home = jp.applicationContext(parseHTML(page).document, 'https://www.stephensonharwood.example/');
+  assert.equal(home.posting, null);
+});
+
+test('a reposted job: the page’s canonical address names its new ID, which is the same job, not a clash', async () => {
+  const OLD = 'https://jobs.smartrecruiters.com/Wiser/744000146674569-resa-analyst-2027-evercore';
+  const NEW = 'https://jobs.smartrecruiters.com/Wiser/744000146681959-resa-analyst-2027-evercore';
+  const page =
+    `<html><head><title>RESA Analyst (2027) | Evercore</title><link rel="canonical" href="${NEW}"></head><body>` +
+    '<main itemscope itemtype="http://schema.org/JobPosting"><h1 itemprop="title">RESA Analyst (2027) | Evercore</h1>' +
+    '<span itemprop="jobLocation" itemscope itemtype="http://schema.org/Place"><span itemprop="address" itemscope><span itemprop="addressLocality">London</span></span></span>' +
+    '<div itemprop="description"><h2>Job Description</h2><p>' +
+    'Join the restructuring and special situations advisory team in London for analyst training and live mandates. '.repeat(
+      6,
+    ) +
+    '</p><h2>Qualifications</h2><p>Strong academic record, financial modelling skills and clear writing.</p></div></main></body></html>';
+  const ctx = jp.applicationContext(parseHTML(page).document, OLD);
+  assert.deepEqual(ctx.jobIds, ['744000146674569', '744000146681959']);
+  assert.equal(jp.compare(ctx, ctx.posting).verdict, 'same');
+  const found = await jp.find(ctx, { fetch: mockFetch({}) });
+  assert.equal(found.verdict, 'same');
+  // The board's own data under the new ID is the same job; a third ID on the board is another one.
+  assert.equal(jp.compare(ctx, { ...ctx.posting, url: NEW, jobIds: ['744000146681959'] }).verdict, 'same');
+  const other = {
+    ...ctx.posting,
+    title: 'M&A Analyst (2027)',
+    url: NEW.replace('681959', '699999'),
+    jobIds: ['744000146699999'],
+  };
+  assert.equal(jp.compare(ctx, other).verdict, 'different');
+});
+
+test('trail: a law firm’s programme page before its graduate portal’s sign-in is likely the job', async () => {
+  const now = Date.parse('2026-10-02T10:00:00Z');
+  const PROGRAMME = 'https://www.pinsentmasons.com/careers/early-talent/england/vacation-placement';
+  const PORTAL = 'https://pinsentmasons.ambertrack.co.uk/graduates2027/CandidateLogin.aspx';
+  const ctx = jp.applicationContext(
+    parseHTML('<html><head><title></title></head><body></body></html>').document,
+    PORTAL,
+  );
+  assert.equal(ctx.company, 'Pinsentmasons');
+  ctx.trail = [{ url: PROGRAMME, title: 'Vacation placements in England | Pinsent Masons', at: now - 2 * 6e4 }];
+  const page =
+    '<html><head><title>Vacation placements in England | Pinsent Masons</title></head><body><main><h1>Vacation placements</h1>' +
+    '<h2>About the scheme</h2><p>' +
+    'Spend two weeks with our lawyers in one of our English offices, working on live matters and meeting partners and trainees. '.repeat(
+      3,
+    ) +
+    '</p><h2>What we look for</h2><p>' +
+    'Curious, commercially aware students with strong academics who communicate clearly and enjoy solving problems in a team. '.repeat(
+      2,
+    ) +
+    '</p><h2>How to apply</h2><p>Applications open in October and close in January; apply online through our graduate portal.</p></main></body></html>';
+  const found = await jp.find(ctx, { now, fetch: mockFetch({ [PROGRAMME]: page }) });
+  assert.deepEqual([found.verdict, found.source], ['likely', PROGRAMME]);
+  assert.ok(found.reasons.includes('the job page you opened before this one in this tab'));
 });

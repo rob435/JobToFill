@@ -502,7 +502,13 @@
         desc.options = [{ text: s.label || s.aria || '', value: optionValue(el) }];
       }
       if (kind === 'select')
-        desc.options = Array.from(el.options).map((o) => ({ text: o.text, value: o.value, disabled: o.disabled }));
+        desc.options = Array.from(el.options).map((o) => ({
+          text: o.text,
+          value: o.value,
+          disabled: o.disabled,
+          // <optgroup label="Asian or Asian British"><option>Other</option>: which "Other" this is.
+          group: o.parentElement && o.parentElement.localName === 'optgroup' ? o.parentElement.label : '',
+        }));
     }
     s.section = sectionHeading(el);
     s.attrs = ATTR_HINTS.map((a) => el.getAttribute(a))

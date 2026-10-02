@@ -9,19 +9,20 @@ const YES_NO = [NONE, ['Yes', 'Yes'], ['No', 'No']];
 const DECLINE = ['Decline to answer', 'Prefer not to say'];
 const same = (values) => values.map((v) => [v, v]);
 
+// prettier-ignore
+const US_BROAD_RACES = [
+  'American Indian or Alaska Native', 'Asian', 'Black or African American', 'Hispanic or Latino',
+  'Native Hawaiian or Other Pacific Islander', 'White', 'Two or More Races',
+];
+const RACE_GROUPS = [...fields.ETHNICITY_CHOICES, { label: 'Broad categories (US forms)', items: US_BROAD_RACES }];
+const YES_NO_DECLINE = [...YES_NO, DECLINE];
+
 const CHOICES = {
   prefix: [['', '—'], ...same(['Mr', 'Ms', 'Mrs', 'Miss', 'Mx', 'Dr'])],
   phoneType: same(['Mobile', 'Home', 'Work']),
   gender: [NONE, ...same(['Male', 'Female', 'Non-binary']), DECLINE],
-  // prettier-ignore
-  race: [
-    NONE,
-    ...same([
-      'American Indian or Alaska Native', 'Asian', 'Black or African American', 'Hispanic or Latino',
-      'Native Hawaiian or Other Pacific Islander', 'White', 'Two or More Races',
-    ]),
-    DECLINE,
-  ],
+  // Detailed answers in optgroups (see RACE_GROUPS); the broad US categories stay for existing profiles.
+  race: [NONE, ...RACE_GROUPS.flatMap((g) => g.items.map((v) => [v, v.replace(/^[^–]+ – /, '')])), DECLINE],
   hispanic: [...YES_NO, DECLINE],
   veteran: [NONE, ['No', 'I am not a protected veteran'], ['Yes', 'I identify as a protected veteran'], DECLINE],
   disability: [NONE, ['No', 'No, I don’t have a disability'], ['Yes', 'Yes, I have a disability'], DECLINE],
@@ -37,7 +38,22 @@ const CHOICES = {
     ]),
     DECLINE,
   ],
-  freeSchoolMeals: [...YES_NO, ['Not applicable', 'Not applicable'], DECLINE],
+  freeSchoolMeals: [...YES_NO, ['I don’t know', 'I don’t know'], ['Not applicable', 'Not applicable'], DECLINE],
+  sexualOrientation: [
+    NONE,
+    ...same(['Heterosexual / straight', 'Gay', 'Lesbian', 'Bisexual', 'Pansexual', 'Asexual', 'Queer']),
+    ['Other sexual orientation', 'Other'],
+    DECLINE,
+  ],
+  // prettier-ignore
+  religion: [
+    NONE,
+    ...same([
+      'No religion or belief', 'Agnostic', 'Buddhist', 'Christian', 'Hindu', 'Jewish', 'Muslim', 'Sikh',
+      'Any other religion or belief',
+    ]),
+    DECLINE,
+  ],
   parentsDegree: [NONE, ['Yes', 'Yes, at least one has a degree'], ['No', 'No'], DECLINE],
   parentOccupation: [
     NONE,
@@ -167,6 +183,29 @@ const FORMS = {
         ],
       },
       {
+        title: 'Conflicts of interest',
+        hint: 'Banks and law firms ask these. Answer for most employers; add a custom answer for the exceptions.',
+        fields: [
+          f('compliance.previouslyEmployed', 'Worked for the employer before?', { type: 'select', options: YES_NO }),
+          f('compliance.relatives', 'Relatives working for the employer?', { type: 'select', options: YES_NO }),
+          f('compliance.relativesDetails', 'Relatives: details', {
+            wide: true,
+            placeholder: 'Name, relationship, team',
+            hint: 'Goes into “If yes, please give details” boxes only when you answered Yes.',
+          }),
+          f('compliance.governmentOfficial', 'Are you a government / public official or a PEP?', {
+            type: 'select',
+            options: YES_NO,
+            hint: 'Includes state-owned companies and “politically exposed person” questions.',
+          }),
+          f('compliance.familyGovernmentOfficial', 'Is a close family member a government / public official?', {
+            type: 'select',
+            options: YES_NO,
+          }),
+          f('compliance.governmentDetails', 'Government connection: details', { wide: true }),
+        ],
+      },
+      {
         title: 'Preferences',
         fields: [
           f('job.yearsExperience', 'Years of experience', { placeholder: 'e.g. 5' }),
@@ -221,10 +260,25 @@ const FORMS = {
         title: 'Self-identification',
         fields: [
           f('eeo.gender', 'Gender', { type: 'select', options: CHOICES.gender }),
-          f('eeo.race', 'Race / ethnicity', { type: 'select', options: CHOICES.race }),
+          f('eeo.race', 'Race / ethnicity', {
+            type: 'select',
+            options: CHOICES.race,
+            optgroups: RACE_GROUPS,
+            hint: 'Forms get the closest option they offer: “Chinese”, then “East Asian”, then “Asian”.',
+          }),
           f('eeo.hispanic', 'Hispanic or Latino?', { type: 'select', options: CHOICES.hispanic }),
           f('eeo.veteran', 'Veteran status', { type: 'select', options: CHOICES.veteran }),
           f('eeo.disability', 'Disability status', { type: 'select', options: CHOICES.disability }),
+          f('eeo.sexualOrientation', 'Sexual orientation', { type: 'select', options: CHOICES.sexualOrientation }),
+          f('eeo.genderIdentitySame', 'Is your gender identity the same as the sex registered at birth?', {
+            type: 'select',
+            options: YES_NO_DECLINE,
+          }),
+          f('eeo.religion', 'Religion or belief', { type: 'select', options: CHOICES.religion }),
+          f('eeo.neurodivergent', 'Neurodivergent (e.g. dyslexia, ADHD, autism)?', {
+            type: 'select',
+            options: YES_NO_DECLINE,
+          }),
         ],
       },
       {
@@ -247,6 +301,18 @@ const FORMS = {
           f('eeo.parentOccupation', 'Main household earner’s job when you were about 14', {
             type: 'select',
             options: CHOICES.parentOccupation,
+          }),
+          f('eeo.postcodeAt14', 'Home postcode when you were 14', { placeholder: 'e.g. SW1A 1AA' }),
+          f('eeo.careLeaver', 'Have you been in local authority care?', { type: 'select', options: YES_NO_DECLINE }),
+          f('eeo.carer', 'Are you, or were you, a (young) carer?', { type: 'select', options: YES_NO_DECLINE }),
+          f('eeo.refugee', 'Refugee or asylum seeker?', {
+            type: 'select',
+            options: YES_NO_DECLINE,
+            hint: 'Only diversity questions; work-authorisation questions use your work eligibility answers.',
+          }),
+          f('eeo.bursary', 'Means-tested bursary or grant at university?', {
+            type: 'select',
+            options: YES_NO_DECLINE,
           }),
         ],
       },
@@ -291,13 +357,34 @@ const LISTS = {
 
 /* ------------------------------------------------------------------ forms */
 
+/** Put a select's options into <optgroup>s: [{ label, items: [value…] }]. Options not listed stay outside. */
+function groupOptions(node, groups) {
+  const select = node.querySelector('select');
+  if (!select) return node;
+  const value = select.value;
+  const after = Array.from(select.options).find((o) => !groups.some((g) => g.items.includes(o.value)) && o.value);
+  for (const g of groups) {
+    const og = document.createElement('optgroup');
+    og.label = g.label;
+    for (const v of g.items) {
+      const o = Array.from(select.options).find((x) => x.value === v);
+      if (o) og.append(o);
+    }
+    select.insertBefore(og, after || null);
+  }
+  select.value = value;
+  return node;
+}
+
 function renderForm(key, { state, scheduleSave }) {
   const spec = FORMS[key];
-  const bind = (fs) =>
-    control(fs, util.getPath(state.profile, fs.path), (v) => {
+  const bind = (fs) => {
+    const node = control(fs, util.getPath(state.profile, fs.path), (v) => {
       util.setPath(state.profile, fs.path, v);
       scheduleSave();
     });
+    return fs.optgroups ? groupOptions(node, fs.optgroups) : node;
+  };
   return [
     sectionHead(spec.title, spec.intro),
     ...spec.groups.map((g) => group(g.title, g.hint, grid(g.fields.map(bind)))),

@@ -466,7 +466,8 @@ test('real screening questions from graduate application forms', () => {
       'Are you related to anyone now working for Graham or anyone who has previously worked for Graham? If yes, list (name, relationship)',
       'text',
     ),
-    null,
+    'compliance.relatives',
+    'never a name: answered from "Relatives working here"',
   );
   assert.equal(
     ask(
@@ -947,7 +948,10 @@ test('round 2 (Pinpoint DE / UK law): school-leaving grades, "please state", pro
     null,
   );
   assert.equal(ask('Which firm/organisation do you currently work for?'), 'job.currentCompany');
-  assert.equal(ask('Is the Gender you identify with the same as registered at birth?', 'combobox'), null);
+  assert.equal(
+    ask('Is the Gender you identify with the same as registered at birth?', 'combobox'),
+    'eeo.genderIdentitySame',
+  );
   assert.equal(ask('Gender', 'combobox'), 'eeo.gender');
   assert.equal(
     fields.eduLevelOf(util.normalize('Final grade obtained in School Graduation (Abitur or equivalent)')),
@@ -955,4 +959,104 @@ test('round 2 (Pinpoint DE / UK law): school-leaving grades, "please state", pro
   );
   assert.equal(fields.eduLevelOf(util.normalize('Final grade obtained in Bachelor’s Degree')), 'bachelor');
   assert.equal(fields.eduLevelOf(util.normalize('Baccalaureate degree GPA')), null);
+});
+
+test('diversity and background questions: FSM, care, carers, refugees, bursaries, religion, orientation, identity', () => {
+  const yn = ['Yes', 'No', 'Prefer not to say'];
+  const ask = (q, kind, options) =>
+    typeOf(desc({ question: q }, { kind: kind || 'radio', options: opts(...(options || yn)) }));
+  for (const q of [
+    'If you finished school after 1980, were you eligible for free school meals at any point during your school years?',
+    'Free school meals eligibility',
+    'Did you receive free school meals during your school years?',
+    'Were you eligible for Pupil Premium?',
+    'Did you qualify for free or reduced-price lunch?',
+  ])
+    assert.equal(ask(q), 'eeo.freeSchoolMeals', q);
+  assert.equal(ask('Have you ever been in care?'), 'eeo.careLeaver');
+  assert.equal(ask('Are you a care leaver?'), 'eeo.careLeaver');
+  assert.equal(ask('Have you spent time in local authority care?'), 'eeo.careLeaver');
+  assert.equal(ask('Are you a young carer?'), 'eeo.carer');
+  assert.equal(ask('Do you have caring responsibilities?'), 'eeo.carer');
+  assert.equal(ask('Are you a refugee or asylum seeker?'), 'eeo.refugee');
+  assert.equal(ask('Are you a refugee under 8 U.S.C. 1157?'), null, 'work authorisation, not diversity');
+  assert.equal(ask('Did you receive a means-tested bursary or grant at university?'), 'eeo.bursary');
+  assert.equal(ask('Were you in receipt of a maintenance grant?'), 'eeo.bursary');
+  assert.equal(
+    ask('What type of school did you attend?', 'select', ['State school', 'Independent school with a bursary']),
+    'eeo.schoolType',
+  );
+  assert.equal(ask('What is your religion or belief?', 'select', ['Christian', 'Muslim']), 'eeo.religion');
+  assert.equal(ask('What is your sexual orientation?', 'select', ['Bi', 'Gay/Lesbian']), 'eeo.sexualOrientation');
+  assert.equal(
+    ask('Is the gender you identify with the same as the sex you were registered at birth?'),
+    'eeo.genderIdentitySame',
+  );
+  assert.equal(ask('Do you identify as transgender?'), 'eeo.genderIdentitySame');
+  assert.equal(
+    ask('How would you describe your gender identity?', 'select', ['Man', 'Woman', 'Non-binary']),
+    'eeo.gender',
+  );
+  assert.equal(ask('Do you identify as LGBTQIA (Lesbian, Gay, Bisexual, Transgender, Queer)?'), 'eeo.lgbt');
+  assert.equal(ask('Do you consider yourself to be neurodivergent?'), 'eeo.neurodivergent');
+  assert.equal(
+    typeOf(desc('What was the postcode of your home when you were 14?')),
+    'eeo.postcodeAt14',
+    'not your current postcode',
+  );
+  assert.equal(typeOf(desc('Postcode')), 'address.postalCode');
+});
+
+test('conflicts of interest: government officials and PEPs, relatives, worked here before', () => {
+  const ask = (q, kind) => typeOf(desc({ question: q }, { kind: kind || 'radio', options: opts('Yes', 'No') }));
+  for (const q of [
+    'Are you, or is any immediate family member (parent, spouse, sibling, child), a current or former government official, public official, or employee of a state-owned entity?',
+    'Are you a politically exposed person (PEP)?',
+    'Were your parents involved in government?',
+    'Are you related to a government official?',
+    'Do you or anyone in your family have a personal, client, and/or government connection to KKR?',
+  ])
+    assert.equal(ask(q), 'compliance.government', q);
+  assert.equal(
+    typeOf(
+      desc({
+        label:
+          'Government officials engaged in enforcing laws may review this information as required by law; it will be kept confidential.',
+      }),
+    ),
+    null,
+    'EEO notice text',
+  );
+  assert.equal(
+    ask('Do you have any family members currently employed by KKR (inclusive of Global Atlantic)?'),
+    'compliance.relatives',
+  );
+  assert.equal(ask('Have you previously worked at Man?'), 'compliance.previouslyEmployed');
+  assert.equal(ask('Have you ever been employed by William Blair?'), 'compliance.previouslyEmployed');
+  assert.equal(ask('Have you previously applied to Point72?'), null);
+  assert.equal(ask('Are you currently, or have you ever been, employed by Deloitte in any capacity?'), null);
+});
+
+test('Hong Kong and EU personal details: Chinese / English names, ID cards, German / French / Italian labels', () => {
+  const cases = {
+    'Chinese name': null,
+    'Name in Chinese': null,
+    'Name (native script)': null,
+    'English name': 'name.preferred',
+    'Full name (as shown on HKID)': 'name.full',
+    'Identity card number': null,
+    'HKID number': null,
+    'Card number': 'cc.number',
+    'Straße und Hausnummer': 'address.line1',
+    Mobilnummer: 'phone',
+    Gehaltsvorstellung: 'job.salary',
+    'Frühester Eintrittstermin': 'job.startDate',
+    Kündigungsfrist: 'job.noticePeriod',
+    Nationalité: 'nationality',
+    Nazionalità: 'nationality',
+    'Data di nascita': 'dob',
+    'Prétentions salariales': 'job.salary',
+    Disponibilité: 'job.startDate',
+  };
+  for (const [label, want] of Object.entries(cases)) assert.equal(typeOf(desc(label)), want, label);
 });

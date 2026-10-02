@@ -552,7 +552,7 @@
     const path = u.pathname.toLowerCase();
     out.jobId = urlJobIds(url)[0] || null;
     const tenant = host.match(
-      /^([a-z0-9-]+)\.(?:grad\.allhires\.com|app\.candidats\.io|ambertrack\.co\.uk|vacancy-filler\.co\.uk|apply4law\.com|current-vacancies\.com|careers\.hibob\.com|zohorecruit\.(?:com|eu)|bc\.direct|talentview\.io|jobs\.50skills\.com|easyapply\.co)$/,
+      /^([a-z0-9-]+)\.(?:grad\.allhires\.com|(?:app|hr)\.candidats\.io|ambertrack\.co\.uk|vacancy-filler\.co\.uk|apply4law\.com|current-vacancies\.com|careers\.hibob\.com|zohorecruit\.(?:com|eu)|bc\.direct|talentview\.io|jobs\.50skills\.com|easyapply\.co)$/,
     );
     if (tenant && !/^(app|www|jobs|careers|apply)$/.test(tenant[1])) out.company = tenant[1].replace(/^app-/, '');
     if (
@@ -944,8 +944,8 @@
   // The parts a job advert has: what you'll do, what you need, what you get, and how and when to apply.
   // prettier-ignore
   const JOB_SECTIONS = [
-    /responsibilit|what you('|’)?ll (do|be doing|work on)|what you will (do|work on)|your (role|impact|tasks|mission|day)|the role\b|role overview|about the (role|job|position|programme|program|internship)|job (description|summary|purpose)|key (duties|accountabilities)|duties|ihre aufgaben|deine aufgaben|aufgaben|vos missions|missions?\b|le poste|descriptif du poste/i,
-    /requirements?|qualifications?|what (we('|’)?re|we are) looking for|who you are|about you|your profile|skills (and|&) experience|experience (and|&) skills|essential|desirable|nice to have|ihr profil|dein profil|profil recherché|votre profil|compétences|you have\b|you('|’)?ll (need|bring)|you will (need|bring)/i,
+    /responsibilit|what you('|’)?ll (do|be doing|work on)|what you will (do|work on)|your (role|impact|tasks|mission|day)|the role\b|role overview|about the (role|job|position|programme|program|internship|training contract|scheme)|job (description|summary|purpose)|key (duties|accountabilities)|duties|seats?\b|rotations?\b|ihre aufgaben|deine aufgaben|aufgaben|vos missions|missions?\b|le poste|descriptif du poste/i,
+    /requirements?|qualifications?|what (we('|’)?re|we are) looking for|what we look for|who you are|about you|your profile|skills (and|&) experience|experience (and|&) skills|essential|desirable|nice to have|ihr profil|dein profil|profil recherché|votre profil|compétences|you have\b|you('|’)?ll (need|bring)|you will (need|bring)/i,
     /benefits|what we offer|wir bieten|perks|salary|compensation|avantages|nous offrons|why join/i,
     /\b(apply|application|deadline|closing date|start date|duration|full[- ]time|part[- ]time|contract|internship|graduate|candidates?|bewerbung|candidature|stage)\b/i,
   ];
@@ -1419,7 +1419,7 @@
   const JUNK_SELECTOR =
     'script,style,noscript,template,svg,iframe,nav,footer,form,button,select,textarea,input,label,dialog,[role="navigation"],[role="contentinfo"],[role="dialog"],[role="alertdialog"],[aria-modal="true"],[hidden]';
   const JUNK_NAME =
-    /(^|[\s_-])(cookies?|consent|gdpr|onetrust|ot-sdk|banner|modal|popup|newsletter|subscribe|social|share|sharing|breadcrumbs?|similar|related|recommended|recommendations|more-jobs|other-jobs|job-?alerts?|footer|sidebar|navbar|nav|menu|skip-link|search|filters?|pagination)($|[\s_-])/i;
+    /(^|[\s_-])(cookies?|consent|gdpr|onetrust|ot-sdk|banner|modal|popup|newsletter|subscribe|social|share|sharing|breadcrumbs?|similar|related|recommended|recommendations|more-jobs|other-jobs|job-?alerts?|footer|sidebar|navbar|nav|menu|skip-link|search|filters?|pagination|language-?(selector|switcher|picker)|country-?(selector|picker)|locale-?(selector|switcher))($|[\s_-])/i;
   const GOOD_NAME = /desc|content|detail|posting|job|article|main|body|vacanc|position/i;
   // Cookie and consent banners (OneTrust, Cookiebot, Usercentrics…), privacy and legal pop-ups, by class, id or label.
   const CONSENT_NAME =
@@ -1565,7 +1565,7 @@
   /* --------------------------------------------------------- page headings */
 
   const GENERIC_TITLE =
-    /^(apply|application|apply now|apply for this (job|position|role)|job application|start your application|my information|personal (information|details)|sign in|log in|login|create (an )?account|careers?|jobs?|job search|search jobs|welcome|home|current vacancies|open positions|join us|thank you|are you still with us\??|work summary|job application form|candidate (home|experience)|review|submit|resume|cv|error\s*\d*\b|\d{3}\b|internal server error|access denied|forbidden|too many requests|just a moment|attention required|page not found|listings|search results|current openings|(\w+ )?candidate portal|(join )?(our )?talent (community|network|pool)|sign up|your personal space|who we are|my (profile|account|applications?)|dashboard|create (a |your )?profile|register|your privacy|privacy (policy|notice|statement|settings|preferences|cent(er|re))|cookies?( (policy|settings|preferences|notice|consent|declaration))?|manage (cookies|consent|preferences)|we (use|value) (cookies|your privacy)|terms (of use|and conditions)|legal (notice|information)|disclaimer|imprint|impressum|datenschutz\w*|mentions légales|politique de confidentialité|.{0,60}\bequal (employment )?opportunit(y|ies)\b.*|.{0,40}\bis an? (equal|e-verify)\b.*)\b/i;
+    /^(apply|application|apply now|apply for this (job|position|role)|job application|start your application|my information|personal (information|details)|sign in|log in|login|create (an )?account|careers?|jobs?|job search|search jobs|welcome|home|current vacancies|open positions|join us|thank you|are you still with us\??|work summary|job application form|candidate (home|experience)|review|submit|resume|cv|error\s*\d*\b|\d{3}\b|internal server error|access denied|forbidden|too many requests|just a moment|attention required|page not found|listings|search results|current openings|(\w+ )?candidate portal|(join )?(our )?talent (community|network|pool)|sign up|your personal space|who we are|my (profile|account|applications?)|dashboard|create (a |your )?profile|register|your privacy|privacy (policy|notice|statement|settings|preferences|cent(er|re))|cookies?( (policy|settings|preferences|notice|consent|declaration))?|manage (cookies|consent|preferences)|we (use|value) (cookies|your privacy)|terms (of use|and conditions)|legal (notice|information)|disclaimer|imprint|impressum|datenschutz\w*|mentions légales|politique de confidentialité|view this (site|page) in|(choose|select|change) (your )?(language|country|region|location)|.{0,60}\bequal (employment )?opportunit(y|ies)\b.*|.{0,40}\bis an? (equal|e-verify)\b.*)\b/i;
   const notGeneric = (t) => !GENERIC_TITLE.test(t);
   const SITE_PIECE =
     /^(workday|careers?|jobs?|job board|lever|greenhouse|ashby|smartrecruiters|workable|icims|taleo|avature|eightfold|oracle|apply|application|home|job details?|job description|careers? (site|page|portal)|candidate experience( page)?)$/i;
@@ -1677,6 +1677,7 @@
 
   function headingTexts(doc) {
     return qa(doc, 'h1, h2')
+      .slice(0, 30)
       .filter((h) => !inJunk(h))
       .slice(0, 8)
       .map((h) => shortText(h, 200))
@@ -2279,6 +2280,14 @@
       context.company,
     );
     plainFields(context);
+    // A portal that shows only the firm's name ("Trowers & Hamlins", "Freshfields") names no job.
+    const firstLabel = context.host.replace(/^www\./, '').split('.')[0];
+    if (
+      context.title &&
+      !JOBBY_TITLE.test(context.title) &&
+      [context.company, firstLabel, siteLabel(pageUrl)].some((n) => n && companyMatch(context.title, n) === true)
+    )
+      context.title = '';
 
     context.jobIds = uniq([
       a.jobId,
@@ -2955,6 +2964,8 @@
 
     // The addresses' own job IDs outrank IDs that only the page's text shared ("similar jobs" lists).
     // Two different jobs on the same board: same ATS and company, both with a job ID of the same kind.
+    // The page's canonical address names the same job, perhaps reposted under a new ID (SmartRecruiters).
+    const aliases = ctx.canonical ? uniq([ats(ctx.canonical).jobId, ...urlJobIds(ctx.canonical)]) : [];
     const sameBoard =
       ctxAts.name &&
       ctxAts.name === pAts.name &&
@@ -2966,7 +2977,8 @@
       ctxAts.jobId &&
       pAts.jobId &&
       idShape(ctxAts.jobId) === idShape(pAts.jobId) &&
-      !idsMatch(ctxAts.jobId, pAts.jobId)
+      !idsMatch(ctxAts.jobId, pAts.jobId) &&
+      !aliases.some((x) => idsMatch(x, pAts.jobId))
     ) {
       reasons.unshift(`different job ID (${ctxAts.jobId} vs ${pAts.jobId})`);
       return { score: 0.05, verdict: 'different', reasons };
@@ -2989,6 +3001,7 @@
     const clash =
       c !== false &&
       sameSite &&
+      !strongCtx.some((x) => strongPost.some((y) => idsMatch(x, y))) &&
       strongCtx.find(
         (x) =>
           idKey(x).length >= 4 &&
@@ -3051,8 +3064,15 @@
   /** A trail or history candidate that is almost certainly the page the user clicked Apply on. */
   // (Not history alone: a job page opened minutes ago in some tab may not be the one being applied for; with
   // nothing on the application page to compare, that stays 'unsure' for the AI check and the user to confirm.)
-  function justBefore(c) {
-    return !!c.trail && c.trail.pos === 0 && c.trail.ageMin <= 30 && c.trail.sameSite && c.trail.jobPage;
+  // (A programme page without a job ID — a law firm's vacation scheme — counts when its text is a real advert.)
+  function justBefore(c, posting) {
+    return (
+      !!c.trail &&
+      c.trail.pos === 0 &&
+      c.trail.ageMin <= 30 &&
+      c.trail.sameSite &&
+      (c.trail.jobPage || (!!posting && jobStructure(posting.description) >= 2 && !isLegalText(posting.description)))
+    );
   }
 
   /** Find the description for the application in `context`; see the API notes at the top. */
@@ -3083,7 +3103,22 @@
     const advert = onPage && (marked || (jobStructure(here.description) >= 2 && !isLegalText(here.description)));
     const askBoard =
       onPage && here.source === 'page-text' && (apiRequests(ctx.url || '').length > 0 || (ctx.embeds || []).length > 0);
-    const deferred = advert && askBoard ? here : null;
+    // A programme page (a law firm's training contract, a company's own advert) with no job ID or board to ask:
+    // its own text, as 'likely' — when nothing better turns up and it isn't a home, list or sign-in page.
+    const pu = parseUrl(ctx.url || '');
+    const plainPage =
+      !ctx.pasted &&
+      !onPage &&
+      here &&
+      here.source === 'page-text' &&
+      words(here.description) >= 120 &&
+      jobStructure(here.description) >= 2 &&
+      !isLegalText(here.description) &&
+      !!pu &&
+      pu.pathname.replace(/\/+$/, '') !== '' &&
+      !LIST_PAGE.test(pu.pathname + pu.search) &&
+      !LOGIN_PAGE.test(pu.pathname);
+    const deferred = (advert && askBoard) || plainPage ? here : null;
     if (advert && !askBoard) {
       const cmp = compare(ctx, here);
       if (cmp.verdict !== 'different')
@@ -3133,7 +3168,7 @@
     const tracker = !ctx.pasted ? trackrHint(ctx, items) : null;
     const hintLookup = tracker && trackrRequests(tracker).length ? lookupTrackr(tracker) : null;
     // Nothing to look up: say why, so the studio can tell the user (and never report an empty search).
-    if (!list.length && !hintLookup) {
+    if (!list.length && !hintLookup && !deferred) {
       const why = ctx.gone
         ? 'the job board says this job is closed or no longer available'
         : 'nothing to look up: this page has no job address, job ID or link to the job';
@@ -3212,6 +3247,16 @@
         if (body != null && body.length > 6e6) body = body.slice(0, 6e6);
         let posting = null;
         const finalUrl = (res.url && !req && res.url) || c.url;
+        // A redirect to a sign-in page isn't a closed job: the user's own session (a background tab) may show it.
+        const fu = parseUrl(finalUrl);
+        if (
+          !req &&
+          fu &&
+          urlKey(finalUrl) !== urlKey(c.url) &&
+          (LOGIN_PAGE.test(fu.pathname) ||
+            /^(login|signin|sso|auth|passport|accounts?|id|identity)\./i.test(fu.hostname))
+        )
+          return outcome('no posting without signing in (it redirects to a sign-in page)');
         // A closed job's page often redirects to the careers home or a job list: closed, not another posting.
         if (!req && movedAway(c.url, finalUrl)) {
           closed.push(finalUrl);
@@ -3331,7 +3376,11 @@
       if (r.cmp.verdict === 'unsure' && r.c.structural && r.cmp.score >= 0.45 && !clash) r.verdict = 'likely';
       // The job page this tab showed just before (on the same site), or Trackr's programme name matches:
       // likely, when nothing on the application page says otherwise.
-      else if (r.cmp.verdict === 'unsure' && !clash && (justBefore(r.c) || (r.cmp.hinted && r.cmp.score >= 0.85)))
+      else if (
+        r.cmp.verdict === 'unsure' &&
+        !clash &&
+        (justBefore(r.c, r.posting) || (r.cmp.hinted && r.cmp.score >= 0.85))
+      )
         r.verdict = 'likely';
       else r.verdict = r.cmp.verdict;
     }
@@ -3347,7 +3396,10 @@
       return withHint({
         posting: deferred,
         verdict: 'likely',
-        reasons: ['the description is on this page', 'the job board didn’t confirm it'],
+        reasons: [
+          'the description is on this page',
+          plainPage ? 'no job ID or job board to confirm it' : 'the job board didn’t confirm it',
+        ],
         source: ctx.url,
         tried,
       });

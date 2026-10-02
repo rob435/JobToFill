@@ -66,11 +66,29 @@
         hispanic: '',
         veteran: '',
         disability: '',
+        sexualOrientation: '',
+        genderIdentitySame: '',
+        religion: '',
+        neurodivergent: '',
         // UK social-mobility monitoring
         schoolType: '',
         freeSchoolMeals: '',
         parentsDegree: '',
         parentOccupation: '',
+        postcodeAt14: '',
+        careLeaver: '',
+        carer: '',
+        refugee: '',
+        bursary: '',
+      },
+      // Conflicts of interest (banks and law firms ask these)
+      compliance: {
+        previouslyEmployed: '',
+        relatives: '',
+        relativesDetails: '',
+        governmentOfficial: '',
+        familyGovernmentOfficial: '',
+        governmentDetails: '',
       },
       education: [blankEducation()],
       experience: [blankExperience()],
@@ -224,6 +242,28 @@
     'TS/SCI': ['TS/SCI', 'Top Secret/SCI', 'Top Secret / SCI', 'TS SCI'],
   };
 
+  const RELIGIONS = {
+    'No religion or belief': ['No religion or belief', 'No religion', 'Atheist', 'None', 'No religion / atheist'],
+    Agnostic: ['Agnostic'],
+    Buddhist: ['Buddhist', 'Buddhism'],
+    Christian: ['Christian', 'Christianity'],
+    Hindu: ['Hindu', 'Hinduism'],
+    Jewish: ['Jewish', 'Judaism'],
+    Muslim: ['Muslim', 'Islam'],
+    Sikh: ['Sikh', 'Sikhism'],
+    'Any other religion or belief': ['Any other religion or belief', 'Other religion', 'Other'],
+  };
+  const ORIENTATIONS = {
+    'Heterosexual / straight': ['Heterosexual / straight', 'Heterosexual', 'Straight'],
+    Gay: ['Gay', 'Gay man', 'Gay / Lesbian', 'Gay or lesbian'],
+    Lesbian: ['Lesbian', 'Gay woman', 'Gay / Lesbian', 'Gay or lesbian'],
+    Bisexual: ['Bisexual', 'Bi', 'Bisexual and/or pansexual'],
+    Pansexual: ['Pansexual', 'Bisexual and/or pansexual'],
+    Asexual: ['Asexual'],
+    Queer: ['Queer'],
+    'Other sexual orientation': ['Other', 'I identify in another way', 'Prefer to self-describe'],
+  };
+
   /** A settings-page answer plus the longer ways forms spell it. */
   function withSpellings(text, table) {
     const v = val(text);
@@ -274,6 +314,19 @@
     if (ok === 'yes' && sponsor === 'yes') return val('I have the right to work now but will need visa sponsorship.');
     if (ok === 'no' || sponsor === 'yes') return val('I will need visa sponsorship to work in this role.');
     return null;
+  }
+
+  /** "Are you related to anyone working here? If yes, give their name" in a text box: "No", or the details. */
+  function yesWithDetails(answer, details, ctx) {
+    const v = val(answer);
+    if (!v || v.canonical !== 'yes' || !LONG_TEXT.includes(ctx.kind) || U.isBlank(details)) return v;
+    return val(String(details).trim(), { canonical: 'yes' });
+  }
+
+  /** The "If yes, please give details" box after one of those questions: filled only after a Yes. */
+  function detailsIfYes(answer, details) {
+    const v = JTF.matcher ? JTF.matcher.canonicalOf(answer) : null;
+    return v === 'yes' && !U.isBlank(details) ? val(String(details).trim(), { canonical: 'yes' }) : null;
   }
 
   function numberVal(text) {
@@ -478,6 +531,206 @@
     else if (year === 3 && year !== total) extra.push('Junior');
     return val(`${n} year`, { candidates: [`${n} year`, `Year ${year}`, `${word} year`, ...extra, n, String(year)] });
   }
+
+  /* ---------------------------------------------------------------- ethnicity */
+
+  // Ethnic groups and subgroups as UK (ONS 2001/2011/2021) and US (EEO) forms list them. `words` name the group
+  // in an option; each subgroup is [key, settings label, words, Asian region]. A stored answer is free text
+  // ("Asian – Chinese", or an older broad "Asian"): parseEthnicity reads answers and options the same way.
+  const ETHNIC_GROUPS = [
+    {
+      key: 'asian',
+      label: 'Asian / Asian British',
+      words: /\basian\b/,
+      subs: [
+        ['chinese', 'Chinese', /\bchinese\b|\bhong kong(er)?\b|\btaiwanese\b/, 'east'],
+        ['indian', 'Indian', /(?<!\b(american|west|east|north american|alaskan?) )\bindian\b/, 'south'],
+        ['pakistani', 'Pakistani', /\bpak[ia]stan[ia]?\b/, 'south'],
+        ['bangladeshi', 'Bangladeshi', /\bbangladesh[ia]?\b/, 'south'],
+        ['japanese', 'Japanese', /\bjapanese\b/, 'east'],
+        ['korean', 'Korean', /\bkorean\b/, 'east'],
+        ['filipino', 'Filipino', /\bfilipin[oa]\b|\bphilippine\b/, 'southeast'],
+        ['vietnamese', 'Vietnamese', /\bvietnamese\b/, 'southeast'],
+        ['thai', 'Thai', /\bthai\b/, 'southeast'],
+        ['malaysian', 'Malaysian', /\bmalaysian\b|\bmalay\b/, 'southeast'],
+        ['indonesian', 'Indonesian', /\bindonesian\b/, 'southeast'],
+        ['srilankan', 'Sri Lankan', /\bsri lankan?\b/, 'south'],
+        ['nepali', 'Nepali', /\bnepal(i|ese)\b/, 'south'],
+      ],
+    },
+    {
+      key: 'black',
+      label: 'Black / African / Caribbean / Black British',
+      words: /\bblack\b|\bof african descent\b/,
+      subs: [
+        ['africanamerican', 'African American', /\bafrican american\b/],
+        ['african', 'African', /(?<!\bnorth )\bafrican\b(?! (american|descent))/],
+        ['caribbean', 'Caribbean', /\bcarr?ib+ean\b|\bwest indian\b/],
+      ],
+    },
+    {
+      key: 'mixed',
+      label: 'Mixed / Multiple ethnic groups',
+      words:
+        /\bmixed\b|\bmultiple ethnic\b|\btwo or more\b|\bmulti ?racial\b|\bbi ?racial\b|\bwhite and (black|asian)\b|\b(black|asian) and white\b/,
+      subs: [
+        ['whiteasian', 'White and Asian', /\bwhite and asian\b|\basian and white\b/],
+        ['whiteblackafrican', 'White and Black African', /\bwhite and black african\b|\bblack african and white\b/],
+        [
+          'whiteblackcaribbean',
+          'White and Black Caribbean',
+          /\bwhite and black carr?ib+ean\b|\bblack carr?ib+ean and white\b/,
+        ],
+        // Lists that stop at "White and Black": either of the two above (never offered in settings).
+        ['whiteblack', 'White and Black', /\bwhite and black\b|\bblack and white\b/, null, true],
+      ],
+    },
+    {
+      key: 'white',
+      label: 'White',
+      words: /\bwhite\b|\bcaucasian\b|\beuropean\b/,
+      subs: [
+        [
+          'british',
+          'British (English / Welsh / Scottish / Northern Irish)',
+          /\bbritish\b|\benglish\b|\bwelsh\b|\bscottish\b|\bnorthern irish\b|\bunited kingdom\b|\buk\b/,
+        ],
+        ['traveller', 'Gypsy or Irish Traveller', /\bgyps(y|ies)\b|\btravell?er\b/],
+        ['irish', 'Irish', /(?<!\bnorthern )\birish\b(?! travell?er)/],
+        ['roma', 'Roma', /\broma(ni)?\b/],
+      ],
+    },
+    {
+      key: 'hispanic',
+      label: 'Hispanic / Latino',
+      words: /\bhispanic\b|\blatin[aoxe]\b|\blatinx\b|\bspanish origin\b/,
+      subs: [
+        ['mexican', 'Mexican', /\bmexican\b|\bchican[oa]\b/],
+        ['puertorican', 'Puerto Rican', /\bpuerto rican\b/],
+        ['cuban', 'Cuban', /\bcuban\b/],
+        ['latinamerican', 'Central / South American', /\b(central|south|latin) american\b/],
+      ],
+    },
+    {
+      key: 'mena',
+      label: 'Middle Eastern / North African',
+      words: /\bmiddle eastern\b|\bnorth african\b|\bmena\b|\bswana\b/,
+      subs: [
+        ['arab', 'Arab', /\barab(ic)?\b/],
+        ['iranian', 'Iranian', /\biranian\b|\bpersian\b/],
+        ['turkish', 'Turkish', /\bturkish\b/],
+        ['kurdish', 'Kurdish', /\bkurd(ish)?\b/],
+        ['northafrican', 'North African', /\bnorth african\b/],
+      ],
+    },
+    {
+      key: 'indigenous',
+      label: 'Indigenous',
+      words: /\bindigenous\b|\bfirst peoples\b/,
+      subs: [
+        ['aian', 'American Indian or Alaska Native', /\bamerican indian\b|\balaska\w* native\b|\bnative american\b/],
+        ['nhpi', 'Native Hawaiian or Other Pacific Islander', /\bnative hawaiian\b|\bpacific islander\b/],
+        ['aboriginal', 'Aboriginal and / or Torres Strait Islander', /\baboriginal\b|\btorres strait\b/],
+        ['maori', 'Māori', /\bmaori\b/],
+        ['firstnations', 'First Nations / Inuit / Métis', /\bfirst nations?\b|\binuit\b|\bmetis\b/],
+      ],
+    },
+    {
+      key: 'other',
+      label: 'Other',
+      words: /^(any )?other( ethnic(ity| group| background)?)?\b|\bother ethnic\b/,
+      subs: [],
+    },
+  ];
+  const ASIAN_REGIONS = [
+    ['southeast', /\bsouth ?east(ern)? asian?\b/],
+    ['south', /\bsouth asian?\b/],
+    ['east', /(?<!\bsouth )\beast asian?\b/],
+  ];
+  // US EEO's broad categories: a group, whatever subgroup words they contain.
+  const US_BROAD = /^(black or african american|african american or black|hispanic or latin[aox]+|white|asian)$/;
+
+  /**
+   * What an ethnicity answer or option names: { group, groups, sub, region, other } — "Asian or Asian British -
+   * Other Asian background" is { group: 'asian', other: true }, "Chinese - Chinese" { group: 'asian', sub: 'chinese' },
+   * "Asian (Not Hispanic or Latinx)" { group: 'asian' }. Null when it names no group (or declines).
+   */
+  function parseEthnicity(text) {
+    // "(Not Hispanic or Latinx)" qualifies a US category; it names no second group.
+    const raw = String(text || '').replace(
+      /\(?\s*not\s+(hispanic|latin[a-z]*)(\s+or\s+(hispanic|latin[a-z]*))?\s*\)?/gi,
+      ' ',
+    );
+    const all = U.normalize(raw);
+    if (!all || (JTF.matcher && JTF.matcher.canonicalOf(all) === 'decline')) return null;
+    const parts = raw.split(/\s*[:–—]\s*|\s+-\s+/).filter((x) => x.trim());
+    const head = parts.length > 1 ? U.normalize(parts[0]) : all;
+    const tail = parts.length > 1 ? U.normalize(parts.slice(1).join(' ')) : all;
+    let groups = ETHNIC_GROUPS.filter((g) => g.words.test(head)).map((g) => g.key);
+    if (groups.includes('mixed')) groups = ['mixed']; // "White and Black African" is one mixed group
+    const other = /\b(any )?other\b|\bnot listed\b/.test(tail) && !/\bother pacific islander\b/.test(tail);
+    let sub = null;
+    let subGroup = null;
+    let region = null;
+    // "Any other Black, Black British or Caribbean background" names no subgroup.
+    if (!US_BROAD.test(all) && !other) {
+      // Subgroups of the groups the option names (any group when it names none: "Chinese", "Arab").
+      const pool = ETHNIC_GROUPS.filter((g) => !groups.length || groups.includes(g.key) || groups.includes('other'));
+      for (const g of pool) {
+        // "Middle Eastern or North African" is the group's own name.
+        const hits = g.subs.filter(
+          ([key, , re]) => re.test(tail) && !(key === 'northafrican' && /\bmiddle eastern\b/.test(tail)),
+        );
+        if (!hits.length) continue;
+        subGroup = g.key;
+        // "Black, Black British, Caribbean or African" names the whole group, not one subgroup.
+        if (hits.length === 1 || g.key === 'mixed') [sub, , , region] = hits[0];
+        break;
+      }
+    }
+    if (!sub && !US_BROAD.test(all) && (groups.includes('asian') || !groups.length)) {
+      const r = ASIAN_REGIONS.find(([, re]) => re.test(all));
+      if (r) region = r[0];
+    }
+    const group = subGroup || (region ? 'asian' : groups.find((g) => g !== 'other') || groups[0] || null);
+    if (!group) return null;
+    const named = groups.length > 0;
+    return {
+      group,
+      groups: [...new Set([...groups, group])],
+      named,
+      sub,
+      region: region || null,
+      other: !sub && other,
+    };
+  }
+
+  /** An ethnicity answer: matched against an option list by parseEthnicity, most specific option first. */
+  function ethnicityVal(text) {
+    const v = val(text);
+    const eth = v ? parseEthnicity(v.text) : null;
+    if (eth) Object.assign(v, { kind: 'ethnicity', eth });
+    return v;
+  }
+
+  /** The settings page's choices: [{ label, items: [value…] }]. */
+  const ETHNICITY_CHOICES = ETHNIC_GROUPS.map((g) => ({
+    label: g.label,
+    items:
+      g.key === 'other'
+        ? ['Any other ethnic group']
+        : [
+            ...g.subs.filter((x) => !x[4]).map(([, label]) => `${g.label.split(' / ')[0]} – ${label}`),
+            ...(g.key === 'asian'
+              ? [
+                  'Asian – Any other East Asian background',
+                  'Asian – Any other South Asian background',
+                  'Asian – Any other Southeast Asian background',
+                ]
+              : []),
+            `${g.label.split(' / ')[0]} – Any other ${g.key === 'mena' ? 'Middle Eastern or North African' : g.label.split(' / ')[0]} background`,
+          ],
+  }));
 
   function degreeVal(text) {
     return val(text, { kind: 'degree' });
@@ -829,10 +1082,108 @@
     'job.referralSource': simple('How you heard about the job', 'job.referralSource'),
 
     'eeo.gender': simple('Gender', 'eeo.gender'),
-    'eeo.race': simple('Race / ethnicity', 'eeo.race'),
-    'eeo.hispanic': simple('Hispanic / Latino', 'eeo.hispanic'),
+    'eeo.race': { label: 'Race / ethnicity', path: 'eeo.race', get: (p) => ethnicityVal(p.eeo.race) },
+    // A Hispanic / Latino ethnicity answers the separate US "Are you Hispanic or Latino?" question too.
+    'eeo.hispanic': {
+      label: 'Hispanic / Latino',
+      path: 'eeo.hispanic',
+      get(p) {
+        const e = parseEthnicity(p.eeo.race);
+        return val(p.eeo.hispanic) || (e && e.group === 'hispanic' ? val('Yes') : null);
+      },
+    },
     'eeo.veteran': simple('Veteran status', 'eeo.veteran'),
     'eeo.disability': simple('Disability status', 'eeo.disability'),
+    'eeo.sexualOrientation': {
+      label: 'Sexual orientation',
+      path: 'eeo.sexualOrientation',
+      get: (p) => withSpellings(p.eeo.sexualOrientation, ORIENTATIONS),
+    },
+    // "Is the gender you identify with the same as the sex registered at birth?"; "Are you trans?" asks the opposite.
+    'eeo.genderIdentitySame': {
+      label: 'Gender identity same as sex at birth',
+      path: 'eeo.genderIdentitySame',
+      get(p, ctx) {
+        const v = val(p.eeo.genderIdentitySame);
+        if (v && /\btrans(gender)?\b/.test(ctx.question || '') && !/\bsame\b/.test(ctx.question || ''))
+          return v.canonical === 'yes' ? val('No') : v.canonical === 'no' ? val('Yes') : v;
+        return v;
+      },
+    },
+    // "Do you identify as LGBTQIA+?": from your orientation and gender identity.
+    'eeo.lgbt': {
+      label: 'LGBTQ+',
+      get(p) {
+        const o = U.normalize(p.eeo.sexualOrientation);
+        const same = JTF.matcher ? JTF.matcher.canonicalOf(p.eeo.genderIdentitySame) : null;
+        if (!o || /prefer not|decline/.test(o)) return null;
+        if (!/^heterosexual|^straight/.test(o) || same === 'no') return val('Yes');
+        return same === 'yes' ? val('No') : null;
+      },
+    },
+    'eeo.religion': {
+      label: 'Religion or belief',
+      path: 'eeo.religion',
+      get: (p) => withSpellings(p.eeo.religion, RELIGIONS),
+    },
+    'eeo.neurodivergent': simple('Neurodivergent', 'eeo.neurodivergent'),
+    'eeo.postcodeAt14': simple('Home postcode at age 14', 'eeo.postcodeAt14'),
+    'eeo.careLeaver': simple('Been in care', 'eeo.careLeaver'),
+    'eeo.carer': simple('Carer', 'eeo.carer'),
+    'eeo.refugee': simple('Refugee or asylum seeker', 'eeo.refugee'),
+    'eeo.bursary': simple('Means-tested bursary or grant at university', 'eeo.bursary'),
+
+    'compliance.previouslyEmployed': simple('Worked here before', 'compliance.previouslyEmployed'),
+    'compliance.relatives': {
+      label: 'Relatives working here',
+      path: 'compliance.relatives',
+      get: (p, ctx) => yesWithDetails(p.compliance.relatives, p.compliance.relativesDetails, ctx),
+    },
+    'compliance.relativesDetails': {
+      label: 'Relatives working here: details',
+      path: 'compliance.relativesDetails',
+      get: (p) => detailsIfYes(p.compliance.relatives, p.compliance.relativesDetails),
+    },
+    // "Are you, or is any immediate family member, a current or former government official…?", "Are you a
+    // politically exposed person?", "Were your parents involved in government?": you, your family, or both.
+    'compliance.government': {
+      label: 'Government official / PEP',
+      get(p, ctx) {
+        const q = ctx.question || '';
+        const family =
+          /\b(related to|family|relatives?|parents?|spouse|partner|siblings?|child(ren)?|household|close associates?)\b/.test(
+            q,
+          );
+        const self =
+          !family ||
+          (/\b(you or|you and|yourself|are you (a|an|currently|now|ever|or)|have you (ever )?(been|held|worked)|were you)\b/.test(
+            q,
+          ) &&
+            !/\bare you related\b/.test(q));
+        const canon = (t) => (JTF.matcher ? JTF.matcher.canonicalOf(t) : null);
+        const answers = [
+          self && canon(p.compliance.governmentOfficial),
+          family && canon(p.compliance.familyGovernmentOfficial),
+        ].filter((x) => x !== false);
+        let answer = null;
+        if (answers.includes('yes')) answer = 'Yes';
+        else if (answers.length && answers.every((x) => x === 'no')) answer = 'No';
+        if (!answer) return null;
+        return answer === 'Yes' ? yesWithDetails('Yes', p.compliance.governmentDetails, ctx) : val('No');
+      },
+    },
+    'compliance.governmentDetails': {
+      label: 'Government official / PEP: details',
+      path: 'compliance.governmentDetails',
+      get(p) {
+        const canon = (t) => (JTF.matcher ? JTF.matcher.canonicalOf(t) : null);
+        const yes = [p.compliance.governmentOfficial, p.compliance.familyGovernmentOfficial].some(
+          (x) => canon(x) === 'yes',
+        );
+        return detailsIfYes(yes ? 'Yes' : 'No', p.compliance.governmentDetails);
+      },
+    },
+
     'eeo.schoolType': {
       label: 'Type of school (age 11–16)',
       path: 'eeo.schoolType',
@@ -1030,7 +1381,8 @@
     'degree', 'program', 'display', 'screen', 'host', 'server', 'maiden', 'father', 'mother', 'parent', 'spouse',
     'guardian', '\\bkin\\b', 'contact person', 'signature', 'holder', 'bank', 'club', 'award', 'certif', 'hiring',
     'interviewer', 'employee', 'department', 'title', 'legal entity', 'brand', 'campaign', 'store', 'pronounc',
-    'pronunciation', 'phonetic', 'module',
+    'pronunciation', 'phonetic', 'module', 'chinese', 'native', 'local language', 'characters', 'script', 'kanji',
+    'katakana', 'cyrillic',
   ].join('|'));
 
   const R = (type, re, opts) => Object.assign({ type, re }, opts || {});
@@ -1124,7 +1476,10 @@
     R(
       'cc.number',
       /(card|cc|kreditkarten|tarjeta|carte) ?(number|no|num|nummer|numero)|credit ?card|debit ?card|card ?#|\bccnum|\bcard$/,
-      { not: /type|name|holder|expir|exp date|cvv|cvc|security|zip|postal|brand|phone|gift/ },
+      // An identity card (HKID), student or membership card is not a payment card.
+      {
+        not: /type|name|holder|expir|exp date|cvv|cvc|security|zip|postal|brand|phone|gift|identity|\bid\b|hkid|national|passport|student|membership|loyalty|library|insurance|health/,
+      },
     ),
     R('cc.type', /card ?(type|brand|network)|type of card/, { kinds: CHOICE }),
 
@@ -1181,7 +1536,7 @@
     ),
     R(
       'job.salary',
-      /salary|compensation|pay (expectation|range|requirement)|desired (pay|rate|wage)|expected (pay|wage|rate|ctc)|\b(current|present|desired) ctc\b|^ctc$|remuneration|\bwage\b|rate expectation|hourly rate|base pay/,
+      /salary|salari(al|ale|ales|o)\b|\bgehalt|\bpretentions?\b|\bstipendio\b|\bretribuzione\b|compensation|pay (expectation|range|requirement)|desired (pay|rate|wage)|expected (pay|wage|rate|ctc)|\b(current|present|desired) ctc\b|^ctc$|remuneration|\bwage\b|rate expectation|hourly rate|base pay/,
       {
         // The currency and pay-period pickers next to the amount ("salaryCurrency", "Desired Salary Type").
         not: /currenc|\bperiod\b|frequency|\b(salary|pay) (type|basis|unit)\b/,
@@ -1189,14 +1544,17 @@
       },
     ),
     R('job.nonCompete', /non ?compete|non ?solicit|restrictive (covenant|agreement|clause)|garden leave/),
-    R('job.noticePeriod', /notice ?period|notice (required|do you need)|how much notice|weeks notice/),
+    R(
+      'job.noticePeriod',
+      /notice ?period|notice (required|do you need)|how much notice|weeks notice|kundigungsfrist|\bpreavis\b|\bpreavviso\b/,
+    ),
     R(
       'job.otherOffers',
       /\b(other|competing|outstanding|existing|pending) (job |internship |employment )?offers?\b|\boffers? (from|at|with) (other|another|any other) (firms?|compan|employers?|organi)|\boffers? (and|or|&) deadlines?|\bdeadlines? (we|that we) should\b|\bany (other )?(offers|deadlines)\b|\bexploding offer/,
     ),
     R(
       'job.startDate',
-      /when (can|could|would) you (like to |be able to )?(start|begin|join)|when (are|will) you (be )?(able|available) to (start|begin|join)|available (start|to start|to begin|from)|\bavailability\b|earliest (possible )?(start|date)|date (you are )?available|(desired|preferred) start|expected start|join(ing)? date|how soon|start (date|dates) (for|of) (the|this|your) (internship|placement|programme|program|role|position|job)|\bdate (that )?you (could|can|would|will) (start|begin|join)\b|\b(ready|available) for (full ?time )?(employment|work)\b|\b(will|would|could|can) be (able|available) to (start|begin|commence|join)\b|\b(what|which) date\b.*\bavailab|\bwhen (are|will|would) you (be )?available\b/,
+      /when (can|could|would) you (like to |be able to )?(start|begin|join)|when (are|will) you (be )?(able|available) to (start|begin|join)|available (start|to start|to begin|from)|\bavailability\b|earliest (possible )?(start|date)|date (you are )?available|(desired|preferred) start|expected start|join(ing)? date|how soon|start (date|dates) (for|of) (the|this|your) (internship|placement|programme|program|role|position|job)|\bdate (that )?you (could|can|would|will) (start|begin|join)\b|\b(ready|available) for (full ?time )?(employment|work)\b|\beintritt\w*|\bdisponibilit[ea]\b|\bdate de debut\b|\b(will|would|could|can) be (able|available) to (start|begin|commence|join)\b|\b(what|which) date\b.*\bavailab|\bwhen (are|will|would) you (be )?available\b/,
     ),
     // "The internship runs from 1 July to 30 September 2027. Can you confirm that you are available…?"
     R(
@@ -1228,7 +1586,50 @@
       yieldsTo: ['edu.end'],
     }),
 
+    // Conflicts of interest: government officials / PEPs (you, your family), relatives here, worked here before.
+    // EEO notices ("Government officials engaged in enforcing laws…") are not questions.
+    R(
+      'compliance.government',
+      /\bgovernment (official|employee|position|role|connection|body|agency|department|entity|minister)s?\b|\bpublic (official|office|servant)s?\b|\bpolitically exposed|\bpeps?\b|\bstate ?owned (entit|enterprise|compan|business)|\bforeign (government )?official|\bcivil servant|\binvolved (in|with) (the )?(government|politics)\b|\b(public|political|government) (office|position|appointment)s?\b|\bsenior political figure/,
+      {
+        kinds: CHOICE.concat(LONG_TEXT),
+        not: /\bengaged in enforcing\b|\benforcing (the )?laws?\b|\bequal (employment|opportunity)\b|\bfederal contractor|\bgovernment (contracts?|contractors?|funding|grants?)\b|\bvisa\b|\bsponsor/,
+      },
+    ),
+    // Not about the company's auditors ("…employed by Ernst & Young, that engages in audit work?").
+    R(
+      'compliance.relatives',
+      /\b(related to|relatives?|family members?|immediate family|spouse|domestic partner|close (personal )?relationship)\b.*\b(work|works|working|worked|employ|employed|employee|employees|staff)\b|\b(know|related to) any ?one (who )?(currently )?(works?|working|employed|at)\b/,
+      {
+        kinds: CHOICE.concat(LONG_TEXT),
+        not: /government|public official|politically|referr|refer you|emergency|\b(ernst|ey|deloitte|pwc|pricewaterhouse\w*|kpmg|auditors?|audit)\b/,
+      },
+    ),
+    R(
+      'compliance.previouslyEmployed',
+      /\b(previously|ever|formerly|before|in the past) (been )?(worked|employed|work|been employed|interned)\b.*\b(for|at|by|with)\b|\b(current or former|former|ex) (employee|staff member|intern)\b|\bhave you (ever )?worked (for|at|with) (us|our)\b|\bworked (for|at) [a-z ]+ (before|previously|in the past)\b/,
+      {
+        kinds: CHOICE.concat(LONG_TEXT),
+        not: /\bapplied\b|\binterview|\brelated|famil|relative|\bin (finance|banking|consulting|the industry|a similar)|\b(ernst|ey|deloitte|pwc|pricewaterhouse\w*|kpmg|auditors?|audit)\b/,
+      },
+    ),
+
     // Voluntary self-identification
+    // Sexual orientation, gender identity vs sex at birth, LGBTQ+, religion, neurodiversity.
+    R('eeo.sexualOrientation', /\bsexual orientation\b|\bsexuality\b|\borientation\b/, { kinds: CHOICE }),
+    R(
+      'eeo.genderIdentitySame',
+      /\b(same as|match(es)?|differ\w* from)\b.*\b(sex|gender)\b.*\b(registered|assigned|recorded) at birth\b|\b(registered|assigned) at birth\b|\bidentify as trans(gender)?\b|\bare you trans(gender)?\b|\btrans (history|experience)\b/,
+      { kinds: CHOICE },
+    ),
+    R('eeo.lgbt', /\blgbt|\blgbq|\bidentify as (part of the )?(queer|lgb)/, { kinds: CHOICE }),
+    R('eeo.religion', /\breligio|\bfaith\b|\bbelief\b/, { kinds: CHOICE }),
+    R(
+      'eeo.neurodivergent',
+      /\bneuro ?(divergen|diverse|diversity|atypical)|\bneurodivergent\b|\bdyslexi|\badhd\b|\bautis|\bdyspraxi/,
+      // "Do you have a disability or long-term health condition including … neurodiversity?" is the disability one.
+      { kinds: CHOICE, not: /\bdisabilit|long ?term (health )?condition|\bimpairment/ },
+    ),
     R('eeo.hispanic', /hispanic|latin[oax]\b/, { kinds: CHOICE }),
     R('eeo.race', /\brace\b|ethnic/, { kinds: CHOICE }),
     R('eeo.veteran', /veteran|military (service|status)|armed forces|served in the/, { kinds: CHOICE }),
@@ -1237,7 +1638,37 @@
       not: /orientation|transgender|same as|(registered|assigned) at birth/,
     }),
     // UK social-mobility monitoring
-    R('eeo.freeSchoolMeals', /free school meals?|\bfsm\b/, { kinds: CHOICE }),
+    // "Were you eligible for free school meals?", "…receive FSM", pupil premium, the US free or reduced-price lunch.
+    R(
+      'eeo.freeSchoolMeals',
+      /free school (meals?|lunch(es)?)|\bfsm\b|pupil premium|free (or|and|\/) reduced( price| cost)? (school )?(lunch|meals?)|reduced (price )?(school )?lunch/,
+      { kinds: CHOICE },
+    ),
+    R('eeo.postcodeAt14', /\bpost ?code\b.*\b(14|fourteen)\b|\b(14|fourteen)\b.*\bpost ?code\b/, { kinds: TEXTISH }),
+    R(
+      'eeo.careLeaver',
+      /\bcare leaver\b|\b(been|grew up|lived|were you|spent time|time) in (local authority |foster |residential |social )?care\b|\blooked after (child|young person|by (a|the) local authority)|\bfoster(ed)? care\b|\blocal authority care\b|\bin the care system\b/,
+      { kinds: CHOICE },
+    ),
+    R(
+      'eeo.carer',
+      /\b(young |unpaid |primary |family )?carer\b|\bcaring responsibilit|\bcare for (a|an|someone) (family member|relative|friend|disabled|ill|elderly)|\blook after (a|an|someone) (family member|relative|disabled|ill|elderly)/,
+      { kinds: CHOICE },
+    ),
+    // A refugee diversity question, never the refugee / asylee lines of a work-authorisation list.
+    R(
+      'eeo.refugee',
+      /\b(are|were) you (a |an )?(refugee|asylum seeker)|\brefugee (or|and|\/) asylum|\basylum seeker\b|\brefugee (status|background|experience)\b|\bcame to the uk as a refugee\b/,
+      {
+        kinds: CHOICE,
+        not: /\bu ?s ?c\b|\b115[78]\b|\basylee\b|work authori|employment eligib|eligib\w* to work|lawful(ly)? permanent|green card|export|\bvisa\b|citizen/,
+      },
+    ),
+    R(
+      'eeo.bursary',
+      /\bbursar(y|ies)\b|\bmaintenance (grant|loan)s?\b|\bmeans ?tested (grant|support|bursary|funding|financial)|\bfinancial (support|aid) (from|at) (your )?universit/,
+      { kinds: CHOICE, not: /independent|fee paying|private school|school type|type of school|\bschool you\b/ },
+    ),
     R(
       'eeo.schoolType',
       /\b(type|kind) of school\b|\bschool type\b|\bschool did you (mainly )?attend\b|\bstate (school|run|funded)\b.*\b(independent|private|fee)|\bfee paying\b/,
@@ -1245,7 +1676,7 @@
     ),
     R(
       'eeo.parentsDegree',
-      /\bparents?\b.*\b(universit|degree|higher education|college|qualification)|\bguardians?\b.*\b(universit|degree|higher education|qualification)|\bfirst (person )?in (your|my) (immediate )?family\b.*\b(universit|college|higher education|degree)|\bfirst generation (student|university|college)|\b(qualifications?|degree|universit\w*|education)\b.*\b(parents?|guardians?)\b/,
+      /\bparents?\b.*\b(universit|degree|higher education|college|qualification)|\bguardians?\b.*\b(universit|degree|higher education|qualification)|\bfirst (person )?in (your|my) (immediate )?family\b.*\b(universit|college|higher education|degree)|\b(universit|college|higher education)\w*\b.*\bfirst (person )?(in|of) (your|my) (immediate )?family\b|\bfirst generation (student|university|college)|\b(qualifications?|degree|universit\w*|education)\b.*\b(parents?|guardians?)\b/,
       { kinds: CHOICE },
     ),
     R(
@@ -1256,7 +1687,7 @@
     R('pronouns', /\bpronouns?\b/), // not "how your name is pronounced"
     R(
       'dob',
-      /birth ?(date|day)|date of birth|\bdob\b|\bbday\b|birthday|geburtsdatum|fecha de nacimiento|date de naissance/,
+      /birth ?(date|day)|date of birth|\bdob\b|\bbday\b|birthday|geburtsdatum|fecha de nacimiento|date de naissance|data di nascita/,
       { not: /place|city|country|town/ },
     ),
     R(
@@ -1355,7 +1786,7 @@
     }),
     R(
       'name.preferred',
-      /preferred (first |given )?name|nick ?name|\bgoes by\b|known as|chosen name|name you (go by|prefer)/,
+      /preferred (first |given )?name|nick ?name|\bgoes by\b|known as|chosen name|name you (go by|prefer)|\benglish (first |given )?name\b/,
     ),
     R(
       'name.first',
@@ -1408,7 +1839,7 @@
     ),
     R(
       'phone',
-      /phone|mobile|\bcell\b|cellular|telephone|\btel\b|contact (number|no)|telefon|telefono|\bportable\b|\bhandy\b|whats ?app|\bmob\b/,
+      /phone|mobile|\bmobil(nummer|telefon)?\b|\bcell\b|cellular|telephone|\btel\b|contact (number|no)|telefon|telefono|\bportable\b|\bhandy\b|whats ?app|\bmob\b/,
       {
         // "…start with a + and then the country code" is help for the whole number.
         not: /type|\bext\b|extension|(?<!\b(including|include|incl|with|plus|then|the|your|a|by) )\bcountry\b|(?<!\bcountry )\bcode\b|fax|device|prefix|emergency|referr|reference|manager|supervisor|employer|company|business|organi[sz]ation|\bsms\b|text messag|consent/,
@@ -1430,7 +1861,7 @@
     ),
     R(
       'address.line1',
-      /address ?(line)? ?(1|one|i)\b|\baddr(ess)? ?1\b|\bstreet\b|\baddress\b|\baddr\b|strasse|direccion|\badresse\b|indirizzo|\bmorada\b|house ?(number|name|no)/,
+      /address ?(line)? ?(1|one|i)\b|\baddr(ess)? ?1\b|\bstreet\b|\baddress\b|\baddr\b|strasse|straße|hausnummer|direccion|\badresse\b|indirizzo|\bmorada\b|house ?(number|name|no)/,
       {
         not: /e ?mail|\bip\b|\bweb\b|\burl\b|line ?(2|two|3|three)|\bcity\b|\bstate\b|zip|postal|country|same as|wallet|mac address|crypto/,
         kinds: TEXTISH,
@@ -1468,7 +1899,7 @@
     }),
     R(
       'nationality',
-      /nationality|citizenship|citizen of|country of (citizenship|nationality)|staatsangehorigkeit|nacionalidad/,
+      /nationality|citizenship|citizen of|country of (citizenship|nationality)|staatsangehorigkeit|nacionalidad|\bnationalite\b|\bnazionalita\b/,
       { not: /other (countr|nationalit|citizenship)|\bdual\b|previous|\bformer|second (nationality|citizenship)/ },
     ),
     R('address.country', /\bcountr(y|ies)\b|\bnation\b|\bland\b|\bpais\b|\bpays\b/, {
@@ -1620,6 +2051,8 @@
     eduLevelOf,
     languagesNamed,
     isAcknowledgement,
+    parseEthnicity,
+    ETHNICITY_CHOICES,
     cardBrand,
     val,
   };

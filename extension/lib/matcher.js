@@ -55,7 +55,7 @@
   const LINK_KINDS = ['text', 'url', 'textarea'];
   // "Please specify if you selected Other": the box for an answer you chose not to give.
   const OTHER_FOLLOW_UP =
-    /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b|\bif (it|yours|your \w+( \w+)?) (is|was) not (listed|shown|in the list|found|available)\b|\bnot listed (above|below)\b.*\b(specify|enter|type|provide|state)\b/;
+    /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|^(if|when) you (have )?(selected|chose|picked|ticked|checked) (?!yes\b)|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b|\bif (it|yours|your \w+( \w+)?) (is|was) not (listed|shown|in the list|found|available)\b|\bnot listed (above|below)\b.*\b(specify|enter|type|provide|state)\b/;
   const EMAIL_TYPES = new Set(['email', 'account.username']);
   // Field types a lone checkbox can answer: "I am authorized to work in the US", "I have read the
   // privacy notice", or one option of a checklist ("London" under "Which offices…?").
@@ -332,6 +332,10 @@
     return null;
   }
 
+  const DETAILS_OF = {
+    'compliance.government': 'compliance.governmentDetails',
+    'compliance.relatives': 'compliance.relativesDetails',
+  };
   const PLACE_TYPES = ['location', 'address.city'];
   const ABOUT_YOU_TYPES = ['location', 'address.city', 'address.state', 'address.country', 'address.postalCode'];
   const ABOUT_YOU = /\b(you|your|yourself|reside|resident|residence|live|living|home|currently|current)\b/;
@@ -376,6 +380,21 @@
       if (!r || r.type !== 'exp.title' || norm(questionText(descs[i])) !== 'title') return;
       const next = results.slice(i + 1, i + 4).find((x) => x && x.type);
       if (next && /^name\.(first|last|full|middle)$/.test(next.type)) Object.assign(r, { type: 'name.prefix' });
+    });
+
+    // "If yes, please give details" right after a conflict-of-interest question: that question's details box.
+    results.forEach((r, i) => {
+      if (!['text', 'textarea'].includes(descs[i].kind)) return;
+      const q = norm(questionText(descs[i]));
+      if (!/^(if (yes|so|applicable|you answered yes)|please (give|provide|list) (details|more|their|the))\b/.test(q))
+        return;
+      for (let j = i - 1; j >= Math.max(0, i - 2); j--) {
+        const prev = results[j] && DETAILS_OF[results[j].type];
+        if (prev) {
+          results[i] = { type: prev, part: null, score: 1, source: 'follow-up' };
+          return;
+        }
+      }
     });
 
     const state = { edu: { index: -1, seen: new Set() }, exp: { index: -1, seen: new Set() } };
@@ -765,6 +784,44 @@
     return best ? best.i : -1;
   }
 
+  /**
+   * The best option for ethnicity answer `want` (fields.parseEthnicity): its exact subgroup anywhere in the list
+   * ("Chinese - Chinese" beats "Asian or Asian British - Other Asian background"), then its Asian region ("East
+   * Asian"), then its group ("Asian or Asian British", US "Asian"), then "Any other <group> background". A broad
+   * answer ("Asian") only takes a group option. -1 when nothing fits.
+   */
+  function bestEthnicity(opts, options, want) {
+    let best = null;
+    for (const o of opts) {
+      // An <optgroup> names the group of a bare "Other" or "Chinese".
+      const group = options[o.i] && options[o.i].group;
+      const e = F().parseEthnicity(group && !/[:–—]|\s-\s/.test(o.text) ? `${group}: ${o.text}` : o.text);
+      const score = e ? ethnicityScore(e, want, o.n) : 0;
+      if (score > 0 && (!best || score > best.score)) best = { i: o.i, score };
+    }
+    return best ? best.i : -1;
+  }
+
+  function ethnicityScore(o, w, n) {
+    if (w.group === 'other') return o.group === 'other' && !o.sub && !o.region ? 100 : 0;
+    if (!o.groups.includes(w.group)) return 0;
+    if (o.sub === 'whiteblack') return /^whiteblack/.test(w.sub || '') ? 85 : 0; // Maven's "White and Black "
+    if (o.sub) {
+      if (o.sub !== w.sub) return 0;
+      // "Asian or Asian British – Chinese", then "Asian - Chinese", then "Chinese"; "British" before "English".
+      const full = /\b(asian|black) british\b/.test(n) ? 1 : 0;
+      return 100 + full + (o.named ? 0.5 : 0) + (w.sub === 'british' && /\b(british|united kingdom)\b/.test(n) ? 2 : 0);
+    }
+    if (o.region) {
+      if (o.region !== w.region) return 0;
+      if (o.other) return w.other && !w.sub ? 100 : 50;
+      return w.other ? 70 : 80;
+    }
+    const broad = !w.sub && !w.region && !w.other;
+    if (o.other) return w.other ? (w.region ? 70 : 100) : broad ? 0 : 40;
+    return (broad ? 100 : 60) - (/\bpacific islander\b/.test(n) ? 5 : 0);
+  }
+
   /** Every option a list value ("London, New York") picks, in the list's order. */
   function matchAll(options, v) {
     if (!v) return [];
@@ -829,6 +886,9 @@
           best = { i: o.i, w: o.r[1] - o.r[0] };
       if (best) return best.i;
     }
+
+    // Ethnicity lists: the most specific option offered, never a fuzzy guess between subgroups.
+    if (v.kind === 'ethnicity' && v.eth) return bestEthnicity(opts, options, v.eth);
 
     const cands = [...new Set((v.candidates || [v.text]).map(norm).filter(Boolean))];
     for (const c of cands) {
@@ -925,6 +985,21 @@
       !DATE_PATTERN.test(hint)
     )
       return `${U.monthName(d.month).replace(/^./, (c) => c.toUpperCase())} ${y}`;
+
+    // A question in a plain text box with no format hint ("Earliest availability to start at CRA (not binding)")
+    // reads best spelled out: "28 June 2027", which nobody takes for 6 February. Date pickers have a placeholder.
+    const question = U.cleanLabel(s.label || s.question || s.aria || '');
+    if (
+      v.kind === 'date' &&
+      d.month &&
+      (type === 'text' || type === 'textarea') &&
+      !hint &&
+      !DATE_PATTERN.test(label) &&
+      question.split(/\s+/).length >= 4
+    ) {
+      const month = U.monthName(d.month).replace(/^./, (c) => c.toUpperCase());
+      return d.day ? `${d.day} ${month} ${y}` : `${month} ${y}`;
+    }
 
     if (v.kind === 'month') return type === 'number' ? String(d.month) : mm;
     if (v.kind === 'year') return desc.maxLength === 2 || /^\s*yy\s*$/.test(hint) ? y.slice(2) : y;

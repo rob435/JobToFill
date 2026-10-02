@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <title>Graduate Programme – equality, diversity and background (UK style)</title>
+    <style>
+      body {
+        font: 15px/1.4 system-ui, sans-serif;
+        margin: 32px auto;
+        max-width: 720px;
+      }
+      .q {
+        margin: 14px 0;
+      }
+      label {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Equal opportunities monitoring</h1>
+    <!-- Modelled on UK graduate forms: an ONS two-step ethnicity question (group, then background in optgroups with
+         a bare "Other" per group), a 2011-style list where Chinese is its own group, social-mobility questions with
+         "I am / I am not" options, and conflict-of-interest questions with "If yes" boxes. -->
+    <form id="application">
+      <div class="q">
+        <label for="eth_group">Ethnic group</label>
+        <select id="eth_group">
+          <option value="">Please select</option>
+          <option>Asian or Asian British</option>
+          <option>Black, Black British, Caribbean or African</option>
+          <option>Mixed or multiple ethnic groups</option>
+          <option>White</option>
+          <option>Other ethnic group</option>
+          <option>Prefer not to say</option>
+        </select>
+      </div>
+      <div class="q">
+        <label for="eth_background">Ethnic background</label>
+        <select id="eth_background">
+          <option value="">Please select</option>
+          <optgroup label="Asian or Asian British">
+            <option>Bangladeshi</option>
+            <option>Chinese</option>
+            <option>Indian</option>
+            <option>Pakistani</option>
+            <option>Other</option>
+          </optgroup>
+          <optgroup label="Black, Black British, Caribbean or African">
+            <option>African</option>
+            <option>Caribbean</option>
+            <option>Other</option>
+          </optgroup>
+          <optgroup label="White">
+            <option>English, Welsh, Scottish, Northern Irish or British</option>
+            <option>Irish</option>
+            <option>Other</option>
+          </optgroup>
+        </select>
+      </div>
+      <div class="q">
+        <label for="cra">How would you describe your nationality and/or ethnicity?</label>
+        <select id="cra">
+          <option value="">Select...</option>
+          <option>White - British - English, Scottish or Welsh</option>
+          <option>Mixed Race - White and Asian</option>
+          <option>Asian or Asian British - Indian</option>
+          <option>Asian or Asian British - Other Asian background</option>
+          <option>Black or Black British - African</option>
+          <option>Chinese - Chinese</option>
+          <option>Other Ethnic group</option>
+          <option>Prefer not to say</option>
+        </select>
+      </div>
+      <div class="q">
+        <label for="orientation">What is your sexual orientation?</label>
+        <select id="orientation">
+          <option value="">Select...</option>
+          <option>Bi</option>
+          <option>Gay/Lesbian</option>
+          <option>Heterosexual/straight</option>
+          <option>Other</option>
+          <option>Prefer not to say</option>
+        </select>
+      </div>
+      <fieldset class="q">
+        <legend>Is the gender you identify with the same as the sex you were registered at birth?</legend>
+        <label><input type="radio" name="same" id="same-yes" value="yes" /> Yes</label>
+        <label><input type="radio" name="same" id="same-no" value="no" /> No</label>
+        <label><input type="radio" name="same" id="same-pnts" value="pnts" /> Prefer not to say</label>
+      </fieldset>
+      <div class="q">
+        <label for="religion">What is your religion or belief?</label>
+        <select id="religion">
+          <option value="">Select...</option>
+          <option>No religion or belief/Atheist</option>
+          <option>Buddhist</option>
+          <option>Christian</option>
+          <option>Muslim</option>
+          <option>Any other religion or belief</option>
+          <option>Prefer not to say</option>
+        </select>
+      </div>
+      <fieldset class="q">
+        <legend>Do you consider yourself to be neurodivergent?</legend>
+        <label><input type="radio" name="neuro" id="neuro-yes" value="yes" /> Yes</label>
+        <label><input type="radio" name="neuro" id="neuro-no" value="no" /> No</label>
+      </fieldset>
+      <fieldset class="q">
+        <legend>
+          If you finished school after 1980, were you eligible for free school meals at any point during your school years?
+        </legend>
+        <label><input type="radio" name="fsm" id="fsm-yes" value="yes" /> Yes</label>
+        <label><input type="radio" name="fsm" id="fsm-no" value="no" /> No</label>
+        <label
+          ><input type="radio" name="fsm" id="fsm-na" value="na" /> Not applicable (finished school before 1980 or went
+          to school outside of the United Kingdom)</label
+        >
+        <label><input type="radio" name="fsm" id="fsm-dk" value="dk" /> I don't know</label>
+      </fieldset>
+      <fieldset class="q">
+        <legend>Have you ever been in care?</legend>
+        <label><input type="radio" name="care" id="care-yes" value="yes" /> I have been in care</label>
+        <label><input type="radio" name="care" id="care-no" value="no" /> I have not been in care</label>
+      </fieldset>
+      <fieldset class="q">
+        <legend>Are you a young carer?</legend>
+        <label><input type="radio" name="carer" id="carer-yes" value="yes" /> I am a carer</label>
+        <label><input type="radio" name="carer" id="carer-no" value="no" /> I am not a carer</label>
+      </fieldset>
+      <fieldset class="q">
+        <legend>Are you a refugee or asylum seeker?</legend>
+        <label><input type="radio" name="refugee" id="refugee-yes" value="yes" /> Yes</label>
+        <label><input type="radio" name="refugee" id="refugee-no" value="no" /> No</label>
+      </fieldset>
+      <div class="q">
+        <label for="export">Please state which of the following applies to you (export regulations):</label>
+        <select id="export">
+          <option value="">Select...</option>
+          <option>I am a U.S. Citizen.</option>
+          <option>I am a refugee under 8 U.S.C. 1157.</option>
+          <option>I am an asylee under 8 U.S.C. 1158.</option>
+          <option>None of the above.</option>
+        </select>
+      </div>
+      <fieldset class="q">
+        <legend>Did you receive a means-tested bursary or grant at university?</legend>
+        <label><input type="radio" name="bursary" id="bursary-yes" value="yes" /> Yes</label>
+        <label><input type="radio" name="bursary" id="bursary-no" value="no" /> No</label>
+      </fieldset>
+      <div class="q">
+        <label for="pc14">What was the postcode of your home when you were 14?</label><input id="pc14" />
+      </div>
+      <div class="q"><label for="pc">Postcode</label><input id="pc" /></div>
+      <h2>Conflicts of interest</h2>
+      <fieldset class="q">
+        <legend>
+          Are you, or is any immediate family member (parent, spouse, sibling, child), a current or former government
+          official, public official, or employee of a state-owned entity?
+        </legend>
+        <label><input type="radio" name="gov" id="gov-yes" value="yes" /> Yes</label>
+        <label><input type="radio" name="gov" id="gov-no" value="no" /> No</label>
+      </fieldset>
+      <div class="q">
+        <label for="gov_details">If yes, please give details</label><textarea id="gov_details"></textarea>
+      </div>
+      <fieldset class="q">
+        <legend>Do you have any relatives currently working for the firm?</legend>
+        <label><input type="radio" name="rel" id="rel-yes" value="yes" /> Yes</label>
+        <label><input type="radio" name="rel" id="rel-no" value="no" /> No</label>
+      </fieldset>
+      <div class="q">
+        <label for="rel_details">If yes, please provide their name and relationship</label><input id="rel_details" />
+      </div>
+      <fieldset class="q">
+        <legend>Have you previously worked for the firm?</legend>
+        <label><input type="radio" name="prev" id="prev-yes" value="yes" /> Yes</label>
+        <label><input type="radio" name="prev" id="prev-no" value="no" /> No</label>
+      </fieldset>
+      <p>
+        Government officials engaged in enforcing laws may be given access to this information in accordance with
+        applicable law.
+      </p>
+    </form>
+  </body>
+</html>

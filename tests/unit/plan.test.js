@@ -1007,3 +1007,337 @@ test('"Right to work / Visa status" in a text box gets a sentence; yes/no questi
     'I have the right to work now but will need visa sponsorship.',
   );
 });
+
+/* ---------------------------------------------------------------- ethnicity */
+
+const ETH = {
+  // US EEO (Greenhouse, Jensen Hughes)
+  us: [
+    'Decline To Self Identify',
+    'Two or More Races',
+    'Native Hawaiian or Other Pacific Islander',
+    'White',
+    'Hispanic or Latino',
+    'Black or African American',
+    'Asian',
+    'American Indian or Alaskan Native',
+  ],
+  // UK 2011-style (Charles River Associates): Chinese is its own group, not under Asian.
+  cra: [
+    'White - British - English, Scottish or Welsh',
+    'White - Irish',
+    'White - Other White background',
+    'Mixed Race - White and Black Caribbean',
+    'Mixed Race - White and Black African',
+    'Mixed Race - White and Asian',
+    'Mixed Race - Other Mixed background',
+    'Asian or Asian British - Indian',
+    'Asian or Asian British - Pakistani',
+    'Asian or Asian British - Bangladeshi',
+    'Asian or Asian British - Other Asian background',
+    'Black or Black British - Caribbean',
+    'Black or Black British - African',
+    'Black or Black British - Other Black background',
+    'Chinese - Chinese',
+    'Other Ethnic group',
+    'Prefer not to say',
+  ],
+  // ONS 2021, flat (Marshall Wace)
+  ons: [
+    'Indian',
+    'Pakistani',
+    'Bangladeshi',
+    'Chinese',
+    'Any other Asian background',
+    'African',
+    'Caribbean',
+    'Any other Black, Black British, or Caribbean background',
+    'White and Black Caribbean',
+    'White and Black African',
+    'White and Asian',
+    'Any other Mixed or multiple ethnic background',
+    'English',
+    'Welsh',
+    'Scottish',
+    'Northern Irish',
+    'Irish',
+    'British',
+    'Roma',
+    'Any other white background',
+    'Arab',
+    'Prefer not to say',
+    'Other (not specified)',
+  ],
+  // Maven: no dashes, misspellings, a truncated mix
+  maven: [
+    'Asian Bangladeshi',
+    'Asian Chinese',
+    'Asian Indian',
+    'Asian Pakastani',
+    'Any other Asian background',
+    'Black African',
+    'Black African American',
+    'Black Carribean',
+    'Any other Black background',
+    'Hispanic, Latino or Spanish Origin',
+    'White and Asian',
+    'White and Black ',
+    'Any other mixed/multiple ethnic background',
+    'White United Kingdom',
+    'White Romani',
+    'Any other White background',
+    'Arab',
+    'Any other ethnic group',
+    'Prefer not to say',
+  ],
+  // Point72: US categories with "(Not Hispanic or Latinx)"
+  p72: [
+    'African American or Black (Not Hispanic or Latinx)',
+    'Asian (Not Hispanic or Latinx)',
+    'Hispanic or Latinx',
+    'Multiracial',
+    'Native American Indian or Alaska Native (Not Hispanic or Latinx)',
+    'Other Pacific Islander (Not Hispanic or Latinx)',
+    'White or Caucasian',
+    'I choose not to provide this information',
+  ],
+  // Regions (Bot Auto)
+  regions: [
+    'Black or of African descent',
+    'East Asian',
+    'Hispanic, Latinx or of Spanish Origin',
+    'Indigenous, American Indian or Alaska Native',
+    'Middle Eastern or North African',
+    'Native Hawaiian or Pacific Islander',
+    'South Asian',
+    'Southeast Asian',
+    'White or European',
+    "I don't wish to answer",
+  ],
+  // Step one of a two-step form: just the groups.
+  groups: [
+    'Asian or Asian British',
+    'Black, Black British, Caribbean or African',
+    'Mixed or multiple ethnic groups',
+    'White',
+    'Other ethnic group',
+    'Prefer not to say',
+  ],
+};
+
+function race(answer, list) {
+  const p = student();
+  p.eeo.race = answer;
+  const options = Array.isArray(list) ? opts(...list) : list;
+  const i = matcher.matchOption(options, fields.resolve('eeo.race', p, {}));
+  return i < 0 ? null : options[i].text;
+}
+
+test('ethnicity: the most specific option offered, then up the hierarchy', () => {
+  const chinese = 'Asian – Chinese';
+  assert.equal(race(chinese, ETH.cra), 'Chinese - Chinese', 'never "Other Asian background"');
+  assert.equal(race(chinese, ETH.ons), 'Chinese');
+  assert.equal(race(chinese, ETH.maven), 'Asian Chinese');
+  assert.equal(race(chinese, ETH.regions), 'East Asian');
+  assert.equal(race(chinese, ETH.groups), 'Asian or Asian British');
+  assert.equal(race(chinese, ETH.us), 'Asian');
+  assert.equal(race(chinese, ETH.p72), 'Asian (Not Hispanic or Latinx)');
+  assert.equal(
+    race(chinese, ['Asian or Asian British – Chinese', 'Asian - Chinese', 'Chinese']),
+    'Asian or Asian British – Chinese',
+  );
+  assert.equal(race(chinese, ['Chinese', 'East Asian', 'Asian']), 'Chinese');
+  assert.equal(race(chinese, ['Asian/Pacific Islander', 'White']), 'Asian/Pacific Islander');
+  // Not listed: "Any other Asian background"; a region still beats it.
+  assert.equal(race('Asian – Filipino', ETH.cra), 'Asian or Asian British - Other Asian background');
+  assert.equal(race('Asian – Filipino', ETH.regions), 'Southeast Asian');
+  assert.equal(race('Asian – Indian', ETH.regions), 'South Asian');
+  assert.equal(race('Asian – Indian', ETH.maven), 'Asian Indian');
+  assert.equal(race('Asian – Pakistani', ETH.maven), 'Asian Pakastani');
+  // Black, Mixed, White, Arab, Indigenous.
+  assert.equal(race('Black – Caribbean', ETH.maven), 'Black Carribean');
+  assert.equal(race('Black – Caribbean', ETH.groups), 'Black, Black British, Caribbean or African');
+  assert.equal(race('Black – African', ETH.us), 'Black or African American');
+  assert.equal(race('Black – African American', ETH.cra), 'Black or Black British - Other Black background');
+  assert.equal(race('Mixed – White and Black African', ETH.maven), 'White and Black ');
+  assert.equal(race('Mixed – White and Asian', ETH.us), 'Two or More Races');
+  assert.equal(race('Mixed – White and Asian', ETH.p72), 'Multiracial');
+  const british = 'White – British (English / Welsh / Scottish / Northern Irish)';
+  assert.equal(race(british, ETH.ons), 'British');
+  assert.equal(race(british, ETH.cra), 'White - British - English, Scottish or Welsh');
+  assert.equal(race(british, ETH.maven), 'White United Kingdom');
+  assert.equal(race('White – Irish', ETH.ons), 'Irish', 'not Northern Irish');
+  assert.equal(race('White – Irish', ETH.maven), 'Any other White background');
+  assert.equal(race('White – Roma', ETH.maven), 'White Romani');
+  assert.equal(race('Middle Eastern – Arab', ETH.ons), 'Arab');
+  assert.equal(race('Middle Eastern – Arab', ETH.regions), 'Middle Eastern or North African');
+  assert.equal(race('Indigenous – Māori', ETH.us), null, 'never another indigenous people');
+  assert.equal(
+    race('Indigenous – American Indian or Alaska Native', ETH.p72),
+    'Native American Indian or Alaska Native (Not Hispanic or Latinx)',
+  );
+  assert.equal(race('Hispanic – Mexican', ETH.us), 'Hispanic or Latino');
+  assert.equal(race('Hispanic – Mexican', ETH.cra), null);
+  assert.equal(race('Any other ethnic group', ETH.cra), 'Other Ethnic group');
+  assert.equal(race('Prefer not to say', ETH.cra), 'Prefer not to say');
+  assert.equal(race('Prefer not to say', ETH.p72), 'I choose not to provide this information');
+  // <optgroup>s name the group of a bare "Other".
+  const grouped = [
+    { text: 'Chinese', value: 'c', group: 'Asian or Asian British' },
+    { text: 'Other', value: 'ao', group: 'Asian or Asian British' },
+    { text: 'African', value: 'b', group: 'Black or Black British' },
+    { text: 'Other', value: 'bo', group: 'Black or Black British' },
+  ];
+  const p = student();
+  p.eeo.race = 'Black – African American';
+  assert.equal(matcher.matchOption(grouped, fields.resolve('eeo.race', p, {})), 3);
+});
+
+test('ethnicity: old broad answers keep filling as before', () => {
+  assert.equal(race('Asian', ETH.us), 'Asian');
+  assert.equal(race('White', ETH.us), 'White');
+  assert.equal(race('Two or More Races', ETH.us), 'Two or More Races');
+  assert.equal(race('Black or African American', ETH.us), 'Black or African American');
+  assert.equal(race('Hispanic or Latino', ETH.us), 'Hispanic or Latino');
+  assert.equal(race('American Indian or Alaska Native', ETH.us), 'American Indian or Alaskan Native');
+  assert.equal(race('Native Hawaiian or Other Pacific Islander', ETH.us), 'Native Hawaiian or Other Pacific Islander');
+  assert.equal(race('Decline to answer', ETH.us), 'Decline To Self Identify');
+  assert.equal(race('Asian', ETH.groups), 'Asian or Asian British');
+  assert.equal(race('White', ETH.p72), 'White or Caucasian');
+  // A broad answer never guesses a subgroup.
+  assert.equal(race('Asian', ETH.cra), null);
+  assert.equal(race('Asian', ETH.ons), null);
+});
+
+test('a Hispanic / Latino ethnicity answers the separate Hispanic question', () => {
+  const p = student();
+  p.eeo.race = 'Hispanic – Mexican';
+  assert.equal(fields.resolve('eeo.hispanic', p, {}).text, 'Yes');
+  p.eeo.hispanic = 'No';
+  assert.equal(fields.resolve('eeo.hispanic', p, {}).text, 'No', 'an explicit answer wins');
+  p.eeo.hispanic = '';
+  p.eeo.race = 'Asian – Chinese';
+  assert.equal(fields.resolve('eeo.hispanic', p, {}), null);
+});
+
+test('settings offer every detailed ethnicity, grouped', () => {
+  const groups = fields.ETHNICITY_CHOICES;
+  const labels = groups.map((g) => g.label);
+  for (const l of [
+    'Asian / Asian British',
+    'White',
+    'Mixed / Multiple ethnic groups',
+    'Indigenous',
+    'Hispanic / Latino',
+  ])
+    assert.ok(labels.includes(l), l);
+  const all = groups.flatMap((g) => g.items);
+  for (const v of [
+    'Asian – Chinese',
+    'Asian – Nepali',
+    'White – Gypsy or Irish Traveller',
+    'Indigenous – Māori',
+    'Any other ethnic group',
+  ])
+    assert.ok(all.includes(v), v);
+  // Every choice reads back as its own group.
+  for (const g of groups) for (const v of g.items) assert.ok(fields.parseEthnicity(v), v);
+});
+
+test('diversity answers pick the right option, with polarity ("I am not a carer")', () => {
+  const p = student();
+  Object.assign(p.eeo, {
+    freeSchoolMeals: 'Not applicable',
+    carer: 'No',
+    careLeaver: 'Yes',
+    religion: 'No religion or belief',
+    sexualOrientation: 'Bisexual',
+    genderIdentitySame: 'Yes',
+    neurodivergent: 'Prefer not to say',
+  });
+  const pick = (type, q, list) => {
+    const options = opts(...list);
+    const i = matcher.matchOption(options, ask(p, type, q));
+    return i < 0 ? null : options[i].text;
+  };
+  const fsm = [
+    'Yes',
+    'No',
+    'Not applicable (finished school before 1980 or went to school outside of the United Kingdom)',
+    "I don't know",
+    'Prefer not to say',
+  ];
+  assert.equal(pick('eeo.freeSchoolMeals', 'Were you eligible for free school meals?', fsm), fsm[2]);
+  p.eeo.freeSchoolMeals = 'I don’t know';
+  assert.equal(pick('eeo.freeSchoolMeals', 'Were you eligible for free school meals?', fsm), "I don't know");
+  assert.equal(pick('eeo.carer', 'Are you a carer?', ['I am a carer', 'I am not a carer']), 'I am not a carer');
+  assert.equal(
+    pick('eeo.careLeaver', 'Have you been in care?', ['I have been in care', 'I have not been in care']),
+    'I have been in care',
+  );
+  const religions = [
+    'No religion or belief/Atheist',
+    'Buddhist',
+    'Christian',
+    'Any other religion or belief',
+    'Prefer not to say',
+  ];
+  assert.equal(pick('eeo.religion', 'What is your religion or belief?', religions), religions[0]);
+  assert.equal(
+    pick('eeo.sexualOrientation', 'What is your sexual orientation?', ['Bi', 'Gay/Lesbian', 'Heterosexual/straight']),
+    'Bi',
+  );
+  assert.equal(
+    pick('eeo.genderIdentitySame', 'Is your gender identity the same as the sex registered at birth?', ['Yes', 'No']),
+    'Yes',
+  );
+  assert.equal(pick('eeo.genderIdentitySame', 'Do you identify as transgender?', ['Yes', 'No']), 'No');
+  assert.equal(pick('eeo.lgbt', 'Do you identify as LGBTQIA?', ['Yes', 'No', 'Prefer not to say']), 'Yes');
+  assert.equal(pick('eeo.neurodivergent', 'Neurodivergent?', ['Yes', 'No', 'Prefer not to say']), 'Prefer not to say');
+  p.eeo.postcodeAt14 = 'M1 1AA';
+  assert.equal(ask(p, 'eeo.postcodeAt14', 'Postcode at 14').text, 'M1 1AA');
+});
+
+test('conflicts of interest: you, your family or both; details only after a Yes', () => {
+  const p = student();
+  const combined =
+    'Are you, or is any immediate family member, a current or former government official, public official, or employee of a state-owned entity?';
+  assert.equal(ask(p, 'compliance.government', combined), null, 'nothing answered: left for you');
+  p.compliance.governmentOfficial = 'No';
+  assert.equal(ask(p, 'compliance.government', combined), null, 'family unknown');
+  p.compliance.familyGovernmentOfficial = 'No';
+  assert.equal(ask(p, 'compliance.government', combined).text, 'No');
+  assert.equal(ask(p, 'compliance.government', 'Are you a politically exposed person (PEP)?').text, 'No');
+  p.compliance.familyGovernmentOfficial = 'Yes';
+  p.compliance.governmentDetails = 'My father is a local councillor.';
+  assert.equal(ask(p, 'compliance.government', combined).text, 'Yes');
+  assert.equal(ask(p, 'compliance.government', 'Are you a politically exposed person?').text, 'No', 'about you only');
+  assert.equal(ask(p, 'compliance.government', 'Were your parents involved in government?').text, 'Yes');
+  assert.equal(
+    ask(p, 'compliance.government', 'Do you or a family member have a government connection? If yes, explain', {
+      kind: 'textarea',
+    }).text,
+    'My father is a local councillor.',
+  );
+  // "If yes, please give details" after the question.
+  const page = [
+    desc({ question: combined }, { kind: 'radio', options: opts('Yes', 'No') }),
+    desc('If yes, please give details', { kind: 'textarea' }),
+    desc({ question: 'Do you have any relatives working for us?' }, { kind: 'radio', options: opts('Yes', 'No') }),
+    desc('If yes, please provide their name and relationship'),
+  ];
+  const plan = matcher.plan(page, p);
+  assert.deepEqual(
+    plan.results.map((r) => r && r.type),
+    ['compliance.government', 'compliance.governmentDetails', 'compliance.relatives', 'compliance.relativesDetails'],
+  );
+  const q = (i) => util.normalize(matcher.questionText(page[i]));
+  assert.equal(
+    fields.resolve('compliance.governmentDetails', p, { question: q(1) }).text,
+    'My father is a local councillor.',
+  );
+  p.compliance.relatives = 'No';
+  p.compliance.relativesDetails = 'Should not appear';
+  assert.equal(fields.resolve('compliance.relativesDetails', p, { question: q(3) }), null, 'stays empty after a No');
+  assert.equal(fields.resolve('compliance.relatives', p, { question: q(2), kind: 'text' }).text, 'No');
+});

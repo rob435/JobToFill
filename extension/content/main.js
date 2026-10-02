@@ -230,35 +230,34 @@
     // Exactly which fields were filled (a follow-up box can share its type with the question it follows).
     const filledKeys = new Set();
     const keyOf = (r, question) => [r.type, r.index || 0, r.part || '', question].join('|');
-    for (const i of order) {
-      const field = fields[i];
-      const r = results[i];
+    /** Fill one field from the profile; `count` adds what it asks about to the report's lists. */
+    const fillOne = async (field, r, { count = true } = {}) => {
       if (!r || !r.type) {
-        report.unknown++;
-        continue;
+        if (count) report.unknown++;
+        return null;
       }
       if (r.type === 'file.coverLetter' || r.type === 'coverLetter') report.wantsLetter = true;
-      if (only && !only.has(r.type)) continue;
+      if (only && !only.has(r.type)) return null;
       report.detected++;
       const def = JTF.fields.DEFS[r.type];
       const label = labelFor(field, r);
       const question = U.normalize(JTF.matcher.questionText(field.desc));
       if (def && def.consent && !settings.consents) {
         if (!JTF.fill.hasValue(field)) report.consents++;
-        continue;
+        return null;
       }
       if (uploaded && !settled && field.kind !== 'file') {
         await settle();
         settled = true;
       }
       const v = await valueFor(field, r, def, question);
-      if (v && r.type !== 'custom' && FOLLOW_UP.test(question) && v.canonical !== 'yes') continue;
+      if (v && r.type !== 'custom' && FOLLOW_UP.test(question) && v.canonical !== 'yes') return null;
       if (!v) {
-        if (!(def && def.secret)) {
+        if (count && !(def && def.secret)) {
           report.missing.push(label);
           report.missingTypes.push(r.type);
         }
-        continue;
+        return null;
       }
       const res = await JTF.fill.apply(field, v, {
         overwrite: settings.overwrite || !!payload.force,
@@ -276,7 +275,9 @@
         report.failed++;
         report.unmatched.push(label);
       }
-    }
+      return res.status;
+    };
+    for (const i of order) await fillOne(fields[i], results[i]);
 
     // A late CV parse can still clear or re-render fields after they were filled: fill those again.
     if (uploaded && filledKeys.size) {
@@ -300,6 +301,24 @@
           if (settings.highlight !== false) JTF.fill.highlight(res.target || field.el);
         }
       }
+    }
+    // Answers can reveal more questions: the ethnicity subgroup once the group is picked, "If yes,
+    // please give details", the country once "Yes, I need sponsorship" is chosen. Fill fields that
+    // weren't on the page before, a couple of rounds at most.
+    const seen = new Set(fields.map((f) => f.el));
+    for (let round = 0; round < 2 && filledKeys.size; round++) {
+      await settle(1500, 300);
+      const next = scan(profile);
+      const fresh = next.fields
+        .map((field, i) => [field, next.results[i]])
+        .filter(([field]) => !seen.has(field.el) && field.kind !== 'file' && !JTF.fill.hasValue(field));
+      next.fields.forEach((f) => seen.add(f.el));
+      let added = 0;
+      for (const [field, r] of fresh) {
+        if ((await fillOne(field, r, { count: false })) === 'filled') added++;
+      }
+      report.revealed = (report.revealed || 0) + added;
+      if (!added) break;
     }
     report.missing = [...new Set(report.missing)];
     report.missingTypes = [...new Set(report.missingTypes)];

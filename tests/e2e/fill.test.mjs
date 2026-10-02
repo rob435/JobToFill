@@ -340,6 +340,70 @@ test('Pinpoint custom questions: Yes/No inside a page-wide fieldset, school vs d
   await page.close();
 });
 
+test('UK diversity page: two-step ethnicity, 2011-style list, background and conflict-of-interest questions', async () => {
+  const original = await h.profile();
+  try {
+    await h.setProfile({
+      eeo: {
+        ...original.eeo,
+        race: 'Asian – Chinese',
+        hispanic: '',
+        sexualOrientation: 'Bisexual',
+        genderIdentitySame: 'Yes',
+        religion: 'No religion or belief',
+        neurodivergent: 'No',
+        freeSchoolMeals: 'Not applicable',
+        careLeaver: 'No',
+        carer: 'No',
+        refugee: 'No',
+        bursary: 'Yes',
+        postcodeAt14: 'M1 1AA',
+      },
+      compliance: {
+        previouslyEmployed: 'No',
+        relatives: 'No',
+        relativesDetails: 'Should stay out',
+        governmentOfficial: 'No',
+        familyGovernmentOfficial: 'Yes',
+        governmentDetails: 'My mother is a local councillor.',
+      },
+    });
+    const page = await h.open('diversity.html');
+    const r = await h.fill(page);
+    assert.equal(r.error, undefined);
+    assert.equal(await selectedText(page, '#eth_group'), 'Asian or Asian British', 'step one: the group');
+    assert.equal(
+      await page.$eval(
+        '#eth_background',
+        (s) => s.options[s.selectedIndex].text + ' / ' + s.options[s.selectedIndex].parentElement.label,
+      ),
+      'Chinese / Asian or Asian British',
+      'step two: the subgroup',
+    );
+    assert.equal(await selectedText(page, '#cra'), 'Chinese - Chinese', 'never "Other Asian background"');
+    assert.equal(await selectedText(page, '#orientation'), 'Bi');
+    assert.equal(await checked(page, '#same-yes'), true);
+    assert.equal(await selectedText(page, '#religion'), 'No religion or belief/Atheist');
+    assert.equal(await checked(page, '#neuro-no'), true);
+    assert.equal(await checked(page, '#fsm-na'), true);
+    assert.equal(await checked(page, '#care-no'), true, '"I have not been in care"');
+    assert.equal(await checked(page, '#carer-no'), true, '"I am not a carer"');
+    assert.equal(await checked(page, '#refugee-no'), true);
+    assert.equal(await selectedText(page, '#export'), 'Select...', 'refugee answer never used for work authorisation');
+    assert.equal(await checked(page, '#bursary-yes'), true);
+    assert.equal(await value(page, '#pc14'), 'M1 1AA');
+    assert.equal(await value(page, '#pc'), '94105', 'the current postcode is still yours');
+    assert.equal(await checked(page, '#gov-yes'), true, 'a family member is: Yes');
+    assert.equal(await value(page, '#gov_details'), 'My mother is a local councillor.');
+    assert.equal(await checked(page, '#rel-no'), true);
+    assert.equal(await value(page, '#rel_details'), '', 'details stay empty after a No');
+    assert.equal(await checked(page, '#prev-no'), true);
+    await page.close();
+  } finally {
+    await h.setProfile({ eeo: original.eeo, compliance: original.compliance });
+  }
+});
+
 test('cross-origin iframe (embedded application) is filled', async () => {
   const page = await h.open('embed.html');
   const frame = await frameWith(page, '127.0.0.1', '#first_name');
@@ -724,4 +788,30 @@ test('Pinpoint-style react-select: own input ids, read-only dropdowns, options w
   assert.equal(state.application_form_equality_monitoring_age_bracket, '35-44');
   assert.ok(!r.unmatched.includes('Gender'), JSON.stringify(r.unmatched));
   await page.close();
+});
+
+test('questions that appear after an answer are filled too: ethnic background, "if yes" details', async () => {
+  const original = await h.profile();
+  try {
+    await h.setProfile({
+      eeo: { ...original.eeo, race: 'Asian – Chinese' },
+      compliance: {
+        ...original.compliance,
+        governmentOfficial: 'No',
+        familyGovernmentOfficial: 'Yes',
+        governmentDetails: 'My mother is a local councillor.',
+      },
+    });
+    const page = await h.open('reveal.html');
+    const r = await h.fill(page);
+    assert.equal(r.error, undefined);
+    assert.equal(await page.$eval('#group', (s) => s.value), 'Asian or Asian British');
+    assert.equal(await page.$eval('#background', (s) => s.value), 'Chinese', 'the question that appeared');
+    assert.equal(await page.$eval('input[name=family_gov][value=yes]', (i) => i.checked), true);
+    assert.equal(await page.$eval('#gov_details', (t) => t.value), 'My mother is a local councillor.');
+    assert.ok(r.revealed >= 2, JSON.stringify(r));
+    await page.close();
+  } finally {
+    await h.setProfile({ eeo: original.eeo, compliance: original.compliance });
+  }
 });
