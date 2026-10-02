@@ -206,8 +206,11 @@
   /**
    * The letter chosen for the application open in this tab: the same page, a page of the same job (its id is
    * in the address), or the next step of the same application (same tab and site, a few hours on).
+   * Some sites send every applicant to one address (apply.careers.hsbc.com/), so an address that doesn't
+   * name the job only counts in the same tab, and not once the tab has moved on to another job's page
+   * (`trail`: the job pages the tab showed, with when).
    */
-  async function letterFor({ tabId, url }) {
+  async function letterFor({ tabId, url, trail }) {
     if (!url) return null;
     let u;
     try {
@@ -217,19 +220,38 @@
     }
     const now = Date.now();
     const path = (x) => x.replace(/[?#].*$/, '').replace(/\/+$/, '');
-    const hostOf = (x) => {
+    const parse = (x) => {
       try {
-        return new URL(x).hostname;
+        return new URL(x);
       } catch (err) {
         return null;
       }
     };
+    const ID = /\d{5,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/gi;
+    const named = (l) => {
+      const p = (parse(l.url) || {}).pathname || '';
+      const last = p.split('/').filter(Boolean).pop() || '';
+      return (
+        /\d{4,}|[0-9a-f]{8}-[0-9a-f]{4}/i.test(p) ||
+        (l.jobIds || []).some((id) => id && id.length >= 4 && p.includes(id)) ||
+        last.split(/[-_]+/).length >= 3
+      );
+    };
+    // A job page with another job's id, opened in this tab after the letter was chosen.
+    const movedOn = (l) =>
+      (trail || []).some((t) => {
+        if (!t || !t.url || t.at <= l.attachedAt || path(t.url) === path(l.url)) return false;
+        const p = (parse(t.url) || {}).pathname || '';
+        if (!/\/(jobs?|postings?|vacanc\w*|positions?|opportunit\w*|requisitions?|roles?)\b/i.test(p)) return false;
+        const known = [...(l.jobIds || []), (l.posting && l.posting.url) || ''].join(' ');
+        return (p.match(ID) || []).some((id) => !known.includes(id));
+      });
     for (const l of await getLetters()) {
       if (!l.attachedAt || now - l.attachedAt > LETTER_TTL) continue;
-      if (hostOf(l.url) !== u.hostname) continue;
-      if (path(l.url) === path(url)) return l;
+      if (((parse(l.url) || {}).hostname || null) !== u.hostname) continue;
+      if (path(l.url) === path(url) && named(l)) return l;
       if ((l.jobIds || []).some((id) => id && id.length >= 4 && url.includes(id))) return l;
-      if (l.tabId === tabId && now - l.attachedAt < 6 * 3600000) return l;
+      if (l.tabId === tabId && now - l.attachedAt < 6 * 3600000 && !movedOn(l)) return l;
     }
     return null;
   }

@@ -247,6 +247,33 @@ test('store: a chosen letter follows its application across pages, not to other 
   assert.deepEqual(await store.getLetters(), []);
 });
 
+test('store: one application address for every job (HSBC) never carries a letter to another job', async () => {
+  const at = Date.now() - 60000;
+  const a = await store.saveLetter({
+    profileId: 'p',
+    url: 'https://apply.careers.hsbc.com/',
+    tabId: 3,
+    attachedAt: at,
+    jobIds: ['1373565757'],
+    posting: { url: 'https://apply.careers.hsbc.com/emergingtalent/job/London-Relationship-Management/1373565757/' },
+  });
+  const find = (tabId, url, trail) => store.letterFor({ tabId, url, trail }).then((l) => l && l.id);
+  const root = 'https://apply.careers.hsbc.com/';
+  assert.equal(await find(3, root), a.id, 'the same tab, still on that application');
+  assert.equal(await find(4, root), null, 'the same address in another tab is another job');
+  const own = [
+    { url: a.posting.url, at: at - 5000 },
+    { url: `${root}step/2`, at: at + 1000 },
+  ];
+  assert.equal(await find(3, root, own), a.id, 'its own job page and later steps');
+  const other = [
+    ...own,
+    { url: 'https://apply.careers.hsbc.com/emergingtalent/job/London-Markets/1373576757/', at: Date.now() },
+  ];
+  assert.equal(await find(3, root, other), null, 'the tab moved on to another job');
+  await store.removeLetter(a.id);
+});
+
 test('geo and util helpers', () => {
   assert.equal(geo.findCountry('U.S.A.')[0], 'US');
   assert.equal(geo.findCountry('Deutschland')[0], 'DE');

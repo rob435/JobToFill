@@ -699,13 +699,16 @@ async function tailorCv() {
 async function previousLetter() {
   const ids = new Set([...((state.context && state.context.jobIds) || []), ...(state.job.posting.jobIds || [])]);
   const postingUrl = state.job.posting.url;
+  // The same application address isn't enough: some sites use one address for every job.
+  const title = util.normalize(state.job.posting.title || '');
+  const sameTitle = (l) => !!title && !!l.posting && util.normalize(l.posting.title || '') === title;
   return (
     (await store.getLetters()).find(
       (l) =>
         l.profileId === state.profile.id &&
         l.letter &&
         l.analysis &&
-        ((state.context && l.url === state.context.url) ||
+        ((state.context && l.url === state.context.url && sameTitle(l)) ||
           (postingUrl && l.posting && l.posting.url === postingUrl) ||
           (l.jobIds || []).some((id) => id && id.length >= 4 && ids.has(id))),
     ) || null

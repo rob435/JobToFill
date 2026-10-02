@@ -113,7 +113,7 @@ const docMeta = (d) => (d ? { name: d.name, size: d.size, type: d.type, updatedA
 async function fillPayload(tabId) {
   const { profile, settings } = await store.getActive();
   const tab = await api.tabs.get(tabId).catch(() => null);
-  const letter = await store.letterFor({ tabId, url: tab && tab.url });
+  const letter = await store.letterFor({ tabId, url: tab && tab.url, trail: await readTrail(tabId) });
   const docs = await store.docInfo(profile.id);
   let filled = profile;
   if (letter && letter.profileId === profile.id) {
