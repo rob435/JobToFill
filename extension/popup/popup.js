@@ -224,7 +224,9 @@ function renderAi(run) {
       body.push(
         el('p', {
           className: 'result-list',
-          textContent: 'Outlined in dashed orange on the page. Read each one before you submit.',
+          textContent:
+            'Outlined in dashed orange on the page. Read each one before you submit.' +
+            (run.cost ? ` (AI cost: $${run.cost.toFixed(4)})` : ''),
         }),
       );
     const items = (run.items || []).filter((i) => i.filled);

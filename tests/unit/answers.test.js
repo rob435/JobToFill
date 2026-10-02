@@ -54,6 +54,10 @@ test('withheld: diversity, declarations and ID numbers never go; legal and healt
   assert.equal(w('Do you consider yourself to be from a lower socio-economic background?'), 'eeo');
   assert.equal(w('Which best describes you?', { options: ['Male', 'Female', 'Non-binary'] }), 'eeo');
   assert.equal(w('Ethnicity', { section: 'UK Diversity Question Set' }), 'eeo');
+  assert.equal(w('Geschlecht'), 'eeo');
+  assert.equal(w('Origine ethnique'), 'eeo');
+  assert.equal(w('¿Tiene alguna discapacidad?'), 'eeo');
+  assert.equal(w('Warum möchten Sie bei uns arbeiten?'), null);
   assert.equal(w('I agree to the privacy notice', { kind: 'checkbox' }), 'consent');
   assert.equal(w('By ticking this box I confirm the information is true and accurate'), 'consent');
   assert.equal(w('Please provide your National Insurance number'), 'identity');

@@ -31,6 +31,9 @@
   // Never sent to the model: diversity monitoring (opt-in, in the profile), declarations, identity numbers.
   const EEO =
     /\b(gender|sex|ethnic\w*|race|racial|sexual orientation|sexuality|religio\w*|faith|disabilit\w*|disabled|veteran|military service|transgender|lgbt\w*|pronouns?|marital|pregnan\w*|caring responsibilit\w*|carer|free school meals|socio ?economic|social mobility|household earner|first generation|parents? (or guardians? )?(have|has|went|attended|completed|education|degree|occupation)|type of school|school did you (mainly )?attend|diversity|equal (employment )?opportunit\w*|eeo|demographic|hispanic|latin[aox]|age range|age group|neurodiver\w*|refugee|asylum|care leaver|been in care|bursary)\b/;
+  // The same in German, French, Spanish, Dutch and Italian forms (normalised: no accents).
+  const EEO_INTL =
+    /\b(geschlecht|ethnisch\w*|herkunft|behinderung|schwerbehindert\w*|religion|konfession|sexuelle orientierung|sexe|genre|origine (ethnique|sociale)|ethnique|handicap|orientation sexuelle|situation de handicap|genero|etnia|origen etnico|discapacidad|orientacion sexual|geslacht|etniciteit|afkomst|beperking|seksuele orientatie|genere|etnia|disabilita|orientamento sessuale|diversit[ae]t?)\b/;
   const CONSENT =
     /^(i |by (ticking|checking|clicking|submitting|signing)|please (confirm|acknowledge|tick|check) (that )?(you (have )?(read|understand|agree|consent|accept|acknowledge))|acknowledg|agree|consent)|\b(i (hereby )?(confirm|agree|consent|acknowledge|accept|certify|declare|understand|authori[sz]e|attest)|declaration|signature|e ?signature|sign (here|below)|privacy (notice|policy|statement)|terms (and|&) conditions|terms of use|data protection|gdpr|i have read|ai (usage )?policy|true (and|&) (accurate|complete|correct)|accurate (and|&) complete)\b/;
   const IDENTITY =
@@ -55,7 +58,11 @@
     const text = norm([item.question, item.section, item.help].filter(Boolean).join(' '));
     const options = norm((item.options || []).join(' '));
     if (IDENTITY.test(norm(item.question))) return 'identity';
-    if (EEO.test(norm(item.question)) || (EEO.test(norm(item.section)) && !/\b(education|experience)\b/.test(text)))
+    if (
+      EEO.test(norm(item.question)) ||
+      EEO_INTL.test(norm(item.question)) ||
+      (EEO.test(norm(item.section)) && !/\b(education|experience)\b/.test(text))
+    )
       return 'eeo';
     // "Male / Female / Non-binary" or "White / Black / Asian" are monitoring questions whatever the label says.
     if (/\b(male|female|non binary)\b.*\b(male|female|non binary)\b|\bwhite\b.*\b(black|asian)\b/.test(options))
@@ -205,6 +212,7 @@
       '- About the employer and the role, use the JOB POSTING and COMPANY notes. Widely known facts about what the employer does are fine; specific numbers, dates, deals, products, offices or people only when the posting has them.',
       '- When a question asks for a fact the material and guidance don’t give (a score, an ID, a referee or referrer, a past application, a relative, an offer, a visa detail, a grade not stated, a criminal, regulatory or health matter), skip it. Never guess about the candidate.',
       '- Previous answers were written for other employers: reuse their facts and voice, never another employer’s name or reasons.',
+      '- Never answer diversity or equal-opportunity monitoring (gender, ethnicity, disability, religion, sexuality, social background, in any language), declarations, consents or signatures: skip them.',
       '',
       'Choice questions (with "options"):',
       '- Answer with the exact text of one option, or for "multi" a list of option texts. Never anything that isn’t an option.',

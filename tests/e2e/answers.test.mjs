@@ -217,3 +217,15 @@ test('a question an AI answer brings up ("If yes, which firm…") is answered in
   assert.equal(r.ai.filled, 2, JSON.stringify(r.ai.items));
   await page.close();
 });
+
+test('the job behind an application is found for the AI on a linked HTML page (offscreen document in Chromium)', async () => {
+  const page = await h.open('letters/apply.html?job=R-1234');
+  const job = await h.bg((id) => globalThis.JTFBackground.jobFor(id), await h.tabId(page));
+  assert.equal(job.company, 'Acme Capital');
+  assert.match(job.title, /Operations Analyst/);
+  assert.match(job.description, /Reconcile trades and positions every day/);
+  // Remembered for the next step of the same application.
+  const cached = await h.bg((id) => globalThis.JTF.store.getTabJob(id), await h.tabId(page));
+  assert.match(cached.job.description, /Reconcile trades/);
+  await page.close();
+});
