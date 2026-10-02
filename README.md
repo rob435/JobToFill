@@ -175,7 +175,7 @@ Implemented ✅ · Ideas for later 💡
 - Sections that only appear after clicking _Add another_ aren't added automatically yet.
 - It can't fill CAPTCHAs or closed shadow roots, and won't run on browser pages or extension stores.
 - The cover letter writer needs an AI provider account (OpenRouter, DeepSeek or similar). Its checks catch invented numbers, skills, names and claims, but read the letter before you send it: the AI can still describe something more strongly than you would.
-- Job descriptions behind a login (some Workday, Oracle or SuccessFactors sites) can't always be fetched. Open the job page and start from there, or paste the description.
+- The job description is found and checked for about 93% of live postings tested (124 graduate and internship roles across 15+ job sites). SuccessFactors career sites and a few employers (e.g. Amazon) send _Apply_ to a sign-in page that drops the job's ID: start from the job's page, switch on the browsing-history search, or paste the description.
 - CV text is read from text-based PDFs and Word files. Scanned (image-only) PDFs have no text to read.
 
 ## Development
