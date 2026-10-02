@@ -25,6 +25,34 @@ const CHOICES = {
   hispanic: [...YES_NO, DECLINE],
   veteran: [NONE, ['No', 'I am not a protected veteran'], ['Yes', 'I identify as a protected veteran'], DECLINE],
   disability: [NONE, ['No', 'No, I don’t have a disability'], ['Yes', 'Yes, I have a disability'], DECLINE],
+  // UK social-mobility monitoring (the Social Mobility Commission's standard questions)
+  schoolType: [
+    NONE,
+    ...same([
+      'State school (non-selective)',
+      'State school (selective)',
+      'Independent / fee-paying school',
+      'Independent school with a 90%+ bursary',
+      'School outside the UK',
+    ]),
+    DECLINE,
+  ],
+  freeSchoolMeals: [...YES_NO, ['Not applicable', 'Not applicable'], DECLINE],
+  parentsDegree: [NONE, ['Yes', 'Yes, at least one has a degree'], ['No', 'No'], DECLINE],
+  parentOccupation: [
+    NONE,
+    ...same([
+      'Professional',
+      'Manager / administrator',
+      'Clerical / intermediate',
+      'Technical / craft',
+      'Routine / semi-routine',
+      'Long-term unemployed',
+      'Small business owner',
+      'Other / not applicable',
+    ]),
+    DECLINE,
+  ],
 };
 
 // prettier-ignore
@@ -181,7 +209,7 @@ const FORMS = {
   eeo: {
     title: 'Voluntary disclosures',
     intro:
-      'US employers ask these for equal-opportunity reporting. Answering is voluntary and never affects your application. ' +
+      'Employers ask these for equal-opportunity and social-mobility reporting. Answering is voluntary and never affects your application. ' +
       'Leave a question on “— don’t fill —” to answer it yourself each time.',
     groups: [
       {
@@ -192,6 +220,29 @@ const FORMS = {
           f('eeo.hispanic', 'Hispanic or Latino?', { type: 'select', options: CHOICES.hispanic }),
           f('eeo.veteran', 'Veteran status', { type: 'select', options: CHOICES.veteran }),
           f('eeo.disability', 'Disability status', { type: 'select', options: CHOICES.disability }),
+        ],
+      },
+      {
+        title: 'UK social mobility',
+        hint: 'UK employers ask these to see how open their hiring is. They are about your background, not your merit.',
+        fields: [
+          f('eeo.schoolType', 'School you mainly attended, age 11–16', {
+            type: 'select',
+            options: CHOICES.schoolType,
+          }),
+          f('eeo.freeSchoolMeals', 'Eligible for free school meals?', {
+            type: 'select',
+            options: CHOICES.freeSchoolMeals,
+          }),
+          f('eeo.parentsDegree', 'Does a parent or guardian have a university degree?', {
+            type: 'select',
+            options: CHOICES.parentsDegree,
+            hint: '“First in your family to go to university?” is answered from this too.',
+          }),
+          f('eeo.parentOccupation', 'Main household earner’s job when you were about 14', {
+            type: 'select',
+            options: CHOICES.parentOccupation,
+          }),
         ],
       },
     ],

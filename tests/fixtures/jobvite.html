@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Jobvite-style apply page</title>
+    <style>
+      body { font: 15px system-ui; margin: 40px; }
+      .hidden-input { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }
+      .ng-hide { display: none; }
+    </style>
+  </head>
+  <body>
+    <!-- Reduced from jobs.jobvite.com: each "Select" button opens a popup that Jobvite appends to <body>, in
+         button order. The popups hold the real file inputs, labelled only "File". -->
+    <form id="apply">
+      <h3 id="jv-resume-header">Add Resume*</h3>
+      <button type="button" jv-add-attachment attachment-label="Resume" aria-labelledby="jv-resume-header">Select</button>
+      <h3>Add Cover Letter</h3>
+      <button type="button" jv-add-attachment attachment-label="Cover Letter">Select</button>
+      <p><label for="jv-field-a">First Name</label> <input id="jv-field-a" name="input-a" /></p>
+      <p><label for="jv-field-b">Last Name</label> <input id="jv-field-b" name="input-b" /></p>
+      <p><label for="jv-field-c">Email</label> <input id="jv-field-c" name="input-c" /></p>
+    </form>
+    <div class="jv-add-attachment ng-hide" id="attachmentDropdown" role="dialog" aria-label="Attachment Options">
+      <div class="jv-add-attachment-item"><span role="button">Dropbox</span></div>
+      <div class="jv-add-attachment-item">
+        <label for="file-input-0"><span role="button">File</span></label
+        ><input id="file-input-0" type="file" class="hidden-input" />
+      </div>
+    </div>
+    <div class="jv-add-attachment ng-hide" id="attachmentDropdown" role="dialog" aria-label="Attachment Options">
+      <div class="jv-add-attachment-item"><span role="button">Dropbox</span></div>
+      <div class="jv-add-attachment-item">
+        <label for="file-input-1"><span role="button">File</span></label
+        ><input id="file-input-1" type="file" class="hidden-input" />
+      </div>
+    </div>
+  </body>
+</html>

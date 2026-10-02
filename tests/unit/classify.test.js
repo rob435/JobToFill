@@ -307,3 +307,377 @@ test('options refine the guess', () => {
   );
   assert.equal(typeOf(desc({ label: 'Date of birth', placeholder: 'DD/MM/YYYY' })), 'dob');
 });
+
+test('student and graduate-scheme questions', () => {
+  const ask = (label, kind, options) =>
+    typeOf(desc({ question: label }, { kind: kind || 'text', options: options ? opts(...options) : null }));
+  const years = ['1st year', '2nd year', 'Final year'];
+  assert.equal(ask('When does your course finish?'), 'edu.end');
+  assert.equal(ask('When are you graduating?'), 'edu.end');
+  assert.equal(ask('Did you graduate?', 'radio', ['Yes', 'No']), null);
+  assert.equal(ask('High school graduation year'), null, 'school leaving year is not your degree');
+  assert.equal(ask('A level completion year'), null);
+  assert.equal(ask('What year of study are you in?', 'select', years), 'edu.year');
+  assert.equal(ask('Current year of study', 'select', years), 'edu.year');
+  assert.equal(ask('Class standing', 'select', ['Freshman', 'Sophomore', 'Junior', 'Senior']), 'edu.year');
+  assert.equal(ask('Year of university entry', 'select'), null, 'the year you started is not your year of study');
+  assert.equal(ask('Degree classification', 'select', ['First', '2:1', '2:2']), 'edu.gpa');
+  assert.equal(ask('Predicted degree class', 'select', ['First', '2:1', '2:2']), 'edu.gpa');
+  // Social-mobility questions mention "school" but ask about your background, not your university.
+  assert.equal(ask('Did you receive free school meals?', 'select', ['Yes', 'No']), 'eeo.freeSchoolMeals');
+  assert.equal(
+    ask('What type of school did you attend between the ages of 11 and 16?', 'select', [
+      'State-run or state-funded school',
+      'Independent or fee-paying school',
+    ]),
+    'eeo.schoolType',
+  );
+  assert.equal(ask('I confirm that I will graduate in 2027', 'radio', ['Yes', 'No']), 'edu.end');
+  assert.equal(ask('I confirm that I will graduate in 2027', 'checkbox'), 'edu.end');
+  assert.equal(
+    ask(
+      'Tell us about a time you used university resources to solve a problem in your school or college life',
+      'textarea',
+    ),
+    null,
+    'an essay question is not the school name',
+  );
+});
+
+test('work history, start dates and locations', () => {
+  const ask = (label, kind, options) =>
+    typeOf(desc({ question: label }, { kind: kind || 'text', options: options ? opts(...options) : null }));
+  assert.equal(ask('Employment start date'), 'exp.start');
+  assert.equal(ask('Employment end date'), 'exp.end');
+  assert.equal(ask('Employer location'), 'exp.location');
+  assert.equal(ask('Company city'), 'exp.location');
+  assert.equal(ask('Preferred employment start date'), null);
+  assert.equal(ask('Is your contract open ended?', 'textarea'), null);
+  assert.equal(ask('Preferred start date'), 'job.startDate');
+  assert.equal(ask('Start date for the internship'), 'job.startDate');
+  assert.equal(ask('When are you able to start?'), 'job.startDate');
+  assert.equal(ask('When will you be available to start?'), 'job.startDate');
+  assert.equal(ask('Where would you be willing to relocate?', 'select'), 'job.locations');
+  assert.equal(ask('How did you connect with us?', 'select'), 'job.referralSource');
+});
+
+test('contact and identity questions that only look like personal fields', () => {
+  const ask = (label, kind, options) =>
+    typeOf(desc({ question: label }, { kind: kind || 'text', options: options ? opts(...options) : null }));
+  assert.equal(ask('Business phone'), null);
+  assert.equal(ask('Company phone number'), null);
+  assert.equal(ask('I consent to receive SMS text messages to my phone', 'checkbox'), null);
+  assert.equal(ask('State'), 'address.state');
+  assert.equal(ask('Please state your notice period'), 'job.noticePeriod');
+  assert.equal(ask('Please state any reasonable adjustments you require', 'textarea'), null);
+  assert.equal(ask('Nationality', 'select'), 'nationality');
+  assert.equal(ask('Do you hold any other citizenships?', 'select', ['Yes', 'No']), null);
+  assert.equal(ask('Dual nationality'), null);
+  assert.equal(ask('Pronouns'), 'pronouns');
+  assert.equal(ask('How do you pronounce your name?'), null, 'neither your pronouns nor your name');
+  assert.equal(ask('Name pronunciation'), null);
+  assert.equal(ask('Has a bonding company ever denied you coverage?', 'select', ['Yes', 'No']), null);
+  // The box for "Other" is for an answer the profile doesn't have.
+  assert.equal(ask('If you selected Other, please specify'), null);
+  assert.equal(ask('Other, please specify'), null);
+  assert.equal(ask('If other, please state'), null);
+  // A word in the help text alone is not enough.
+  assert.equal(typeOf(desc({ label: 'Tell us more', describedby: 'Please follow your university policy' })), null);
+});
+
+test('skills and spoken languages', () => {
+  const ask = (label, kind, options) =>
+    typeOf(desc({ question: label }, { kind: kind || 'text', options: options ? opts(...options) : null }));
+  assert.equal(ask('Which languages are you fluent in?'), 'languages');
+  assert.equal(ask('Language fluency'), 'languages');
+  assert.equal(ask('What programming languages do you know?'), 'skills');
+  assert.equal(ask('What is your level of Python?', 'select'), null);
+  assert.equal(ask('How proficient are you with Excel?', 'select'), null);
+  assert.equal(
+    ask('Do you have programming experience with any of the following?', 'checkboxes', ['Python', 'C++']),
+    'skills',
+  );
+});
+
+test('acknowledgements can be dropdowns too', () => {
+  assert.equal(
+    typeOf(
+      desc(
+        { question: 'Please review our privacy notice and confirm' },
+        { kind: 'select', options: opts('I confirm') },
+      ),
+    ),
+    'consent',
+  );
+  for (const answer of ['I confirm', 'Acknowledged', 'I accept', 'Agree', 'I understand', 'Confirmed'])
+    assert.equal(matcher.canonicalOf(answer), 'yes', answer);
+});
+
+test('real screening questions from graduate application forms', () => {
+  const ask = (label, kind, options) =>
+    typeOf(desc({ label, aria: label }, { kind: kind || 'combobox', options: options ? opts(...options) : null }));
+  // Schools picked from a list, asked as a question.
+  assert.equal(ask('Which university are you currently attending? Select "Other" if not listed'), 'edu.school');
+  assert.equal(ask('Please re-confirm the university you currently attend'), 'edu.school');
+  assert.equal(ask('Which institution do you currently attend/have most recently attended?'), 'edu.school');
+  assert.equal(ask('What school do you currently attend?'), 'edu.school');
+  assert.equal(ask('Are you currently enrolled at a university?', 'select', ['Yes', 'No']), null);
+  assert.equal(ask('Have you attended a university?'), null);
+  assert.equal(ask('Please specify the grading scale used by your current school.'), null);
+  // Not a sponsorship, relocation or salary question just because a word appears.
+  assert.equal(
+    ask(
+      'If you require any support or adjustments during the recruitment process for any reason including those related to a disability, please indicate here and we will be in contact. This does NOT include questions related to visa sponsorship or our recruitment timelines.',
+    ),
+    null,
+  );
+  assert.equal(
+    ask(
+      'Do you require any reasonable adjustments or accommodations to participate in the recruitment process? (i.e extra time on assessments, relocation of interview venue)',
+    ),
+    null,
+  );
+  assert.equal(
+    ask(
+      'We have several job paths as part of our QTA program. To help us understand which path(s) is/are best for you, which of these statements best describes your interest in CTC?',
+    ),
+    null,
+  );
+  assert.equal(ask('Expected CTC', 'text'), 'job.salary');
+  assert.equal(ask('Are you available to work full-time for 6 consecutive months?'), null);
+  assert.equal(
+    ask('Are you able to work on-site at our Jupiter, FL office for a 10-week Summer 2027 internship?'),
+    null,
+  );
+  assert.equal(ask('Are you legally able to work in the UK?'), 'job.authorized');
+  assert.equal(
+    ask(
+      'Do you have the right to work in the United States? Rothesay will not sponsor a work visa for this internship.',
+    ),
+    'job.authorized',
+  );
+  assert.equal(
+    ask('Can you perform all of the essential functions of this role with or without reasonable accommodations?'),
+    null,
+  );
+  // A yes/no question is never answered with a name, a username or a subject.
+  assert.equal(
+    ask(
+      'Are you related to anyone now working for Graham or anyone who has previously worked for Graham? If yes, list (name, relationship)',
+      'text',
+    ),
+    null,
+  );
+  assert.equal(
+    ask(
+      'Do you have an immediate family member or domestic partner employed by Ernst & Young, that engages in audit work?',
+      'text',
+    ),
+    null,
+  );
+  assert.equal(
+    ask(
+      'Are you currently pursuing a Major in one of the following disciplines: Computer Science or Computer Engineering',
+    ),
+    null,
+  );
+  assert.equal(
+    ask('Do you have a GitHub profile? Please share the link', 'text'),
+    'links.github',
+    'a link box is still a link box',
+  );
+});
+
+test('education questions from graduate application forms', () => {
+  const ask = (label, kind, options) =>
+    typeOf(desc({ label, aria: label }, { kind: kind || 'combobox', options: options ? opts(...options) : null }));
+  assert.equal(
+    ask('Please select all fields of study that closely align with your education background', 'checkboxes', [
+      'Statistics',
+      'Mathematics',
+      'Computer Science',
+    ]),
+    'edu.field',
+  );
+  assert.equal(ask('Please select your Subjects(s)', 'checkboxes', ['Computer Science', 'Mathematics']), 'edu.field');
+  assert.equal(ask('For your most recent degree, what is/was your GPA (normalized to a 4.0 scale)?'), 'edu.gpa');
+  assert.equal(ask('GPA (Graduate)'), 'edu.gpa');
+  assert.equal(ask('Undergraduate GPA', 'text'), 'edu.gpa');
+  assert.equal(
+    ask('What is your graduation year (class of 2030 and 2031 undergraduate degrees will not be considered)?'),
+    'edu.end:year',
+  );
+  assert.equal(ask('Are you an undergraduate student?', 'select', ['Yes', 'No']), null);
+  assert.equal(ask('What year do you plan on finishing your university studies?'), 'edu.end:year');
+  assert.equal(ask('In which year will you/ did you leave academia?'), 'edu.end:year');
+  assert.equal(ask('Please indicate the maximum possible score/GPA at your institution, if applicable.', 'text'), null);
+  assert.equal(
+    ask('What are you on track to receive/ did you receive in your Undergraduate degree?', 'select', [
+      'First Class',
+      'Upper-Second Class',
+      'Lower-Second Class',
+      'Third Class',
+    ]),
+    'edu.gpa',
+  );
+  assert.equal(ask('What is the approximate date that you could start?', 'text'), 'job.startDate');
+  assert.equal(
+    ask('Please indicate the employer or organization of your most recent working experience.', 'text'),
+    'job.currentCompany',
+  );
+  assert.equal(
+    ask('Indicate the title of your most recent work experience, if applicable.', 'text'),
+    'job.currentTitle',
+  );
+});
+
+test('acknowledgements, demographics and answers given by the options', () => {
+  const ask = (label, kind, options) =>
+    typeOf(desc({ label, aria: label }, { kind: kind || 'combobox', options: options ? opts(...options) : null }));
+  assert.equal(ask('Candidate Confidentiality Agreement'), 'consent');
+  assert.equal(ask('Recruitment Privacy Notice', 'select', ['Acknowledge']), 'consent');
+  assert.equal(ask('Privacy Notice', 'checkboxes', ['Acknowledge']), 'consent');
+  assert.equal(ask('Essay portion: answer at least 2 of the 3 essays below', 'select', ['I understand']), 'consent');
+  assert.equal(
+    ask('Programme', 'select', ['Summer Internship']),
+    null,
+    'one option is not an acknowledgement by itself',
+  );
+  for (const answer of ['Acknowledge/Confirm', 'I acknowledge and agree', 'Acknowledge & Agree', 'Understood'])
+    assert.equal(matcher.canonicalOf(answer), 'yes', answer);
+  assert.equal(
+    ask('Voluntary Demographic Questions (for applicants residing in the UK ONLY)', 'select', [
+      'Male',
+      'Female',
+      'Prefer not to say',
+    ]),
+    'eeo.gender',
+  );
+  assert.equal(ask('Age', 'select', ['16 - 17', '18 - 21', '22 - 30']), 'age');
+  assert.equal(ask('What is your age range?'), 'age');
+  assert.equal(ask('Average deal size'), null);
+});
+
+test('help text and wrapper ids do not make a phone field', () => {
+  assert.equal(
+    typeOf(
+      desc({
+        label: 'Start your job search here',
+        placeholder: 'Enter keywords here',
+        name: 'searchKeyword',
+        ancestors: 'advanced_search_filters_mobile_modal_no_show',
+      }),
+    ),
+    null,
+  );
+  assert.equal(
+    typeOf(
+      desc({
+        label:
+          'Mobile Number (required) For international numbers, start with a + and then the country code, followed by the phone number.',
+      }),
+    ),
+    'phone',
+  );
+  assert.equal(typeOf(desc({ label: 'Phone number (including country code)' })), 'phone');
+  assert.equal(
+    typeOf(desc({ label: 'Country code' }, { kind: 'select', options: opts('+1', '+44') })),
+    'phone.countryCode',
+  );
+});
+
+test('salary currency and pay period boxes are not the salary; a green card is not a payment card', () => {
+  const currencies = opts('US Dollar ($)', 'Canadian Dollar ($)', 'Euro (€)', 'British Pound (£)');
+  assert.equal(
+    typeOf(
+      desc(
+        { nearby: 'Desired Salary', name: 'salaryCurrency', attrs: 'candidate.salary.currency' },
+        { kind: 'select', options: currencies },
+      ),
+    ),
+    null,
+  );
+  assert.equal(
+    typeOf(
+      desc({ attrs: 'candidate.salary.period' }, { kind: 'select', options: opts('Hourly', 'Monthly', 'Yearly') }),
+    ),
+    null,
+  );
+  assert.equal(typeOf(desc({ label: 'Desired Salary Type' }, { kind: 'combo' })), null);
+  assert.equal(typeOf(desc({ placeholder: 'Desired Salary', name: 'cSalary' })), 'job.salary');
+  assert.equal(
+    typeOf(
+      desc(
+        { label: 'Are you a US citizen or lawful permanent resident (green card holder)?' },
+        { kind: 'select', options: opts('Yes', 'No') },
+      ),
+    ),
+    null,
+  );
+});
+
+test('salary ranges in a dropdown are still the salary', () => {
+  assert.equal(
+    typeOf(
+      desc({ label: 'Salary expectations' }, { kind: 'select', options: opts('$80k-$120k', '$120k-$160k', '$160k+') }),
+    ),
+    'job.salary',
+  );
+});
+
+test('an "Autofill from resume" upload is not the resume field', () => {
+  const file = (signals) => typeOf(desc(signals, { kind: 'file' }));
+  assert.equal(
+    file({ nearby: 'Autofill from resume Upload your resume here to autofill key application fields.' }),
+    null,
+  );
+  assert.equal(
+    file({ nearby: "Apply with resume Upload your resume and we'll automatically fill out your application" }),
+    null,
+  );
+  assert.equal(file({ label: 'Resume' }), 'file.resume');
+});
+
+test("an employer's location or address is the job's, not yours", () => {
+  assert.equal(typeOf(desc('Employer Location (City, State, Zip)')), 'exp.location');
+  assert.equal(typeOf(desc('Employer Address')), 'exp.location');
+  assert.equal(typeOf(desc('Company city')), 'exp.location');
+  assert.equal(typeOf(desc('State')), 'address.state');
+  assert.equal(typeOf(desc('Street address')), 'address.line1');
+});
+
+test('Ashby UK internship form: right to work, graduation window, parents, AI policy', () => {
+  const yn = ['Yes', 'No'];
+  const ask = (label, kind, options) =>
+    typeOf(desc({ question: label }, { kind: kind || 'radio', options: options ? opts(...options) : null }));
+  assert.equal(
+    ask(
+      'Do you have the right to work in the region? This role will be in the office 5 days a week. Work authorization in the internship location is required. Sponsorship for internships is not available at this time.',
+      'radio',
+      yn,
+    ),
+    'job.authorized',
+  );
+  assert.equal(ask('Are you able to work in the UK without restrictions?', 'radio', yn), 'job.authorized');
+  assert.equal(
+    ask('Are you currently a university student who will graduate Fall of 2027 or Spring 2028?', 'radio', yn),
+    'edu.end',
+  );
+  assert.equal(ask('Are you a recent graduate?', 'radio', yn), null);
+  assert.equal(
+    ask('What is the highest level of education completed by either of your parents or guardians?', 'radio', [
+      'Primary school or below',
+      'Secondary school (High school)',
+      "Bachelor's degree (University undergraduate degree)",
+    ]),
+    'eeo.parentsDegree',
+  );
+  assert.equal(
+    ask(
+      'AI Policy for Application While we support the use of AI tools to enhance productivity in your role, we ask that you refrain from using AI assistants during the application process.',
+      'radio',
+      yn,
+    ),
+    null,
+  );
+});

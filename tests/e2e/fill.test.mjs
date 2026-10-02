@@ -251,6 +251,12 @@ test('Ashby-style form: Yes/No toggle buttons, ARIA radios and checkboxes, label
   assert.equal(await checked(page, '#arb'), false, 'acknowledgements are left for you by default');
   assert.equal(r.consents, 1);
   assert.equal(await page.$$eval('.bubble:checked', (els) => els.length), 0, 'hidden bubble inputs untouched');
+  assert.equal(await fileName(page, '#_systemfield_resume'), 'Ada_Lovelace_CV.pdf');
+  assert.equal(await fileName(page, '#autofill-resume'), '', '"Autofill from resume" would rewrite the form');
+  assert.equal(await checked(page, '#src0'), true, 'checkbox group whose boxes have different names');
+  assert.equal(await checked(page, '#src1'), false);
+  assert.equal(await checked(page, '#deg0'), true);
+  assert.equal(await checked(page, '#deg1'), false);
   await page.close();
 });
 
@@ -600,4 +606,42 @@ test('automatic backup: kept in Downloads/JobToFill and offered back after the e
     await bg(() => globalThis.JTF.store.setBackupInfo({ paused: false, dismissed: true, previous: null }));
     await h.setSettings({ autoBackup: false });
   }
+});
+
+test('Jobvite-style uploads: file inputs parked in popups at the end of the page', async () => {
+  const page = await h.open('jobvite.html');
+  const r = await h.fill(page);
+  assert.equal(r.error, undefined);
+  assert.equal(await value(page, '#jv-field-a'), 'Ada');
+  assert.equal(await fileName(page, '#file-input-0'), 'Ada_Lovelace_CV.pdf');
+  assert.equal(await fileName(page, '#file-input-1'), '', 'the cover letter upload does not get the resume');
+  assert.ok(r.missing.includes('Cover letter file'), JSON.stringify(r.missing));
+  await page.close();
+});
+
+test('Gem-style form: span labels, "Click to upload" drop zones, radios without a name', async () => {
+  const page = await h.open('gem.html');
+  const r = await h.fill(page);
+  assert.equal(r.error, undefined);
+  assert.equal(await value(page, '#first'), 'Ada');
+  assert.equal(await fileName(page, '#resume'), 'Ada_Lovelace_CV.pdf');
+  assert.equal(await fileName(page, '#cover'), '', 'the cover letter drop zone does not get the resume');
+  assert.equal(await checked(page, '#auth-yes'), true);
+  assert.equal(await checked(page, '#auth-no'), false);
+  assert.equal(await checked(page, '#spons-no'), true);
+  assert.equal(await checked(page, '#spons-yes'), false);
+  await page.close();
+});
+
+test('Pinpoint-style react-select: own input ids, read-only dropdowns, options without roles', async () => {
+  const page = await h.open('pinpoint.html');
+  await page.waitForSelector('#application_form_equality_monitoring_gender');
+  const r = await h.fill(page);
+  assert.equal(r.error, undefined);
+  const state = JSON.parse(await text(page, '#state'));
+  assert.equal(state.application_form_application_country, 'United States');
+  assert.equal(state.application_form_equality_monitoring_gender, 'Female');
+  assert.equal(state.application_form_equality_monitoring_age_bracket, '35-44');
+  assert.ok(!r.unmatched.includes('Gender'), JSON.stringify(r.unmatched));
+  await page.close();
 });

@@ -35,15 +35,22 @@
   };
 
   const MIN_SCORE = 0.35;
+  // An ancestor's id alone ("formField-startDate") only names a date box; "…_mobile_modal" is not a phone.
+  const ANCESTOR_ONLY = 0.4;
   // Types whose value is a short phrase, never the answer to an essay question.
   const SHORT_VALUE =
     /^(name\.|edu\.(school|degree|field|gpa|location|start|end)|exp\.(company|title|location)|address\.|location$|email$|phone|links\.|nationality$|pronouns$|job\.(currentCompany|currentTitle|salary|yearsExperience|startDate|referralSource)$)/;
   // Types a Yes/No question never asks for ("Has a bonding company ever denied you?" is not your employer).
   const NEVER_YES_NO =
-    /^(name\.|edu\.(school|degree|field|gpa|location)|exp\.(company|title|location)|address\.|location$|email$|phone|links\.|nationality$|pronouns$)/;
+    /^(name\.|edu\.(school|degree|field|gpa|location)|exp\.(company|title|location)|address\.|location$|email$|phone|links\.|nationality$|pronouns$|account\.|job\.current(Company|Title)$)/;
+  // "Are you related to anyone working here? If yes, list their name": a yes/no question, whatever the box.
+  const YES_NO_QUESTION =
+    /^(are|do|does|did|have|has|had|is|was|were|will|would|can|could|should|may) (you|your|any|there|we|anyone|this|it)\b/;
+  // "Do you have a GitHub? Please share the link" in a text box still wants the link.
+  const LINK_TYPE = /^links\./;
   // "Please specify if you selected Other": the box for an answer you chose not to give.
   const OTHER_FOLLOW_UP =
-    /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b/;
+    /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b|\bif (it|yours|your \w+( \w+)?) (is|was) not (listed|shown|in the list|found|available)\b|\bnot listed (above|below)\b.*\b(specify|enter|type|provide|state)\b/;
   const EMAIL_TYPES = new Set(['email', 'account.username']);
   // Field types a lone checkbox can answer: "I am authorized to work in the US", "I have read the
   // privacy notice", or one option of a checklist ("London" under "Which offices…?").
@@ -124,7 +131,8 @@
     const s = desc.signals || {};
     if (OTHER_FOLLOW_UP.test(norm(s.question || s.label || s.aria || s.nearby || ''))) return null;
     // A Yes/No question is never answered with a name, a school or a link.
-    const yesNo = yesNoOptions(desc);
+    const yesNoAsked = YES_NO_QUESTION.test(norm(s.question || s.label || s.aria || ''));
+    const yesNo = yesNoOptions(desc) || yesNoAsked;
     const byType = new Map();
     let best = null;
     for (const rule of F().RULES) {
@@ -147,7 +155,10 @@
       // An essay box ("Do you have coding experience? … GitHub links welcomed", "Think of something in
       // your academic life…") wants an answer, not a name, school or URL.
       if (desc.kind === 'textarea' && SHORT_VALUE.test(rule.type) && hitText.split(' ').length > 12) continue;
-      if (yesNo && NEVER_YES_NO.test(rule.type)) continue;
+      if (yesNo && NEVER_YES_NO.test(rule.type) && !(LINK_TYPE.test(rule.type) && !desc.options && !yesNoOptions(desc)))
+        continue;
+      // "AI policy … our tools" with Yes / No options is not a list of skills.
+      if ((rule.type === 'skills' || rule.type === 'languages') && yesNoOptions(desc)) continue;
       score += 0.05 * (hits - 1);
       const candidate = { type: rule.type, part: rule.part || null, score, source: 'rule', rule };
       const prev = byType.get(rule.type);
@@ -155,7 +166,11 @@
       if (!best || score > best.score + 1e-9) best = candidate;
     }
     // A word in the help text or a wrapper's id alone ("…your university's policy…") is not enough.
-    if (!best || best.score < MIN_SCORE) return refine(fallback(desc), desc);
+    if (!best || best.score < MIN_SCORE || (best.score < ANCESTOR_ONLY && !F().DATE_TYPES.has(best.type)))
+      return refine(fromOptions(desc) || fallback(desc), desc);
+    // "What did you receive in your undergraduate degree? First / Upper second / …" asks for the grade.
+    if ((best.type === 'edu.degree' || best.type === 'edu.level') && looksLikeDegreeClasses(desc.options))
+      return refine({ type: 'edu.gpa', part: null, score: best.score, source: 'options' }, desc);
 
     // "Name" labels a first/last pair more often than a full-name box: let specifics win.
     if (best.rule.yieldsTo) {
@@ -168,6 +183,30 @@
       }
     }
     return refine({ type: best.type, part: best.part, score: best.score, source: best.source }, desc);
+  }
+
+  // UK degree classes and their usual spellings.
+  const DEGREE_CLASS =
+    /^(first|1st|upper second|lower second|second|2 ?[1i]|2 ?2|2 ?ii|third|3rd|distinction|merit|pass)\b|\b(first|second|third) class\b|\bclass honours\b/;
+
+  function looksLikeDegreeClasses(options) {
+    const opts = (options || []).filter((o) => !isPlaceholder(norm(o.text)));
+    return opts.length >= 2 && opts.filter((o) => DEGREE_CLASS.test(norm(o.text))).length / opts.length >= 0.5;
+  }
+
+  /**
+   * A control no wording identified, recognised by what it offers: a single "I acknowledge"
+   * (an acknowledgement), "Male / Female / …" (gender), "First / 2:1 / 2:2" (degree class).
+   */
+  function fromOptions(desc) {
+    const opts = (desc.options || []).filter((o) => !isPlaceholder(norm(o.text)));
+    if (!opts.length || desc.kind === 'checkbox') return null;
+    const make = (type) => ({ type, part: null, score: 0.5, source: 'options' });
+    if (opts.length === 1 && canonicalOf(opts[0].text) === 'yes') return make('consent');
+    const canon = opts.map((o) => canonicalOf(o.text));
+    if (canon.includes('male') && canon.includes('female')) return make('eeo.gender');
+    if (looksLikeDegreeClasses(opts)) return make('edu.gpa');
+    return null;
   }
 
   const MONTH_WORD = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/;
@@ -262,6 +301,8 @@
   }
 
   const PLACE_TYPES = ['location', 'address.city'];
+  const ABOUT_YOU_TYPES = ['location', 'address.city', 'address.state', 'address.country', 'address.postalCode'];
+  const ABOUT_YOU = /\b(you|your|yourself|reside|resident|residence|live|living|home|currently|current)\b/;
   const SECTION_ONLY = ['address.state', 'address.country', 'address.postalCode'];
 
   /** How many fields in a row, from results[i], belong to section `g` (generic boxes included). */
@@ -308,6 +349,15 @@
         prev = null;
         continue;
       }
+      // "Summary" between a job's dates and title describes that job (Breezy's work history).
+      if (prev && r.type === 'summary' && /^(summary|description)$/.test(norm(questionText(descs[i])))) {
+        if (prev === 'exp') r.type = 'exp.description';
+        else {
+          r.dropped = r.type;
+          r.type = null;
+          continue;
+        }
+      }
       if (r.type.startsWith('gen.')) {
         const target = prev && (r.type !== 'gen.description' || prev === 'exp') ? prev + r.type.slice(3) : null;
         if (!target) {
@@ -316,6 +366,11 @@
           continue;
         }
         r.type = target;
+      } else if (prev && ABOUT_YOU_TYPES.includes(r.type) && ABOUT_YOU.test(norm(questionText(descs[i])))) {
+        // "Which country do you live in?" right after the education section is still about you.
+        prev = null;
+        detached = null;
+        continue;
       } else if (prev && (r.type === 'location' || r.type === 'address.city')) {
         r.type = prev + '.location';
       } else if (prev && ['address.state', 'address.country', 'address.postalCode'].includes(r.type)) {
@@ -325,7 +380,9 @@
         continue;
       }
       const g = groupOf(r.type);
-      if (!g) {
+      // "Name of secondary school" or "Undergraduate GPA" is answered from the entry at that level, wherever it is.
+      if (!g || (g === 'edu' && F().eduLevelOf(norm(questionText(descs[i]))))) {
+        if (g) r.index = 0;
         prev = null;
         detached = null;
         continue;
@@ -395,8 +452,9 @@
       return 'no';
     if (/\bi am\b|\bi have\b|\bi identify\b|\bi do\b|\bi will\b|\bi can\b|\bi m\b|\bi agree\b/.test(t)) return 'yes';
     // Acknowledgement answers: "I confirm", "Acknowledged", "I accept".
+    // "Acknowledge/Confirm", "Acknowledge & agree", "Understood".
     if (
-      /^i (confirm|acknowledge|accept|consent|understand|certify)\b|^(confirm(ed)?|acknowledged?|accept(ed)?|agreed?)$/.test(
+      /^i (confirm|acknowledge|accept|consent|understand|certify)\b|^(confirm(ed)?|acknowledged?|accept(ed)?|agreed?|understood|consent)( (and )?(confirm(ed)?|acknowledged?|accept(ed)?|agreed?|understood|consent))*$/.test(
         t,
       )
     )
@@ -693,12 +751,21 @@
       if (r >= 0) return r;
     }
 
+    // "Yes, will require sponsorship" / "No, already authorized": the options say whether you need a sponsor.
+    let pool = opts;
+    if (v.sponsor && opts.some((o) => /\bsponsor/.test(o.n))) {
+      const needs = (n) => /\bsponsor/.test(n) && !/\b(not|no|without|never|won t|don t|doesn t|dont)\b/.test(n);
+      const kept = opts.filter((o) => needs(o.n) === (v.sponsor === 'yes'));
+      if (kept.length === 1) return kept[0].i;
+      if (kept.length) pool = kept;
+    }
+
     if (v.canonical) {
-      const hits = opts.filter((o) => canonicalOf(o.text) === v.canonical);
+      const hits = pool.filter((o) => canonicalOf(o.text) === v.canonical);
       if (hits.length === 1) return hits[0].i;
       if (hits.length > 1) return bestText(hits, cands, v).i;
       // Two options, one of them clearly the opposite answer: take the other one.
-      if (opts.length === 2 && (v.canonical === 'yes' || v.canonical === 'no')) {
+      if (pool === opts && opts.length === 2 && (v.canonical === 'yes' || v.canonical === 'no')) {
         const opposite = v.canonical === 'yes' ? 'no' : 'yes';
         const other = opts.filter((o) => canonicalOf(o.text) !== opposite);
         if (other.length === 1 && canonicalOf(opts.find((o) => o !== other[0]).text) === opposite) return other[0].i;
@@ -728,11 +795,11 @@
     if (
       v.kind === 'date' &&
       d.month &&
-      type === 'text' &&
+      (type === 'text' || type === 'textarea') &&
       /\bmonth (and|&|\/) year\b/i.test(label) &&
       !DATE_PATTERN.test(hint)
     )
-      return `${U.monthName(d.month)} ${y}`;
+      return `${U.monthName(d.month).replace(/^./, (c) => c.toUpperCase())} ${y}`;
 
     if (v.kind === 'month') return type === 'number' ? String(d.month) : mm;
     if (v.kind === 'year') return desc.maxLength === 2 || /^\s*yy\s*$/.test(hint) ? y.slice(2) : y;
@@ -783,6 +850,7 @@
     matchOption,
     matchAll,
     optionSpan,
+    degreeGroup,
     formatForText,
     isPlaceholder,
   };

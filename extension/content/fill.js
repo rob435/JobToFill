@@ -233,9 +233,13 @@
   function currentOptions(el) {
     const lb = listboxFor(el);
     let opts = lb ? Array.from(lb.querySelectorAll('[role="option"]')) : [];
-    if (!opts.length && el.id) {
-      // react-select without ARIA roles: <input id="react-select-3-input"> -> #react-select-3-option-0…
-      const m = el.id.match(/^(.*)-input$/);
+    if (!opts.length) {
+      // react-select without ARIA roles: its ids share a prefix ("react-select-3-input", "-listbox",
+      // "-placeholder") even when the site gives the input its own id -> #react-select-3-option-0…
+      const ids = ['aria-controls', 'aria-owns', 'aria-describedby'].map((a) => el.getAttribute(a) || '');
+      const m =
+        ids.join(' ').match(/\b(react-select-[\w-]+?)-(listbox|placeholder|value)\b/) ||
+        (el.id || '').match(/^(.*)-input$/);
       if (m) opts = Array.from(el.ownerDocument.querySelectorAll(`[id^="${CSS.escape(m[1])}-option-"]`));
     }
     return opts.filter((o) => o.getAttribute('aria-disabled') !== 'true' && dom().isVisible(o));
@@ -409,7 +413,9 @@
   async function fillCombo(field, v) {
     const el = field.el;
     const isInput = el.localName === 'input';
-    const searchable = isInput && !el.readOnly;
+    // react-select's isSearchable={false} renders a read-only dummy input that ignores typing.
+    const searchable =
+      isInput && !el.readOnly && el.getAttribute('aria-readonly') !== 'true' && el.getAttribute('inputmode') !== 'none';
     const items = v.kind === 'list' ? v.items.map((item) => JTF.fields.val(item)) : null;
     const chosen = [];
     let sawOptions = false;

@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { load, desc, opts } = require('./helpers');
 
-const { matcher, fields } = load();
+const { matcher, fields, util } = load();
 
 function sample() {
   const p = fields.createProfile('Test');
@@ -224,4 +224,534 @@ test('formatting for text boxes', () => {
   assert.equal(f('cc.exp', card, {}), '04/29');
   assert.equal(f('cc.exp', card, { placeholderRaw: 'MM / YYYY' }), '04/2029');
   assert.equal(f('cc.exp', card, { inputType: 'month' }), '2029-04');
+});
+
+function student() {
+  const p = fields.createProfile('Student');
+  Object.assign(p.address, { city: 'San Francisco', state: 'CA', country: 'United States' });
+  p.education = [
+    { school: 'UCL', degree: 'BSc', field: 'Mathematics', gpa: '3.9', startDate: '2024-09', endDate: '2027-06' },
+  ];
+  p.skills = 'Python, SQL, Excel';
+  p.languages = 'English, French, German';
+  return p;
+}
+const ask = (p, type, question, extra) =>
+  fields.resolve(type, p, Object.assign({ jobContext: true, index: 0, question: util.normalize(question) }, extra));
+
+test('grades: a GPA picks its band, a UK class picks its option by name', () => {
+  const p = student();
+  const gpa = ask(p, 'edu.gpa', 'GPA');
+  assert.equal(gpa.number, 3.9);
+  assert.equal(matcher.matchOption(opts('Below 3.0', '3.00 - 3.49', '3.50 - 3.79', '3.80 - 4.00'), gpa), 3);
+  p.education[0].gpa = '3.9/4.0';
+  assert.equal(ask(p, 'edu.gpa', 'GPA').number, 3.9);
+  p.education[0].gpa = '2:1';
+  const uk = ask(p, 'edu.gpa', 'Predicted degree classification');
+  assert.equal(uk.number, undefined);
+  assert.equal(matcher.matchOption(opts('First', '2:1 (Upper Second)', '2:2', 'Third'), uk), 1);
+});
+
+test('"Will you graduate between X and Y?" is answered from your graduation date', () => {
+  const p = student(); // graduates June 2027
+  const grad = (q) => {
+    const v = ask(p, 'edu.end', q);
+    return v && v.canonical ? v.text : v && v.text;
+  };
+  assert.equal(grad('Will you graduate between December 2026 and July 2027?'), 'Yes');
+  assert.equal(grad('Will you graduate between December 2028 and July 2029?'), 'No');
+  assert.equal(grad('I confirm that my graduation date will be either Spring 2027 or Summer 2027'), 'Yes');
+  assert.equal(grad('I confirm that my graduation date will be either Fall 2026 or Spring 2027'), 'No');
+  assert.equal(grad('Will you graduate before 2028?'), 'Yes');
+  assert.equal(grad('Will you graduate by 2027?'), 'Yes');
+  assert.equal(grad('Will you graduate after 2027?'), 'No');
+  assert.equal(grad('Will you graduate in 2027?'), 'Yes');
+  assert.equal(grad('Are you graduating in 2026?'), 'No');
+  assert.equal(grad('What is your expected graduation date?'), '2027-06', 'a plain question gets the date');
+});
+
+test('year of study is worked out from the course dates', () => {
+  const p = student(); // Sep 2024 – Jun 2027
+  const year = (y, m) => fields.resolve('edu.year', p, { today: new Date(y, m - 1, 1) });
+  assert.equal(year(2024, 6), null, 'before the course starts');
+  assert.equal(year(2024, 10).text, '1st year');
+  assert.ok(year(2024, 10).candidates.includes('Freshman'));
+  const third = year(2026, 10);
+  assert.equal(third.text, '3rd year');
+  assert.ok(third.candidates.includes('Final year'));
+  assert.equal(matcher.matchOption(opts('First year', 'Second year', 'Final year'), third), 2);
+  assert.equal(matcher.matchOption(opts('Year 1', 'Year 2', 'Year 3', 'Year 4'), third), 2);
+  assert.equal(year(2027, 10).text, 'Graduated');
+  // A year-of-study question sits among education fields without starting a new entry.
+  const plan = matcher.plan(
+    [
+      desc('School'),
+      desc('Year of study', { kind: 'select', options: opts('1st year', 'Final year') }),
+      desc('Degree'),
+      desc('School'),
+    ],
+    p,
+  );
+  assert.deepEqual(types(plan), ['edu.school#0', 'edu.year', 'edu.degree#0', 'edu.school#1']);
+});
+
+test('degree, location, skills and languages adapt to the question', () => {
+  const p = student();
+  assert.equal(
+    ask(p, 'edu.degree', 'What degree course are you studying?', { kind: 'text' }).text,
+    'BSc in Mathematics',
+  );
+  assert.equal(ask(p, 'edu.degree', 'Degree', { kind: 'text' }).text, 'BSc');
+  assert.equal(ask(p, 'edu.degree', 'What degree course are you studying?', { kind: 'select' }).text, 'BSc');
+
+  const loc = ask(p, 'location', 'Location');
+  assert.ok(loc.candidates.includes('San Francisco, California, United States'));
+  assert.equal(
+    matcher.matchOption(
+      opts('San Francisco, Cebu, Philippines', 'San Francisco, California, United States', 'San Francisco de Macorís'),
+      loc,
+    ),
+    1,
+    'the option naming your state wins',
+  );
+
+  assert.deepEqual(ask(p, 'skills', 'Skills', { kind: 'text' }).items, ['Python', 'SQL', 'Excel']);
+  assert.deepEqual(
+    matcher.matchAll(
+      opts('Java', 'Python', 'SQL', 'R'),
+      ask(p, 'skills', 'Which tools do you use?', { kind: 'select' }),
+    ),
+    [1, 2],
+  );
+  assert.deepEqual(ask(p, 'languages', 'Which languages are you fluent in other than English?').items, [
+    'French',
+    'German',
+  ]);
+  assert.equal(ask(p, 'languages', 'Languages').text, 'English, French, German');
+  p.languages = 'English';
+  assert.equal(ask(p, 'languages', 'Which languages are you fluent in other than English?'), null);
+});
+
+test('a question asked again among the screening questions is about your first entry', () => {
+  const p = student();
+  const term = desc(
+    { question: 'Which term matches your graduation date?' },
+    { kind: 'select', options: opts('Spring 2027', 'Summer 2027') },
+  );
+  const again = matcher.plan(
+    [
+      desc('School'),
+      desc('Degree'),
+      desc('Graduation date'),
+      desc('First name'),
+      desc('Email', { kind: 'email' }),
+      term,
+      desc('Phone'),
+    ],
+    p,
+  );
+  assert.deepEqual(types(again), [
+    'edu.school#0',
+    'edu.degree#0',
+    'edu.end#0',
+    'name.first',
+    'email',
+    'edu.end#0',
+    'phone',
+  ]);
+  // A full second entry still starts a new one.
+  const second = matcher.plan(
+    [
+      desc('School'),
+      desc('Degree'),
+      desc('Graduation date'),
+      desc('First name'),
+      desc('School'),
+      desc('Degree'),
+      desc('Graduation date'),
+    ],
+    p,
+  );
+  assert.deepEqual(types(second), [
+    'edu.school#0',
+    'edu.degree#0',
+    'edu.end#0',
+    'name.first',
+    'edu.school#1',
+    'edu.degree#1',
+    'edu.end#1',
+  ]);
+});
+
+test('date formats spelled out in the label', () => {
+  const p = student();
+  const f = (label, d) =>
+    matcher.formatForText(
+      fields.resolve('edu.end', p, { jobContext: true, index: 0 }),
+      Object.assign({ inputType: 'text', maxLength: 0, placeholderRaw: '', signals: { label } }, d),
+    );
+  assert.equal(f('Graduation date (MM/YYYY)'), '06/2027');
+  assert.equal(f('Graduation date, dd-mm-yyyy'), '01-06-2027');
+  assert.equal(f('When do you graduate (Month and Year)?'), 'June 2027');
+  assert.equal(f('When do you graduate (Month and Year)?', { inputType: 'textarea' }), 'June 2027');
+  assert.equal(f('Graduation date (MM/YYYY)', { placeholderRaw: 'YYYY-MM' }), '2027-06', 'the placeholder wins');
+});
+
+test('UK degree classes match however the form spells them', () => {
+  const p = student();
+  const pick = (gpa, ...options) => {
+    p.education[0].gpa = gpa;
+    const i = matcher.matchOption(opts(...options), ask(p, 'edu.gpa', 'Degree classification'));
+    return i < 0 ? null : options[i];
+  };
+  assert.equal(
+    pick(
+      '2:1',
+      '1st Class, equivalent to US 3.7-4.0 GPA',
+      'Upper Second Class, equivalent to US 3.3-3.6 GPA',
+      'Lower Second Class, equivalent to US 3.0-3.2 GPA',
+    ),
+    'Upper Second Class, equivalent to US 3.3-3.6 GPA',
+  );
+  assert.equal(
+    pick('2:1', 'First Class', 'Upper-Second Class', 'Lower-Second Class', 'Third Class'),
+    'Upper-Second Class',
+  );
+  assert.equal(
+    pick(
+      '2:1',
+      "I'd rather not disclose",
+      '50-59% - Second class honours: Grade 2',
+      '60-69% - Second class honours: Grade 1',
+      '70%+ - First class honours',
+    ),
+    '60-69% - Second class honours: Grade 1',
+  );
+  assert.equal(pick('First', 'First / 1st', '2:1', '2:2', 'Third'), 'First / 1st');
+  assert.equal(pick('1st', '< 3.0', '3.5 - 3.9', '4.0 - 4.4', 'First-Class Honours'), 'First-Class Honours');
+  assert.equal(pick('2:2', 'First', '2.1', '2.2', 'Third'), '2.2');
+  assert.equal(pick('2:1', 'Over 3.9', '3.8 - 3.89', '3.7 - 3.79'), null, 'a class is not a GPA');
+});
+
+test('nationality written as a demonym matches a list of countries', () => {
+  const p = student();
+  p.personal.nationality = 'British';
+  const v = fields.resolve('nationality', p, { jobContext: true });
+  assert.equal(matcher.matchOption(opts('Afghanistan', 'United Kingdom', 'United States'), v), 1);
+  assert.equal(matcher.matchOption(opts('American', 'British', 'Irish'), v), 1);
+  p.personal.nationality = 'United States';
+  assert.equal(
+    matcher.matchOption(opts('American', 'British', 'Irish'), fields.resolve('nationality', p, { jobContext: true })),
+    0,
+  );
+});
+
+test('age bands come from the date of birth', () => {
+  const p = student();
+  p.personal.dob = '2004-12-10';
+  const age = fields.resolve('age', p, { today: new Date(2026, 9, 1) });
+  assert.equal(age.text, '21');
+  assert.equal(matcher.matchOption(opts('16 - 17', '18 - 21', '22 - 30', '31 - 40'), age), 1);
+  assert.equal(fields.resolve('age', p, { today: new Date(2026, 11, 10) }).text, '22', 'on the birthday');
+  p.personal.dob = '';
+  assert.equal(fields.resolve('age', p, {}), null);
+});
+
+test('work authorization options that talk about sponsorship', () => {
+  const p = student();
+  Object.assign(p.job, { authorized: 'Yes', sponsorship: 'No' });
+  const auth = fields.resolve('job.authorized', p, { jobContext: true });
+  const spons = fields.resolve('job.sponsorship', p, { jobContext: true });
+  const status = opts('Yes, will require firm sponsorship', 'No. already has permanent work authorization');
+  assert.equal(matcher.matchOption(status, auth), 1);
+  assert.equal(matcher.matchOption(status, spons), 1);
+  const statements = opts(
+    'I am authorized to work in the United States for any employer',
+    'I am authorized to work in the United States but will require sponsorship in the future',
+    'I am not authorized to work in the United States',
+  );
+  assert.equal(matcher.matchOption(statements, auth), 0);
+  assert.equal(matcher.matchOption(opts('Yes', 'No'), auth), 0);
+  assert.equal(matcher.matchOption(opts('Yes', 'No'), spons), 1);
+  p.job.sponsorship = 'Yes';
+  assert.equal(matcher.matchOption(statements, fields.resolve('job.authorized', p, { jobContext: true })), 1);
+});
+
+test('a GitHub username question gets the username', () => {
+  const p = student();
+  p.links.github = 'https://github.com/ada-l/';
+  assert.equal(ask(p, 'links.github', 'What is your Github username?').text, 'ada-l');
+  assert.equal(ask(p, 'links.github', 'GitHub').text, 'https://github.com/ada-l/');
+});
+
+test('"Which country do you live in?" after the education section is still yours', () => {
+  const p = student();
+  const country = (label) => desc({ label }, { kind: 'select', options: opts('United Kingdom', 'United States') });
+  const plan = matcher.plan(
+    [
+      desc('School'),
+      desc('Degree'),
+      country('Country'),
+      desc('Field of study'),
+      country('What country do you currently reside in?'),
+      desc({ label: 'If applicable, which US state do you reside in?' }, { kind: 'select', options: opts('Alabama') }),
+      desc('Where are you currently based?'),
+    ],
+    p,
+  );
+  assert.deepEqual(types(plan), [
+    'edu.school#0',
+    'edu.degree#0',
+    null,
+    'edu.field#0',
+    'address.country',
+    'address.state',
+    'location',
+  ]);
+});
+
+test('a "Summary" box inside a work-history entry describes that job', () => {
+  const plan = matcher.plan(
+    [
+      desc('Company'),
+      desc('Title'),
+      desc('Summary', { kind: 'textarea' }),
+      desc('Start date', { kind: 'date', inputType: 'date' }),
+      desc('School'),
+      desc('Field of Study'),
+      desc('Summary', { kind: 'textarea' }),
+      desc('Start date', { kind: 'date', inputType: 'date' }),
+      desc('Professional summary', { kind: 'textarea' }),
+    ],
+    sample(),
+  );
+  assert.deepEqual(types(plan), [
+    'exp.company#0',
+    'exp.title#0',
+    'exp.description#0',
+    'exp.start#0',
+    'edu.school#0',
+    'edu.field#0',
+    null,
+    'edu.start#0',
+    'summary',
+  ]);
+});
+
+test('UK social mobility questions', () => {
+  const p = student();
+  Object.assign(p.eeo, {
+    schoolType: 'State school (non-selective)',
+    freeSchoolMeals: 'Yes',
+    parentsDegree: 'No',
+    parentOccupation: 'Routine / semi-routine',
+  });
+  const classify = (label, ...options) =>
+    matcher.classify(desc({ label }, { kind: 'select', options: opts(...options) }));
+  const answer = (label, ...options) => {
+    const r = classify(label, ...options);
+    assert.ok(r && r.type, label);
+    const v = fields.resolve(r.type, p, { jobContext: true, question: util.normalize(label) });
+    const i = matcher.matchOption(opts(...options), v);
+    return i < 0 ? null : options[i];
+  };
+  assert.equal(
+    answer(
+      'What type of school did you mainly attend between the ages of 11 and 16?',
+      'A state-run or state-funded school - selective on academic, faith or other grounds',
+      'A state-run or state-funded school - non-selective',
+      'Independent or fee-paying school',
+      'Independent or fee-paying school, where I received a means-tested bursary covering 90% or more of the total cost',
+      'Attended school outside the UK',
+      'Prefer not to say',
+    ),
+    'A state-run or state-funded school - non-selective',
+  );
+  assert.equal(
+    answer(
+      'If you finished school after 1980, were you eligible for Free School Meals at any point during your school years?',
+      'Yes',
+      'No',
+      'Not applicable (finished school before 1980 or went to school overseas)',
+      "I don't know",
+      'Prefer not to say',
+    ),
+    'Yes',
+  );
+  assert.equal(answer('Did either of your parents attend university?', 'Yes', 'No'), 'No');
+  assert.equal(answer('Are you the first in your family to go to university?', 'Yes', 'No'), 'Yes');
+  assert.equal(
+    answer(
+      'What is the highest level of qualifications achieved by either of your parent(s) or guardian(s) by the time you were 18?',
+      'At least one has a degree level qualification',
+      'Qualifications below degree level',
+      'No formal qualifications',
+      "Don't know",
+    ),
+    'Qualifications below degree level',
+  );
+  assert.equal(
+    answer(
+      'What was the occupation of your main household earner when you were aged 14?',
+      'Modern professional and traditional professional occupations such as: teacher, nurse',
+      'Senior, middle or junior managers or administrators such as: finance manager',
+      'Clerical and intermediate occupations such as: secretary',
+      'Technical and craft occupations such as: motor mechanic',
+      'Routine, semi-routine manual and service occupations such as: postal worker',
+      'Long-term unemployed (claimed Jobseeker’s Allowance or earlier unemployment benefit for more than a year)',
+    ),
+    'Routine, semi-routine manual and service occupations such as: postal worker',
+  );
+  // Left blank in the profile: nothing is chosen.
+  p.eeo.freeSchoolMeals = '';
+  assert.equal(answer('Were you eligible for free school meals?', 'Yes', 'No'), null);
+});
+
+test('a question naming a level of study answers from that degree', () => {
+  const p = sample(); // BSc at University of London, then MSc at Cambridge
+  const q = (type, question) => {
+    const v = fields.resolve(type, p, { jobContext: true, index: 0, question: util.normalize(question) });
+    return v && v.text;
+  };
+  assert.equal(q('edu.gpa', 'Undergraduate GPA'), '3.9');
+  assert.equal(q('edu.gpa', 'GPA (Graduate)'), null, 'the MSc has no GPA');
+  assert.equal(q('edu.school', 'Which university did you attend for your Masters?'), 'Cambridge');
+  assert.equal(q('edu.gpa', 'GPA (Doctorate)'), null);
+  assert.equal(q('edu.school', 'Name of Secondary/Academy School Attended'), null, 'no school-level entry');
+  assert.equal(
+    q('edu.school', 'Undergraduate or graduate school'),
+    'University of London',
+    'two levels: no preference',
+  );
+  assert.equal(
+    q('edu.school', 'Which university? This includes any studies not yet started, e.g. a Masters'),
+    'University of London',
+    'an example is not the level asked about',
+  );
+  p.education.push({
+    school: 'Eton College',
+    degree: 'A levels',
+    field: 'Maths, Physics',
+    startDate: '2008-09',
+    endDate: '2015-06',
+  });
+  assert.equal(q('edu.school', 'Name of Secondary/Academy School Attended'), 'Eton College');
+  // Level questions don't start new entries in the education section.
+  const plan = matcher.plan(
+    [
+      desc('Name of Secondary/Academy School Attended'),
+      desc('Secondary/Academy School Dates Attended'),
+      desc('What University did you Attend'),
+      desc('University Dates Attended', { kind: 'textarea' }),
+      desc('Degree Subject'),
+      desc('Expected/Achieved Final Degree Classification'),
+      desc('Expected Year of Graduation'),
+    ],
+    p,
+  );
+  assert.deepEqual(types(plan), [
+    'edu.school#0',
+    null,
+    'edu.school#0',
+    null,
+    'edu.field#0',
+    'edu.gpa#0',
+    'edu.end#0:year',
+  ]);
+});
+
+test('"Are you available to start from <date>?" is answered from your start date', () => {
+  const p = student();
+  p.job.startDate = '2027-06-28';
+  const avail = (question) => {
+    const v = ask(p, 'job.startDate', question);
+    return v && v.canonical ? v.text : v && v.text;
+  };
+  assert.equal(avail('Are you available to start full time from Monday 6th September 2027?'), 'Yes');
+  assert.equal(avail('Will you be available to start full-time from 6th September 2027?'), 'Yes');
+  assert.equal(avail('Are you available from 21st June to 20th August 2027?'), 'No', 'starts a week too late');
+  assert.equal(avail('Are you available from 1st July to 20th August 2027?'), 'Yes');
+  assert.equal(avail('I confirm my availability for a Summer 2027 (June/July starts) internship'), 'Yes');
+  assert.equal(avail('Will you be ready for full-time employment in 2028?'), 'Yes');
+  assert.equal(avail('Are you available to start in January 2027?'), 'No');
+  assert.equal(avail('When can you start?'), '2027-06-28', 'a plain question gets the date');
+  const classify = (label) => matcher.classify(desc({ label }, { kind: 'select', options: opts('Yes', 'No') }));
+  assert.equal(classify('Are you available to start full time from Monday 6th September 2027?').type, 'job.startDate');
+  assert.equal(classify('Will you be ready for full-time employment in 2028?').type, 'job.startDate');
+  assert.equal(
+    classify('I confirm my availability for a Summer 2027 (June/July starts) internship').type,
+    'job.startDate',
+  );
+});
+
+test('"Is this your current employer?" in a work-history entry is answered for that entry', () => {
+  const yn = opts('Yes', 'No');
+  const plan = matcher.plan(
+    [
+      desc('1. Employer Name'),
+      desc({ question: 'Is this your current employer?' }, { kind: 'radio', options: yn }),
+      desc('Job Title'),
+      desc('2. Employer Name'),
+      desc({ question: 'Is this your current employer?' }, { kind: 'radio', options: yn }),
+      desc('Job Title'),
+    ],
+    sample(),
+  );
+  assert.deepEqual(types(plan), [
+    'exp.company#0',
+    'exp.current#0',
+    'exp.title#0',
+    'exp.company#1',
+    'exp.current#1',
+    'exp.title#1',
+  ]);
+  const p = sample();
+  assert.equal(fields.resolve('exp.current', p, { jobContext: true, index: 0 }).canonical, 'yes');
+  assert.equal(fields.resolve('exp.current', p, { jobContext: true, index: 1 }).canonical, 'no');
+});
+
+test('"If your institution is not listed above" does not start a second education entry', () => {
+  const plan = matcher.plan(
+    [
+      desc(
+        { label: 'Please select the college or university you currently attend or previously attended:' },
+        { kind: 'combobox' },
+      ),
+      desc('If your institution is not listed above, please specify below:'),
+      desc({ label: 'Indicate your expected graduation date:' }, { kind: 'combobox' }),
+      desc({ label: 'Of the following options, please select your declared major:' }, { kind: 'combobox' }),
+      desc('What is your cumulative GPA?'),
+    ],
+    sample(),
+  );
+  assert.deepEqual(types(plan), ['edu.school#0', null, 'edu.end#0', 'edu.field#0', 'edu.gpa#0']);
+});
+
+test('"If yes, tell us more" boxes stay empty after a No, in every fill pass', () => {
+  const p = student();
+  const more = (question) =>
+    fields.resolve('job.otherOffers', p, { jobContext: true, question: util.normalize(question) });
+  p.job.otherOffers = 'No';
+  assert.equal(more('If you said yes above, please tell us about your offers and deadlines.'), null);
+  assert.equal(more('Do you have other offers?').text, 'No');
+  p.job.otherOffers = 'Yes, Jane Street, deadline 1 November';
+  assert.equal(more('If yes, please tell us about your offers').text, 'Yes, Jane Street, deadline 1 November');
+  p.job.sponsorship = 'No';
+  assert.equal(
+    fields.resolve('job.sponsorship', p, {
+      question: util.normalize('If yes, what type of sponsorship will you require?'),
+    }),
+    null,
+  );
+});
+
+test('"Are you a student who will graduate Fall of 2027 or Spring 2028?" is answered from your date', () => {
+  const p = student(); // June 2027
+  const v = ask(p, 'edu.end', 'Are you currently a university student who will graduate Fall of 2027 or Spring 2028?');
+  assert.equal(v.text, 'No');
+  p.education[0].endDate = '2028-05';
+  assert.equal(
+    ask(p, 'edu.end', 'Are you currently a university student who will graduate Fall of 2027 or Spring 2028?').text,
+    'Yes',
+  );
 });

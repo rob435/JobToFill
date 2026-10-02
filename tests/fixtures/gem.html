@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Gem-style application</title>
+    <style>
+      body { font: 15px system-ui; margin: 40px; }
+      .field { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+      .drop { border: 1px dashed #999; padding: 16px; position: relative; }
+      .drop input { position: absolute; inset: 0; opacity: 0; }
+    </style>
+  </head>
+  <body>
+    <!-- Reduced from jobs.gem.com: labels are spans, uploads are drop zones that only say "Click to upload",
+         and radio buttons have no name (React keeps the state). -->
+    <div class="form">
+      <div class="field"><span>First name *</span><div><input id="first" type="text" /></div></div>
+      <div class="field"><span>Email *</span><div><input id="email" type="text" /></div></div>
+      <div class="field">
+        <span>Resume *</span>
+        <div><div class="drop"><div>Click to upload or drag and drop here</div><input id="resume" type="file" accept=".pdf,.doc,.docx" /></div></div>
+      </div>
+      <div class="field">
+        <span>Cover letter</span>
+        <div><div class="drop"><div>Click to upload or drag and drop here</div><input id="cover" type="file" accept=".pdf,.doc,.docx" /></div></div>
+      </div>
+      <div class="field">
+        <span>Are you legally authorized to work in the United States? *</span>
+        <div class="options">
+          <div><input id="auth-yes" type="radio" /><label for="auth-yes">Yes</label></div>
+          <div><input id="auth-no" type="radio" /><label for="auth-no">No</label></div>
+        </div>
+      </div>
+      <div class="field">
+        <span>Will you now or in the future require visa sponsorship? *</span>
+        <div class="options">
+          <div><input id="spons-yes" type="radio" /><label for="spons-yes">Yes</label></div>
+          <div><input id="spons-no" type="radio" /><label for="spons-no">No</label></div>
+        </div>
+      </div>
+    </div>
+    <script>
+      // Like React: a click picks one option of the group, since the inputs share no name.
+      for (const group of document.querySelectorAll('.options')) {
+        const radios = group.querySelectorAll('input[type=radio]');
+        for (const r of radios)
+          r.addEventListener('change', () => radios.forEach((o) => (o.checked = o === r)));
+      }
+    </script>
+  </body>
+</html>

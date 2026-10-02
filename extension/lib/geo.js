@@ -122,6 +122,19 @@
     ],
   };
 
+  // Nationalities, so "British" finds the United Kingdom in a list of countries.
+  const DEMONYMS =
+    'GB:British,English,Scottish,Welsh,Northern Irish;US:American;IE:Irish;FR:French;DE:German;ES:Spanish;IT:Italian;' +
+    'PT:Portuguese;NL:Dutch;BE:Belgian;CH:Swiss;AT:Austrian;SE:Swedish;NO:Norwegian;DK:Danish;FI:Finnish;IS:Icelandic;' +
+    'PL:Polish;CZ:Czech;SK:Slovak;HU:Hungarian;RO:Romanian;BG:Bulgarian;GR:Greek;CY:Cypriot;MT:Maltese;HR:Croatian;' +
+    'SI:Slovenian;RS:Serbian;AL:Albanian;UA:Ukrainian;RU:Russian;LT:Lithuanian;LV:Latvian;EE:Estonian;LU:Luxembourgish;' +
+    'TR:Turkish;IL:Israeli;LB:Lebanese;JO:Jordanian;SA:Saudi,Saudi Arabian;AE:Emirati;QA:Qatari;EG:Egyptian;MA:Moroccan;' +
+    'NG:Nigerian;GH:Ghanaian;KE:Kenyan;ZA:South African;ET:Ethiopian;UG:Ugandan;ZW:Zimbabwean;IN:Indian;PK:Pakistani;' +
+    'BD:Bangladeshi;LK:Sri Lankan;NP:Nepalese,Nepali;CN:Chinese;HK:Hongkonger;TW:Taiwanese;JP:Japanese;' +
+    'KR:South Korean,Korean;SG:Singaporean;MY:Malaysian;ID:Indonesian;TH:Thai;VN:Vietnamese;PH:Filipino;' +
+    'AU:Australian;NZ:New Zealander;CA:Canadian;MX:Mexican;BR:Brazilian;AR:Argentine,Argentinian;CL:Chilean;' +
+    'CO:Colombian;PE:Peruvian;IR:Iranian;GE:Georgian;AM:Armenian;JM:Jamaican';
+
   const norm = (s) => JTF.util.normalize(s);
 
   let countryIndex = null;
@@ -131,7 +144,18 @@
     for (const row of COUNTRIES) {
       for (const key of row) countryIndex.set(norm(key), row);
     }
+    const byCode = new Map(COUNTRIES.map((row) => [row[0], row]));
+    for (const entry of DEMONYMS.split(';')) {
+      const [code, names] = entry.split(':');
+      for (const name of names.split(','))
+        if (!countryIndex.has(norm(name))) countryIndex.set(norm(name), byCode.get(code));
+    }
     return countryIndex;
+  }
+
+  function demonyms(iso2) {
+    const entry = DEMONYMS.split(';').find((e) => e.startsWith(iso2 + ':'));
+    return entry ? entry.slice(3).split(',') : [];
   }
 
   /** Look up a country by code, name or alias. Returns the data row or null. */
@@ -169,7 +193,7 @@
     return [...new Set([String(value), name, ...aliases, code])];
   }
 
-  const geo = { COUNTRIES, REGIONS, findCountry, countryCandidates, findRegion, regionCandidates };
+  const geo = { COUNTRIES, REGIONS, findCountry, countryCandidates, demonyms, findRegion, regionCandidates };
   JTF.geo = geo;
   if (typeof module === 'object' && module.exports) module.exports = geo;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -57,7 +57,18 @@
         locations: '',
         otherOffers: '',
       },
-      eeo: { gender: '', race: '', hispanic: '', veteran: '', disability: '' },
+      eeo: {
+        gender: '',
+        race: '',
+        hispanic: '',
+        veteran: '',
+        disability: '',
+        // UK social-mobility monitoring
+        schoolType: '',
+        freeSchoolMeals: '',
+        parentsDegree: '',
+        parentOccupation: '',
+      },
       education: [blankEducation()],
       experience: [blankExperience()],
       skills: '',
@@ -142,6 +153,72 @@
     return val(url);
   }
 
+  // The ways UK social-mobility questions word each answer the settings page offers.
+  const SCHOOL_TYPES = {
+    'State school (non-selective)': [
+      'state run or state funded school non selective',
+      'non selective state school',
+      'state school non selective',
+      'comprehensive',
+      'state school',
+      'state run or state funded school',
+    ],
+    'State school (selective)': [
+      'state run or state funded school selective',
+      'selective state school',
+      'grammar school',
+      'state school selective',
+      'state school',
+    ],
+    'Independent / fee-paying school': [
+      'independent or fee paying school',
+      'independent school',
+      'fee paying school',
+      'private school',
+    ],
+    'Independent school with a 90%+ bursary': [
+      'independent or fee paying school where i received a means tested bursary',
+      'bursary',
+      'independent or fee paying school',
+    ],
+    'School outside the UK': ['attended school outside the uk', 'school outside the uk', 'outside the uk', 'overseas'],
+  };
+  const PARENT_DEGREE = {
+    Yes: ['Yes', 'degree or above', 'at least one has a degree', 'degree level', 'university degree'],
+    No: ['No', 'qualifications below degree level', 'below degree level', 'no degree'],
+  };
+  const OCCUPATIONS = {
+    Professional: ['modern professional and traditional professional occupations', 'professional occupations'],
+    'Manager / administrator': ['senior middle or junior managers or administrators', 'managers or administrators'],
+    'Clerical / intermediate': ['clerical and intermediate occupations', 'intermediate occupations'],
+    'Technical / craft': ['technical and craft occupations'],
+    'Routine / semi-routine': [
+      'routine semi routine manual and service occupations',
+      'routine manual and service occupations',
+    ],
+    'Long-term unemployed': ['long term unemployed'],
+    'Small business owner': ['small business owners', 'self employed'],
+    'Other / not applicable': [
+      'other such as retired',
+      'this question does not apply to me',
+      'other',
+      'not applicable',
+    ],
+  };
+
+  /** A settings-page answer plus the longer ways forms spell it. */
+  function withSpellings(text, table) {
+    const v = val(text);
+    if (v && table[v.text]) v.candidates = [v.text, ...table[v.text]];
+    return v;
+  }
+
+  function sponsorAware(v, p) {
+    const need = JTF.matcher ? JTF.matcher.canonicalOf(p.job.sponsorship) : null;
+    if (v && (need === 'yes' || need === 'no')) v.sponsor = need;
+    return v;
+  }
+
   function numberVal(text) {
     if (U.isBlank(text)) return null;
     const m = String(text)
@@ -193,10 +270,49 @@
     });
   }
 
-  /** "3.9" or "3.9/4.0" also matches ranges like "3.80 - 4.00"; "2:1" or "First" only matches by text. */
+  // UK degree classes and the ways forms spell them ("Upper Second Class", "Second class honours: Grade 1").
+  const DEGREE_CLASSES = [
+    [
+      /^(first|1st|1)( class)?( honours)?$/,
+      ['First', '1st', 'First Class', 'First Class Honours', '1st Class', 'First / 1st'],
+    ],
+    [
+      /^(2 ?1|2 ?i|upper second|2 1 upper second)( class)?( honours)?$/,
+      [
+        '2:1',
+        '2.1',
+        '2i',
+        'Upper Second',
+        'Upper Second Class',
+        'Upper Second Class Honours',
+        'Second Class Honours Grade 1',
+        'Second Class Honours (Upper Division)',
+        'Second Class Upper',
+      ],
+    ],
+    [
+      /^(2 ?2|2 ?ii|lower second)( class)?( honours)?$/,
+      [
+        '2:2',
+        '2.2',
+        '2ii',
+        'Lower Second',
+        'Lower Second Class',
+        'Lower Second Class Honours',
+        'Second Class Honours Grade 2',
+        'Second Class Honours (Lower Division)',
+        'Second Class Lower',
+      ],
+    ],
+    [/^(third|3rd)( class)?( honours)?$/, ['Third', '3rd', 'Third Class', 'Third Class Honours', '3rd Class']],
+  ];
+
+  /** "3.9" or "3.9/4.0" also matches ranges like "3.80 - 4.00"; "2:1" or "First" matches its spellings. */
   function gpaVal(text) {
     const m = String(text || '').match(/^\s*(\d(?:\.\d+)?)\s*(?:\/\s*\d(?:\.\d+)?)?\s*$/);
-    return m ? val(text, { kind: 'number', number: parseFloat(m[1]) }) : val(text);
+    if (m && !/:/.test(text)) return val(text, { kind: 'number', number: parseFloat(m[1]) });
+    const cls = DEGREE_CLASSES.find(([re]) => re.test(U.normalize(text)));
+    return cls ? val(text, { candidates: [String(text).trim(), ...cls[1]] }) : val(text);
   }
 
   /**
@@ -212,7 +328,10 @@
     if (!d) return null;
     const at = d.year * 12 + (d.month || typicalMonth) - 1;
     const span = (text) => JTF.matcher.optionSpan(text);
-    let m = q.match(/\bbetween (.+?) and (.+)$/) || q.match(/\beither (.+?) or (.+)$/);
+    let m =
+      q.match(/\bbetween (.+?) and (.+)$/) ||
+      q.match(/\beither (.+?) or (.+)$/) ||
+      q.match(/\bgraduat\w* (?:in )?(.+?(?:19|20)\d{2}) or (.+?(?:19|20)\d{2})$/);
     let range = null;
     if (m) {
       const a = span(m[1]);
@@ -226,6 +345,40 @@
     }
     if (!range) return null;
     return val(at >= range[0] && at <= range[1] ? 'Yes' : 'No');
+  }
+
+  const MONTH_RE =
+    'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
+  const DAY_MONTH = new RegExp(
+    `\\b(\\d{1,2})(?:st|nd|rd|th)? (${MONTH_RE})\\b|\\b(${MONTH_RE}) (\\d{1,2})(?:st|nd|rd|th)?\\b`,
+  );
+
+  /**
+   * "Are you available to start from 6th September 2027?", "Are you available from 21st June to 20th August
+   * 2027?", "I confirm my availability for a Summer 2027 internship": yes when your earliest start date is
+   * on or before the date asked about (the start of a range, the end of a season). Null when it isn't one.
+   */
+  function availableAnswer(raw, question) {
+    const q = question || '';
+    if (!/^((are|will|would|can|could|do) you|(i )?confirm)\b/.test(q)) return null;
+    if (!/\bavailab|\bstart|\bready\b|\bcommence|\bjoin/.test(q)) return null;
+    const start = U.parseDate(raw);
+    if (!start || !start.month) return null;
+    // The first date mentioned, up to its year: "6th September 2027", "21st June" (year from later on), "Summer 2027".
+    const year = q.match(/\b(?:19|20)\d{2}\b/);
+    if (!year) return null;
+    const head = q.slice(0, year.index + 4);
+    const range = q.match(/\bfrom (.+?) (?:to|until|till|through) /);
+    const phrase = range ? range[1] + ' ' + year[0] : head.replace(/^.*?\b(from|on|by|in|for|around|before)\b /, '');
+    const span = JTF.matcher.optionSpan(
+      phrase.replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/g, ''),
+    );
+    if (!span) return null;
+    const at = start.year * 12 + start.month - 1;
+    let ok = at <= (range ? span[0] : span[1]);
+    const dm = phrase.match(DAY_MONTH);
+    if (ok && dm && start.day && span[0] === span[1] && at === span[0]) ok = start.day <= +(dm[1] || dm[4]);
+    return val(ok ? 'Yes' : 'No');
   }
 
   const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth'];
@@ -290,6 +443,25 @@
   const at = (path, wrap) => (p) => (wrap || val)(U.getPath(p, path));
   const simple = (label, path, wrap) => ({ label, path, get: at(path, wrap) });
 
+  // "Undergraduate GPA", "GPA (Graduate)", "Name of secondary school": the entry at that level of study.
+  const LEVEL_WORDS = [
+    ['highschool', /\b(high school|secondary( school)?|sixth form|a levels?|gcses?|academy school)\b/],
+    ['bachelor', /\b(undergrad\w*|bachelor\w*|bsc)\b/],
+    [
+      'master',
+      /\b(master\w*|msc|mba|post ?grad\w*|graduate (degree|school|program|programme|gpa|studies|student|level))\b|\bgpa graduate\b/,
+    ],
+    ['doctorate', /\b(doctora\w*|ph ?d|dphil)\b/],
+  ];
+
+  /** The one level of study a question names, or null (none, or several). */
+  function eduLevelOf(question) {
+    // Examples don't count: "…graduate? This includes … studies e.g. a Masters".
+    const q = String(question || '').replace(/\b(e g|eg|i e|such as|for example|including|includes|include)\b.*$/, '');
+    const hits = LEVEL_WORDS.filter(([, re]) => re.test(q)).map(([level]) => level);
+    return hits.length === 1 ? hits[0] : null;
+  }
+
   function entry(label, list, key, kind) {
     return {
       label,
@@ -302,7 +474,10 @@
           // A "Company" box on a checkout form is not your employer.
           return key === 'company' && i === 0 ? val(p.address.organization) : null;
         }
-        const e = (p[list] || [])[i];
+        const level = list === 'education' ? eduLevelOf(ctx.question) : null;
+        const e = level
+          ? (p.education || []).find((x) => JTF.matcher.degreeGroup(U.normalize(x.degree)) === level)
+          : (p[list] || [])[i];
         if (!e) return null;
         if (kind === 'date') {
           if (key === 'endDate' && e.current) return null;
@@ -340,7 +515,28 @@
     'name.prefix': simple('Title (Mr/Ms)', 'personal.prefix'),
     pronouns: simple('Pronouns', 'personal.pronouns'),
     dob: { label: 'Date of birth', path: 'personal.dob', get: (p, ctx) => dateVal(p.personal.dob, ctx.part) },
-    nationality: simple('Nationality', 'personal.nationality', countryVal),
+    // "Age: 18 - 21 / 22 - 30": worked out from the date of birth.
+    age: {
+      label: 'Age',
+      get(p, ctx) {
+        const d = U.parseDate(p.personal.dob);
+        if (!d || !d.month) return null;
+        const now = ctx.today || new Date();
+        const had = now.getMonth() + 1 > d.month || (now.getMonth() + 1 === d.month && now.getDate() >= (d.day || 1));
+        const years = now.getFullYear() - d.year - (had ? 0 : 1);
+        return years > 0 && years < 120 ? val(String(years), { kind: 'number', number: years }) : null;
+      },
+    },
+    nationality: {
+      label: 'Nationality',
+      path: 'personal.nationality',
+      get(p) {
+        // Lists of nationalities ("American", "British") as well as of countries.
+        const v = countryVal(p.personal.nationality);
+        if (v && v.iso2) v.candidates = [...new Set([...v.candidates, ...JTF.geo.demonyms(v.iso2)])];
+        return v;
+      },
+    },
 
     email: simple('Email', 'contact.email'),
     phone: {
@@ -431,7 +627,16 @@
     },
 
     'links.linkedin': simple('LinkedIn', 'links.linkedin', linkVal),
-    'links.github': simple('GitHub', 'links.github', linkVal),
+    'links.github': {
+      label: 'GitHub',
+      path: 'links.github',
+      get(p, ctx) {
+        const v = linkVal(p.links.github);
+        // "What is your GitHub username?" wants "ada", not the link.
+        const user = v && /\b(user ?name|handle)\b/.test(ctx.question || '') && v.text.match(/github\.com\/([\w.-]+)/i);
+        return user ? val(user[1]) : v;
+      },
+    },
     'links.portfolio': {
       label: 'Portfolio',
       path: 'links.portfolio',
@@ -459,8 +664,17 @@
       },
     },
     'job.yearsExperience': simple('Years of experience', 'job.yearsExperience', numberVal),
-    'job.authorized': simple('Authorized to work', 'job.authorized'),
-    'job.sponsorship': simple('Requires sponsorship', 'job.sponsorship'),
+    // Both carry whether you need sponsorship, for options like "Yes, will require sponsorship".
+    'job.authorized': {
+      label: 'Authorized to work',
+      path: 'job.authorized',
+      get: (p) => sponsorAware(val(p.job.authorized), p),
+    },
+    'job.sponsorship': {
+      label: 'Requires sponsorship',
+      path: 'job.sponsorship',
+      get: (p) => sponsorAware(val(p.job.sponsorship), p),
+    },
     'job.relocate': simple('Willing to relocate', 'job.relocate'),
     'job.over18': simple('Over 18', 'job.over18'),
     'job.salary': simple('Salary expectation', 'job.salary', numberVal),
@@ -482,7 +696,7 @@
     'job.startDate': {
       label: 'Available start date',
       path: 'job.startDate',
-      get: (p, ctx) => dateVal(p.job.startDate, ctx.part, 9),
+      get: (p, ctx) => availableAnswer(p.job.startDate, ctx.question) || dateVal(p.job.startDate, ctx.part, 9),
     },
     'job.referralSource': simple('How you heard about the job', 'job.referralSource'),
 
@@ -491,6 +705,30 @@
     'eeo.hispanic': simple('Hispanic / Latino', 'eeo.hispanic'),
     'eeo.veteran': simple('Veteran status', 'eeo.veteran'),
     'eeo.disability': simple('Disability status', 'eeo.disability'),
+    'eeo.schoolType': {
+      label: 'Type of school (age 11–16)',
+      path: 'eeo.schoolType',
+      get: (p) => withSpellings(p.eeo.schoolType, SCHOOL_TYPES),
+    },
+    'eeo.freeSchoolMeals': simple('Free school meals', 'eeo.freeSchoolMeals'),
+    'eeo.parentsDegree': {
+      label: 'A parent has a degree',
+      path: 'eeo.parentsDegree',
+      get(p, ctx) {
+        const v = withSpellings(p.eeo.parentsDegree, PARENT_DEGREE);
+        // "Are you the first in your family to go to university?" asks the opposite.
+        if (v && /\bfirst\b.*\b(family|generation)\b|\bfirst generation\b/.test(ctx.question || '')) {
+          if (v.canonical === 'yes') return val('No');
+          if (v.canonical === 'no') return val('Yes');
+        }
+        return v;
+      },
+    },
+    'eeo.parentOccupation': {
+      label: 'Main household earner’s job at 14',
+      path: 'eeo.parentOccupation',
+      get: (p) => withSpellings(p.eeo.parentOccupation, OCCUPATIONS),
+    },
 
     'edu.level': { label: 'Highest education', get: (p) => degreeVal(((p.education || [])[0] || {}).degree) },
     'edu.school': entry('School / university', 'education', 'school'),
@@ -652,15 +890,27 @@
     'nick', 'preferred', 'universit', 'college', 'institution', '\\bjob\\b', 'position', '\\brole\\b', 'product', 'course',
     'degree', 'program', 'display', 'screen', 'host', 'server', 'maiden', 'father', 'mother', 'parent', 'spouse',
     'guardian', '\\bkin\\b', 'contact person', 'signature', 'holder', 'bank', 'club', 'award', 'certif', 'hiring',
-    'interviewer', 'employee', 'department', 'title', 'legal entity', 'brand', 'campaign', 'store',
+    'interviewer', 'employee', 'department', 'title', 'legal entity', 'brand', 'campaign', 'store', 'pronounc',
+    'pronunciation', 'phonetic',
   ].join('|'));
 
   const R = (type, re, opts) => Object.assign({ type, re }, opts || {});
 
   const CONSENT =
-    /acknowledg|\bi (have )?(read|reviewed|understood)\b|\bi (hereby )?(confirm|agree|accept|consent|certify|attest|declare|understand)\b|\bconsent\b|privacy (notice|policy|statement)|notice at collection|data (protection|privacy|processing) (notice|policy|statement)|terms (and|&) conditions|terms of (use|service)|\bgdpr\b|candidate (privacy|data) (notice|policy)/;
+    /acknowledg|\bi (have )?(read|reviewed|understood)\b|\bi (hereby )?(confirm|agree|accept|consent|certify|attest|declare|understand)\b|\bconsent\b|privacy (notice|policy|statement)|notice at collection|data (protection|privacy|processing) (notice|policy|statement)|terms (and|&) conditions|terms of (use|service)|\bgdpr\b|candidate (privacy|data) (notice|policy)|confidentiality (agreement|undertaking|notice|statement)|non ?disclosure (agreement|undertaking)|maintain (the )?(strict )?confidentiality/;
   const OPT_IN =
     /marketing|newsletter|promotion|\bsms\b|text messages?|whats ?app|job alerts?|talent (community|network|pool)|future (opportunit|roles?|jobs?|vacanc|positions?|openings?)|other (roles|positions|opportunities|openings)|keep (me|my)|contact me|subscribe|\bupdates\b|share my (data|information|details) with/;
+
+  /** "US Dollar ($) / Euro (€)" or "Hourly / Monthly / Yearly": the units next to a salary, not the amount. */
+  function looksLikeMoneyUnits(options) {
+    const opts = (options || []).filter((o) => !JTF.matcher.isPlaceholder(U.normalize(o.text)));
+    if (opts.length < 2) return false;
+    const unit = (t) =>
+      (!/\d/.test(t) &&
+        /[$€£¥₹]|\b(dollars?|euros?|pounds?|yen|rupees?|francs?|usd|eur|gbp|chf|currency)\b/i.test(t)) ||
+      /^(per )?(hour|hourly|day|daily|week|weekly|month|monthly|year|yearly|annual|annually|annum)$/i.test(t.trim());
+    return opts.filter((o) => unit(o.text)).length / opts.length >= 0.6;
+  }
 
   function hasYesNoOptions(desc) {
     const opts = (desc.options || []).filter((o) => !JTF.matcher.isPlaceholder(U.normalize(o.text)));
@@ -681,7 +931,8 @@
     ),
     R('file.resume', /resume|\bcv\b|curriculum|lebenslauf|attach|upload|document|\bfile\b/, {
       kinds: ['file'],
-      not: /photo|picture|image|avatar|headshot|transcript|portfolio|certificat|passport|\bid\b|writing sample|cover/,
+      // "Autofill from resume" / "Apply with resume" read the file and rewrite the form: not the resume upload.
+      not: /photo|picture|image|avatar|headshot|transcript|portfolio|certificat|passport|\bid\b|writing sample|cover|auto ?fill|automatically fill|apply with (your )?(resume|cv)|pre ?fill|parse/,
       // An "Attach" button whose id or group says "cover letter" is not the resume upload.
       notAny:
         /cover ?letter|motivation(al)? letter|letter of motivation|anschreiben|lettre de motivation|transcript|writing sample|headshot|photo|passport/,
@@ -699,6 +950,7 @@
     R(
       'cc.name',
       /card ?holder|name on (the |your )?card|(card|cc) ?(owner|name)|name (as it )?(appears )?on (your )?card|karteninhaber|titular de la tarjeta|nom du titulaire/,
+      { not: /green card|permanent resident/ },
     ),
     R(
       'cc.exp',
@@ -735,16 +987,28 @@
     R(
       'job.sponsorship',
       /sponsor|visa (status|support|required|transfer|requirement)|\bh ?1 ?b\b|immigration (support|sponsorship|assistance)|require (a )?(work )?visa/,
+      {
+        not: /adjustments?\b|accommodat/,
+        // "Do you have the right to work in the region? … Sponsorship is not available" asks for your right to work.
+        test: (desc, hit) =>
+          !/^(do|are) you (currently )?(have|hold|legally|lawfully)? ?(the )?(legal )?(right to work|authori[sz]ed|eligible|permitted|entitled)\b/.test(
+            hit,
+          ),
+      },
     ),
     R(
       'job.authorized',
-      /(authori[sz]ed|eligible|entitled|permitted|allowed|able) to (lawfully |legally )?work|work (authori[sz]ation|permit|eligibility)|employment (authori[sz]ation|eligibility)|eligib(le|ility) (for|to) (employment|work)|authori[sz]ation to work|right to work|legal right to|legally (work|employed)/,
+      /\b(authori[sz]ed|eligible|entitled|permitted|allowed) to (lawfully |legally )?work|work (authori[sz]ation|permit|eligibility)|employment (authori[sz]ation|eligibility)|eligib(le|ility) (for|to) (employment|work)|authori[sz]ation to work|right to work|legal right to|legally (work|employed)/,
     ),
+    // "Are you able to work in the UK?" is about permission; "able to work on-site 5 days a week" is not.
+    R('job.authorized', /\bable to (lawfully |legally )?work\b/, {
+      not: /\bon ?site\b|in (the |our )?office|in person|days (a|per) week|\bcommute|\bhybrid\b|\bshifts?\b|weekends?|overtime|consecutive|full ?time for/,
+    }),
     R(
       'job.locations',
       /\blocations?\b.*\b(interested|prefer|willing|open to|relocat|consider|like to work|want to work)|\b(preferred|desired|target|ideal) (work |office |job |internship |role )?(locations?|offices?|cities)|\bwhich (other )?(offices?|locations?|cities)\b|\b(office|location|city) preferences?\b|where would you (like|prefer|want) to (work|be based)|\brelocat\w* (where|which (cities|locations|offices))\b|^where\b.*\brelocat/,
     ),
-    R('job.relocate', /relocat/),
+    R('job.relocate', /relocat/, { not: /adjustments?\b|accommodat/ }),
     R(
       'job.over18',
       /\b(18|eighteen)\b.*\b(years|older|age)\b|\b(at least|over|above|older than) (the age of )?(18|eighteen)\b|legal (working )?age|age of majority/,
@@ -755,7 +1019,12 @@
     ),
     R(
       'job.salary',
-      /salary|compensation|pay (expectation|range|requirement)|desired (pay|rate|wage)|expected (pay|wage|rate|ctc)|\bctc\b|remuneration|\bwage\b|rate expectation|hourly rate|base pay/,
+      /salary|compensation|pay (expectation|range|requirement)|desired (pay|rate|wage)|expected (pay|wage|rate|ctc)|\b(current|present|desired) ctc\b|^ctc$|remuneration|\bwage\b|rate expectation|hourly rate|base pay/,
+      {
+        // The currency and pay-period pickers next to the amount ("salaryCurrency", "Desired Salary Type").
+        not: /currenc|\bperiod\b|frequency|\b(salary|pay) (type|basis|unit)\b/,
+        test: (desc) => !looksLikeMoneyUnits(desc.options),
+      },
     ),
     R('job.nonCompete', /non ?compete|non ?solicit|restrictive (covenant|agreement|clause)|garden leave/),
     R('job.noticePeriod', /notice ?period|notice (required|do you need)|how much notice|weeks notice/),
@@ -765,7 +1034,7 @@
     ),
     R(
       'job.startDate',
-      /when (can|could|would) you (start|begin|join)|when (are|will) you (be )?(able|available) to (start|begin|join)|available (start|to start|to begin|from)|\bavailability\b|earliest (possible )?(start|date)|date (you are )?available|(desired|preferred) start|expected start|join(ing)? date|how soon|start (date|dates) (for|of) (the|this|your) (internship|placement|programme|program|role|position|job)/,
+      /when (can|could|would) you (start|begin|join)|when (are|will) you (be )?(able|available) to (start|begin|join)|available (start|to start|to begin|from)|\bavailability\b|earliest (possible )?(start|date)|date (you are )?available|(desired|preferred) start|expected start|join(ing)? date|how soon|start (date|dates) (for|of) (the|this|your) (internship|placement|programme|program|role|position|job)|\bdate (that )?you (could|can|would|will) (start|begin|join)\b|\b(ready|available) for (full ?time )?(employment|work)\b/,
     ),
     R(
       'job.yearsExperience',
@@ -773,11 +1042,11 @@
     ),
     R(
       'job.currentCompany',
-      /current (company|employer|organi[sz]ation|workplace)|present (company|employer)|most recent (company|employer)|^org$|latest employer/,
+      /current (company|employer|organi[sz]ation|workplace)|present (company|employer)|most recent (company|employer)|^org$|latest employer|\b(employer|company|organi[sz]ation) (or (employer|company|organi[sz]ation) )?of your (most recent|current|latest)\b/,
     ),
     R(
       'job.currentTitle',
-      /current (job )?(title|position|role|designation|occupation)|present (title|position|role)|most recent (job )?(title|position|role)|^headline$|professional headline/,
+      /current (job )?(title|position|role|designation|occupation)|present (title|position|role)|most recent (job )?(title|position|role)|^headline$|professional headline|\b(title|position) of your (most recent|current|latest)\b/,
     ),
 
     // Acknowledgements ("I have read the privacy notice", "Acknowledge/Confirm"), never marketing opt-ins
@@ -793,13 +1062,37 @@
     R('eeo.hispanic', /hispanic|latin[oax]\b/, { kinds: CHOICE }),
     R('eeo.race', /\brace\b|ethnic/, { kinds: CHOICE }),
     R('eeo.veteran', /veteran|military (service|status)|armed forces|served in the/, { kinds: CHOICE }),
-    R('eeo.disability', /disabilit|disabled|handicap|impairment/, { kinds: CHOICE }),
+    R('eeo.disability', /disabilit|disabled|handicap|impairment/, { kinds: CHOICE, not: /adjustments?\b|accommodat/ }),
     R('eeo.gender', /\bgender\b|\bsex\b|geschlecht|\bgenre\b|\bsexo\b/, { not: /orientation|transgender/ }),
+    // UK social-mobility monitoring
+    R('eeo.freeSchoolMeals', /free school meals?|\bfsm\b/, { kinds: CHOICE }),
+    R(
+      'eeo.schoolType',
+      /\b(type|kind) of school\b|\bschool type\b|\bschool did you (mainly )?attend\b|\bstate (school|run|funded)\b.*\b(independent|private|fee)|\bfee paying\b/,
+      { kinds: CHOICE },
+    ),
+    R(
+      'eeo.parentsDegree',
+      /\bparents?\b.*\b(universit|degree|higher education|college|qualification)|\bguardians?\b.*\b(universit|degree|higher education|qualification)|\bfirst (person )?in (your|my) (immediate )?family\b.*\b(universit|college|higher education|degree)|\bfirst generation (student|university|college)|\b(qualifications?|degree|universit\w*|education)\b.*\b(parents?|guardians?)\b/,
+      { kinds: CHOICE },
+    ),
+    R(
+      'eeo.parentOccupation',
+      /\b(main|highest) (household )?(income )?earner\b|\bhousehold earner\b|\boccupation of your (main )?(parent|household)|\bparents?\b.*\b(occupation|job)\b|\b(aged?|when you were) (about )?14\b/,
+      { kinds: CHOICE },
+    ),
     R('pronouns', /\bpronouns?\b/), // not "how your name is pronounced"
     R(
       'dob',
       /birth ?(date|day)|date of birth|\bdob\b|\bbday\b|birthday|geburtsdatum|fecha de nacimiento|date de naissance/,
       { not: /place|city|country|town/ },
+    ),
+    R(
+      'age',
+      /^(your |current )?age\b(?! of)|\bwhat is your (current )?age\b|\bhow old are you\b|\bage (range|group|bracket|band)\b/,
+      {
+        not: /\b(18|eighteen|16|21)\b|\bover\b|at least|older|minimum|legal/,
+      },
     ),
 
     // Links (before names and websites)
@@ -819,12 +1112,14 @@
     R(
       'edu.level',
       /highest (level of )?(education|degree|qualification|academic)|education(al)? (level|attainment|background|qualification)|level of (education|study|degree)/,
+      { not: /fields? of study|\bsubjects?\b|\bmajors?\b|\bdisciplines?\b|\bparents?\b|guardian|mother|father/ },
     ),
     R(
       'edu.end',
-      /graduat(ion|ed|e|ing)\b|expected graduation|completion (date|year)|year of (graduation|completion|passing)|class of|passing year|year (graduated|completed)|\b(course|degree|studies|programme|program) (finish|end|complete)s?\b|\b(finish|complete|end) (your|my|the) (course|degree|studies)\b|\bend (date |year )?of (your |the )?(course|degree|studies)\b/,
+      /\bgraduat(ion|ed|e|ing)\b|expected graduation|completion (date|year)|year of (graduation|completion|passing)|class of|passing year|year (graduated|completed)|\b(course|degree|studies|programme|program) (finish|end|complete)s?\b|\b(finish|finishing|complete|completing|end|ending) (your |my |the )?(university |college |undergraduate |current |academic )?(course|degree|studies|programme|program)\b|\bend (date |year )?of (your |the )?(course|degree|studies)\b|\bleav(e|ing) (academia|university|full time education)\b/,
       {
-        not: /^(did|have|are) you|post ?grad|graduate (degree|school|program|student)|undergrad|high school|secondary school|sixth form|a levels?\b/,
+        // "undergraduate" no longer matches (\b), so "graduation year (undergraduate degrees…)" is still a date
+        not: /^(did|have) you|^are you (a |an )?(recent |new )?(graduate|grad|undergrad)|post ?grad|\bgraduate (degree|school|program|student)|high school|secondary school|sixth form|a levels?\b|\bgpa\b|\bgrades?\b/,
       },
     ),
     R(
@@ -838,7 +1133,7 @@
       'edu.school',
       /\bschool\b|universit|college|institut(e|ion)|alma mater|academy|hochschule|\becole\b|universidad/,
       {
-        not: /high school (diploma|graduate|completion)|degree|major|minor|gpa|\byear\b|\bdate\b|\bstart|\bend\b|graduat|\blocation\b|\bcity\b|\bstate\b|country|did you|have you|are you|do you|e ?mail|address|transcript|currently (attend|enrolled)|meals|type of school|school type|kind of school|fee paying|state school|grammar school/,
+        not: /high school (diploma|graduate|completion)|degree|major|minor|gpa|\byear\b|\bdates?\b|\bstart|\bend\b|graduat|\blocation\b|\bcity\b|\bstate\b|country|^(did|have|has|are|do|does|were|was|will|would|can|is) you\b|e ?mail|address|transcript|meals|type of school|school type|kind of school|fee paying|state school|grammar school|grading|\bscale\b/,
       },
     ),
     // "What degree are you currently pursuing?" asks for a degree; "Are you pursuing a degree?" is yes/no.
@@ -851,12 +1146,12 @@
       },
     ),
     R('edu.degree', /\bdegree\b|qualification|diploma|\baward\b/, {
-      not: /major|field|subject|discipline|\byear\b|\bdate\b|level of|highest|degree of|\bdid you|have you|do you|are you|minimum|equivalent|\bclass\b|classification/,
+      not: /major|field|subject|discipline|\byear\b|\bdate\b|level of|highest|degree of|\bdid you|have you|do you|are you|minimum|equivalent|\bclass\b|classification|\bgpa\b|\bgrades?\b|\bscore\b/,
       test: (desc) => !hasYesNoOptions(desc),
     }),
     R(
       'edu.field',
-      /field of study|\bmajor\b|\bdiscipline\b|concentration|area of study|speciali[sz]ation|course of study|program(me)? of study|\bsubject\b|study (field|area)|\bfield\b|course name/,
+      /fields? of study|\bmajors?\b|\bdisciplines?\b|concentration|area of study|speciali[sz]ation|course of study|program(me)? of study|\bsubjects?\b|study (field|area)|\bfield\b|course name/,
       {
         not: /minor|\bdid\b|field (sales|service|work|engineer|marketing|operations)|form ?field|field ?(set|label|wrapper|group|container|row|section|input)/,
       },
@@ -864,7 +1159,7 @@
     R(
       'edu.gpa',
       /\bgpa\b|grade point|\bcgpa\b|cumulative (grade|average)|grade average|\bgrades?\b|degree classification|class of degree|\bdegree class\b|\bclassification\b|\bhonou?rs\b/,
-      { not: /test score|credit score/ },
+      { not: /test score|credit score|maximum|max possible|highest possible|grading scale|scale used/ },
     ),
 
     // Names
@@ -914,12 +1209,17 @@
     R(
       'phone.countryCode',
       /country ?(phone )?(calling )?code|dial(l)?(ing)? ?code|calling ?code|phone.*country|country.*phone|\bisd\b|(phone|tel|mobile) ?prefix|country ?prefix|international code/,
+      // "Mobile number (including country code)" is the whole number.
+      {
+        not: /\b(start|begin)s? with|\b(including|include|incl|with|plus|then|followed by) (the |your |a )?(country|dial(l)?ing|international) code\b/,
+      },
     ),
     R(
       'phone',
       /phone|mobile|\bcell\b|cellular|telephone|\btel\b|contact (number|no)|telefon|telefono|\bportable\b|\bhandy\b|whats ?app|\bmob\b/,
       {
-        not: /type|\bext\b|extension|country|code|fax|device|prefix|emergency|referr|reference|manager|supervisor|employer|company|business|organi[sz]ation|\bsms\b|text messag|consent/,
+        // "…start with a + and then the country code" is help for the whole number.
+        not: /type|\bext\b|extension|(?<!\b(including|include|incl|with|plus|then|the|your|a|by) )\bcountry\b|(?<!\bcountry )\bcode\b|fax|device|prefix|emergency|referr|reference|manager|supervisor|employer|company|business|organi[sz]ation|\bsms\b|text messag|consent/,
         yieldsTo: ['phone.countryCode', 'phone.type'],
       },
     ),
@@ -937,29 +1237,33 @@
       /address ?(line)? ?(1|one|i)\b|\baddr(ess)? ?1\b|\bstreet\b|\baddress\b|\baddr\b|strasse|direccion|\badresse\b|indirizzo|\bmorada\b|house ?(number|name|no)/,
       {
         not: /e ?mail|\bip\b|\bweb\b|\burl\b|line ?(2|two|3|three)|\bcity\b|\bstate\b|zip|postal|country|same as|wallet|mac address|crypto/,
-        yieldsTo: ['address.line2', 'address.city', 'address.postalCode'],
+        yieldsTo: ['address.line2', 'address.city', 'address.postalCode', 'exp.location'],
       },
     ),
     R(
       'location',
       /\blocation\b|city ?(and|&)? ?(state|country)|where are you (currently )?(based|located|living)|current (city|location|residence)|based in|place of residence|city of residence|where do you live|^residence$/,
       {
-        not: /preferred|desired|willing|relocat|office|prefer|which location|work location|job location|interested|position location|hope|want|open to/,
+        not: /preferred|desired|willing|relocat|office|prefer|which location|work location|job location|interested|position location|hope|want|open to|employer|company|organi[sz]ation/,
       },
     ),
     R(
       'address.city',
       /\bcity\b|\btown\b|\bsuburb\b|\blocality\b|\bort\b|\bstadt\b|\bciudad\b|\bville\b|\bcitta\b|municipality|\bwohnort\b|address level 2/,
-      { not: /\bstate\b|zip|postal|birth/ },
+      { not: /\bstate\b|zip|postal|birth|employer|company|organi[sz]ation/ },
     ),
     R(
       'address.state',
       /\bstate\b|\bprovince\b|\bregion\b|\bcounty\b|\bterritory\b|prefecture|bundesland|\bestado\b|\bprovincia\b|address level 1/,
-      { not: /united states|marital|\b(please|you|to) state\b|\bstate (your|which|whether|if|why|how|what|the|any)\b/ },
+      {
+        not: /united states|marital|\b(please|you|to) state\b|\bstate (your|which|whether|if|why|how|what|the|any)\b/,
+        yieldsTo: ['exp.location'], // "Employer Location (City, State, Zip)"
+      },
     ),
     R(
       'address.postalCode',
       /\bzip\b|zip ?code|\bzipcode|postal|post ?code|postcode|\bpin ?code\b|\bplz\b|postleitzahl|codigo postal|code postal|\bcap\b|\bcep\b/,
+      { yieldsTo: ['exp.location'] },
     ),
     R(
       'nationality',
@@ -975,6 +1279,14 @@
       'exp.current',
       /currently (work|employed|working)|current(ly)? (job|role|position|employer)|i (currently )?work here|\bpresent\b|still (work|employed)|\bongoing\b|current$/,
       { kinds: ['checkbox'] },
+    ),
+    // "Is this your current employer?" (Yes/No) inside a work-history entry.
+    R(
+      'exp.current',
+      /\b(is|was) this (your|my) current (employer|job|position|role|company)\b|\bdo you (still|currently) work here\b/,
+      {
+        kinds: CHOICE,
+      },
     ),
     R(
       'exp.start',
@@ -1067,6 +1379,9 @@
     tel: ['phone'], 'tel-national': ['phone.national'], 'tel-country-code': ['phone.countryCode'],
   };
 
+  // "If yes, please tell us more": only answered when the answer to the question before was yes.
+  const FOLLOW_UP = /^if (yes|so|you (said|answered|selected|chose|checked|ticked) yes)\b/;
+
   /** Resolve a field type to a value object (or null when the profile has nothing for it). */
   function resolve(type, profile, ctx) {
     ctx = ctx || {};
@@ -1074,7 +1389,8 @@
     const def = DEFS[type];
     if (!def || !profile) return null;
     try {
-      return def.get(profile, ctx) || null;
+      const v = def.get(profile, ctx) || null;
+      return v && FOLLOW_UP.test(ctx.question || '') && v.canonical !== 'yes' ? null : v;
     } catch (err) {
       return null;
     }
@@ -1098,6 +1414,7 @@
     KINDS: { TEXTISH, CHOICE, DEFAULT_KINDS },
     resolve,
     labelOf,
+    eduLevelOf,
     cardBrand,
     val,
   };

@@ -62,6 +62,17 @@
     'data-cy',
   ];
   const PLACEHOLDERISH = /^(select|choose|please select|search|type to search|start typing|-+)\b/i;
+  // A drop zone's instructions ("Click to upload or drag and drop here", "PDF, max 5MB") say nothing about
+  // what the upload is for: the label is further out.
+  const UPLOAD_WORDS = new Set(
+    'click tap here to or and upload uploads attach browse choose select add drag drop your a an the files file document documents max maximum size mb kb limit up of pdf doc docx txt rtf odt accepted formats types supported only'.split(
+      ' ',
+    ),
+  );
+  const isUploadBoilerplate = (t) =>
+    U.normalize(t)
+      .split(' ')
+      .every((w) => !w || UPLOAD_WORDS.has(w) || /^\d+$/.test(w));
 
   /* ------------------------------------------------------------ visibility */
 
@@ -182,15 +193,19 @@
   function contextLabel(start, members) {
     const skip = (n) => members.has(n) || (n.localName === 'label' && n.control && members.has(n.control));
     let node = start;
+    let boilerplate = '';
     for (let depth = 0; depth < 6; depth++) {
       const parent = node.parentElement;
       if (!parent || parent === node.ownerDocument.body) break;
-      if (foreignControls(parent, members) > 0) return previousText(node);
+      if (foreignControls(parent, members) > 0) return previousText(node) || boilerplate;
       const t = textOf(parent, skip);
-      if (t && !PLACEHOLDERISH.test(t)) return U.cleanLabel(t, 200);
+      if (t && !PLACEHOLDERISH.test(t)) {
+        if (!isUploadBoilerplate(t)) return U.cleanLabel(t, 200);
+        boilerplate = boilerplate || U.cleanLabel(t, 200);
+      }
       node = parent;
     }
-    return previousText(node);
+    return previousText(node) || boilerplate;
   }
 
   function commonAncestor(nodes) {
@@ -272,6 +287,20 @@
     if (group.localName === 'fieldset') t = fieldsetTitle(group);
     if (!t) t = explicitLabel(group) || group.getAttribute('aria-label') || '';
     return U.cleanLabel(t, 200);
+  }
+
+  /**
+   * Jobvite only: each upload's "Select" button opens a popup (#attachmentDropdown) that is appended to
+   * <body> in button order, and the file input inside is labelled just "File". The button says what the
+   * upload is for ("Resume", "Cover Letter").
+   */
+  function jobviteUploadLabel(el) {
+    const pop = el.closest('#attachmentDropdown');
+    if (!pop || pop.parentElement !== el.ownerDocument.body) return '';
+    const pops = Array.from(el.ownerDocument.querySelectorAll('body > #attachmentDropdown'));
+    const buttons = Array.from(el.ownerDocument.querySelectorAll('button[jv-add-attachment]'));
+    const button = pops.length === buttons.length ? buttons[pops.indexOf(pop)] : null;
+    return button ? U.cleanLabel(button.getAttribute('attachment-label') || explicitLabel(button)) : '';
   }
 
   function ancestorHints(el) {
@@ -368,14 +397,40 @@
     return list.filter((m) => isUsable(m, kind));
   }
 
+  /** Radios with no name (Gem's React forms): the group is the smallest wrapper holding several of them. */
+  function namelessRadios(el) {
+    let a = el.parentElement;
+    for (let i = 0; a && i < 5; i++, a = a.parentElement) {
+      const list = Array.from(a.querySelectorAll('input[type="radio"]:not([name])'));
+      if (list.length > 1) return list.filter((m) => isUsable(m, 'radio'));
+    }
+    return [el];
+  }
+
+  /**
+   * Checkboxes each named after their option (Ashby: name="LinkedIn", name="Glassdoor") inside one titled
+   * <fieldset> are one checklist. Long labels are separate statements ("I agree…"), so those stay single.
+   */
+  function fieldsetCheckboxes(el) {
+    const fs = el.closest('fieldset');
+    if (!fs || !fieldsetTitle(fs)) return null;
+    const controls = Array.from(fs.querySelectorAll(COUNTED_SELECTOR)).filter((c) => !isShim(c));
+    if (controls.length < 2 || !controls.every((c) => c.localName === 'input' && c.type === 'checkbox')) return null;
+    if (controls.some((c) => optionLabel(c).length > 60)) return null;
+    return controls.filter((m) => isUsable(m, 'checkbox'));
+  }
+
   function groupMembers(el) {
     if (isAriaChoice(el)) return ariaMembers(el, el.matches('button[aria-pressed]') ? 'radio' : kindOf(el));
+    if (el.type === 'radio' && !el.hasAttribute('name')) return namelessRadios(el);
     const scope = el.form || el.getRootNode();
     const type = el.type;
     const selector = `input[type="${type}"][name="${CSS.escape(el.name)}"]`;
-    return Array.from(scope.querySelectorAll(selector)).filter(
+    const named = Array.from(scope.querySelectorAll(selector)).filter(
       (m) => (m.form || null) === (el.form || null) && isUsable(m, type),
     );
+    if (type === 'checkbox' && named.length <= 1) return fieldsetCheckboxes(el) || named;
+    return named;
   }
 
   function describe(el, kind, members) {
@@ -402,7 +457,7 @@
       s.title = el.getAttribute('title') || '';
       if (kind === 'checkbox' && !s.label) s.label = nextText(el);
       if (!s.label && !s.aria) s.nearby = contextLabel(el, new Set([el]));
-      const group = groupLabel(el);
+      const group = groupLabel(el) || (kind === 'file' ? jobviteUploadLabel(el) : '');
       if (group && U.normalize(group) !== U.normalize(s.label || s.aria)) {
         // For an upload or a lone checkbox the group's legend is the question; elsewhere it is context.
         if (kind === 'file' || kind === 'checkbox') s.question = group;
@@ -431,7 +486,7 @@
       if (seen.has(el)) continue;
       const kind = kindOf(el);
       if (!kind || !isUsable(el, kind)) continue;
-      if ((kind === 'radio' || kind === 'checkbox') && (el.name || isAriaChoice(el))) {
+      if ((kind === 'radio' || kind === 'checkbox') && (el.name || isAriaChoice(el) || kind === 'radio')) {
         const members = groupMembers(el);
         members.forEach((m) => seen.add(m));
         if (kind === 'radio' || members.length > 1) {
