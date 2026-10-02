@@ -578,7 +578,7 @@
   /* -------------------------------------------------------------- pipeline */
 
   const NOT_A_ROLE =
-    /^\s*(your privacy|we value your privacy|privacy( policy| notice| settings| preferences)?|cookies?( policy| settings| preferences| consent| notice)?|manage (cookies|consent|preferences)|consent|terms( of use| and conditions)?|sign in|log ?in|create (an )?account|page not found|not found|404|access denied|error|just a moment|attention required|careers?|jobs?|home)\W*$/i;
+    /^\s*(your privacy|we value your privacy|privacy( policy| notice| settings| preferences)?|cookies?( policy| settings| preferences| consent| notice)?|manage (cookies|consent|preferences)|consent|terms( of use| and conditions)?|sign in|log ?in|create (an )?account|page not found|not found|404|access denied|error|just a moment|attention required|careers?|jobs?|home|open (positions|roles|jobs|vacancies)|current (openings|vacancies)|vacancies|search (jobs|results))\W*$/i;
 
   function cleanAnalysis(a, posting, context) {
     const s = (v) => (typeof v === 'string' ? decodeEntities(v).trim() : '');
