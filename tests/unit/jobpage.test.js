@@ -2014,6 +2014,14 @@ test('lists and logos: RMK category pages are lists, and an image file name is n
     'https://www.pinsentmasons.com/careers/early-talent/england/vacation-placement',
   );
   assert.ok(!/language/i.test(lang.title), lang.title);
+  // A portal page that shows only the firm's name: no job title (it would make the firm's programme 'different').
+  const firm = jp.applicationContext(
+    parseHTML(
+      '<html><head><title>Trowers &amp; Hamlins</title></head><body><h1>Trowers &amp; Hamlins</h1></body></html>',
+    ).document,
+    'https://trowers.hr.candidats.io/roles',
+  );
+  assert.deepEqual([firm.title, firm.company], ['', 'Trowers']);
   // A video player inside the application page (its frame's title once became the job's title).
   const video = jp.applicationContext(
     parseHTML('<html><head><title>Vimeo</title></head><body><h1>Our people</h1></body></html>').document,
