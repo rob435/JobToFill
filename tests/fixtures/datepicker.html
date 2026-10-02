@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Engineer – application with a date picker and a modal</title>
+    <style>
+      body {
+        font: 15px/1.4 system-ui, sans-serif;
+        margin: 32px auto;
+        max-width: 720px;
+      }
+      .react-datepicker-popper {
+        position: absolute;
+        background: #fff;
+        border: 1px solid #ccc;
+        padding: 8px;
+      }
+      .react-datepicker-popper[hidden],
+      #modal[hidden] {
+        display: none;
+      }
+      #modal {
+        border: 2px solid #333;
+        padding: 12px;
+        margin-top: 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Engineer</h1>
+    <!-- Like Ashby's react-datepicker: focusing the box opens a calendar that stays open until Escape or a click
+         outside. -->
+    <form id="application">
+      <label for="first">First name</label><input id="first" />
+      <label for="start">When can you start a new role?</label>
+      <div class="react-datepicker-wrapper"><input id="start" type="text" placeholder="Pick date..." /></div>
+      <div class="react-datepicker-popper" id="calendar" hidden>
+        <div class="react-datepicker__month" role="listbox" aria-label="month 2026-11">
+          <div role="option" class="react-datepicker__day">1</div>
+          <div role="option" class="react-datepicker__day">2</div>
+          <div role="option" class="react-datepicker__day">3</div>
+        </div>
+      </div>
+    </form>
+    <!-- Opened later as an application step in a modal (?modal): its calendar must not make us close the modal. -->
+    <div id="modal" role="dialog" aria-modal="true" aria-label="Contact details" hidden>
+      <label for="avail">Date available</label><input id="avail" type="text" placeholder="Pick date..." />
+      <div class="react-datepicker-popper" id="calendar2" hidden>
+        <div role="listbox"><div role="option">1</div></div>
+      </div>
+    </div>
+    <script>
+      const input = document.getElementById('start');
+      const cal = document.getElementById('calendar');
+      input.addEventListener('focus', () => (cal.hidden = false));
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') cal.hidden = true;
+      });
+      document.addEventListener('mousedown', (e) => {
+        if (!cal.contains(e.target) && e.target !== input) cal.hidden = true;
+      });
+      const modal = document.getElementById('modal');
+      if (location.search === '?modal') {
+        modal.hidden = false;
+        document.getElementById('application').hidden = true;
+      }
+      const avail = document.getElementById('avail');
+      avail.addEventListener('focus', () => (document.getElementById('calendar2').hidden = false));
+      // Like a dialog library: Escape or a click outside closes the modal.
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !modal.hidden) modal.hidden = true;
+      });
+      document.addEventListener('mousedown', (e) => {
+        if (!modal.contains(e.target)) modal.hidden = true;
+      });
+    </script>
+  </body>
+</html>

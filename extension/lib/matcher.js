@@ -169,6 +169,9 @@
       // An essay box ("Do you have coding experience? … GitHub links welcomed", "Think of something in
       // your academic life…") wants an answer, not a name, school or URL.
       if (desc.kind === 'textarea' && SHORT_VALUE.test(rule.type) && hitText.split(' ').length > 12) continue;
+      // "Inizio offers a full suite of services… have you interviewed with another agency? If so, provide agency
+      // name" is never your name, whatever the box.
+      if (/^name\./.test(rule.type) && hitText.split(' ').length > 14) continue;
       // "…please outline your current right to work status, visa type and expiry date" wants more than "No".
       if (desc.kind === 'textarea' && YES_NO_TYPES.test(rule.type) && EXPLAIN.test(hitText)) continue;
       const linkBox = LINK_TYPE.test(rule.type) && !desc.options && LINK_KINDS.includes(desc.kind);
@@ -281,8 +284,10 @@
 
   /* ----------------------------------------------------------- custom answers */
 
+  // On the normalised heading; "A-level" only when written with a capital A ("Select a level" is not one).
   const SCHOOL_SECTION =
-    /\b(high school|secondary (school|education|qualifications?)|sixth form|a ?levels?|i?gcses?|highers|international baccalaureate|ib diploma|pre u)\b/;
+    /\b(high school|secondary (school|education|qualifications?)|sixth form|i?gcses?|highers|international baccalaureate|ib diploma|pre u)\b/;
+  const A_LEVELS = /\bA[- ]?[Ll]evels?\b|\bA-?LEVELS?\b/;
 
   /**
    * The human question a control asks, for custom answers and the learn feature. A box under a school-level
@@ -291,7 +296,7 @@
   function questionText(desc) {
     const s = desc.signals || {};
     const q = U.cleanLabel(s.question || s.label || s.aria || s.nearby || s.placeholder || s.title || '');
-    if (s.section && SCHOOL_SECTION.test(norm(s.section)) && !F().eduLevelOf(norm(q)))
+    if (s.section && (SCHOOL_SECTION.test(norm(s.section)) || A_LEVELS.test(s.section)) && !F().eduLevelOf(norm(q)))
       return U.cleanLabel(`${s.section}: ${q}`);
     return q;
   }
@@ -463,7 +468,16 @@
       if (prev !== g) detached = null;
       // Back after other questions with something this section already had: a new entry only when
       // it starts the way the first one did and goes on for more than one field.
-      if (!detached && prev !== g && st.seen.has(key) && (key !== st.lead || runLength(results, i, g) < 2))
+      // "Please re-confirm the university you currently attend" among the screening questions is about the same
+      // entry; a second "School" box starts the next one.
+      const sameLabel =
+        norm(questionText(descs[i])) === st.leadLabel || norm(questionText(descs[i])).split(' ').length <= 3;
+      if (
+        !detached &&
+        prev !== g &&
+        st.seen.has(key) &&
+        (key !== st.lead || runLength(results, i, g) < 2 || !sameLabel)
+      )
         detached = g;
       if (detached === g) {
         r.index = 0;
@@ -473,7 +487,10 @@
       if (st.index < 0 || st.seen.has(key)) {
         st.index++;
         st.seen = new Set();
-        if (st.index === 0) st.lead = key;
+        if (st.index === 0) {
+          st.lead = key;
+          st.leadLabel = norm(questionText(descs[i]));
+        }
       }
       st.seen.add(key);
       r.index = st.index;

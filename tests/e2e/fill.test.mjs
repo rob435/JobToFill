@@ -404,6 +404,19 @@ test('UK diversity page: two-step ethnicity, 2011-style list, background and con
   }
 });
 
+test('a date picker that typing opened is closed again; a modal the form sits in is left open', async () => {
+  const page = await h.open('datepicker.html');
+  await h.fill(page);
+  assert.equal(await value(page, '#start'), '11/02/2026');
+  assert.equal(await page.$eval('#calendar', (c) => c.hidden), true, 'calendar closed (Ashby left it open)');
+  await page.close();
+  const modal = await h.open('datepicker.html?modal');
+  await h.fill(modal);
+  assert.equal(await value(modal, '#avail'), '11/02/2026');
+  assert.equal(await modal.$eval('#modal', (m) => m.hidden), false, 'the modal the form sits in stays open');
+  await modal.close();
+});
+
 test('cross-origin iframe (embedded application) is filled', async () => {
   const page = await h.open('embed.html');
   const frame = await frameWith(page, '127.0.0.1', '#first_name');

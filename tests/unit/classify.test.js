@@ -421,7 +421,11 @@ test('real screening questions from graduate application forms', () => {
   assert.equal(ask('Please re-confirm the university you currently attend'), 'edu.school');
   assert.equal(ask('Which institution do you currently attend/have most recently attended?'), 'edu.school');
   assert.equal(ask('What school do you currently attend?'), 'edu.school');
-  assert.equal(ask('Are you currently enrolled at a university?', 'select', ['Yes', 'No']), null);
+  assert.equal(
+    ask('Are you currently enrolled at a university?', 'select', ['Yes', 'No']),
+    'edu.enrolled',
+    'not a school',
+  );
   assert.equal(ask('Have you attended a university?'), null);
   assert.equal(ask('Please specify the grading scale used by your current school.'), null);
   // Not a sponsorship, relocation or salary question just because a word appears.

@@ -933,6 +933,8 @@ test('UK law-firm forms: boxes under a school heading ask about school; "Title" 
   ]);
   assert.equal(matcher.questionText(page[6]), 'A-levels (or equivalent): Subject');
   assert.equal(matcher.questionText(page[9]), 'Subject', 'a university heading changes nothing');
+  assert.equal(matcher.questionText(desc({ label: 'Subject', section: 'Select a level' })), 'Subject');
+  assert.equal(matcher.questionText(desc({ label: 'Grade', section: 'A Level results' })), 'A Level results: Grade');
   // School-level questions are answered from a school entry, and there is none.
   const q = (i) => util.normalize(matcher.questionText(page[i]));
   for (const i of [3, 5, 6, 7]) {
@@ -1340,4 +1342,119 @@ test('conflicts of interest: you, your family or both; details only after a Yes'
   p.compliance.relativesDetails = 'Should not appear';
   assert.equal(fields.resolve('compliance.relativesDetails', p, { question: q(3) }), null, 'stays empty after a No');
   assert.equal(fields.resolve('compliance.relatives', p, { question: q(2), kind: 'text' }).text, 'No');
+});
+
+test('round 2 (Maven / CRA): "If you selected …" boxes, first of your family, spelled-out dates in question boxes', () => {
+  const p = student();
+  assert.equal(
+    matcher.classify(desc("If you selected 'A friend or relative', please put their full name below.")),
+    null,
+    'never your own name',
+  );
+  assert.equal(matcher.classify(desc('If you selected yes, please tell us more', { kind: 'textarea' })), null);
+  const firstGen = matcher.classify(
+    desc(
+      {
+        question:
+          'If you went to university (college in the USA) or home country equivalent, were you the first of your family to do so',
+      },
+      { kind: 'select', options: opts('Yes', 'No', 'Prefer not to say') },
+    ),
+  );
+  assert.equal(firstGen.type, 'eeo.parentsDegree');
+  p.eeo.parentsDegree = 'Yes';
+  assert.equal(
+    ask(p, 'eeo.parentsDegree', 'If you went to university, were you the first of your family to do so').text,
+    'No',
+    'a parent has a degree, so not the first',
+  );
+  assert.equal(
+    matcher.classify(
+      desc(
+        {
+          question:
+            'Do you have a disability or long-term health condition including, but not limited to: neurodiversity?',
+        },
+        { kind: 'select', options: opts('Yes', 'No') },
+      ),
+    ).type,
+    'eeo.disability',
+  );
+  // CRA "Earliest availability to start at CRA (not binding)": no placeholder, a sentence.
+  p.job.startDate = '2027-06-28';
+  const v = ask(p, 'job.startDate', 'Earliest availability to start at CRA (not binding)');
+  assert.equal(matcher.formatForText(v, desc('Earliest availability to start at CRA (not binding)')), '28 June 2027');
+  assert.equal(matcher.formatForText(v, desc({ label: 'Start date', placeholder: 'Pick date...' })), '06/28/2027');
+  assert.equal(matcher.formatForText(v, desc({ label: 'When can you start? (DD/MM/YYYY)' })), '28/06/2027');
+  assert.equal(matcher.formatForText(v, desc('Available from')), '06/28/2027', 'a short label keeps the usual format');
+});
+
+test('Greenhouse education block, then screening questions asking about it again (DV Trading, Schonfeld)', () => {
+  const p = student();
+  const page = [
+    desc('First Name'),
+    desc('School', { kind: 'combobox' }),
+    desc('Degree', { kind: 'combobox' }),
+    desc('Discipline', { kind: 'combobox' }),
+    desc('End date year', { kind: 'number' }),
+    desc('LinkedIn Profile'),
+    desc('Website'),
+    desc('Please re-confirm the university you currently attend', { kind: 'combobox' }),
+    desc('What is your expected graduation date?', { kind: 'combobox' }),
+    desc('What degree are you currently pursuing?', { kind: 'combobox' }),
+  ];
+  const t = types(matcher.plan(page, p));
+  assert.deepEqual(
+    t.slice(7),
+    ['edu.school#0', 'edu.end#0', 'edu.degree#0'],
+    'about the first entry, not a second one',
+  );
+  // A real second entry still starts one.
+  const two = types(
+    matcher.plan(
+      [desc('School'), desc('Degree'), desc('End date'), desc('Website'), desc('School'), desc('Degree')],
+      p,
+    ),
+  );
+  assert.deepEqual(two, ['edu.school#0', 'edu.degree#0', 'edu.end#0', 'links.website', 'edu.school#1', 'edu.degree#1']);
+  // Putnam: a long Yes/No question ending "If so, please provide agency name" is not your name.
+  assert.equal(
+    matcher.classify(
+      desc(
+        'Inizio offers a full suite of advisory, medical, marketing, and engagement services. To your knowledge, have you actively interviewed with another Inizio agency in the past 12 months? If so, please provide agency name.',
+        { kind: 'combobox' },
+      ),
+    ),
+    null,
+  );
+  assert.equal(matcher.classify(desc('Please enter your full name as it appears on your passport')).type, 'name.full');
+});
+
+test('enrolment status from your education dates (SpaceX, Cloover)', () => {
+  const today = new Date(2026, 9, 2);
+  const spacex = opts(
+    'I will be enrolled in a bachelor’s degree program by the start of employment',
+    'I will be enrolled in a graduate degree program by the start of employment',
+    'None of the above',
+  );
+  const p = student(); // BSc to June 2027
+  const v = fields.resolve('edu.enrolled', p, { question: 'please select your enrollment status', today });
+  assert.equal(matcher.matchOption(spacex, v), 0);
+  assert.equal(matcher.matchOption(opts('Bachelor', 'Master', 'Graduated'), v), 0);
+  assert.equal(matcher.matchOption(opts('Yes', 'No'), v), 0);
+  p.education[0].degree = 'MSc';
+  assert.equal(matcher.matchOption(spacex, fields.resolve('edu.enrolled', p, { today })), 1);
+  p.education[0].endDate = '2016-06';
+  assert.equal(matcher.matchOption(spacex, fields.resolve('edu.enrolled', p, { today })), 2, 'graduated');
+  assert.equal(
+    matcher.classify(desc({ question: 'Please select your enrollment status:' }, { kind: 'select', options: spacex }))
+      .type,
+    'edu.enrolled',
+  );
+  assert.equal(
+    matcher.classify(
+      desc('If you are currently enrolled in university, what is your expected graduation date?', { kind: 'combobox' }),
+    ).type,
+    'edu.end',
+  );
 });

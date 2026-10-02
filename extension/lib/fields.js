@@ -732,6 +732,35 @@
           ],
   }));
 
+  /**
+   * "Please select your enrollment status" / "Are you currently enrolled?": yes, at the level of the course you
+   * are on (an education entry that hasn't ended), else no. Null without dated education.
+   */
+  function enrolment(p, today) {
+    const now = today || new Date();
+    const nowM = now.getFullYear() * 12 + now.getMonth();
+    const dated = (p.education || []).filter((e) => U.parseDate(e.endDate));
+    if (!dated.length) return null;
+    const current = dated.find((e) => {
+      const d = U.parseDate(e.endDate);
+      return d.year * 12 + (d.month || 6) - 1 >= nowM;
+    });
+    if (!current)
+      return val('No', {
+        candidates: ['No', 'Not currently enrolled', 'Not enrolled', 'Graduated', 'None of the above'],
+      });
+    const level = JTF.matcher ? JTF.matcher.degreeGroup(U.normalize(current.degree)) : null;
+    const words =
+      {
+        bachelor: ['Enrolled in a bachelor', 'Bachelor', 'Undergraduate'],
+        master: ['Enrolled in a graduate', 'Graduate', 'Master', 'Postgraduate'],
+        doctorate: ['Enrolled in a graduate', 'Doctorate', 'PhD', 'Graduate'],
+        highschool: ['High school'],
+      }[level] || [];
+    // The level first: it decides between "enrolled in a bachelor's…" and "enrolled in a graduate…".
+    return val('Yes', { candidates: [...words, 'Yes', 'Currently enrolled', 'Enrolled'] });
+  }
+
   function degreeVal(text) {
     return val(text, { kind: 'degree' });
   }
@@ -1218,6 +1247,7 @@
     'edu.start': entry('Education start date', 'education', 'startDate', 'date'),
     'edu.end': entry('Graduation date', 'education', 'endDate', 'date'),
     'edu.year': { label: 'Year of study', get: (p, ctx) => studyYear(p, ctx.today) },
+    'edu.enrolled': { label: 'Currently enrolled', get: (p, ctx) => enrolment(p, ctx.today) },
 
     'exp.company': entry('Company', 'experience', 'company'),
     'exp.title': entry('Job title', 'experience', 'title'),
@@ -1728,6 +1758,14 @@
       },
     ),
     R(
+      'edu.enrolled',
+      /\benrol+(ment|ed) status\b|\b(are|were) you (currently )?(enrol+ed|a (current )?student)\b|\bcurrent(ly)? (enrol+ed|study status|student status)\b|\b(study|student) status\b/,
+      {
+        kinds: CHOICE.concat(['textarea']),
+        not: /graduat|\byear\b|\bdegree subject\b|\bmajor\b|\b(which|what|name of (the|your)) (university|school|college|institution)\b/,
+      },
+    ),
+    R(
       'edu.year',
       /\b(current |academic )?year of (study|studies|university|uni|college|degree|course|your (degree|course|studies|programme|program))\b|\b(what|which) year (of (your )?(study|studies|university|uni|degree|course|programme|program) )?are you (currently )?in\b|\bstudy year\b|\bcurrent year\b.*\b(study|studies|university|degree|course)\b|\byear in (school|university|college)\b|\bclass standing\b|\bacademic standing\b/,
       {
@@ -1854,9 +1892,16 @@
       {
         not: /line ?(1|one)|business unit/,
         kinds: TEXTISH,
-        // "Which Building Services modules have you completed?" is not a flat number.
-        test: (desc, hit) =>
-          /address|\baddr\b|\bapt\b|apartment|suite|complement/.test(hit) || hit.split(' ').length <= 5,
+        // "Which Building Services modules have you completed?" is not a flat number; "a full suite of services" is
+        // not a suite.
+        test: (desc, hit) => {
+          const words = hit.split(' ').length;
+          return (
+            /\baddress\b|\baddr\b/.test(hit) ||
+            words <= 5 ||
+            (words <= 8 && /\bapt\b|apartment|suite|complement/.test(hit))
+          );
+        },
       },
     ),
     R(

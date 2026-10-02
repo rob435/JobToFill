@@ -460,6 +460,37 @@
     return !!el.closest('[class*="is-multi" i], [class*="isMulti" i], [class*="--multi" i]');
   }
 
+  /* ------------------------------------------------------------ popups */
+
+  const POPUP =
+    '[role="listbox"], [role="dialog"], [role="grid"], .react-datepicker-popper, .flatpickr-calendar.open, .ui-datepicker, [class*="datepicker" i][class*="popper" i], [class*="DayPicker" i]';
+
+  function openPopups(doc) {
+    return Array.from(doc.querySelectorAll(POPUP)).filter((p) => !p.closest('[data-jtf-ui]') && dom().isVisible(p));
+  }
+
+  /**
+   * A date picker or suggestion list that typing opened (react-datepicker's calendar on Ashby) is closed again:
+   * Escape, then a click outside. Popups that were open before (an application in a modal) are left alone.
+   */
+  async function closePopups(el, before) {
+    const doc = el.ownerDocument;
+    const fresh = () => openPopups(doc).filter((p) => !before.includes(p) && !p.contains(el));
+    // Widgets open on focus synchronously: nothing new now means nothing to close (and no time lost per box).
+    if (!fresh().length) return;
+    // Escape or a click outside would also close a modal the form itself sits in: leave those alone.
+    const modal = '[role="dialog"], [aria-modal="true"]';
+    if (el.closest(modal) || before.some((p) => p.matches(modal))) return;
+    const active = dom().deepActiveElement(doc);
+    if (active && active !== el && active !== doc.body) key(active, 'Escape');
+    key(el, 'Escape');
+    await sleep(30);
+    if (!fresh().length) return;
+    for (const type of ['mousedown', 'mouseup', 'click'])
+      doc.body.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: doc.defaultView }));
+    await sleep(30);
+  }
+
   /* ------------------------------------------------------------- files */
 
   function dataUrlToFile(doc) {
@@ -561,7 +592,9 @@
             text = M().formatForText(Object.assign({}, v, { text: v.international }), desc);
           if (!text) return { status: 'nomatch' };
           history.push({ el, kind, prev: el.value });
+          const before = openPopups(el.ownerDocument);
           typeValue(el, text);
+          await closePopups(el, before);
           return { status: 'filled' };
         }
       }
