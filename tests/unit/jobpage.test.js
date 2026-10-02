@@ -959,6 +959,27 @@ test('compare: different jobs at the same company, place or board', () => {
   assert.equal(orOther.verdict, 'different', orOther.reasons.join('; '));
 });
 
+test('compare: the job ID in the address beats IDs from a "similar jobs" list on the page', () => {
+  const url = 'https://jobs.pwc.co.uk/earlycareers/uk/en/job/EC202660/Summer-Internship-Technology-and-AI-London';
+  const ctx = {
+    url,
+    ats: jp.ats(url),
+    title: 'Summer Internship - Technology and AI - London',
+    company: 'PwC',
+    jobIds: ['EC202660', 'EC202632', 'EC202629'],
+  };
+  const other = posting({
+    url: 'https://jobs.pwc.co.uk/earlycareers/uk/en/job/EC202632/Graduate-Technology-and-AI-London',
+    title: 'Graduate - Technology and AI - London',
+    company: 'PwC',
+    jobIds: ['EC202632'],
+  });
+  const v = jp.compare(ctx, other);
+  assert.equal(v.verdict, 'different', v.reasons.join('; '));
+  const same = jp.compare(ctx, { ...other, url, title: ctx.title, jobIds: ['EC202660'] });
+  assert.equal(same.verdict, 'same');
+});
+
 test('compare: unsure when there is too little to go on', () => {
   const v = jp.compare(
     { url: 'https://example.com/apply', company: 'Contoso Bank' },

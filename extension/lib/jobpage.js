@@ -2230,14 +2230,7 @@
     if (l === true) reasons.push('location matches');
     if (l === false) reasons.push('location differs');
 
-    if (sharedId) {
-      if (c === false && t != null && t < 0.3) {
-        reasons.unshift(`same job ID ${sharedId}, but nothing else matches`);
-        return { score: 0.5, verdict: 'unsure', reasons };
-      }
-      reasons.unshift(`same job ID ${sharedId}`);
-      return { score: 0.97, verdict: 'same', reasons };
-    }
+    // The addresses' own job IDs outrank IDs that only the page's text shared ("similar jobs" lists).
     // Two different jobs on the same board: same ATS and company, both with a job ID of the same kind.
     const sameBoard =
       ctxAts.name &&
@@ -2245,7 +2238,13 @@
       ctxAts.company &&
       pAts.company &&
       compact(ctxAts.company) === compact(pAts.company);
-    if (sameBoard && ctxAts.jobId && pAts.jobId && idShape(ctxAts.jobId) === idShape(pAts.jobId)) {
+    if (
+      sameBoard &&
+      ctxAts.jobId &&
+      pAts.jobId &&
+      idShape(ctxAts.jobId) === idShape(pAts.jobId) &&
+      !idsMatch(ctxAts.jobId, pAts.jobId)
+    ) {
       reasons.unshift(`different job ID (${ctxAts.jobId} vs ${pAts.jobId})`);
       return { score: 0.05, verdict: 'different', reasons };
     }
@@ -2264,13 +2263,24 @@
     const clash =
       c !== false &&
       sameSite &&
-      strongCtx.find((x) =>
-        strongPost.some((y) => idShape(x) === idShape(y) && idKey(x).length >= 4 && !idsMatch(x, y)),
+      strongCtx.find(
+        (x) =>
+          idKey(x).length >= 4 &&
+          !strongPost.some((y) => idsMatch(x, y)) &&
+          strongPost.some((y) => idShape(x) === idShape(y)),
       );
     if (clash) {
       const theirs = strongPost.find((y) => idShape(clash) === idShape(y));
       reasons.unshift(`different job ID (${clash} vs ${theirs})`);
       return { score: 0.1, verdict: 'different', reasons };
+    }
+    if (sharedId) {
+      if (c === false && t != null && t < 0.3) {
+        reasons.unshift(`same job ID ${sharedId}, but nothing else matches`);
+        return { score: 0.5, verdict: 'unsure', reasons };
+      }
+      reasons.unshift(`same job ID ${sharedId}`);
+      return { score: 0.97, verdict: 'same', reasons };
     }
     if (t == null) {
       reasons.push('not enough on the application page to compare');
