@@ -431,6 +431,7 @@
       '- If the posting wants something the candidate doesn’t have, don’t claim it. Lead with what they do have.',
       '- Example letters were written for other employers: reuse the candidate’s facts and voice, never the other company’s name, role or reasons.',
       '- Never describe the candidate doing something just because the posting mentions it (e.g. “deploying software daily in an Agile team”) unless the material says they did.',
+      '- A skills list says what the candidate knows, not what each project was built with: don’t say a project uses a tool, language or technique (threading, Linux, Python…) unless the material says so for that project.',
       '',
       'Structure:',
       `1. Opening, 1–2 sentences: “I am applying for the <role> in <location>.” (or close to it), then who the candidate is now (for a student: year of study, degree, university and when they graduate). Take the year of study from the material or the example letters when they state it; only work it out from the dates and TODAY when nothing states it.`,
