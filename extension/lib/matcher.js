@@ -44,10 +44,15 @@
   const NEVER_YES_NO =
     /^(name\.|edu\.(school|degree|field|gpa|location)|exp\.(company|title|location)|address\.|location$|email$|phone|links\.|nationality$|pronouns$|account\.|job\.current(Company|Title)$)/;
   // "Are you related to anyone working here? If yes, list their name": a yes/no question, whatever the box.
+  // "Could you please provide your degree classification?" is a request, not a yes/no question.
   const YES_NO_QUESTION =
-    /^(are|do|does|did|have|has|had|is|was|were|will|would|can|could|should|may) (you|your|any|there|we|anyone|this|it)\b/;
+    /^(are|do|does|did|have|has|had|is|was|were|will|would|can|could|should|may) (you|your|any|there|we|anyone|this|it)\b(?! (kindly |please )?(provide|tell|share|list|give|describe|explain|specify|enter|state|indicate|select|choose|upload|outline|advise|let us know|write|detail|name|identify|confirm (your|the|which|what|whether))\b)/;
   // "Do you have a GitHub? Please share the link" in a text box still wants the link.
   const LINK_TYPE = /^links\./;
+  const YES_NO_TYPES = /^job\.(authorized|sponsorship|relocate|over18)$/;
+  const EXPLAIN =
+    /\b(outline|describe|explain|provide (details|information|more)|give (details|more)|tell us (about|more)|elaborate)\b/;
+  const LINK_KINDS = ['text', 'url', 'textarea'];
   // "Please specify if you selected Other": the box for an answer you chose not to give.
   const OTHER_FOLLOW_UP =
     /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b|\bif (it|yours|your \w+( \w+)?) (is|was) not (listed|shown|in the list|found|available)\b|\bnot listed (above|below)\b.*\b(specify|enter|type|provide|state)\b/;
@@ -67,12 +72,18 @@
     'languages',
   ]);
 
+  // "…outside of the classroom? For example: student clubs, partner organisations…": the examples don't say
+  // what the question asks for.
+  const EXAMPLES = /\b(for example|for instance|e g|such as)\b.*$/;
+
   function signalTexts(desc) {
     const out = [];
     const s = desc.signals || {};
     for (const key of Object.keys(WEIGHTS)) {
       if (!s[key]) continue;
-      const text = norm(String(s[key]).slice(0, 300));
+      let text = norm(String(s[key]).slice(0, 300));
+      const m = text.match(EXAMPLES);
+      if (m && text.slice(0, m.index).split(' ').length > 6) text = text.slice(0, m.index).trim();
       if (text) out.push({ key, text, weight: WEIGHTS[key] });
     }
     return out;
@@ -129,7 +140,10 @@
 
     const signals = signalTexts(desc);
     const s = desc.signals || {};
-    if (OTHER_FOLLOW_UP.test(norm(s.question || s.label || s.aria || s.nearby || ''))) return null;
+    // "Which university…? Please select "Other" if yours is not listed" is the question, not its follow-up box.
+    const asked = String(s.question || s.label || s.aria || s.nearby || '');
+    const head = asked.split('?')[0];
+    if (OTHER_FOLLOW_UP.test(norm(head.split(' ').length >= 4 ? head : asked))) return null;
     // A Yes/No question is never answered with a name, a school or a link.
     const yesNoAsked = YES_NO_QUESTION.test(norm(s.question || s.label || s.aria || ''));
     const yesNo = yesNoOptions(desc) || yesNoAsked;
@@ -155,10 +169,13 @@
       // An essay box ("Do you have coding experience? … GitHub links welcomed", "Think of something in
       // your academic life…") wants an answer, not a name, school or URL.
       if (desc.kind === 'textarea' && SHORT_VALUE.test(rule.type) && hitText.split(' ').length > 12) continue;
-      if (yesNo && NEVER_YES_NO.test(rule.type) && !(LINK_TYPE.test(rule.type) && !desc.options && !yesNoOptions(desc)))
-        continue;
-      // "AI policy … our tools" with Yes / No options is not a list of skills.
-      if ((rule.type === 'skills' || rule.type === 'languages') && yesNoOptions(desc)) continue;
+      // "…please outline your current right to work status, visa type and expiry date" wants more than "No".
+      if (desc.kind === 'textarea' && YES_NO_TYPES.test(rule.type) && EXPLAIN.test(hitText)) continue;
+      const linkBox = LINK_TYPE.test(rule.type) && !desc.options && LINK_KINDS.includes(desc.kind);
+      if (yesNo && NEVER_YES_NO.test(rule.type) && !linkBox) continue;
+      // "AI policy … our tools" with Yes / No options is not a list of skills; "Are you fluent in French?" is.
+      if (rule.type === 'skills' && yesNoOptions(desc)) continue;
+      if (rule.type === 'languages' && yesNoOptions(desc) && !F().languagesNamed(hitText).length) continue;
       score += 0.05 * (hits - 1);
       const candidate = { type: rule.type, part: rule.part || null, score, source: 'rule', rule };
       const prev = byType.get(rule.type);
@@ -220,13 +237,19 @@
       if (share(/^(19|20)\d{2}$/) >= 0.8) return 'year';
       if (
         opts.length <= 13 &&
-        texts.filter((t) => MONTH_WORD.test(t) || /^(0?[1-9]|1[0-2])$/.test(t)).length / texts.length >= 0.8
+        texts.filter((t) => (MONTH_WORD.test(t) && !/\b(19|20)\d{2}\b/.test(t)) || /^(0?[1-9]|1[0-2])$/.test(t))
+          .length /
+          texts.length >=
+          0.8
       )
         return 'month';
       if (opts.length >= 28 && share(/^(0?[1-9]|[12]\d|3[01])$/) >= 0.8) return 'day';
     }
     const s = desc.signals || {};
-    const text = [s.label, s.aria, s.placeholder, s.name, s.id, s.attrs, s.nearby, s.title].map(norm).join(' | ');
+    // "A 3 month placement" or "2 years" is a duration, not a month or year box.
+    const text = [s.label, s.aria, s.placeholder, s.name, s.id, s.attrs, s.nearby, s.title]
+      .map((t) => norm(t).replace(/\b\d+ (months?|years?|days?)\b/g, ''))
+      .join(' | ');
     const hasMonth = /\bmonth\b|\bmm\b|\bmonat\b|\bmes\b|\bmois\b/.test(text);
     const hasYear = /\byear\b|\byyyy\b|\byy\b|\bjahr\b|\bano\b|\bannee\b/.test(text);
     const hasDay = /\bday\b|\bdd\b/.test(text);
@@ -258,10 +281,19 @@
 
   /* ----------------------------------------------------------- custom answers */
 
-  /** The human question a control asks, for custom answers and the learn feature. */
+  const SCHOOL_SECTION =
+    /\b(high school|secondary (school|education|qualifications?)|sixth form|a ?levels?|i?gcses?|highers|international baccalaureate|ib diploma|pre u)\b/;
+
+  /**
+   * The human question a control asks, for custom answers and the learn feature. A box under a school-level
+   * heading asks about that level: "Subject" under "A-levels" is "A-levels: Subject".
+   */
   function questionText(desc) {
     const s = desc.signals || {};
-    return U.cleanLabel(s.question || s.label || s.aria || s.nearby || s.placeholder || s.title || '');
+    const q = U.cleanLabel(s.question || s.label || s.aria || s.nearby || s.placeholder || s.title || '');
+    if (s.section && SCHOOL_SECTION.test(norm(s.section)) && !F().eduLevelOf(norm(q)))
+      return U.cleanLabel(`${s.section}: ${q}`);
+    return q;
   }
 
   /** "how did you hear|referral" -> phrases; "/^why .* us\??$/i" -> RegExp. */
@@ -339,6 +371,13 @@
       return classify(desc);
     });
 
+    // "Title" just before the name boxes is Mr / Ms, not a job title.
+    results.forEach((r, i) => {
+      if (!r || r.type !== 'exp.title' || norm(questionText(descs[i])) !== 'title') return;
+      const next = results.slice(i + 1, i + 4).find((x) => x && x.type);
+      if (next && /^name\.(first|last|full|middle)$/.test(next.type)) Object.assign(r, { type: 'name.prefix' });
+    });
+
     const state = { edu: { index: -1, seen: new Set() }, exp: { index: -1, seen: new Set() } };
     let prev = null;
     let detached = null; // the section of a run of one-off questions, all about the first entry
@@ -348,6 +387,19 @@
       if (r.type === 'custom') {
         prev = null;
         continue;
+      }
+      // Under "Secondary education" / "A-levels": dates are that school's, places and addresses not yours.
+      if (F().eduLevelOf(norm(questionText(descs[i]))) === 'highschool') {
+        if (r.type === 'gen.start' || r.type === 'gen.end') {
+          Object.assign(r, { type: 'edu' + r.type.slice(3), index: 0 });
+          prev = null;
+          continue;
+        }
+        if (r.type.startsWith('gen.') || r.type.startsWith('address.') || r.type === 'location') {
+          r.dropped = r.type;
+          r.type = null;
+          continue;
+        }
       }
       // "Summary" between a job's dates and title describes that job (Breezy's work history).
       if (prev && r.type === 'summary' && /^(summary|description)$/.test(norm(questionText(descs[i])))) {
@@ -540,7 +592,13 @@
       t.match(/(\d+(?:\.\d+)?)\s*(?:\+|or more|and (?:above|over|up)|plus)/) ||
       t.match(/(?:more than|over|above|at least|greater than)\s*(\d+(?:\.\d+)?)/);
     if (m) return [+m[1], Infinity];
-    m = t.match(/(?:less than|under|below|fewer than)\s*(\d+(?:\.\d+)?)/);
+    m = t.match(/(?:>=|≥|=>)\s*(\d+(?:\.\d+)?)/);
+    if (m) return [+m[1], Infinity];
+    m = t.match(/>\s*(\d+(?:\.\d+)?)/);
+    if (m) return [+m[1] + 1e-9, Infinity];
+    m = t.match(/(?:<=|≤|=<)\s*(\d+(?:\.\d+)?)/);
+    if (m) return [0, +m[1]];
+    m = t.match(/(?:less than|under|below|fewer than|<)\s*(\d+(?:\.\d+)?)/);
     if (m) return [0, +m[1] - 1e-9];
     m = t.match(/^\s*(\d+(?:\.\d+)?)\s*(?:years?|yrs?)?\s*$/);
     if (m) return [+m[1], +m[1]];
@@ -631,6 +689,10 @@
         } else numericMonth = +w;
         continue;
       }
+      if (w === 'winter') {
+        units.push({ from: 1, to: 2, year: null, winter: true });
+        continue;
+      }
       if (TERMS[w]) range = TERMS[w];
       else if (PERIODS[w]) range = PERIODS[w];
       else if (MONTH_TOKEN.test(w)) range = [MONTH_NUMBER[w.slice(0, 3)], MONTH_NUMBER[w.slice(0, 3)]];
@@ -641,6 +703,11 @@
     if (/\b(first|1st) half\b/.test(t)) units.push({ from: 1, to: 6, year: null });
     if (/\b(second|2nd) half\b/.test(t)) units.push({ from: 7, to: 12, year: null });
     if (!units.length || year == null) return null;
+    // "Winter 2026/ Spring 2027": a winter graduation before the next spring is December's.
+    units.forEach((u, k) => {
+      const next = units[k + 1];
+      if (u.winter && next && u.year != null && next.year === u.year + 1) Object.assign(u, { from: 12, to: 14 });
+    });
     let start = Infinity;
     let end = -Infinity;
     let prev = null;
@@ -664,6 +731,13 @@
     else if (/\b(before|prior to)\b/.test(t)) [start, end] = [-Infinity, start - 1];
     return [start, end];
   }
+
+  const DOES_NOT_NEED =
+    /\b(not|never|no longer|won t|don t|doesn t|dont|wont|without) (\w+ )?(require|need|requiring|needing)\b|\bwithout (\w+ )?sponsor|\bno (\w+ )?sponsor\w* (is |will be )?(required|needed)|\bsponsor\w* (is |will be )?not (required|needed)/;
+  const NOT_AUTHORIZED =
+    /\b(not|no longer|un) ?(currently |yet |legally )*(authori[sz]ed|eligible|permitted|entitled|allowed)\b|\bno (current )?(work|employment) authori[sz]ation\b|\b(do not|don t) (currently )?have (the |a )?(\w+ )?(right|authori[sz]ation|permission) to work\b/;
+  const GRADUATED =
+    /\b(not|no longer) (currently )?(enrolled|a (current )?student|in (school|education|university|college)|studying)\b|\b(already )?graduated\b|\balumn/;
 
   /** The option whose term or period best covers date value `v`, or -1. Null when no option is a date. */
   function bestDate(opts, v) {
@@ -728,22 +802,48 @@
       const value = String(o.value == null ? '' : o.value).trim();
       const n = norm(text);
       if (isPlaceholder(n)) return;
-      opts.push({ i, text, value, n, nv: norm(value) });
+      // "<3.7" and "> 3 Months" lose their sign when normalised: never an exact spelling of "3.7".
+      opts.push({ i, text, value, n, nv: norm(value), signed: /[<>≤≥]/.test(text) });
     });
     if (!opts.length) return -1;
 
     if (v.kind === 'phoneCode') return bestPhoneCode(opts, v);
 
+    // Notice periods against "< 1 Month" / "1-2 Months" / "4 weeks": compared in weeks (before spellings:
+    // "> 3 Months" reads "3 months" once its sign is stripped).
+    if (v.kind === 'notice' && v.weeks != null) {
+      const unit = (text) => {
+        const u = (norm(text).match(/\b(day|week|month)s?\b/) || [])[1];
+        return u ? { day: 1 / 7, week: 1, month: 4.345 }[u] : null;
+      };
+      const scaled = opts
+        .map((o) => {
+          const r = parseRange(o.text);
+          const k = unit(o.text);
+          return r && k ? { i: o.i, text: `${r[0] * k}-${r[1] * k}`, r: [r[0] * k, r[1] * k] } : null;
+        })
+        .filter(Boolean);
+      let best = null;
+      for (const o of scaled)
+        if (v.weeks >= o.r[0] - 1e-6 && v.weeks <= o.r[1] + 1e-6 && (!best || o.r[1] - o.r[0] < best.w))
+          best = { i: o.i, w: o.r[1] - o.r[0] };
+      if (best) return best.i;
+    }
+
     const cands = [...new Set((v.candidates || [v.text]).map(norm).filter(Boolean))];
     for (const c of cands) {
-      const hit = opts.find((o) => o.n === c) || opts.find((o) => o.nv === c);
+      const hit = opts.find((o) => o.n === c && !o.signed) || opts.find((o) => o.nv === c && !o.signed);
       if (hit) return hit.i;
     }
 
-    if (v.kind === 'date' && v.date) {
+    if ((v.kind === 'date' || v.kind === 'year') && v.date) {
       // Terms and periods ("Spring/Summer 2027", "Q2 2027"): when the options are dates, never guess by text.
       const r = bestDate(opts, v);
-      if (r !== null) return r;
+      if (r !== null) {
+        // Graduated already: "I am not currently enrolled" / "Already graduated".
+        const done = r < 0 && v.past ? opts.find((o) => GRADUATED.test(o.n)) : null;
+        return done ? done.i : r;
+      }
     }
 
     if (v.kind === 'number' && v.number != null) {
@@ -754,10 +854,35 @@
     // "Yes, will require sponsorship" / "No, already authorized": the options say whether you need a sponsor.
     let pool = opts;
     if (v.sponsor && opts.some((o) => /\bsponsor/.test(o.n))) {
-      const needs = (n) => /\bsponsor/.test(n) && !/\b(not|no|without|never|won t|don t|doesn t|dont)\b/.test(n);
+      const needs = (n) => {
+        if (!/\bsponsor/.test(n)) return false;
+        // "No - I do not have the permanent right to work and will require sponsorship" needs it; "No, I will
+        // not require sponsorship" and "No sponsorship required" don't.
+        if (DOES_NOT_NEED.test(n)) return false;
+        return (
+          /\b(require[sd]?|requiring|need(s|ed|ing)?)\b/.test(n) ||
+          !/\b(not|no|without|never|won t|don t|doesn t|dont)\b/.test(n)
+        );
+      };
       const kept = opts.filter((o) => needs(o.n) === (v.sponsor === 'yes'));
       if (kept.length === 1) return kept[0].i;
       if (kept.length) pool = kept;
+    }
+
+    // Status lists ("I am not currently authorized to work in the U.S." / "German Citizen" / "European Citizen"):
+    // never the status you don't have; your citizenship when it is listed.
+    if (v.authorized === 'yes' && pool.some((o) => NOT_AUTHORIZED.test(o.n))) {
+      const kept = pool.filter((o) => !NOT_AUTHORIZED.test(o.n));
+      if (kept.length) pool = kept;
+    }
+    if (v.citizen && v.citizen.length && v.authorized !== 'no') {
+      const mine = pool.filter(
+        (o) =>
+          /\b(citizen|citizenship|national|passport)\b/.test(o.n) &&
+          !/\b(not|non|neither|nor|other than|without)\b/.test(o.n) &&
+          v.citizen.some((c) => (' ' + o.n + ' ').includes(' ' + c + ' ')),
+      );
+      if (mine.length) return mine[0].i;
     }
 
     if (v.canonical) {
@@ -796,7 +921,7 @@
       v.kind === 'date' &&
       d.month &&
       (type === 'text' || type === 'textarea') &&
-      /\bmonth (and|&|\/) year\b/i.test(label) &&
+      /\bmonth\s*(and|&|\/)\s*year\b/i.test(label) &&
       !DATE_PATTERN.test(hint)
     )
       return `${U.monthName(d.month).replace(/^./, (c) => c.toUpperCase())} ${y}`;

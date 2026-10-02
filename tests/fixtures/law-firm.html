@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <title>Vacation Scheme 2027 – application (UK law firm style)</title>
+    <style>
+      body {
+        font: 15px/1.4 system-ui, sans-serif;
+        margin: 32px auto;
+        max-width: 760px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        margin: 6px 0;
+      }
+      .field {
+        margin: 10px 0;
+      }
+      label {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Vacation Scheme 2027</h1>
+    <!-- Modelled on UK law-firm application portals: a personal details page, then secondary education with an
+         A-level grid, then university with modules and marks, then firm-specific questions. -->
+    <form id="application">
+      <section>
+        <h2>Personal details</h2>
+        <div class="field"><label for="title">Title</label><input id="title" name="title" /></div>
+        <div class="field"><label for="forename">Forename(s)</label><input id="forename" name="forename" /></div>
+        <div class="field"><label for="surname">Surname</label><input id="surname" name="surname" /></div>
+        <div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" /></div>
+      </section>
+      <section>
+        <h2>Secondary education</h2>
+        <div class="field"><label for="sch_name">School/college name</label><input id="sch_name" /></div>
+        <div class="field"><label for="sch_postcode">Postcode</label><input id="sch_postcode" /></div>
+        <div class="field"><label for="sch_from">Start date</label><input id="sch_from" placeholder="MM/YYYY" /></div>
+        <div class="field"><label for="sch_to">End date</label><input id="sch_to" placeholder="MM/YYYY" /></div>
+        <h3>A-levels (or equivalent)</h3>
+        <div class="row">
+          <label
+            >Qualification
+            <select id="al_type_1">
+              <option value="">Please select</option>
+              <option>A Level</option>
+              <option>IB</option>
+              <option>BTEC</option>
+            </select></label
+          >
+          <label>Subject <input id="al_subject_1" /></label>
+          <label>Grade <input id="al_grade_1" /></label>
+        </div>
+        <div class="field"><label for="ucas">UCAS points</label><input id="ucas" /></div>
+      </section>
+      <section>
+        <h2>University education</h2>
+        <div class="field"><label for="uni">University</label><input id="uni" /></div>
+        <div class="field"><label for="uni_degree">Degree</label><input id="uni_degree" /></div>
+        <div class="field"><label for="uni_subject">Subject</label><input id="uni_subject" /></div>
+        <div class="field"><label for="uni_from">Start date</label><input id="uni_from" placeholder="MM/YYYY" /></div>
+        <div class="field"><label for="uni_to">End date</label><input id="uni_to" placeholder="MM/YYYY" /></div>
+        <div class="row">
+          <label>Module title <input id="mod_title_1" /></label>
+          <label>Mark (%) <input id="mod_mark_1" /></label>
+        </div>
+        <div class="field"><label for="overall">Overall percentage to date</label><input id="overall" /></div>
+      </section>
+      <section>
+        <h2>About you</h2>
+        <fieldset>
+          <legend>Have you completed a vacation scheme with any other firm?</legend>
+          <label><input type="radio" name="vac" value="yes" /> Yes</label>
+          <label><input type="radio" name="vac" value="no" /> No</label>
+        </fieldset>
+        <div class="field">
+          <label for="tc_start">When would you like to start your training contract?</label>
+          <select id="tc_start">
+            <option value="">Please select</option>
+            <option>September 2029</option>
+            <option>March 2030</option>
+          </select>
+        </div>
+      </section>
+    </form>
+  </body>
+</html>

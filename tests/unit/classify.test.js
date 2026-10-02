@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { load, desc, opts } = require('./helpers');
 
-const { matcher } = load();
+const { matcher, fields, util } = load();
 const typeOf = (d) => {
   const r = matcher.classify(d);
   return r ? r.type + (r.part ? ':' + r.part : '') : null;
@@ -612,7 +612,8 @@ test('salary currency and pay period boxes are not the salary; a green card is n
         { kind: 'select', options: opts('Yes', 'No') },
       ),
     ),
-    null,
+    'citizen',
+    'answered from your nationality, never a card field',
   );
 });
 
@@ -680,4 +681,278 @@ test('Ashby UK internship form: right to work, graduation window, parents, AI po
     ),
     null,
   );
+});
+
+test('round 2 (US tech / EU finance Greenhouse forms): what each question really asks', () => {
+  const yn = ['Yes', 'No'];
+  const ask = (label, kind, options) =>
+    typeOf(desc({ label }, { kind: kind || 'combobox', options: options ? opts(...options) : null }));
+  // SpaceX: a "Portfolio" upload (button "Attach") is not the CV; the CV upload still is.
+  assert.equal(
+    typeOf(desc({ label: 'Attach', question: 'Portfolio', id: 'question_37206157002' }, { kind: 'file' })),
+    null,
+  );
+  assert.equal(typeOf(desc({ label: 'Attach', question: 'Resume/CV', id: 'resume' }, { kind: 'file' })), 'file.resume');
+  assert.equal(typeOf(desc({ label: 'Resume / portfolio' }, { kind: 'file' })), 'file.resume');
+  // "How much experience in C programming language do you have?" {Less than 3 months…} is not your skills list.
+  assert.equal(ask('How much experience in C++ programming language do you have?'), null);
+  assert.equal(ask('Which programming languages do you know?', 'checkboxes', ['Python', 'C++']), 'skills');
+  assert.equal(ask('Please select the month you will be able to start your internship.'), 'job.startDate:month');
+  assert.equal(ask('Answer Certification', 'combobox', yn), 'consent');
+  assert.equal(ask('What is your highest level of completed education?'), 'edu.level');
+  // Anduril: "…technology that is subject to U.S. export controls" is not a field of study.
+  assert.equal(
+    ask(
+      'EXPORT CONTROLS - This position requires access to information and technology that is subject to U.S. export controls.',
+    ),
+    null,
+  );
+  assert.equal(
+    ask('Language Skill(s) (Check all that apply)', 'checkboxes', ['English (ENG)', 'French (FRA)']),
+    'languages',
+  );
+  assert.equal(ask('Additional languages', 'combobox'), 'languages');
+  // Palantir: the hint to pick "Other" belongs to the school question itself.
+  assert.equal(
+    ask(
+      'Which university are you currently attending or did you last attend? Please select "Other (School Not Listed)" if your school is not listed.',
+      'select',
+      ['Aalborg University', 'Other (School Not Listed)'],
+    ),
+    'edu.school',
+  );
+  assert.equal(ask('If your school is not listed, please enter it here', 'text'), null);
+  // KKR: Yes/No questions mentioning portfolio companies; a polite request is not a yes/no question.
+  assert.equal(
+    ask('Have you interviewed with KKR, its affiliates or any of its portfolio companies in the past?', 'combobox'),
+    null,
+  );
+  assert.equal(ask('Do you have a portfolio? Please share the link', 'text'), 'links.portfolio');
+  assert.equal(ask("Could you please provide your Bachelor's degree classification?", 'combobox'), 'edu.gpa');
+  assert.equal(ask('Could you relocate to London?', 'combobox', yn), 'job.relocate');
+  // Examples don't say what the question asks for.
+  assert.equal(
+    ask(
+      'Please share what you are actively involved in outside of the classroom. For example: student clubs, partner organizations, research, work study',
+      'text',
+    ),
+    null,
+  );
+  assert.equal(
+    ask('Are you fluent in French? (Please note this is a requirement for this role)', 'radio', yn),
+    'languages',
+  );
+  assert.equal(ask('Do you speak any languages?', 'radio', yn), null);
+  // William Blair: the facts come first, the question after them.
+  assert.equal(
+    ask(
+      'The internship is a 3 month placement running from 1 July to 30 September 2027. Can you confirm that you are available to work on a full-time basis for the duration of the internship?',
+      'combobox',
+      yn,
+    ),
+    'job.startDate',
+  );
+});
+
+test('round 2 (Ashby / Gemini): combined uploads, acknowledgement checklists, SMS opt-ins, school questions', () => {
+  const ask = (signals, kind, options) =>
+    typeOf(desc(signals, { kind: kind || 'radio', options: options ? opts(...options) : null }));
+  // Agentis: one upload for both documents takes the CV; a cover letter upload is still the letter.
+  assert.equal(
+    ask({ label: 'Please attach a copy of your cover letter and resume in a single combined document.' }, 'file'),
+    'file.resume',
+  );
+  assert.equal(ask({ label: 'Cover Letter' }, 'file'), 'file.coverLetter');
+  assert.equal(ask({ label: 'Attach', id: 'cover_letter' }, 'file'), 'file.coverLetter');
+  // Gemini: a required group of statements to tick is an acknowledgement.
+  assert.equal(
+    ask({ question: 'Applicant Privacy Statement', name: 'question_68277061[]' }, 'checkboxes', [
+      'By clicking this box and submitting your application, you consent to our Applicant Privacy Statement.',
+      'By clicking this box and submitting your application, you consent to third-party background checks.',
+    ]),
+    'consent',
+  );
+  // Base Power: an SMS opt-in named "communicationConsent" is not.
+  assert.equal(
+    ask(
+      {
+        question:
+          'Check Yes or No to indicate your agreement to receive text message updates from Base Power Inc. regarding your job application.',
+        name: 'communicationConsent',
+      },
+      'radio',
+      ['Yes - I consent to receiving text messages', 'No - I do not consent to receiving text messages'],
+    ),
+    null,
+  );
+  assert.equal(ask({ label: 'Interview Recording Consent' }, 'radio', ['Yes', 'No']), 'consent');
+  assert.equal(
+    ask(
+      {
+        label:
+          'Which university are you currently enrolled in, or from which institution did you receive your most recent degree?',
+      },
+      'combobox',
+    ),
+    'edu.school',
+  );
+  assert.equal(ask({ label: 'What university degree do you hold?' }, 'text'), null);
+  assert.equal(
+    ask({ question: 'Are you interested in full-time employment opportunities with us upon graduation?' }, 'radio', [
+      'Yes',
+      'No',
+    ]),
+    null,
+  );
+});
+
+test('round 2 (UK engineering / EU Greenhouse): right to work after a preamble, modules, essays, uploads', () => {
+  const ask = (label, kind, options) =>
+    typeOf(desc({ label }, { kind: kind || 'combobox', options: options ? opts(...options) : null }));
+  // BakerHicks: the sponsorship sentence is a preamble; the question is about your right to work.
+  assert.equal(
+    ask(
+      'Due to recent changes to salary thresholds set by UKVI, this position does not support visa sponsorship in any capacity. Do you currently have the right to work in the UK?',
+    ),
+    'job.authorized',
+  );
+  assert.equal(ask('Will you now or in the future require visa sponsorship?'), 'job.sponsorship');
+  // An essay about your visa status wants more than "No".
+  assert.equal(
+    ask(
+      'BakerHicks are unable to consider applications from candidates on the Graduate visa. Therefore, please outline your current UK right to work status, including visa type and expiry date, whether you require sponsorship now or in the future',
+      'textarea',
+    ),
+    null,
+  );
+  assert.equal(ask('Do you require sponsorship?', 'textarea'), 'job.sponsorship');
+  // "Building Services" modules are not a flat number.
+  assert.equal(
+    ask(
+      'Which of the following relevant Building Services or Mechanical Engineering modules have you completed as part of your degree?',
+      'checkboxes',
+      ['HVAC', 'Thermodynamics'],
+    ),
+    null,
+  );
+  assert.equal(
+    ask('What inspired you to pursue a career in mechanical building services engineering?', 'textarea'),
+    null,
+  );
+  assert.equal(ask('Flat / building', 'text'), 'address.line2');
+  assert.equal(ask('Apartment, suite, unit, building, floor, etc.', 'text'), 'address.line2');
+  assert.equal(ask('When would you like to start your internship? (Month/Year)', 'text'), 'job.startDate');
+  assert.equal(ask('Please attach any other documents (School report, University certificate etc).', 'file'), null);
+  // Teamtailor: "Additional files" whose id says "file".
+  assert.equal(
+    typeOf(
+      desc(
+        {
+          label: 'Additional files',
+          aria: 'Drop your file or upload, Additional files',
+          id: 'candidate_file_remote_url',
+        },
+        { kind: 'file' },
+      ),
+    ),
+    null,
+  );
+  assert.equal(
+    typeOf(
+      desc(
+        { label: 'Upload CV', aria: 'Drop your file or upload, Upload CV', id: 'candidate_resume_remote_url' },
+        { kind: 'file' },
+      ),
+    ),
+    'file.resume',
+  );
+  assert.equal(ask('Current Notice Period', 'combobox'), 'job.noticePeriod');
+  assert.equal(ask('From what date are you available for an internship?', 'text'), 'job.startDate');
+  assert.equal(ask('When will you be available?', 'text'), 'job.startDate');
+});
+
+test('round 2 (FR / DE / IT / ES forms): whole-name labels, dial-code pickers, Personio custom question ids', () => {
+  assert.equal(typeOf(desc({ label: 'Nom complet', placeholder: 'Prénom et nom' })), 'name.full');
+  assert.equal(typeOf(desc({ label: 'Name', placeholder: 'Vor- und Nachname' })), 'name.full');
+  assert.equal(typeOf(desc('Nombre y apellidos')), 'name.full');
+  assert.equal(typeOf(desc('Nome e cognome')), 'name.full');
+  assert.equal(typeOf(desc('Nom et prénom')), 'name.full');
+  assert.equal(typeOf(desc('Prénom')), 'name.first');
+  assert.equal(typeOf(desc('Nom')), 'name.last');
+  assert.equal(typeOf(desc('Nachname')), 'name.last');
+  assert.equal(typeOf(desc('Cognome')), 'name.last');
+  assert.equal(
+    typeOf(
+      desc(
+        { aria: "Sélectionner l'indicatif du pays: France", id: 'country-select-input-candidate.phone-8' },
+        { kind: 'combo' },
+      ),
+    ),
+    'phone.countryCode',
+  );
+  assert.equal(
+    typeOf(desc({ label: 'Ländervorwahl' }, { kind: 'select', options: opts('+49', '+44', '+33') })),
+    'phone.countryCode',
+  );
+  // Personio: "field-custom_attribute_…" ids.
+  const personio = (label, kind, options) =>
+    typeOf(
+      desc(
+        { label, id: 'field-custom_attribute_4621875', name: 'custom_attribute_4621875' },
+        { kind: kind || 'text', options: options ? opts(...options) : null },
+      ),
+    );
+  assert.equal(
+    personio('Academical Transcripts', 'select', ['Please select', 'High School Degree', 'University Degrees']),
+    null,
+  );
+  assert.equal(personio('Which tech startup would you recommend to us for further evaluation? And Why?'), null);
+  assert.equal(personio('Alternative office'), null);
+  assert.equal(personio('Field of study'), 'edu.field');
+  assert.equal(typeOf(desc('Field')), 'edu.field');
+});
+
+test('round 2 (defence / engineering): security clearance held vs eligible, citizenship yes/no', () => {
+  const yn = ['Yes', 'No'];
+  const ask = (q) => typeOf(desc({ question: q }, { kind: 'radio', options: opts(...yn) }));
+  assert.equal(ask('Do you currently hold an active US security clearance?'), 'job.clearance');
+  assert.equal(ask('What is your current security clearance level?'), 'job.clearance');
+  assert.equal(
+    ask('Are you eligible to obtain the security clearance specified in the job description?'),
+    'job.clearanceEligible',
+  );
+  assert.equal(ask('Are you able to hold a U.S. Security Clearance?'), 'job.clearanceEligible');
+  assert.equal(ask('Are you willing to undergo a security clearance process?'), 'job.clearanceEligible');
+  assert.equal(ask('Do you hold, or are you willing to obtain, SC clearance?'), 'job.clearanceEligible');
+  assert.equal(
+    ask('This role requires a UK security clearance and background checks. These include holding British Citizenship.'),
+    'job.clearanceEligible',
+  );
+  assert.equal(ask('Are you a U.S. citizen?'), 'citizen');
+  assert.equal(ask('Are you an EU citizen?'), 'citizen');
+  assert.equal(ask('Are you a dual citizen?'), null);
+});
+
+test('round 2 (Pinpoint DE / UK law): school-leaving grades, "please state", processing consent, current firm', () => {
+  const ask = (label, kind, options) =>
+    typeOf(desc({ label }, { kind: kind || 'text', options: options ? opts(...options) : null }));
+  assert.equal(ask('Please state what university you studied at'), 'edu.school');
+  assert.equal(ask('State', 'text'), 'address.state');
+  assert.equal(ask('(Required) Allow us to process your personal information.', 'checkbox'), 'consent');
+  assert.equal(
+    ask(
+      'DECLARATION OF CONSENT FOR INCLUSION IN THE APPLICANT DATABASE I consent to Cinven storing my data for future vacancies',
+      'combobox',
+    ),
+    null,
+  );
+  assert.equal(ask('Which firm/organisation do you currently work for?'), 'job.currentCompany');
+  assert.equal(ask('Is the Gender you identify with the same as registered at birth?', 'combobox'), null);
+  assert.equal(ask('Gender', 'combobox'), 'eeo.gender');
+  assert.equal(
+    fields.eduLevelOf(util.normalize('Final grade obtained in School Graduation (Abitur or equivalent)')),
+    'highschool',
+  );
+  assert.equal(fields.eduLevelOf(util.normalize('Final grade obtained in Bachelor’s Degree')), 'bachelor');
+  assert.equal(fields.eduLevelOf(util.normalize('Baccalaureate degree GPA')), null);
 });

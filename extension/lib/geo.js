@@ -193,7 +193,30 @@
     return [...new Set([String(value), name, ...aliases, code])];
   }
 
-  const geo = { COUNTRIES, REGIONS, findCountry, countryCandidates, demonyms, findRegion, regionCandidates };
+  // EU and EEA members (plus Switzerland): "EU / EEA citizen", "European citizen".
+  const EUROPEAN = new Set(
+    'AT BE BG HR CY CZ DK EE FI FR DE GR HU IE IT LV LT LU MT NL PL PT RO SK SI ES SE IS LI NO CH'.split(' '),
+  );
+
+  /** The words a list of citizenship options may use for a nationality: names, demonyms, "EU". */
+  function citizenWords(value) {
+    const row = findCountry(value);
+    if (!row) return [];
+    const words = [...countryCandidates(value), ...demonyms(row[0])];
+    if (EUROPEAN.has(row[0])) words.push('EU', 'EEA', 'European', 'European Union');
+    return [...new Set(words.map(norm).filter(Boolean))];
+  }
+
+  const geo = {
+    COUNTRIES,
+    REGIONS,
+    findCountry,
+    countryCandidates,
+    demonyms,
+    citizenWords,
+    findRegion,
+    regionCandidates,
+  };
   JTF.geo = geo;
   if (typeof module === 'object' && module.exports) module.exports = geo;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

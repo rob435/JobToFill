@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <title>Stagiaire – candidature (Recruitee / Personio style)</title>
+    <style>
+      body {
+        font: 15px/1.4 system-ui, sans-serif;
+        margin: 32px auto;
+        max-width: 720px;
+      }
+      .field {
+        margin: 14px 0;
+      }
+      label {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Stagiaire en stratégie</h1>
+    <form id="application">
+      <fieldset>
+        <legend>Mes données</legend>
+        <div class="field">
+          <label for="input-candidate.name-6">Nom complet *</label>
+          <input id="input-candidate.name-6" name="candidate.name" placeholder="Prénom et nom" />
+        </div>
+        <div class="field">
+          <label for="input-candidate.email-7">Adresse e-mail *</label>
+          <input id="input-candidate.email-7" name="candidate.email" type="email" />
+        </div>
+        <!-- react-phone-number-input: a country button and a tel box that starts with the dial code. -->
+        <div class="field">
+          <label for="input-candidate.phone-8">Numéro de téléphone *</label>
+          <div class="PhoneInput">
+            <button
+              type="button"
+              id="country-select-input-candidate.phone-8"
+              aria-haspopup="listbox"
+              aria-label="Sélectionner l'indicatif du pays: France"
+            >
+              France
+            </button>
+            <input id="input-candidate.phone-8" name="candidate.phone" type="tel" value="+33" />
+          </div>
+        </div>
+        <div class="field">
+          <label for="input-candidate.photo-9">Photo</label>
+          <input id="input-candidate.photo-9" name="candidate.photo" type="file" />
+        </div>
+        <div class="field">
+          <label for="input-candidate.cv-10">CV *</label>
+          <input id="input-candidate.cv-10" name="candidate.cv" type="file" />
+        </div>
+        <div class="field">
+          <label for="input-candidate.cover-11">Lettre de motivation</label>
+          <input id="input-candidate.cover-11" name="candidate.cover_letter" type="file" />
+        </div>
+      </fieldset>
+      <!-- Personio custom questions: ids "field-custom_attribute_…" say nothing about a field of study. -->
+      <div class="field">
+        <label for="field-custom_attribute_4621875">Academical Transcripts</label>
+        <select id="field-custom_attribute_4621875" name="custom_attribute_4621875">
+          <option value="">Please select</option>
+          <option>High School Degree</option>
+          <option>University Degrees</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="field-custom_attribute_4621876">Which tech startup would you recommend to us? And why?</label>
+        <input id="field-custom_attribute_4621876" name="custom_attribute_4621876" />
+      </div>
+      <div class="field">
+        <label for="field-custom_attribute_4621877">Alternative office</label>
+        <input id="field-custom_attribute_4621877" name="custom_attribute_4621877" />
+      </div>
+    </form>
+    <script>
+      // Like react-phone-number-input: typing an international number switches the country.
+      const tel = document.getElementById('input-candidate.phone-8');
+      const button = document.getElementById('country-select-input-candidate.phone-8');
+      tel.addEventListener('input', () => {
+        const country = tel.value.startsWith('+1') ? 'United States' : tel.value.startsWith('+33') ? 'France' : 'Other';
+        button.textContent = country;
+        button.setAttribute('aria-label', "Sélectionner l'indicatif du pays: " + country);
+      });
+    </script>
+  </body>
+</html>

@@ -15,7 +15,13 @@
  *   rankHistory(context, items)   → candidates from history items { url, title, lastVisitTime, visitCount }
  *   compare(context, posting)     → { score: 0..1, verdict: 'same'|'different'|'unsure', reasons: [] }
  *   find(context, { fetch, historySearch, now, budget, timeout })
- *                                 → Promise<{ posting, verdict, reasons, source, tried: [{ url, outcome }] }>
+ *                                 → Promise<{ posting, verdict, reasons, source, tried: [{ url, outcome }], hint? }>
+ *                                   hint: { source: 'Trackr', company, programme, deadline, … } when the user came
+ *                                   from Trackr (a hint for matching, never the description)
+ *   trackrHint(context, items)    → { region, industry, season, type, links } | null  (referrer, trail, history)
+ *
+ * context may also carry trail: [{ url, title, at }] — this tab's earlier pages, newest first — and embeds
+ * (job boards embedded in the page); candidates(context, now) uses both.
  *
  * A posting is { url, title, company, location, jobIds, description, source, ats, datePosted,
  * employmentType, confidence }; description is plain text with blank-line paragraphs and "• " bullets.
@@ -32,12 +38,16 @@
   // Section headings that only job descriptions have.
   const JOB_HEADING =
     /\b(responsibilit|requirements?\b|qualifications?\b|what you('|’)?ll (do|bring|need|learn|get|be doing)|what you will (do|bring|learn)|what (we('|’)?re|we are) looking for|what we look for|about (the|this) (role|job|position|team|opportunity|programme|program|internship)|the role\b|your role|role overview|job (description|summary|purpose|overview|responsibilities)|key (skills|duties|accountabilities|responsibilities)|duties\b|who you are|about you|your profile|your impact|skills (and|&) experience|experience (and|&) skills|essential (skills|criteria)|desirable|preferred qualifications|basic qualifications|minimum qualifications|nice to have|what we offer|benefits\b|you will\b|you have\b|you('|’)?ll\b)/i;
+  // The same in German, French, Italian, Spanish and Dutch adverts ("Ihre Aufgaben", "Profil recherché", "Missions").
+  const JOB_HEADING_INTL =
+    /(stellenbeschreibung|ihre aufgaben|deine aufgaben|aufgabengebiet|ihr profil|dein profil|das bringst du mit|das bringen sie mit|was (dich|sie) erwartet|anforderungen|qualifikationen|wir bieten|das bieten wir|was wir bieten|description (du|de) poste|descriptif du poste|vos missions|votre mission|missions? principales|le poste|profil recherché|votre profil|le profil|compétences (requises|recherchées)|qualifications requises|ce que nous offrons|nous vous offrons|pourquoi nous rejoindre|responsabilità|requisiti|descrizione (del ruolo|della posizione)|cosa offriamo|il tuo profilo|responsabilidades|requisitos|funciones|ofrecemos|tu perfil|functieomschrijving|wat ga je doen|wat vragen wij|wat bieden wij)/i;
+  const isJobHeading = (t) => JOB_HEADING.test(t) || JOB_HEADING_INTL.test(t);
   // Other headings a job advert's sections have (only used to find the advert's extent on a page).
   const SECTION_HEADING =
     /^(your (mission|tasks|team|day|future)|why (us|join|work)|about (us|the company|[\w&.' -]{2,40})$|who we are|our (offer|team|culture)|we offer|perks|tasks|ihre aufgaben|ihr profil|wir bieten|missions?|profil)/i;
   // Pages that are not a single job: searches, lists, sign-in.
   const LIST_PAGE =
-    /([?&](q|query|keywords?|search|k)=)|\/(search|jobs\/?$|careers\/?$|job-search|search-results|results|saved-?jobs|jobs\/search|joblist|openings\/?$|positions\/?$)/i;
+    /([?&](q|query|keywords?|search|k)=)|\/(search|jobs\/?$|careers\/?$|job-search|search-results|results|saved-?jobs|jobs\/search|joblist|(job-|current-|open-)?openings\/?$|(open-)?positions\/?$|open-roles\/?$|(current-)?vacancies\/?$|all-jobs\/?$|find-a-(job|role)\/?$|job-offers\/?$|stellenangebote\/?$|offres(-d-emploi)?\/?$|go\/[^/]+\/\d+\/?$)/i;
   const SEARCH_HOST =
     /(^|\.)(google|bing|duckduckgo|yahoo|ecosia|baidu|yandex|startpage|search\.brave)\.[a-z.]+$|^(t\.co|lnkd\.in)$/i;
   const LOGIN_PAGE = /\/(login|log-in|signin|sign-in|sso|auth|oauth|register|signup|sign-up|account)(\/|$|\?)/i;
@@ -150,6 +160,33 @@
     return tidy(decodeEntities(s));
   }
 
+  /**
+   * A one-line field (title, company, place) as plain text: entities decoded — also twice-encoded ones
+   * ("FICC &amp;amp; Equities", which a page's DOM text or JSON can still carry) — tags dropped, spaces collapsed.
+   */
+  function field(s, max = 200) {
+    let out = s == null || s === false ? '' : String(s);
+    for (let i = 0; i < 3 && /&(#x[\da-f]+|#\d+|[a-z][a-z\d]{1,8});/i.test(out); i++) {
+      const next = decodeEntities(out);
+      if (next === out) break;
+      out = next;
+    }
+    if (/<\/?[a-z][a-z\d]*(\s[^<>]*)?\/?>/i.test(out)) out = out.replace(/<\/?[a-z][a-z\d]*(\s[^<>]*)?\/?>/gi, ' ');
+    return clean(out, max);
+  }
+
+  /** Title, company and location of a posting or a context as plain one-line text. */
+  function plainFields(o) {
+    if (!o) return o;
+    for (const [k, max] of [
+      ['title', 200],
+      ['company', 120],
+      ['location', 200],
+    ])
+      if (typeof o[k] === 'string') o[k] = field(o[k], max);
+    return o;
+  }
+
   function tidy(s) {
     const lines = String(s)
       .replace(/\r\n?/g, '\n')
@@ -194,9 +231,12 @@
     return htmlToText(el.innerHTML != null ? el.innerHTML : el.textContent || '');
   }
 
+  /** An element's text on one line, without the CSS or scripts some boards put inside it (RMK's location). */
   function shortText(el, max = 200) {
     if (!el) return '';
-    return clean(el.textContent || '', max);
+    const html = el.innerHTML;
+    const text = html != null && /<(style|script|noscript|template)\b/i.test(html) ? htmlToText(html) : el.textContent;
+    return field(text || '', max);
   }
 
   function attr(doc, selector, name) {
@@ -406,6 +446,37 @@
         return set('phenom', companyFromHost(host), null, 'application', { jobSeqNo: qp.get('jobSeqNo'), base });
     }
 
+    // Oleeo (tal.net): {co}.tal.net/vx/…/candidate/so/pm/1/pl/1/opp/{id}-{slug}[/en-GB]; apply: …/opp/{id}/apply/…
+    if (/\.tal\.net$/.test(host)) {
+      const o = lower.lastIndexOf('opp');
+      const mm = o >= 0 && (parts[o + 1] || '').match(/^(\d+)(?:-|$)/);
+      const id = mm ? mm[1] : null;
+      const after = o >= 0 ? lower.slice(o + 2) : [];
+      const stage = id
+        ? after.some((p) => /^(apply|application|form|register|login)$/.test(p))
+          ? 'application'
+          : 'description'
+        : 'unknown';
+      return set('tal.net', host.split('.')[0].replace(/campus$|careers$/, ''), id, stage);
+    }
+
+    // Sainoo: (www|{co}).sainoo.com/jobs/{id}[/apply] (France)
+    if (/(^|\.)sainoo\.com$/.test(host) && lower[0] === 'jobs' && /^\d+$/.test(parts[1] || '')) {
+      const co = host.split('.')[0];
+      return set(
+        'sainoo',
+        co === 'sainoo' ? null : co,
+        parts[1],
+        has('apply', 'application') ? 'application' : 'description',
+      );
+    }
+
+    // 50skills: jobs.50skills.com/{co}[/{lang}]/{id}[/apply]
+    if (host === 'jobs.50skills.com') {
+      const id = parts.slice(1).find((p) => /^\d+$/.test(p)) || null;
+      return set('50skills', parts[0], id, id ? (has('apply') ? 'application' : 'description') : 'unknown');
+    }
+
     // Recruitee: {co}.recruitee.com/o/{slug}[/c/new]
     if (/\.recruitee\.com$/.test(host)) {
       const o = lower.indexOf('o');
@@ -477,10 +548,18 @@
       return set('ukg', parts[0], id, stage);
     }
 
-    // Anything else: guess from the path.
+    // Anything else: guess from the path. On a recruiting platform's subdomain the first label is the employer.
     const path = u.pathname.toLowerCase();
     out.jobId = urlJobIds(url)[0] || null;
-    if (/\/(apply|application|applications|apply-now|candidate|register|login|signin)(\/|$)/.test(path))
+    const tenant = host.match(
+      /^([a-z0-9-]+)\.(?:grad\.allhires\.com|app\.candidats\.io|ambertrack\.co\.uk|vacancy-filler\.co\.uk|apply4law\.com|current-vacancies\.com|careers\.hibob\.com|zohorecruit\.(?:com|eu)|bc\.direct|talentview\.io|jobs\.50skills\.com|easyapply\.co)$/,
+    );
+    if (tenant && !/^(app|www|jobs|careers|apply)$/.test(tenant[1])) out.company = tenant[1].replace(/^app-/, '');
+    if (
+      /\/(apply|application|applications|apply-now|candidate|new_candidate|new-candidate|register|login|signin|signup|sign-up|easyapply)(\/|$)/.test(
+        path,
+      )
+    )
       out.stage = 'application';
     else if (out.jobId && /job|career|position|vacanc|opening|posting|opportunit|role/.test(path))
       out.stage = 'description';
@@ -520,6 +599,15 @@
       const v = u.searchParams.get(key);
       if (v && /\d/.test(v) && v.length <= 40 && !/^(19|20)\d\d$/.test(v)) ids.push(v);
     }
+    // The same names in another case ("ReqId=751069" on SAP's easy-apply pages).
+    for (const [k, v] of u.searchParams)
+      if (
+        /^(job_?id|req_?id|requisition_?id|posting_?id|vacancy_?id|position_?id|opportunity_?id)$/i.test(k) &&
+        v &&
+        /\d/.test(v) &&
+        v.length <= 40
+      )
+        ids.push(v);
     const segs = u.pathname.split('/').map(safeDecode);
     for (let i = 0; i < segs.length; i++) {
       const seg = segs[i];
@@ -535,7 +623,13 @@
       const lead = seg.match(/^(\d{6,})-/);
       if (lead) ids.push(lead[1]);
       const trail = seg.match(/[A-Za-z]{3}.*[-_](\d{4,})$/);
-      if (trail && !/^(19|20)\d\d$/.test(trail[1])) ids.push(trail[1]);
+      // Not a session's or a portal's own number ("user-415213", "brand-4", "site-12345" in Oleeo addresses).
+      if (
+        trail &&
+        !/^(19|20)\d\d$/.test(trail[1]) &&
+        !/^(user|brand|site|partner|session|sid|uid|wid|appcentre|mobile|lang|xf)[-_]/i.test(seg)
+      )
+        ids.push(trail[1]);
       const wd = seg.match(/_([A-Z]{1,5}[-_]?\d{3,}(?:-\d+)?)$/);
       if (wd) ids.push(wd[1]);
     }
@@ -549,6 +643,10 @@
     const label =
       /\b(?:job|req(?:uisition)?|reference|ref|vacancy|posting|position|opening)\s*(?:id|no\.?|number|code|#)\s*[:#.]?\s*([A-Za-z]{0,5}[-_]?\d[\w-]{2,24})/gi;
     for (const mm of s.matchAll(label)) ids.push(mm[1].replace(/[-_.]+$/, ''));
+    // "Referenz: HP-2027-031", "Kennziffer 4711", "Réf. 2026-118", "Rif. 2026/07".
+    const intl =
+      /(?:^|[^\p{L}])(?:referenz(?:nummer)?|kennziffer|stellen-?id|job-?id|réf(?:érence)?|rif(?:erimento)?|referencia)\s*[:#.]?\s*([A-Za-z]{0,5}[-_]?\d[\w/-]{2,24})/giu;
+    for (const mm of s.matchAll(intl)) ids.push(mm[1].replace(/[-_./]+$/, ''));
     for (const mm of s.matchAll(/\b((?:R|JR|REQ|VAC)[-_]?\d{4,}(?:-\d+)?)\b/g)) ids.push(mm[1]);
     return uniq(ids.filter((id) => /\d{3,}/.test(id) && !/^(19|20)\d\d$/.test(id)));
   }
@@ -679,6 +777,12 @@
       case 'recruitee':
         if (a.stage === 'application') add(cut(/\/c\/new\/?$/i), 'the Recruitee job page');
         break;
+      case 'tal.net':
+        if (a.stage === 'application') add(cut(/\/(apply|application|form|register|login)(\/.*)?$/i), 'the job page');
+        break;
+      case '50skills':
+        if (a.stage === 'application') add(cut(/\/apply(\/.*)?$/i), 'the job page');
+        break;
       case 'teamtailor':
         if (a.stage === 'application') add(cut(/\/applications?(\/new)?\/?$/i), 'the Teamtailor job page');
         break;
@@ -686,15 +790,18 @@
         break;
     }
     if (!out.length && a.stage === 'application') {
-      const stripped = u.pathname.replace(
-        /\/(apply|application|applications\/new|apply-now|login|candidate)(\/.*)?$/i,
-        '',
-      );
-      if (stripped !== u.pathname && stripped.length > 1)
-        add(
-          cut(/\/(apply|application|applications\/new|apply-now|login|candidate)(\/.*)?$/i),
-          'the page before the application step',
-        );
+      const STEP =
+        /\/(apply|application|applications\/new|apply-now|login|candidate|new_candidate|new-candidate|register|signup|sign-up|easyapply|apply-start)(\/.*)?$/i;
+      const stripped = u.pathname.replace(STEP, '');
+      const last = stripped.split('/').filter(Boolean).pop() || '';
+      if (
+        stripped !== u.pathname &&
+        stripped.length > 1 &&
+        !/^(talent-?community|candidates?|portal|careers?|jobs?|home|account|users?|recruits?|external|[a-z]{2}([-_][a-z]{2})?)$/i.test(
+          last,
+        )
+      )
+        add(cut(STEP), 'the page before the application step');
     }
     return out;
   }
@@ -772,6 +879,15 @@
       case 'bamboohr':
         if (a.jobId) out.push(get(`${u.origin}/careers/${enc(a.jobId)}/detail`, 'bamboohr'));
         break;
+      case 'sainoo':
+        if (a.jobId) out.push(get(`https://www.sainoo.com/api/v1/jobs/${enc(a.jobId)}`, 'sainoo'));
+        break;
+      case '50skills':
+        if (a.jobId && a.company)
+          out.push(
+            get(`https://static-jobs-api.50skills.app/public/${enc(a.company)}/jobs/${enc(a.jobId)}.json`, '50skills'),
+          );
+        break;
       case 'eightfold':
         if (a.jobId) {
           const domain = a.domain || u.hostname.replace(/^[^.]+\./, '').replace(/^eightfold\.ai$/, `${a.company}.com`);
@@ -804,9 +920,9 @@
   function makePosting(fields) {
     const p = {
       url: fields.url || '',
-      title: clean(fields.title, 200),
-      company: clean(fields.company, 120),
-      location: clean(fields.location, 200),
+      title: field(fields.title, 200),
+      company: field(fields.company, 120),
+      location: field(fields.location, 200),
       jobIds: uniq((fields.jobIds || []).map((x) => (x == null ? '' : String(x).trim())).filter((x) => x.length >= 2)),
       description: fields.description || '',
       source: fields.source || '',
@@ -820,15 +936,46 @@
     return p;
   }
 
+  // Cookie notices, privacy policies and terms of use: legal small print, not a job.
+  const LEGAL_WORDS =
+    /\b(cookies?|privacy|personal (data|information)|terms (and|&) conditions|terms of (use|service)|consent|gdpr|data protection|tracking technologies|this (web)?site|browsing|browser|disclaimer|liability|copyright|trademarks?|datenschutz|données personnelles)\b/gi;
+  const JOB_WORDS =
+    /\b(responsibilit\w*|requirements?|qualifications?|experience|skills|candidates?|internships?|interns?|graduates?|applicants?|position|vacancy|degree|team|role)\b/gi;
+  // The parts a job advert has: what you'll do, what you need, what you get, and how and when to apply.
+  // prettier-ignore
+  const JOB_SECTIONS = [
+    /responsibilit|what you('|’)?ll (do|be doing|work on)|what you will (do|work on)|your (role|impact|tasks|mission|day)|the role\b|role overview|about the (role|job|position|programme|program|internship)|job (description|summary|purpose)|key (duties|accountabilities)|duties|ihre aufgaben|deine aufgaben|aufgaben|vos missions|missions?\b|le poste|descriptif du poste/i,
+    /requirements?|qualifications?|what (we('|’)?re|we are) looking for|who you are|about you|your profile|skills (and|&) experience|experience (and|&) skills|essential|desirable|nice to have|ihr profil|dein profil|profil recherché|votre profil|compétences|you have\b|you('|’)?ll (need|bring)|you will (need|bring)/i,
+    /benefits|what we offer|wir bieten|perks|salary|compensation|avantages|nous offrons|why join/i,
+    /\b(apply|application|deadline|closing date|start date|duration|full[- ]time|part[- ]time|contract|internship|graduate|candidates?|bewerbung|candidature|stage)\b/i,
+  ];
+
+  /** How many kinds of job-advert section a text has (0–4). */
+  function jobStructure(text) {
+    const s = String(text || '').slice(0, 30000);
+    return JOB_SECTIONS.filter((re) => re.test(s)).length;
+  }
+
+  /** Mostly cookie, privacy or terms-of-use wording? */
+  function isLegalText(text) {
+    const s = String(text || '').slice(0, 30000);
+    const legal = (s.match(LEGAL_WORDS) || []).length;
+    const job = (s.match(JOB_WORDS) || []).length;
+    return (
+      (legal >= 6 && legal > job) || (legal >= 3 && /^\W*(this (web)?site|we use cookies|by (using|browsing))/i.test(s))
+    );
+  }
+
   /** Does this look like a job description rather than a form, a list or legal small print? */
   function isRealDescription(text, strict) {
     const n = words(text);
     if (n < (strict ? 80 : 40)) return false;
-    if (JOB_HEADING.test(text)) return true;
+    if (isLegalText(text)) return false;
+    if (isJobHeading(text)) return true;
     if (strict) return false;
     const hits = (
       String(text).match(
-        /\b(experience|skills|team|role|responsib|candidate|degree|work with|you will|we are|our)\b/gi,
+        /\b(experience|skills|team|role|responsib|candidate|degree|work with|you will|we are|our|expérience|compétences|équipe|missions?|profil|stage|vous|nous|erfahrung|kenntnisse|studium|aufgaben|ihre|wir|esperienza|competenze|requisiti|experiencia|requisitos|equipo)\b/giu,
       ) || []
     ).length;
     return hits >= 3;
@@ -956,25 +1103,68 @@
       if (node[k] && typeof node[k] === 'object') collectTyped(node[k], type, out, depth + 1);
   }
 
-  /** Several JobPosting blocks on one page: prefer the one this URL is about. */
-  function pickPosting(list, url, heading) {
-    if (list.length <= 1) return list[0] || null;
-    const key = urlKey(url);
+  /** How surely a JobPosting block is about this page: its address, its ID, the page's heading (0 = no sign). */
+  function postingFit(p, url, heading, docTitle) {
+    let s = 0;
+    if (p.url && urlKey(p.url) === urlKey(url)) s += 3;
     const ids = urlJobIds(url);
+    if (p.jobIds.some((id) => ids.some((x) => idsMatch(id, x)))) s += 2;
     const h = norm(heading);
+    if (h && norm(p.title) === h) s += 1;
+    else {
+      const sim = Math.max(...[heading, docTitle].map((t) => (t ? titleSimilarity(t, p.title, {}) || 0 : 0)));
+      if (sim >= 0.8) s += 0.75;
+    }
+    return s;
+  }
+
+  /** Several JobPosting blocks on one page: the one this URL is about; none when nothing says which. */
+  function pickPosting(list, url, heading, docTitle) {
+    if (list.length <= 1) return list[0] || null;
     let best = null;
     let bestScore = -1;
     for (const p of list) {
-      let s = Math.min(words(p.description) / 1000, 0.5);
-      if (p.url && urlKey(p.url) === key) s += 3;
-      if (p.jobIds.some((id) => ids.some((x) => idsMatch(id, x)))) s += 2;
-      if (h && norm(p.title) === h) s += 1;
+      const s = postingFit(p, url, heading, docTitle) + Math.min(words(p.description) / 1000, 0.5);
       if (s > bestScore) {
         best = p;
         bestScore = s;
       }
     }
-    return best;
+    // A list of jobs (search results, "similar jobs") without a sign of which one this page is about.
+    return bestScore >= 0.75 ? best : null;
+  }
+
+  const JOBBY_TITLE =
+    /\b(analyst|analyste|analista|engineer|ingénieur|ingenieur|developer|intern|internship|manager|associate|graduate|trader|researcher|scientist|designer|consultant|specialist|officer|assistant|director|apprentice|trainee|programme|program|scheme|placement|praktikum|praktikant|stage|stagiaire|alternant|alternance|werkstudent|becario|tirocinio)\b/i;
+
+  /**
+   * One JobPosting block on another job's page (a "featured job", the last job viewed): its ID or address is a
+   * different job on this site, or the page's heading names a different job.
+   */
+  function aboutAnotherJob(p, url, heading, docTitle, pageStart) {
+    if (postingFit(p, url, heading, docTitle) >= 0.75) return false;
+    const ids = urlJobIds(url);
+    const theirs = uniq([...p.jobIds, ...(p.url && urlKey(p.url) !== urlKey(url) ? urlJobIds(p.url) : [])]);
+    if (ids.length && theirs.some((y) => ids.some((x) => idShape(x) === idShape(y) && !idsMatch(x, y)))) return true;
+    const pu = parseUrl(p.url);
+    const here = parseUrl(url);
+    if (pu && here && pu.hostname === here.hostname && urlJobIds(pu.href).length && ids.length) return true;
+    // The page's heading and title name their own reference ("Réf. 2026-118"), and it isn't this one's.
+    const written = textJobIds(`${docTitle || ''}\n${heading || ''}\n${pageStart || ''}`);
+    if (written.length && theirs.length && !theirs.some((y) => written.some((x) => idsMatch(x, y)))) return true;
+    // The page's own heading is a job title that has nothing in common with this one, or another city's.
+    if (heading && JOBBY_TITLE.test(heading) && p.title) {
+      const sims = [heading, docTitle]
+        .map((t) => (t ? titleSimilarity(t, p.title, {}) : null))
+        .filter((x) => x != null);
+      const best = sims.length ? Math.max(...sims) : null;
+      if (best != null && best < 0.3) return true;
+      const mine = cities(heading);
+      const there = cities(p.title, p.location);
+      if (best != null && best < 0.85 && mine.length && there.length && !mine.some((c) => there.includes(c)))
+        return true;
+    }
+    return false;
   }
 
   function fromJsonLd(doc, url) {
@@ -985,7 +1175,11 @@
     }
     if (!found.length) return null;
     const postings = found.map((o) => fromJobPostingLd(o, url));
-    return pickPosting(postings, url, shortText(q(doc, 'h1')));
+    const heading = shortText(q(doc, 'h1'));
+    const docTitle = clean(String(doc.title || '').replace(/<!--[\s\S]*?-->/g, ''), 300);
+    const best = pickPosting(postings, url, heading, docTitle);
+    const pageStart = visibleText(doc).slice(0, 3000);
+    return best && !aboutAnotherJob(best, url, heading, docTitle, pageStart) ? best : null;
   }
 
   function fromMicrodata(doc, url) {
@@ -994,7 +1188,7 @@
     const prop = (name) => {
       const el = qa(scope, `[itemprop~="${name}"]`)[0];
       if (!el) return '';
-      return clean(el.getAttribute('content') || el.getAttribute('datetime') || el.textContent || '');
+      return field(el.getAttribute('content') || el.getAttribute('datetime') || shortText(el, 300) || '', 300);
     };
     const descEl = qa(scope, '[itemprop~="description"]')[0];
     const org = qa(scope, '[itemprop~="hiringOrganization"]')[0];
@@ -1007,7 +1201,7 @@
     if (locEl) {
       const bits = ['addressLocality', 'addressRegion', 'addressCountry'].map((n) => {
         const e = qa(locEl, `[itemprop~="${n}"]`)[0];
-        return e ? clean(e.getAttribute('content') || e.textContent) : '';
+        return e ? field(e.getAttribute('content') || shortText(e, 120)) : '';
       });
       location = uniq(bits).join(', ') || shortText(locEl, 120);
     }
@@ -1043,6 +1237,7 @@
     { ats: 'eightfold', title: ['.position-title', 'h1[class*="position-title"]'], company: [], location: ['.position-location'], description: ['.position-job-description', '[class*="job-description"]'] },
     { ats: 'phenom', title: ['h1.job-title', '.job-title'], company: [], location: ['.job-location', '.au-target.job-location'], description: ['[data-ph-at-id="job-description-text"]', '.job-description', '.jd-info'] },
     { ats: 'avature', title: ['.banner__text__title', 'h1.title', 'h2.title', '.section__header__text h2.title', '.article--details h1, .article--details h2'], company: [], location: [], description: ['.article--details .article__content', '.job-description', '.article__content'], each: true },
+    { ats: 'tal.net', title: ['#vac_desc h1', 'h1.section'], company: [], location: [], description: ['#vac_desc .form-view', '#vac_desc'] },
     { ats: 'jobvite', title: ['.jv-header'], company: [], location: ['.jv-job-detail-meta'], description: ['.jv-job-detail-description'] },
     { ats: 'breezy', title: ['.banner h1', '.position-header h1'], company: [], location: ['.location'], description: ['.description'] },
     { ats: null, title: ['[itemprop="title"]', '.job-title', '.jobTitle', '.posting-title'], company: [], location: ['.job-location', '.location'], description: ['.job-description', '.jobDescription', '#job-description', '#jobDescription', '.job-details', '.job-detail', '.job-content', '.posting-description', '.vacancy-description', '[class*="JobDescription"]'] },
@@ -1051,7 +1246,7 @@
   /** The rule's title that the browser tab's title also names (banners often use the same classes), else the first. */
   function pickTitle(doc, selectors) {
     const all = [];
-    for (const s of selectors || []) for (const el of qa(doc, s)) all.push(clean(el.textContent, 200));
+    for (const s of selectors || []) for (const el of qa(doc, s)) all.push(shortText(el, 200));
     const list = all.filter((t) => t && notGeneric(t));
     const dt = norm(String(doc.title || '').replace(/<!--[\s\S]*?-->/g, ''));
     return list.find((t) => norm(t).length > 3 && dt.includes(norm(t))) || list[0] || '';
@@ -1060,7 +1255,7 @@
   function firstText(doc, selectors, max = 200, ok) {
     for (const s of selectors || []) {
       for (const el of qa(doc, s)) {
-        const t = clean(s.endsWith('[alt]') ? el.getAttribute('alt') : el.textContent, max);
+        const t = s.endsWith('[alt]') ? field(el.getAttribute('alt'), max) : shortText(el, max);
         if (t && (!ok || ok(t))) return t;
       }
     }
@@ -1226,16 +1421,67 @@
   const JUNK_NAME =
     /(^|[\s_-])(cookies?|consent|gdpr|onetrust|ot-sdk|banner|modal|popup|newsletter|subscribe|social|share|sharing|breadcrumbs?|similar|related|recommended|recommendations|more-jobs|other-jobs|job-?alerts?|footer|sidebar|navbar|nav|menu|skip-link|search|filters?|pagination)($|[\s_-])/i;
   const GOOD_NAME = /desc|content|detail|posting|job|article|main|body|vacanc|position/i;
+  // Cookie and consent banners (OneTrust, Cookiebot, Usercentrics…), privacy and legal pop-ups, by class, id or label.
+  const CONSENT_NAME =
+    /cookie|consent|onetrust|ot-sdk|optanon|cookiebot|cybot|usercentrics|didomi|truste|gdpr|privacy|disclaimer|legal-?pop|legal-?notice|legal-?modal|terms-?of-?use|terms-?and-?conditions|popup/i;
+  const JOBBY_NAME = /(^|[\s_-])(job|posting|vacanc|position)[\w-]*(desc|detail|content|body|text)/i;
+
+  const nameOf = (el) =>
+    `${el.getAttribute('class') || ''} ${el.getAttribute('id') || ''} ${el.getAttribute('aria-label') || ''}`;
+
+  /** A cookie banner or a privacy/legal pop-up — not a page wrapper that only carries a "cookies-accepted" class. */
+  function consentLike(el) {
+    const name = nameOf(el);
+    if (!CONSENT_NAME.test(name) || JOBBY_NAME.test(name)) return false;
+    return !qa(el, 'h1, h2, h3, h4, h5, h6, strong, b, dt').some((h) => {
+      const t = clean(h.textContent, 100);
+      return t.length < 80 && isJobHeading(t);
+    });
+  }
+
+  /** Is this element a banner, menu, pop-up or other page furniture (by its class, id or label)? */
+  function junkName(el) {
+    const name = nameOf(el);
+    return (JUNK_NAME.test(name) && !JOBBY_NAME.test(name)) || consentLike(el);
+  }
+
+  /** Inside a dialog, a cookie banner or another pop-up? */
+  function inJunk(el) {
+    for (let e = el, i = 0; e && e.nodeType === 1 && i < 15; e = e.parentNode, i++) {
+      if (/^(DIALOG|NAV|FOOTER)$/i.test(e.tagName) || /^(dialog|alertdialog)$/i.test(e.getAttribute('role') || ''))
+        return true;
+      if (e.getAttribute('aria-modal') === 'true' || consentLike(e)) return true;
+    }
+    return false;
+  }
 
   function genericPosting(doc, url) {
     const body = doc.body;
     if (!body) return null;
     const clone = body.cloneNode(true);
-    for (const el of qa(clone, JUNK_SELECTOR)) el.remove();
-    for (const el of qa(clone, '[class],[id]')) {
-      const name = `${el.getAttribute('class') || ''} ${el.getAttribute('id') || ''}`;
-      if (JUNK_NAME.test(name) && !/(^|[\s_-])(job|posting)[\w-]*(desc|detail|content)/i.test(name)) el.remove();
+    // An accordion's toggle buttons are its section headings ("Vos missions", "Profil recherché").
+    for (const b of qa(clone, 'button[aria-controls], button[aria-expanded], [class*="accordion"] > button')) {
+      const t = clean(b.textContent, 80);
+      if (!t || !b.ownerDocument) continue;
+      const h = b.ownerDocument.createElement('h3');
+      h.textContent = t;
+      b.replaceWith(h);
     }
+    // (A read-only "form" with no fields is how some boards lay out the advert itself, e.g. Oleeo's form-view, and
+    // collapsed sections — accordions, "Read more" — are hidden until clicked but are the advert's own text.)
+    for (const el of qa(clone, JUNK_SELECTOR)) {
+      if (el.tagName === 'FORM' && !q(el, 'input:not([type="hidden"]), select, textarea, button')) continue;
+      if (
+        el.hasAttribute('hidden') &&
+        /^(DIV|SECTION|P|UL|OL|SPAN|DD|ARTICLE)$/i.test(el.tagName) &&
+        !el.getAttribute('role') &&
+        !junkName(el) &&
+        words(el.textContent) >= 12
+      )
+        continue;
+      el.remove();
+    }
+    for (const el of qa(clone, '[class],[id],[aria-label]')) if (junkName(el)) el.remove();
     const scores = new Map();
     const bump = (el, v) => {
       if (el && el.nodeType === 1) scores.set(el, (scores.get(el) || 0) + v);
@@ -1245,7 +1491,7 @@
       for (const n of el.childNodes) if (n.nodeType === 3) own += n.textContent;
       own = own.trim();
       const isHeading = /^(H[1-6]|STRONG|B|DT)$/i.test(el.tagName);
-      if (isHeading && own.length < 80 && JOB_HEADING.test(own)) {
+      if (isHeading && own.length < 80 && isJobHeading(own)) {
         bump(el.parentNode, 4);
         bump(el.parentNode && el.parentNode.parentNode, 2);
         continue;
@@ -1285,7 +1531,7 @@
     const headingCount = (el) =>
       qa(el, 'h1, h2, h3, h4, h5, h6, strong, b, dt').filter((h) => {
         const t = clean(h.textContent, 100);
-        return t.length < 80 && (JOB_HEADING.test(t) || SECTION_HEADING.test(t));
+        return t.length < 80 && (isJobHeading(t) || SECTION_HEADING.test(t));
       }).length;
     const linkShare = (el) => {
       const len = (el.textContent || '').length || 1;
@@ -1304,34 +1550,47 @@
       }
     }
     best = top;
+    // A list of jobs (every line a link) is not one job.
+    if (linkShare(best) > 0.4) return null;
     const description = elText(best);
     if (!isRealDescription(description) || /^\s*[[{]/.test(description)) return null;
     return makePosting({
       url,
       description,
       source: 'page-text',
-      confidence: JOB_HEADING.test(description) ? 0.65 : 0.5,
+      confidence: isJobHeading(description) ? 0.65 : 0.5,
     });
   }
 
   /* --------------------------------------------------------- page headings */
 
   const GENERIC_TITLE =
-    /^(apply|application|apply now|apply for this (job|position|role)|job application|start your application|my information|personal (information|details)|sign in|log in|login|create (an )?account|careers?|jobs?|job search|search jobs|welcome|home|current vacancies|open positions|join us|thank you|are you still with us\??|work summary|job application form|candidate (home|experience)|review|submit|resume|cv|error\b|\d{3}\b|internal server error|access denied|forbidden|too many requests|just a moment|attention required|page not found|listings|search results|current openings|(\w+ )?candidate portal|(join )?(our )?talent (community|network|pool)|sign up|your personal space|who we are|my (profile|account|applications?)|dashboard|create (a |your )?profile|register)\b/i;
+    /^(apply|application|apply now|apply for this (job|position|role)|job application|start your application|my information|personal (information|details)|sign in|log in|login|create (an )?account|careers?|jobs?|job search|search jobs|welcome|home|current vacancies|open positions|join us|thank you|are you still with us\??|work summary|job application form|candidate (home|experience)|review|submit|resume|cv|error\s*\d*\b|\d{3}\b|internal server error|access denied|forbidden|too many requests|just a moment|attention required|page not found|listings|search results|current openings|(\w+ )?candidate portal|(join )?(our )?talent (community|network|pool)|sign up|your personal space|who we are|my (profile|account|applications?)|dashboard|create (a |your )?profile|register|your privacy|privacy (policy|notice|statement|settings|preferences|cent(er|re))|cookies?( (policy|settings|preferences|notice|consent|declaration))?|manage (cookies|consent|preferences)|we (use|value) (cookies|your privacy)|terms (of use|and conditions)|legal (notice|information)|disclaimer|imprint|impressum|datenschutz\w*|mentions légales|politique de confidentialité|.{0,60}\bequal (employment )?opportunit(y|ies)\b.*|.{0,40}\bis an? (equal|e-verify)\b.*)\b/i;
   const notGeneric = (t) => !GENERIC_TITLE.test(t);
   const SITE_PIECE =
     /^(workday|careers?|jobs?|job board|lever|greenhouse|ashby|smartrecruiters|workable|icims|taleo|avature|eightfold|oracle|apply|application|home|job details?|job description|careers? (site|page|portal)|candidate experience( page)?)$/i;
 
   function cleanCompany(s) {
+    if (
+      /^\s*(false|true|null|undefined|none|n\/a|company( name| logo)?|your company|logo|brand|site name|home|careers?|jobs?|log ?in|sign ?in|apply|greenhouse|lever|workday|ashby|smartrecruiters|workable|icims|taleo|successfactors|oracle|avature|eightfold|phenom|jobvite|recruitee|personio|teamtailor|bamboohr|pinpoint|breezy|allhires|candidats|ambertrack|vacancy filler|apply4law|oleeo|cezanne|eploy|tribepad|hireful|jobtrain|networx|webitrent|hibob|zoho recruit|50skills)\s*$/i.test(
+        String(s || ''),
+      )
+    )
+      return '';
     return clean(
-      String(s || '')
+      field(s, 300)
         .replace(
           /\b(candidate experience page|candidate experience|careers? (site|page|portal)|careers?|jobs?|job board|recruiting|recruitment|talent community)\b/gi,
           ' ',
         )
         .replace(/\s+[|–—-]\s*$/, '')
         .replace(/^\s*[|–—-]\s+/, '')
-        .replace(/\s*\blogo\b\s*/gi, ' '),
+        .replace(/\s*\blogo\b\s*/gi, ' ')
+        // An image's file name used as its alt text: "Marsh_48px", "acme-logo.svg".
+        .replace(/[_-]?\d+px\b|\.(png|svg|jpe?g|gif|webp)\b/gi, '')
+        // A requisition number the tab's title puts last: "Hang Seng Bank (HK) (55392)".
+        .replace(/\s*\(\s*[A-Z]{0,4}[-_]?\d{3,}[\w-]*\s*\)\s*$/i, '')
+        .replace(/_/g, ' '),
       120,
     ).replace(/[\s|–—:,-]+$/, '');
   }
@@ -1377,9 +1636,9 @@
 
   /** Title and company from document.title patterns, cross-checked with the page's headings. */
   function titleParts(docTitle, headings) {
-    const t = clean(String(docTitle || '').replace(/<!--[\s\S]*?-->/g, ''), 300)
+    const t = field(String(docTitle || '').replace(/<!--[\s\S]*?-->/g, ''), 300)
       .replace(
-        /^(job application for|application for|apply for|apply to|applying for|apply|application|job)\s*[:\-–—]?\s+/i,
+        /^(job application for|application for|apply for|apply to|applying for|apply|application|career opportunities|job opportunity|job details|job|vacancy|stellenangebot|stellenanzeige|offre d['’]emploi|offre)\s*[:\-–—]?\s+/i,
         '',
       )
       .trim();
@@ -1395,6 +1654,16 @@
     if (ti < 0)
       ti = pieces.findIndex((p) => hs.some((h) => h.length > 6 && (norm(p).includes(h) || h.includes(norm(p)))));
     const titleIdx = ti >= 0 ? ti : 0;
+    // The page's heading says more than the tab's piece of it ("Stage Analyste M&A – Paris (H/F)"): use it.
+    const fuller =
+      ti >= 0
+        ? headings.find(
+            (h) =>
+              norm(h).includes(norm(pieces[ti])) &&
+              norm(h) !== norm(pieces[ti]) &&
+              h.length <= 2 * pieces[ti].length + 30,
+          )
+        : null;
     const others = pieces.filter((_, i) => i !== titleIdx);
     const companyPiece = others.find((p) => /careers?|jobs/i.test(p)) || others[others.length - 1] || '';
     const company = cleanCompany(companyPiece.replace(/^(careers?|jobs?|work|life)\s+(at|with)\b\s*/i, ''));
@@ -1403,15 +1672,16 @@
       return { title: pieces.filter((p) => p !== companyPiece).join(' | '), company };
     m = pieces[titleIdx].match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
     if (m) return { title: m[1].trim(), company: company || cleanCompany(m[2]) };
-    return { title: pieces[titleIdx], company };
+    return { title: fuller || pieces[titleIdx], company };
   }
 
   function headingTexts(doc) {
     return qa(doc, 'h1, h2')
+      .filter((h) => !inJunk(h))
       .slice(0, 8)
-      .map((h) => clean(h.textContent, 200))
+      .map((h) => shortText(h, 200))
       .filter((t) => t && !GENERIC_TITLE.test(t))
-      .filter((t) => !(words(t) < 6 && (JOB_HEADING.test(t) || SECTION_HEADING.test(t)))); // "What we look for"
+      .filter((t) => !(words(t) < 6 && (isJobHeading(t) || SECTION_HEADING.test(t)))); // "What we look for"
   }
 
   function metaContent(doc, names) {
@@ -1440,6 +1710,16 @@
     }
     if (found.location) return found.location;
     return uniq([found.city || found.town, found.state || found.region || found.province, found.country]).join(', ');
+  }
+
+  /** "Location: London", "Standort: Frankfurt am Main", "Lieu : Paris" written in a posting's text. */
+  function textLocation(text) {
+    const m = String(text || '')
+      .slice(0, 4000)
+      .match(
+        /^(?:•\s*)?(?:job |work |office )?(?:locations?|standort|arbeitsort|einsatzort|dienstort|lieu(?: de travail)?|localisation|sede(?: di lavoro)?|ubicación|city)\s*:\s*([^\n]{2,80})$/im,
+      );
+    return m ? clean(m[1], 120) : '';
   }
 
   /* ------------------------------------------------------- fromDocument */
@@ -1500,6 +1780,16 @@
     const heads = headingTexts(doc);
     const parts = titleParts(doc.title || '', heads);
     if (!posting.title) posting.title = heads[0] || parts.title || metaContent(doc, ['og:title']);
+    // Page text whose headings are boilerplate ("WWT is an Equal Opportunity Employer"): its first line that reads
+    // like a job title ("Technology & Analytics Intern- 2027").
+    if (posting.source === 'page-text' && (!posting.title || !JOBBY_TITLE.test(posting.title))) {
+      const line = posting.description
+        .split('\n')
+        .slice(0, 8)
+        .map((l) => clean(l.replace(/^•\s*/, ''), 200))
+        .find((l) => l && words(l) <= 12 && JOBBY_TITLE.test(l) && !isJobHeading(l) && !/[.:]$/.test(l));
+      if (line) posting.title = line;
+    }
     if (!posting.company) {
       const og = cleanCompany(metaContent(doc, ['og:site_name', 'application-name']));
       const texts = [doc.title, og, heads.join(' '), posting.description.slice(0, 3000)];
@@ -1513,12 +1803,13 @@
     if (!posting.location) {
       for (const rule of DOM_RULES)
         if (!rule.ats || rule.ats === a.name) posting.location = posting.location || firstText(doc, rule.location, 150);
-      posting.location = posting.location || fieldLocation(doc);
+      posting.location = posting.location || fieldLocation(doc) || textLocation(posting.description);
     }
     if (!posting.ats) posting.ats = a.name;
     if (posting.url && urlKey(posting.url) !== urlKey(pageUrl) && posting.source !== 'json-ld') posting.url = pageUrl;
     if (!posting.url) posting.url = pageUrl;
     if (a.jobId && !posting.jobIds.includes(a.jobId)) posting.jobIds.push(a.jobId);
+    plainFields(posting);
     posting.location = placeWithoutCompany(posting.location, posting.company);
     return posting;
   }
@@ -1721,11 +2012,50 @@
             datePosted: json.t_create ? new Date(json.t_create * 1000).toISOString().slice(0, 10) : null,
           };
         break;
+      case 'sainoo': {
+        const d = json.data;
+        if (d && d.position_title && d.brief) {
+          const office = d.office || {};
+          p = {
+            url: `https://www.sainoo.com/jobs/${d.id}`,
+            title: d.position_title,
+            company: (d.company && d.company.name) || '',
+            location: [office.city, office.country].filter(Boolean).join(', '),
+            jobIds: [d.id],
+            description: htmlToText(d.brief),
+            employmentType: (d.experiences || []).join(', ') || d.employment_type,
+            datePosted: d.published_at || null,
+          };
+        }
+        break;
+      }
+      case '50skills': {
+        const langs = Array.isArray(json.languages) ? json.languages : [];
+        const l = langs.find((x) => /^en/i.test(x.language || '')) || langs[0];
+        if (l && l.title)
+          p = {
+            url: json.url || url,
+            title: l.title,
+            company: json.companyFullName || '',
+            location: l.location || '',
+            jobIds: [json.id],
+            description: htmlToText(l.description || l.shortDescriptionHtml || l.shortDescription || ''),
+            employmentType: json.status,
+            datePosted: json.published || null,
+          };
+        break;
+      }
       default:
         break;
     }
     // Unknown data only: a known board's answer without this job must not yield another job from it.
-    if (!p && !(kind && ['ashby', 'greenhouse', 'lever', 'workday', 'smartrecruiters', 'oracle'].includes(kind))) {
+    if (
+      !p &&
+      !(
+        kind &&
+        ['ashby', 'greenhouse', 'lever', 'workday', 'smartrecruiters', 'oracle', '50skills', 'sainoo'].includes(kind)
+      )
+    ) {
       const found = findPostingInJson(json);
       if (!found || words(found.description) < 40) return null;
       p = {
@@ -1739,14 +2069,24 @@
     }
     if (!p || !p.description || words(p.description) < 20) return null;
     if (kind && kind === a.name && a.jobId) p.jobIds = [...(p.jobIds || []), a.jobId];
-    if (!p.company && a.company) p.company = prettyCompany(a.company, [p.description.slice(0, 3000)]);
-    return makePosting({
+    let guessed = false;
+    if (!p.company && a.company) {
+      p.company = companyInText(a.company, [p.description.slice(0, 3000)]);
+      if (!p.company) {
+        p.company = slugTitle(a.company);
+        guessed = true;
+      }
+    }
+    const made = makePosting({
       ...p,
       jobIds: (p.jobIds || []).filter((x) => x != null && x !== ''),
       source: 'api',
       ats: a.name || kind,
       confidence: 0.95,
     });
+    // Only the address named the company ("hdpc.fa.us2.oraclecloud.com" → "HDPC"): a better name may replace it.
+    if (guessed) made.companyGuessed = true;
+    return made;
   }
 
   /* -------------------------------------------------- applicationContext */
@@ -1831,6 +2171,7 @@
       posting: null,
       pageText: '',
       gone: false,
+      embeds: [],
     };
     if (!doc) return context;
     try {
@@ -1860,6 +2201,23 @@
       saysGone(doc, !!(posting && /json-ld|microdata/.test(posting.source))) ||
       /[?&](notfound|error)=(1|true)\b/i.test(pageUrl);
 
+    // A video player, captcha or tracking frame inside the application page says nothing about the job.
+    let framed;
+    try {
+      const w = doc.defaultView;
+      framed = !!w && !!w.top && w.top !== w;
+    } catch (err) {
+      framed = true; // (a cross-origin parent)
+    }
+    const widget =
+      (framed && !a.name && !context.posting && !urlJobIds(pageUrl).length) ||
+      /(^|\.)(vimeo\.com|youtube(-nocookie)?\.com|recaptcha\.net|hcaptcha\.com|challenges\.cloudflare\.com|facebook\.com|doubleclick\.net|googletagmanager\.com|demdex\.net|linkedin\.com|twitter\.com|x\.com|instagram\.com|vidyard\.com|wistia\.(com|net)|brightcove\.net)$/i.test(
+        context.host,
+      );
+    if (widget) {
+      context.posting = null;
+      return context;
+    }
     const heads = headingTexts(doc);
     const parts = titleParts(doc.title || '', heads);
     let atsTitle = '';
@@ -1878,17 +2236,28 @@
         attr(doc, 'img[class*="logo"][alt]', 'alt'),
     );
     const ogTitle = metaContent(doc, ['og:title', 'twitter:title']);
-    const titleOk = (t) => t && !GENERIC_TITLE.test(t) && words(t) <= 20;
-    // An identity provider's sign-in page ("IBMid", "Amazon Passport") says nothing about the job.
+    // "Susquehanna International Group, LLP Careers" names the site, not a job.
+    const siteTitle = (t) => /\b(careers?|jobs|karriere|carrières?|emplois)\b/i.test(t) && !JOBBY_TITLE.test(t);
+    const titleOk = (t) => t && !GENERIC_TITLE.test(t) && !siteTitle(t) && words(t) <= 20;
+    // An identity provider's sign-in page ("IBMid", "Amazon Passport") says nothing about the job, nor does a site's
+    // home, search or sign-in page that a sign-in wall lands on ("SEARCH FOR JOBS…", "Our Strategy").
+    const landing =
+      !!u &&
+      !a.jobId &&
+      !urlJobIds(pageUrl).length &&
+      (u.pathname.replace(/\/+$/, '') === '' || LIST_PAGE.test(u.pathname + u.search) || LOGIN_PAGE.test(u.pathname));
     const idp = /^(login|signin|sso|auth|passport|accounts?|id|identity)\./i.test(context.host);
-    context.title = clean(
-      [
-        atsTitle,
-        posting && posting.source !== 'page-text' ? posting.title : '',
-        ...(idp ? [] : [parts.title, heads[0], ogTitle]),
-      ].find(titleOk) || '',
-      200,
-    );
+    context.title =
+      (landing
+        ? []
+        : [
+            atsTitle,
+            posting && posting.source !== 'page-text' ? posting.title : '',
+            ...(idp ? [] : [parts.title, heads[0], ogTitle]),
+          ]
+      )
+        .map((t) => field(t, 200))
+        .find(titleOk) || '';
     // A company slug reads better in the page's own spelling: "jumptrading" → "Jump Trading".
     const named = [posting && posting.source !== 'page-text' && posting.company, atsCompany, parts.company, og, logoAlt]
       .map(cleanCompany)
@@ -1903,9 +2272,13 @@
       (a.company ? slugTitle(a.company) : '') ||
       '';
     context.location = placeWithoutCompany(
-      clean((posting && posting.location) || atsLocation || fieldLocation(doc) || '', 200),
+      field(
+        (posting && posting.location) || atsLocation || fieldLocation(doc) || textLocation(context.pageText) || '',
+        200,
+      ),
       context.company,
     );
+    plainFields(context);
 
     context.jobIds = uniq([
       a.jobId,
@@ -1915,7 +2288,29 @@
       ...(posting ? posting.jobIds : []),
     ]).slice(0, 12);
     context.links = pageLinks(doc, pageUrl, context);
+    context.embeds = embeddedBoards(doc, pageUrl);
     return context;
+  }
+
+  /**
+   * Job boards embedded in a company page: Greenhouse's job_app iframe or board script ("for=veritiongroupllc"),
+   * Ashby's or Lever's embeds. Their board name is often not the site's ("verition.com" ↔ "veritiongroupllc").
+   */
+  function embeddedBoards(doc, url) {
+    const here = parseUrl(url);
+    const out = [];
+    for (const el of qa(doc, 'iframe[src], script[src], embed[src]').slice(0, 400)) {
+      const u = parseUrl(el.getAttribute('src') || '', url);
+      if (!u || !/^https?:$/.test(u.protocol) || (here && u.hostname === here.hostname)) continue;
+      const a = ats(u.href);
+      if (!a.name || !a.company || !['greenhouse', 'ashby', 'lever'].includes(a.name)) continue;
+      // Only what identifies the board and the job (Greenhouse adds a long validity token).
+      const v = new URL(u.origin + u.pathname);
+      for (const k of ['for', 'token', 'gh_jid'])
+        if (u.searchParams.get(k)) v.searchParams.set(k, u.searchParams.get(k));
+      out.push(v.href);
+    }
+    return uniq(out).slice(0, 4);
   }
 
   /* ----------------------------------------------------------- candidates */
@@ -1943,7 +2338,7 @@
   }
 
   /** Places to look for the description, best first. */
-  function candidates(context) {
+  function candidates(context, now) {
     const ctx = context || {};
     const ctxAts = ctx.ats && 'stage' in ctx.ats ? ctx.ats : ats(ctx.url || '');
     const out = new Map();
@@ -1977,6 +2372,46 @@
           add(r.url, 'the job board’s data for this job', base || 0.93, { request: r, structural: true });
       }
     }
+    // A sign-in page that names where it will go next (?next=, ?returnUrl=, ?redirect_uri=…): the job's page.
+    for (const page of uniq([ctx.url, ctx.canonical])) {
+      const u = parseUrl(page);
+      if (!u) continue;
+      for (const [k, v] of u.searchParams) {
+        if (
+          !/^(next|return(_?url|_?to)?|redirect(_?ur[il]|_?to)?|target(url)?|goto|dest(ination)?|continue|relaystate|ru|back(_?url)?|forward(url)?)$/i.test(
+            k,
+          )
+        )
+          continue;
+        const to = parseUrl(safeDecode(v).replace(/&amp;/g, '&'), u.href);
+        if (
+          to &&
+          /^https?:$/.test(to.protocol) &&
+          urlKey(to.href) !== urlKey(page) &&
+          (looksLikeJobPage(to.href) || urlJobIds(to.href).length)
+        )
+          add(to.href, 'the job this sign-in page will return to', 0.85, { structural: true });
+      }
+    }
+    // A board embedded in the page, with this page's job ID (gh_jid=, ashby_jid=) or the embed's own.
+    for (const e of ctx.embeds || []) {
+      const ea = ats(e);
+      const id = ea.jobId || (ctxAts.name === ea.name ? ctxAts.jobId : null);
+      if (!ea.company || !id) continue;
+      const co = encodeURIComponent(ea.company);
+      const job =
+        ea.name === 'greenhouse'
+          ? `https://job-boards.greenhouse.io/${co}/jobs/${encodeURIComponent(id)}`
+          : ea.name === 'ashby' && UUID_RE.test(id)
+            ? `https://jobs.ashbyhq.com/${co}/${id.toLowerCase()}`
+            : ea.name === 'lever' && UUID_RE.test(id)
+              ? `https://jobs.lever.co/${co}/${id.toLowerCase()}`
+              : null;
+      if (!job) continue;
+      for (const r of apiRequests(job))
+        add(r.url, 'the job board’s data for this job (embedded in the page)', 0.96, { request: r, structural: true });
+      add(job, 'the job board’s page for this job (embedded in the page)', 0.91, { structural: true });
+    }
     // Phenom: the job ID written on the apply page, found inside its jobSeqNo ("…R364008…" ← "R_364008").
     if (ctxAts.name === 'phenom' && ctxAts.jobSeqNo && ctxAts.base && parseUrl(ctx.url)) {
       for (const id of ctx.jobIds || [])
@@ -2001,6 +2436,7 @@
     if (ctx.canonical && urlKey(ctx.canonical) !== urlKey(ctx.url))
       add(ctx.canonical, 'the page’s canonical address', 0.6);
     if (ctx.referrer && isJobReferrer(ctx, ctx.referrer)) add(ctx.referrer, 'the page you came from', 0.55);
+    if (!ctx.pasted) for (const c of trailCandidates(ctx, now)) add(c.url, c.reason, c.weight, { trail: c.trail });
     // A job page that hasn't rendered its description yet: its server HTML may carry JSON-LD.
     if (!ctx.posting && ctxAts.stage === 'description' && !ctx.pasted)
       out.set('self:' + urlKey(ctx.url), { url: ctx.url, reason: 'this page as the server sends it', weight: 0.45 });
@@ -2013,25 +2449,130 @@
     return keyTokens(title, {}).slice(0, 5);
   }
 
+  /** The site's own label: "apply.careers.hsbc.com" → "hsbc", "passport.amazon.jobs" → "amazon". */
+  function siteLabel(url) {
+    const u = parseUrl(url);
+    return u ? companyFromHost(u.hostname.replace(/^www\./, '')) || '' : '';
+  }
+
+  /** Does this address look like one job's page (not a list, a home page or a sign-in)? */
+  function looksLikeJobPage(url) {
+    const u = parseUrl(url);
+    if (
+      !u ||
+      u.pathname.replace(/\/+$/, '') === '' ||
+      LIST_PAGE.test(u.pathname + u.search) ||
+      LOGIN_PAGE.test(u.pathname)
+    )
+      return false;
+    const a = ats(url);
+    if (a.stage === 'description') return true;
+    if (a.stage === 'application') return false;
+    return (
+      urlJobIds(url).length > 0 &&
+      /job|career|position|vacanc|opening|posting|opportunit|role|requisition|stelle|emploi|offre|vagas?/i.test(
+        u.pathname + u.search,
+      )
+    );
+  }
+
+  const isTrackr = (url) => /(^|\.)the-trackr\.com$/i.test((parseUrl(url) || {}).hostname || '');
+
+  /**
+   * chrome.history.search queries: the job's IDs, its title, the company, the site's own name, and everything
+   * visited in the last three hours (a sign-in wall often drops all of these, but the job page was just opened).
+   */
   function historyQuery(context, now) {
     const ctx = context || {};
-    const startTime = (now || Date.now()) - 60 * 864e5;
+    const t = now || Date.now();
+    const startTime = t - 60 * 864e5;
     const out = [];
     for (const id of (ctx.jobIds || []).filter((x) => idKey(x).length >= 4).slice(0, 2))
       out.push({ text: String(id), startTime, maxResults: 25 });
     const core = titleCore(ctx.title);
     if (core.length)
       out.push({ text: clean(String(ctx.title).replace(/[|–—:()[\]]+/g, ' '), 80), startTime, maxResults: 40 });
-    if (ctx.company) out.push({ text: ctx.company, startTime, maxResults: 60 });
-    else if (ctx.ats && ctx.ats.company) out.push({ text: ctx.ats.company, startTime, maxResults: 60 });
+    const company = clean(String(ctx.company || (ctx.ats && ctx.ats.company) || '').replace(/[.,]+$/, ''), 60);
+    if (company) out.push({ text: company, startTime, maxResults: 60 });
+    const label = siteLabel(ctx.url);
+    if (label && label.length >= 3 && !compact(company).includes(compact(label)))
+      out.push({ text: label, startTime, maxResults: 60 });
+    out.push({ text: '', startTime: t - 3 * 36e5, maxResults: 200 });
     return out;
   }
 
+  /** What a visited page (history or this tab's trail) shares with the application: ID, title, board, site, company. */
+  function visitSignals(ctx, url, title) {
+    const ctxAts = ctx.ats && 'stage' in ctx.ats ? ctx.ats : ats(ctx.url || '');
+    const a = ats(url);
+    const label = siteLabel(ctx.url);
+    const hay = `${url} ${title || ''}`.toLowerCase();
+    const sameAts =
+      !!a.name &&
+      a.name === ctxAts.name &&
+      !!a.company &&
+      !!ctxAts.company &&
+      compact(a.company) === compact(ctxAts.company);
+    return {
+      idHit: (ctx.jobIds || []).some((id) => idKey(id).length >= 4 && idKey(hay).includes(idKey(id))),
+      ts: titleSimilarity(ctx.title, title || '', ctx),
+      sameAts,
+      sameSite: sameAts || (!!label && label.length >= 3 && siteLabel(url) === label),
+      companyHit: !!ctx.company && compact(ctx.company).length >= 3 && compact(hay).includes(compact(ctx.company)),
+      jobPage: looksLikeJobPage(url),
+    };
+  }
+
+  /**
+   * This tab's earlier pages (context.trail, newest first: [{ url, title, at }]) as candidates. The tab itself is
+   * the evidence — the job page the user clicked Apply on was open here moments ago — so no other match is needed;
+   * one adds weight, a clashing title takes it away. Capped below a pasted address and a strong job-ID match.
+   */
+  function trailCandidates(ctx, now) {
+    const t = now || Date.now();
+    const out = [];
+    let pos = 0;
+    for (const e of (Array.isArray(ctx.trail) ? ctx.trail : []).slice(0, 12)) {
+      const u = e && parseUrl(e.url);
+      if (!u || !/^https?:$/.test(u.protocol) || urlKey(u.href) === urlKey(ctx.url)) continue;
+      if (
+        SEARCH_HOST.test(u.hostname) ||
+        isTrackr(u.href) ||
+        u.pathname.replace(/\/+$/, '') === '' ||
+        LIST_PAGE.test(u.pathname + u.search) ||
+        LOGIN_PAGE.test(u.pathname) ||
+        ACTION_LINK.test(u.href) ||
+        ats(u.href).stage === 'application'
+      )
+        continue;
+      const ageMin = e.at ? Math.max(0, (t - e.at) / 6e4) : 60;
+      const sig = visitSignals(ctx, u.href, e.title);
+      let w = (ageMin <= 30 ? 0.6 : Math.max(0.3, 0.6 * Math.exp(-(ageMin - 30) / 60))) - 0.05 * pos;
+      if (sig.idHit) w += 0.2;
+      if (sig.ts != null && sig.ts >= 0.5) w += 0.15 * sig.ts;
+      else if (sig.ts != null && sig.ts < 0.35) w -= 0.2;
+      if (sig.sameSite || sig.companyHit) w += 0.05;
+      out.push({
+        url: u.href,
+        reason: 'the job page you opened before this one in this tab',
+        weight: Math.round(Math.max(0.1, Math.min(w, sig.idHit ? 0.87 : 0.8)) * 1000) / 1000,
+        trail: { ageMin: Math.round(ageMin), pos, sameSite: sig.sameSite || sig.companyHit, jobPage: sig.jobPage },
+      });
+      pos++;
+    }
+    return out;
+  }
+
+  /**
+   * History items as candidates: pages with the job's ID or title, and job pages on the same site or board —
+   * the one opened last, minutes before this application page, first. Each says how recent it was and how
+   * many other jobs on that site were opened in the same hour (`history: { ageMin, latest, rivals }`).
+   */
   function rankHistory(context, items, now) {
     const ctx = context || {};
     const t = now || Date.now();
     const seen = new Set();
-    const out = [];
+    const rows = [];
     for (const it of items || []) {
       if (!it || !it.url) continue;
       const u = parseUrl(it.url);
@@ -2041,50 +2582,196 @@
       seen.add(key);
       if (
         SEARCH_HOST.test(u.hostname) ||
+        isTrackr(it.url) ||
         LIST_PAGE.test(u.pathname + u.search) ||
         LOGIN_PAGE.test(u.pathname) ||
         ACTION_LINK.test(it.url)
       )
         continue;
-      const a = ats(it.url);
-      if (a.stage === 'application') continue;
+      if (ats(it.url).stage === 'application') continue;
+      const sig = visitSignals(ctx, it.url, it.title);
+      const ageMin = it.lastVisitTime ? Math.max(0, (t - it.lastVisitTime) / 6e4) : 1e6;
+      if (!sig.idHit && !(sig.ts != null && sig.ts >= 0.5) && !(sig.jobPage && (sig.sameSite || sig.companyHit)))
+        continue;
+      rows.push({ it, ...sig, ageMin });
+    }
+    // Job pages on this site opened in the last hour, newest first: the one just before this page is the likeliest.
+    const recent = rows.filter((r) => r.jobPage && (r.sameSite || r.companyHit) && r.ageMin <= 60);
+    recent.sort((x, y) => x.ageMin - y.ageMin);
+    const out = rows.map((r) => {
       let w = 0.2;
       const reasons = [];
-      const hay = `${it.url} ${it.title || ''}`.toLowerCase();
-      if ((ctx.jobIds || []).some((id) => idKey(id).length >= 4 && idKey(hay).includes(idKey(id)))) {
+      if (r.idHit) {
         w += 0.35;
         reasons.push('job ID');
       }
-      const ts = titleSimilarity(ctx.title, it.title || '', ctx);
-      if (ts != null && ts >= 0.5) {
-        w += 0.25 * ts;
+      if (r.ts != null && r.ts >= 0.5) {
+        w += 0.25 * r.ts;
         reasons.push('title');
       }
-      const sameAts =
-        a.name &&
-        ctx.ats &&
-        a.name === ctx.ats.name &&
-        a.company &&
-        ctx.ats.company &&
-        compact(a.company) === compact(ctx.ats.company);
-      const companyHit = ctx.company && compact(hay).includes(compact(ctx.company));
-      if (sameAts || companyHit) {
+      if (r.sameAts || r.sameSite || r.companyHit) {
         w += 0.1;
-        reasons.push(sameAts ? 'same job board' : 'company');
+        reasons.push(r.sameAts ? 'same job board' : r.sameSite ? 'same site' : 'company');
       }
-      if (!reasons.length) continue;
-      const ageDays = it.lastVisitTime ? Math.max(0, (t - it.lastVisitTime) / 864e5) : 30;
-      w += 0.1 * Math.exp(-ageDays / 7);
-      if (a.stage === 'description' || a.jobId) w += 0.05;
-      out.push({ url: it.url, reason: `in your history (${reasons.join(', ')})`, weight: Math.min(w, 0.85) });
-    }
+      const i = recent.indexOf(r);
+      if (i === 0) {
+        w += 0.2;
+        reasons.push(`opened ${Math.max(1, Math.round(r.ageMin))} min ago`);
+      } else if (i > 0) w += 0.05;
+      w += 0.1 * Math.exp(-r.ageMin / (7 * 1440));
+      if (r.jobPage) w += 0.05;
+      return {
+        url: r.it.url,
+        reason: `in your history (${reasons.join(', ')})`,
+        weight: Math.round(Math.min(w, 0.85) * 1000) / 1000,
+        history: { ageMin: Math.round(r.ageMin), latest: i === 0, rivals: i >= 0 ? recent.length - 1 : 0 },
+      };
+    });
     return out.sort((x, y) => y.weight - x.weight).slice(0, 6);
+  }
+
+  /* --------------------------------------------------------------- Trackr */
+
+  // app.the-trackr.com trackers live at /{region}-{industry}[-{season}][/{type}]; their outbound links carry
+  // utm_source=Trackr&utm_campaign={Region}_{Industry}_{season}; api.the-trackr.com lists each tracker's
+  // programmes (company, name, deadline, locations, link) as public JSON.
+  // prettier-ignore
+  const TRACKR_REGIONS = { uk: 'UK', us: 'US', eu: 'EU', france: 'France', germany: 'Germany', italy: 'Italy', hong_kong: 'Hong Kong' };
+  const TRACKR_TYPES =
+    /^(summer-internships|graduate-programmes|off-cycle-internships|spring-weeks|placements|vacation-schemes|training-contracts)$/;
+  const TRACKR_KEY =
+    /^(uk|us|eu|france|germany|italy|hong[-_]kong)[-_](finance|tech|law|engineering)(?:[-_](20\d\d))?$/i;
+  const TRACKR_TAGS = /^(utm_source|utm_medium|utm_campaign|utm_content|utm_term|gh_src|source|src|ref|trid)$/i;
+
+  /** What an address says about a Trackr tracker: its own page, or a link out of it (utm_source=Trackr). */
+  function trackrTracker(url) {
+    const u = parseUrl(url);
+    if (!u || !/^https?:$/.test(u.protocol)) return null;
+    const make = (m, type, extra) => ({
+      region: TRACKR_REGIONS[m[1].toLowerCase().replace('-', '_')],
+      industry: m[2][0].toUpperCase() + m[2].slice(1).toLowerCase(),
+      season: m[3] || null,
+      type: type && TRACKR_TYPES.test(type) ? type : null,
+      ...extra,
+    });
+    if (isTrackr(u.href)) {
+      const [slug, type] = u.pathname.split('/').filter(Boolean);
+      const m = String(slug || '').match(TRACKR_KEY);
+      return m
+        ? make(m, type, { page: u.href })
+        : { region: null, industry: null, season: null, type: null, page: u.href };
+    }
+    if (![...u.searchParams.values()].some((v) => /^trackr$/i.test(v))) return null;
+    const m = String(u.searchParams.get('utm_campaign') || '').match(TRACKR_KEY);
+    return m
+      ? make(m, null, { link: u.href })
+      : { region: null, industry: null, season: null, type: null, link: u.href };
+  }
+
+  /** The same job's address, give or take tracking parameters ("?feedId=…&utm_source=Trackr")? */
+  function sameJobUrl(a, b) {
+    if (untagged(a) === untagged(b)) return true;
+    const x = parseUrl(a);
+    const y = parseUrl(b);
+    if (!x || !y || x.hostname.replace(/^www\./, '') !== y.hostname.replace(/^www\./, '')) return false;
+    const ix = urlJobIds(x.href);
+    const iy = urlJobIds(y.href);
+    if (ix.length && iy.length) return ix.some((i) => iy.some((j) => idsMatch(i, j)));
+    return (
+      x.pathname.replace(/\/+$/, '').toLowerCase() === y.pathname.replace(/\/+$/, '').toLowerCase() &&
+      x.pathname.length > 1 &&
+      !ix.length &&
+      !iy.length &&
+      !x.search &&
+      !y.search
+    );
+  }
+
+  /** An address without Trackr's tracking parameters (how Trackr's own list names the job). */
+  function untagged(url) {
+    const u = parseUrl(url);
+    if (!u) return String(url || '');
+    for (const k of [...u.searchParams.keys()]) if (TRACKR_TAGS.test(k)) u.searchParams.delete(k);
+    return urlKey(u.href);
+  }
+
+  /**
+   * Did the user come from Trackr? From the referrer, this tab's trail, history visits and tagged addresses: the
+   * tracker (region, industry, season, type when known) and the tagged links. Only a hint, never a description.
+   */
+  function trackrHint(context, items) {
+    const ctx = context || {};
+    const urls = uniq([
+      ctx.url,
+      ctx.canonical,
+      ctx.referrer,
+      ...(Array.isArray(ctx.trail) ? ctx.trail.map((e) => e && e.url) : []),
+      ...(items || []).map((i) => i && i.url),
+    ]);
+    const found = urls.map(trackrTracker).filter(Boolean);
+    if (!found.length) return null;
+    const known = found.filter((f) => f.region);
+    const best = known.find((f) => f.season) || known[0] || found[0];
+    const same = known.filter((f) => f.region === best.region && f.industry === best.industry);
+    return {
+      region: best.region,
+      industry: best.industry,
+      season: (same.find((f) => f.season) || {}).season || null,
+      type: (same.find((f) => f.type) || {}).type || null,
+      links: uniq(found.map((f) => f.link)).slice(0, 10),
+    };
+  }
+
+  /** api.the-trackr.com requests for a hint's tracker (the type when known, else the likeliest ones). */
+  function trackrRequests(hint) {
+    if (!hint || !hint.region || !hint.industry || !hint.season) return [];
+    const types = hint.type
+      ? [hint.type]
+      : hint.industry === 'Law'
+        ? ['vacation-schemes', 'training-contracts']
+        : ['summer-internships', 'graduate-programmes', 'off-cycle-internships'];
+    return types.map((type) => ({
+      url: `https://api.the-trackr.com/programmes?region=${encodeURIComponent(hint.region)}&industry=${hint.industry}&season=${hint.season}&type=${type}`,
+      method: 'GET',
+      headers: { ...JSON_HEADERS },
+      body: null,
+      kind: 'trackr',
+    }));
+  }
+
+  /** The Trackr programme this application is for: its link is this page, or one the user opened from Trackr. */
+  function trackrProgramme(context, json, hint) {
+    const list = json && Array.isArray(json.programmes) ? json.programmes : [];
+    const ctx = context || {};
+    const mine = uniq([
+      ctx.url,
+      ctx.canonical,
+      ...((hint && hint.links) || []),
+      ...(Array.isArray(ctx.trail) ? ctx.trail.map((e) => e && e.url) : []),
+    ]);
+    const p = list.find((x) => x && x.url && mine.some((m) => sameJobUrl(m, x.url)));
+    if (!p) return null;
+    const company = (p.company && p.company.name) || '';
+    return {
+      source: 'Trackr',
+      company: field(company, 120),
+      programme: field(p.name, 200),
+      deadline: p.closingDate ? String(p.closingDate).slice(0, 10) : null,
+      opens: p.openingDate ? String(p.openingDate).slice(0, 10) : null,
+      locations: (p.locations || []).map((l) => field(l, 60)).slice(0, 6),
+      url: p.url,
+      tracker: `${p.region} ${p.industry} ${p.type} ${p.season}`,
+    };
   }
 
   /* -------------------------------------------------------------- compare */
 
   // prettier-ignore
   const TITLE_REWRITES = [
+    // Requisition codes: "(Req #12345)", "[JR-1234]", "– R0012345", "Job ID: 5678".
+    [/[([]\s*(?:(?:req(?:uisition)?|job|ref|vacancy|position)\.?\s*(?:id|no\.?|number|#)?\s*[:#]?\s*)?[A-Z]{0,4}[-_]?\d{3,}[\w-]*\s*[)\]]/gi, ' '],
+    [/\b(?:req(?:uisition)?|job|ref|vacancy|position)\.?\s*(?:id|no\.?|number|#)\s*[:#]?\s*[A-Z]{0,4}[-_]?\d{3,}[\w-]*/gi, ' '],
+    [/\s[-–—|]\s*(?:R|JR|REQ|VAC)[-_]?\d{4,}(?:-\d+)?\s*$/gi, ' '],
     [/\((m|f|w|d|h|x|all genders?)(\s*\/\s*(m|f|w|d|h|x|div))+\)/gi, ' '],
     [/\b(summer|spring|autumn|fall|winter|off[- ]?cycle)\b/gi, ' '],
     [/\b(19|20)\d\d(\s*[/-]\s*(19|20)?\d\d)?\b/g, ' '],
@@ -2122,6 +2809,13 @@
     return toks;
   }
 
+  // Words that say what kind of job it is, not which one.
+  const ROLE_WORDS = new Set(
+    'intern graduate program analyst associate engineer developer trainee apprentice apprenticeship placement consultant assistant officer specialist manager junior senior lead staff student scholar fellow fellowship rotation rotational vacation insight week day experience training contract solicitor'.split(
+      ' ',
+    ),
+  );
+
   /** 0..1 how alike two job titles are once years, seasons, synonyms, company and place names are set aside. */
   function titleSimilarity(a, b, ctx) {
     if (!a || !b) return null;
@@ -2137,8 +2831,10 @@
     for (const t of sa) if (sb.has(t)) inter++;
     const dice = (2 * inter) / (sa.size + sb.size);
     const small = Math.min(sa.size, sb.size);
-    // One title is a shorter form of the other ("Quant Research Intern" in "Quant Research Intern – Equities").
-    const contain = small >= 2 ? (inter / small) * 0.9 : 0;
+    // One title is a shorter form of the other ("Quant Research Intern" in "Quant Research Intern – Equities"),
+    // as long as they share more than role words ("Graduate Engineer" is in every engineering firm's list).
+    let contain = small >= 2 ? (inter / small) * 0.9 : 0;
+    if (contain && ![...sa].some((t) => sb.has(t) && !ROLE_WORDS.has(t))) contain *= 0.65;
     return Math.max(dice, contain);
   }
 
@@ -2174,6 +2870,11 @@
     // Initials: "JPMC" ↔ "JP Morgan Chase", "GS" ↔ "Goldman Sachs".
     if (A.length === 1 && ca.length <= 6 && abbreviates(ca, B)) return true;
     if (B.length === 1 && cb.length <= 6 && abbreviates(cb, A)) return true;
+    // Initials that count the words set aside above: "SIG" ↔ "Susquehanna International Group".
+    const fa = U.tokens(b).filter((t) => t !== 'the');
+    const fb = U.tokens(a).filter((t) => t !== 'the');
+    if (A.length === 1 && ca.length <= 6 && fa.length > B.length && abbreviates(ca, fa)) return true;
+    if (B.length === 1 && cb.length <= 6 && fb.length > A.length && abbreviates(cb, fb)) return true;
     return false;
   }
 
@@ -2190,6 +2891,17 @@
     const n = U.normalize(s);
     const aliased = n.replace(/[\p{L}]+(?: sar)?/gu, (w) => PLACE_ALIASES[w] || w);
     return U.tokens(aliased).filter((t) => t.length > 2 && !LOCATION_FILLER.has(t));
+  }
+
+  // Cities that job titles name ("Summer Analyst – London" vs "– New York"): the same programme elsewhere.
+  // prettier-ignore
+  const CITIES = ['london', 'new york', 'hong kong', 'paris', 'frankfurt', 'munich', 'berlin', 'hamburg', 'dusseldorf', 'zurich', 'geneva', 'milan', 'rome', 'madrid', 'barcelona', 'lisbon', 'dublin', 'edinburgh', 'glasgow', 'manchester', 'birmingham', 'leeds', 'bristol', 'belfast', 'cardiff', 'aberdeen', 'amsterdam', 'brussels', 'luxembourg', 'stockholm', 'copenhagen', 'oslo', 'helsinki', 'warsaw', 'prague', 'vienna', 'budapest', 'athens', 'istanbul', 'dubai', 'abu dhabi', 'riyadh', 'doha', 'mumbai', 'bengaluru', 'delhi', 'gurugram', 'hyderabad', 'chennai', 'pune', 'singapore', 'tokyo', 'seoul', 'shanghai', 'beijing', 'shenzhen', 'taipei', 'sydney', 'melbourne', 'toronto', 'montreal', 'vancouver', 'chicago', 'boston', 'san francisco', 'los angeles', 'houston', 'dallas', 'charlotte', 'seattle', 'austin', 'atlanta', 'miami', 'philadelphia', 'denver', 'sao paulo', 'mexico city', 'johannesburg', 'tel aviv', 'kuala lumpur', 'bangkok', 'jakarta', 'manila', 'lyon', 'marseille', 'lille', 'toulouse', 'bordeaux', 'nantes', 'strasbourg', 'cologne', 'stuttgart', 'leipzig', 'hanover', 'nuremberg', 'turin', 'bologna', 'florence', 'naples', 'valencia', 'seville', 'bilbao', 'porto', 'rotterdam', 'utrecht', 'antwerp', 'gothenburg', 'basel', 'lausanne', 'lugano', 'krakow', 'wroclaw', 'bucharest', 'nottingham', 'sheffield', 'liverpool', 'newcastle', 'southampton'];
+  const CITY_RE = new RegExp(`\\b(${CITIES.join('|')})\\b`, 'g');
+
+  /** Cities a title or a place names, in one spelling ("NYC" → "new york", "Zürich" → "zurich"). */
+  function cities(...texts) {
+    const n = U.normalize(texts.filter(Boolean).join(' | ')).replace(/[\p{L}]+/gu, (w) => PLACE_ALIASES[w] || w);
+    return uniq(n.match(CITY_RE) || []);
   }
 
   function locationMatch(a, b) {
@@ -2223,12 +2935,23 @@
       ctx.company || (ctxAts.company && prettyCompany(ctxAts.company)),
       posting.company || (pAts.company && prettyCompany(pAts.company)),
     );
-    const l = locationMatch(ctx.location, posting.location);
+    let l = locationMatch(ctx.location, posting.location);
+    // The cities each side names, in its title or its place: none in common means another city's vacancy.
+    const cityA = cities(ctx.title, ctx.location);
+    const cityB = cities(posting.title, posting.location);
+    const cityClash =
+      cityA.length > 0 &&
+      cityB.length > 0 &&
+      !cityA.some((x) => cityB.includes(x)) &&
+      !/remote|multiple|various/i.test(`${ctx.location || ''} ${posting.location || ''}`);
+    if (cityClash) l = false;
     if (t != null) reasons.push(t >= 0.85 ? 'title matches' : t >= 0.5 ? 'title is similar' : 'title differs');
     if (c === true) reasons.push('company matches');
     if (c === false) reasons.push('company differs');
     if (l === true) reasons.push('location matches');
     if (l === false) reasons.push('location differs');
+    if ((Array.isArray(ctx.trail) ? ctx.trail : []).some((e) => e && urlKey(e.url) === urlKey(posting.url)))
+      reasons.push('you opened this page before this one in this tab');
 
     // The addresses' own job IDs outrank IDs that only the page's text shared ("similar jobs" lists).
     // Two different jobs on the same board: same ATS and company, both with a job ID of the same kind.
@@ -2255,11 +2978,14 @@
       ...(ctx.canonical ? urlJobIds(ctx.canonical) : []),
     ]);
     const strongPost = uniq([pAts.jobId, ...(posting.jobIds || []).map(String)]);
+    // (Or a board hosted for the company's own site: careers-sig.icims.com ↔ careers.sig.com.)
     const sameSite =
       sameBoard ||
       (parseUrl(ctx.url || '') &&
         parseUrl(posting.url || '') &&
-        companyFromHost(parseUrl(ctx.url).hostname) === companyFromHost(parseUrl(posting.url).hostname));
+        (companyFromHost(parseUrl(ctx.url).hostname) === companyFromHost(parseUrl(posting.url).hostname) ||
+          (!!ctxAts.company && compact(ctxAts.company) === siteLabel(posting.url)) ||
+          (!!pAts.company && compact(pAts.company) === siteLabel(ctx.url))));
     const clash =
       c !== false &&
       sameSite &&
@@ -2296,8 +3022,10 @@
     const specific = (x) => x && placeTokens(x).length <= 4 && !/[/;]|\bor\b/i.test(x);
     let verdict = 'unsure';
     if (t >= 0.92 && c === true && l !== false && (l === true || titleTokens >= 3)) verdict = 'same';
-    else if (t < 0.35 || (c === false && t < 0.75) || (l === false && t < 0.6)) verdict = 'different';
-    else if (l === false && c !== false && specific(ctx.location) && specific(posting.location)) verdict = 'different';
+    else if (t < 0.35 || (c === false && t < 0.75) || (l === false && t < 0.6) || (c === false && l === false))
+      verdict = 'different';
+    else if (l === false && c !== false && ((specific(ctx.location) && specific(posting.location)) || cityClash))
+      verdict = 'different';
     return { score, verdict, reasons };
   }
 
@@ -2307,6 +3035,24 @@
     const body = String(html || '').replace(/<(script|style|noscript|template|svg)\b[\s\S]*?<\/\1\s*>/gi, ' ');
     const text = htmlToText(body);
     return words(text) < 120;
+  }
+
+  /** Did a job's address (with its ID) land on a page without it — the careers home, a list or a search? */
+  function movedAway(from, to) {
+    if (!to || urlKey(from) === urlKey(to)) return false;
+    const ids = uniq([ats(from).jobId, ...urlJobIds(from)]).filter((x) => idKey(x).length >= 4);
+    if (!ids.length) return false;
+    const now = uniq([ats(to).jobId, ...urlJobIds(to)]);
+    if (now.some((y) => ids.some((x) => idsMatch(x, y)))) return false;
+    const u = parseUrl(to);
+    return !!u && (u.pathname.replace(/\/+$/, '') === '' || LIST_PAGE.test(u.pathname + u.search) || !now.length);
+  }
+
+  /** A trail or history candidate that is almost certainly the page the user clicked Apply on. */
+  // (Not history alone: a job page opened minutes ago in some tab may not be the one being applied for; with
+  // nothing on the application page to compare, that stays 'unsure' for the AI check and the user to confirm.)
+  function justBefore(c) {
+    return !!c.trail && c.trail.pos === 0 && c.trail.ageMin <= 30 && c.trail.sameSite && c.trail.jobPage;
   }
 
   /** Find the description for the application in `context`; see the API notes at the top. */
@@ -2322,15 +3068,24 @@
     // The description is already on this page (Greenhouse, Lever and many company sites show it above the form).
     const ctxAts0 = ctx.ats && 'stage' in ctx.ats ? ctx.ats : ats(ctx.url || '');
     const aboutOneJob = (ctx.jobIds || []).length > 0 || ctxAts0.stage !== 'unknown';
-    if (
+    const here = ctx.posting;
+    const onPage =
       !ctx.pasted &&
-      ctx.posting &&
-      ctx.posting.description &&
-      (ctx.posting.confidence || 0) >= 0.6 &&
-      words(ctx.posting.description) >= 80 &&
-      (ctx.posting.source !== 'page-text' || aboutOneJob)
-    ) {
-      const cmp = compare(ctx, ctx.posting);
+      here &&
+      here.description &&
+      (here.confidence || 0) >= 0.6 &&
+      words(here.description) >= 80 &&
+      (here.source !== 'page-text' || aboutOneJob);
+    // Text read off the page (not data that says it's a job posting) must read like a job advert — never a
+    // cookie or privacy notice — and when a job board's ID is in the address (gh_jid=…) or a board is embedded,
+    // the board's own data is asked first: 'same' then rests on the job ID.
+    const marked = here && /json-ld|microdata/.test(here.source);
+    const advert = onPage && (marked || (jobStructure(here.description) >= 2 && !isLegalText(here.description)));
+    const askBoard =
+      onPage && here.source === 'page-text' && (apiRequests(ctx.url || '').length > 0 || (ctx.embeds || []).length > 0);
+    const deferred = advert && askBoard ? here : null;
+    if (advert && !askBoard) {
+      const cmp = compare(ctx, here);
       if (cmp.verdict !== 'different')
         return {
           posting: ctx.posting,
@@ -2346,10 +3101,10 @@
         };
     }
 
-    let list = candidates(ctx);
+    let list = candidates(ctx, opts.now);
+    const items = [];
     if (opts.historySearch && !ctx.pasted) {
       try {
-        const items = [];
         for (const query of historyQuery(ctx, opts.now)) {
           const got = await opts.historySearch(query);
           if (Array.isArray(got)) items.push(...got);
@@ -2358,13 +3113,27 @@
       } catch (err) {
         tried.push({ url: 'history', outcome: `history search failed: ${(err && err.message) || err}` });
       }
-      list.sort((x, y) => y.weight - x.weight);
     }
+    // One entry per page (a page can be in this tab's trail, in history and linked from the page).
+    const byKey = new Map();
+    for (const c of list) {
+      const k = (c.request ? 'api:' : '') + urlKey(c.url);
+      const prev = byKey.get(k);
+      if (!prev) byKey.set(k, c);
+      else byKey.set(k, { ...(prev.weight >= c.weight ? c : prev), ...(prev.weight >= c.weight ? prev : c) });
+    }
+    list = Array.from(byKey.values()).sort((x, y) => y.weight - x.weight);
     if (!fetchFn) {
       return { posting: null, verdict: null, reasons: ['no way to fetch pages'], source: null, tried };
     }
+    // Came from Trackr? Its list names the company, the programme and the deadline: a hint for comparing (never
+    // the description). Looked up alongside the job's own pages; used once they have answered.
+    let hint = null;
+    let hintDone = false;
+    const tracker = !ctx.pasted ? trackrHint(ctx, items) : null;
+    const hintLookup = tracker && trackrRequests(tracker).length ? lookupTrackr(tracker) : null;
     // Nothing to look up: say why, so the studio can tell the user (and never report an empty search).
-    if (!list.length) {
+    if (!list.length && !hintLookup) {
       const why = ctx.gone
         ? 'the job board says this job is closed or no longer available'
         : 'nothing to look up: this page has no job address, job ID or link to the job';
@@ -2372,7 +3141,46 @@
       return { posting: null, verdict: null, reasons: [why], source: null, tried };
     }
 
+    // (Its outcomes join `tried` only when the hint is used: a lookup still running when find() returns is dropped.)
+    async function lookupTrackr(tr) {
+      const log = [];
+      for (const r of trackrRequests(tr)) {
+        let timer = null;
+        let found = null;
+        try {
+          const res = await Promise.race([
+            fetchFn(r.url, { method: 'GET', headers: r.headers }),
+            new Promise((_, reject) => {
+              timer = setTimeout(() => reject(new Error('timed out')), timeout);
+            }),
+          ]);
+          const data =
+            res && res.ok !== false
+              ? typeof res.json === 'function'
+                ? await res.json()
+                : parseJsonLoose(await res.text())
+              : null;
+          found = trackrProgramme(ctx, data, tr);
+          log.push({
+            url: r.url,
+            outcome: found ? `Trackr: ${found.programme} (${found.company})` : 'Trackr: this job isn’t in the tracker',
+          });
+        } catch (err) {
+          log.push({ url: r.url, outcome: `Trackr: failed: ${clean((err && err.message) || err, 80)}` });
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+        if (found) {
+          hintDone = true;
+          return { found, log };
+        }
+      }
+      hintDone = true;
+      return { found: null, log };
+    }
+
     const isDone = () => results.some((r) => r.cmp.verdict === 'same' && r.cmp.score >= 0.9);
+    const closed = [];
     const controllers = new Set();
 
     async function load(c) {
@@ -2404,6 +3212,11 @@
         if (body != null && body.length > 6e6) body = body.slice(0, 6e6);
         let posting = null;
         const finalUrl = (res.url && !req && res.url) || c.url;
+        // A closed job's page often redirects to the careers home or a job list: closed, not another posting.
+        if (!req && movedAway(c.url, finalUrl)) {
+          closed.push(finalUrl);
+          return outcome(`closed: the job page now redirects to ${clean(finalUrl, 120)}`);
+        }
         if (req || /json/i.test(type) || (body && /^\s*[{[]/.test(body) && !/^\s*</.test(body))) {
           if (!json) json = parseJsonLoose(body);
           posting = json ? fromApi(req ? req.kind : null, json, req ? req.page : finalUrl) : null;
@@ -2464,34 +3277,115 @@
     await Promise.all(Array.from({ length: Math.max(1, parallel) }, worker));
     for (const ctl of controllers) ctl.abort();
 
-    for (const r of results) {
-      // Reached from this very application page by the board's own URL scheme: likely the same job.
+    // The Trackr hint: waited for unless the job is already settled (then only taken if it has arrived).
+    if (hintLookup) {
+      const settled = results.some((r) => r.cmp.verdict === 'same' && !r.posting.companyGuessed);
+      if (!settled || hintDone) {
+        const got = await hintLookup;
+        tried.push(...got.log);
+        hint = got.found;
+      }
+    }
+    if (hint) {
+      // (A page's company that Trackr contradicts is likely its template's: "Company Name".)
+      const hintCompany = !!hint.company && (!ctx.company || companyMatch(ctx.company, hint.company) === false);
+      const cmpCtx =
+        (!ctx.title && hint.programme) || hintCompany
+          ? { ...ctx, title: ctx.title || hint.programme, company: hintCompany ? hint.company : ctx.company }
+          : null;
+      // The job page Trackr links to, when nothing better has been found.
+      const hu = parseUrl(hint.url);
       if (
-        r.cmp.verdict === 'unsure' &&
-        r.c.structural &&
-        r.cmp.score >= 0.45 &&
-        !/different job ID/.test(r.cmp.reasons.join(' '))
+        hu &&
+        !results.some((r) => ['same', 'likely'].includes(r.cmp.verdict)) &&
+        urlKey(hu.href) !== urlKey(ctx.url) &&
+        ats(hu.href).stage !== 'application' &&
+        !LIST_PAGE.test(hu.pathname + hu.search) &&
+        !tried.some((t) => sameJobUrl(t.url, hu.href))
       )
+        await load({ url: hu.href, reason: 'the job page Trackr links to', weight: 0.7 });
+      // Trackr's programme name and company only break ties: never 'same' or 'different' on their own.
+      if (cmpCtx)
+        for (const r of results) {
+          if (r.cmp.verdict !== 'unsure') continue;
+          const h = compare(cmpCtx, r.posting);
+          if (h.verdict === 'same' || (h.score >= 0.85 && !h.reasons.some((x) => /differs/.test(x))))
+            r.cmp = {
+              ...r.cmp,
+              score: Math.max(r.cmp.score, Math.min(h.score, 0.89)),
+              reasons: [...r.cmp.reasons, 'the programme you opened on Trackr'],
+              hinted: true,
+            };
+          else if (h.verdict === 'different')
+            r.cmp = {
+              ...r.cmp,
+              score: Math.round(r.cmp.score * 50) / 100,
+              reasons: [...r.cmp.reasons, 'not the programme you opened on Trackr'],
+            };
+        }
+    }
+
+    for (const r of results) {
+      const clash = /different job ID/.test(r.cmp.reasons.join(' '));
+      // Reached from this very application page by the board's own URL scheme: likely the same job.
+      if (r.cmp.verdict === 'unsure' && r.c.structural && r.cmp.score >= 0.45 && !clash) r.verdict = 'likely';
+      // The job page this tab showed just before (on the same site), or Trackr's programme name matches:
+      // likely, when nothing on the application page says otherwise.
+      else if (r.cmp.verdict === 'unsure' && !clash && (justBefore(r.c) || (r.cmp.hinted && r.cmp.score >= 0.85)))
         r.verdict = 'likely';
       else r.verdict = r.cmp.verdict;
     }
     const rank = { same: 3, likely: 2, unsure: 1, different: 0 };
     results.sort((x, y) => rank[y.verdict] - rank[x.verdict] || y.cmp.score - x.cmp.score || y.c.weight - x.c.weight);
     const best = results[0];
+    // The board didn't answer for the job on this page: the page's own text, without its confirmation.
+    if (deferred && (!best || rank[best.verdict] < rank.likely) && compare(ctx, deferred).verdict !== 'different') {
+      tried.push({
+        url: ctx.url || '',
+        outcome: `likely: the description is on this page (${deferred.title || 'untitled'})`,
+      });
+      return withHint({
+        posting: deferred,
+        verdict: 'likely',
+        reasons: ['the description is on this page', 'the job board didn’t confirm it'],
+        source: ctx.url,
+        tried,
+      });
+    }
     if (!best || best.verdict === 'different') {
-      return {
+      return withHint({
         posting: null,
         verdict: best ? 'different' : null,
         reasons: [
           ...(best ? best.cmp.reasons : ['no job description found']),
           ...(ctx.gone ? ['the job board says this job is closed or no longer available'] : []),
+          ...(closed.length
+            ? ['the job’s page now redirects to a general careers page: the job is probably closed']
+            : []),
         ],
         source: null,
         tried,
-      };
+      });
     }
-    const reasons = best.verdict === 'likely' ? [...best.cmp.reasons, best.c.reason] : best.cmp.reasons;
-    return { posting: best.posting, verdict: best.verdict, reasons, source: best.c.url, tried };
+    // Why this page was looked at, when the match itself can't settle it (a trail or history visit, a board URL).
+    const reasons =
+      best.verdict === 'likely' || (best.verdict === 'unsure' && (best.c.history || best.c.trail))
+        ? [...best.cmp.reasons, best.c.reason]
+        : best.cmp.reasons;
+    return withHint({ posting: best.posting, verdict: best.verdict, reasons, source: best.c.url, tried });
+
+    /** The Trackr hint goes with the answer; it also names the company when the posting only guessed it. */
+    function withHint(out) {
+      if (!hint) return out;
+      if (
+        out.posting &&
+        out.posting.companyGuessed &&
+        hint.company &&
+        companyMatch(out.posting.company, hint.company) !== true
+      )
+        out.posting = { ...out.posting, company: hint.company, companyGuessed: false };
+      return { ...out, hint };
+    }
   }
 
   const jobpage = {
@@ -2514,6 +3408,9 @@
     titleSimilarity,
     companyMatch,
     findPostingInJson,
+    trackrHint,
+    trackrRequests,
+    trackrProgramme,
   };
   JTF.jobpage = jobpage;
   if (typeof module === 'object' && module.exports) module.exports = jobpage;

@@ -755,3 +755,255 @@ test('"Are you a student who will graduate Fall of 2027 or Spring 2028?" is answ
     'Yes',
   );
 });
+
+test('round 2: graduation terms, past graduations, "Are you fluent in French?", availability after the facts', () => {
+  const p = student(); // BSc ending June 2027, languages English, French, German
+  // A year box whose options are terms: June is summer, not spring.
+  const year = ask(p, 'edu.end', 'Undergraduate Graduation Year', { part: 'year' });
+  assert.equal(matcher.matchOption(opts('Spring 2027', 'Summer 2027', 'Fall 2027'), year), 1);
+  assert.equal(matcher.matchOption(opts('2026', '2027', '2028'), year), 1);
+  // "Winter 2026/ Spring 2027" is December 2026 to May 2027: the nearest for a June 2027 graduation.
+  const end = ask(p, 'edu.end', 'What is your graduation date?');
+  assert.equal(
+    matcher.matchOption(
+      opts('Winter 2025/ Spring 2026', 'Winter 2026/ Spring 2027', 'Winter 2027/ Spring 2028', 'Other'),
+      end,
+    ),
+    1,
+  );
+  assert.deepEqual(matcher.optionSpan('Winter 2026/ Spring 2027'), [2026 * 12 + 11, 2027 * 12 + 4]);
+  assert.deepEqual(matcher.optionSpan('Fall/Winter 2026'), [2026 * 12 + 8, 2027 * 12 + 1]);
+  // Graduated already: "I am not currently enrolled".
+  const grad = student();
+  grad.education[0].endDate = '2016-06';
+  const past = ask(grad, 'edu.end', 'If you are currently enrolled, what is your expected graduation date?');
+  assert.equal(matcher.matchOption(opts('Spring 2027', 'Fall 2027', 'Other', 'I am not currently enrolled'), past), 3);
+  assert.equal(matcher.matchOption(opts('Spring 2027', 'Fall 2027'), past), -1);
+  assert.equal(matcher.matchOption(opts('Spring 2027', 'Summer 2027', 'Graduated'), end), 1);
+  // Languages asked one at a time.
+  const yn = opts('Yes', 'No');
+  assert.equal(ask(p, 'languages', 'Are you fluent in French? (Please note this is a requirement)').text, 'Yes');
+  assert.equal(ask(p, 'languages', 'Do you speak Mandarin?'), null);
+  assert.equal(matcher.matchOption(yn, ask(p, 'languages', 'Can you speak German or Dutch?')), 0);
+  assert.equal(ask(p, 'languages', 'Additional languages').kind, 'list');
+  // William Blair: the dates first, the question after.
+  const start = Object.assign(student(), {});
+  start.job.startDate = '2027-06-28';
+  const q =
+    'The internship is a 3 month placement running from 1 July to 30 September 2027. Can you confirm that you are available to work on a full-time basis for the duration of the internship?';
+  assert.equal(ask(start, 'job.startDate', q).text, 'Yes');
+  start.job.startDate = '2027-09-01';
+  assert.equal(ask(start, 'job.startDate', q).text, 'No');
+});
+
+test('status lists: never "not authorized" when you are, your citizenship when it is listed', () => {
+  const p = student();
+  p.job.authorized = 'Yes';
+  p.job.sponsorship = 'No';
+  // Base Power (Ashby): no option says plainly "No"; the one with a "not" is the wrong status, not the answer.
+  const base = opts(
+    'I am not currently authorized to work in the U.S.',
+    'I require another type of visa sponsorship to work for Base now',
+    'I require initial H-1B sponsorship to work for Base now',
+    'I am a U.S. citizen or permanent resident (Green Card holder)',
+    'I currently hold OPT and will require H-1B sponsorship in the future',
+  );
+  const q = 'Will you require sponsorship for employment now or in the future?';
+  assert.equal(matcher.matchOption(base, ask(p, 'job.sponsorship', q)), -1);
+  p.personal.nationality = 'American';
+  assert.equal(matcher.matchOption(base, ask(p, 'job.sponsorship', q)), 3);
+  // William Blair: "Please specify your eligibility to work in Germany."
+  const de = opts('German Citizen', 'European Citizen', 'I Hold a Student Visa', 'I Require Sponsorship');
+  const eligibility = 'Please specify your eligibility to work in Germany.';
+  p.personal.nationality = 'German';
+  assert.equal(matcher.matchOption(de, ask(p, 'job.authorized', eligibility)), 0);
+  p.personal.nationality = 'France';
+  assert.equal(matcher.matchOption(de, ask(p, 'job.authorized', eligibility)), 1);
+  p.personal.nationality = 'British';
+  assert.equal(matcher.matchOption(de, ask(p, 'job.authorized', eligibility)), -1);
+  // A negated status is never yours.
+  p.personal.nationality = 'United States';
+  const yn = opts('No, I am not a U.S. citizen', 'Yes, I am a U.S. citizen');
+  assert.equal(matcher.matchOption(yn, ask(p, 'job.authorized', 'Are you a U.S. citizen?')), 1);
+  // Plain Yes / No questions are unchanged.
+  assert.equal(matcher.matchOption(opts('Yes', 'No'), ask(p, 'job.sponsorship', q)), 1);
+});
+
+test('acknowledgement statements: consents yes, opt-ins and refusals no', () => {
+  assert.equal(fields.isAcknowledgement('By clicking this box, you consent to our Applicant Privacy Statement.'), true);
+  assert.equal(fields.isAcknowledgement('I have read and understood the candidate privacy notice.'), true);
+  assert.equal(fields.isAcknowledgement('I do not consent to the privacy notice'), false);
+  assert.equal(fields.isAcknowledgement('Keep my details and contact me about future opportunities'), false);
+  assert.equal(fields.isAcknowledgement('LinkedIn'), false);
+  const p = student();
+  assert.equal(fields.resolve('consent', p, { consents: false }), null);
+  assert.equal(fields.resolve('consent', p, { consents: true }).consent, true);
+});
+
+test('round 2: right-to-work options that mention sponsorship, notice periods in ranges, Month/Year boxes', () => {
+  const p = student();
+  p.job.authorized = 'Yes';
+  p.job.sponsorship = 'No';
+  const bh = opts(
+    'Yes - I have the permanent right to work and do not need sponsorship',
+    'No - I do not have the permanent right to work and will require sponsorship either now or in the future',
+  );
+  assert.equal(
+    matcher.matchOption(bh, ask(p, 'job.authorized', 'Do you currently have the right to work in the UK?')),
+    0,
+  );
+  assert.equal(matcher.matchOption(bh, ask(p, 'job.sponsorship', 'Will you require sponsorship?')), 0);
+  p.job.sponsorship = 'Yes';
+  p.job.authorized = 'No';
+  assert.equal(matcher.matchOption(bh, ask(p, 'job.sponsorship', 'Will you require sponsorship?')), 1);
+  const both = opts('Yes, I will require sponsorship', 'No, I will not require sponsorship', 'No sponsorship required');
+  assert.equal(matcher.matchOption(both, ask(p, 'job.sponsorship', 'Sponsorship?')), 0);
+  // Notice periods.
+  const man = opts('< 1 Month', '1-2 Months', '2-3 Months', '> 3 Months');
+  p.job.noticePeriod = 'None';
+  assert.equal(matcher.matchOption(man, ask(p, 'job.noticePeriod', 'Current Notice Period')), 0);
+  p.job.noticePeriod = '2 weeks';
+  assert.equal(matcher.matchOption(man, ask(p, 'job.noticePeriod', 'Current Notice Period')), 0);
+  p.job.noticePeriod = '6 weeks';
+  assert.equal(matcher.matchOption(man, ask(p, 'job.noticePeriod', 'Current Notice Period')), 1);
+  p.job.noticePeriod = '3 months';
+  assert.equal(matcher.matchOption(man, ask(p, 'job.noticePeriod', 'Current Notice Period')), 2);
+  p.job.noticePeriod = 'None';
+  assert.equal(
+    matcher.matchOption(opts('1 month', 'Immediately available', '3 months'), ask(p, 'job.noticePeriod', 'Notice')),
+    1,
+  );
+  // "(Month/Year)" without spaces.
+  p.job.startDate = '2027-06-28';
+  const d = desc('When would you like to start your internship? (Month/Year)');
+  assert.equal(
+    matcher.formatForText(ask(p, 'job.startDate', 'When would you like to start your internship?'), d),
+    'June 2027',
+  );
+});
+
+test('ranges written with signs: ">=3.7", "<2.5", "> 3 Months"', () => {
+  const p = student(); // GPA 3.9
+  const gpa = opts('-- No answer --', '>=3.7', '3.5 - 3.7', '3.0-3.4', '2.5-3.0', '<2.5');
+  assert.equal(matcher.matchOption(gpa, ask(p, 'edu.gpa', 'Undergraduate degree GPA')), 1);
+  p.education[0].gpa = '3.8';
+  assert.equal(matcher.matchOption(gpa, ask(p, 'edu.gpa', 'Undergraduate degree GPA')), 1);
+  p.education[0].gpa = '2.1';
+  assert.equal(matcher.matchOption(gpa, ask(p, 'edu.gpa', 'Undergraduate degree GPA')), 5);
+});
+
+test('a sign is part of the option: "<3.7" is not 3.7', () => {
+  const p = student();
+  p.education[0].gpa = '3.7';
+  const v = ask(p, 'edu.gpa', 'GPA');
+  assert.equal(matcher.matchOption(opts('<3.7', '3.7-4.0'), v), 1);
+  assert.equal(matcher.matchOption(opts('>=3.7', '3.0-3.69'), v), 0);
+});
+
+test('UK law-firm forms: boxes under a school heading ask about school; "Title" before names is Mr / Ms', () => {
+  const p = sample(); // two university entries, no school entry
+  const page = [
+    desc({ label: 'Title', id: 'title', section: 'Personal details' }),
+    desc({ label: 'Forename(s)', section: 'Personal details' }),
+    desc({ label: 'Surname', section: 'Personal details' }),
+    desc({ label: 'School/college name', section: 'Secondary education' }),
+    desc({ label: 'Postcode', section: 'Secondary education' }),
+    desc({ label: 'Start date', section: 'Secondary education' }),
+    desc({ label: 'Subject', section: 'A-levels (or equivalent)' }),
+    desc({ label: 'Grade', section: 'A-levels (or equivalent)' }),
+    desc({ label: 'University', section: 'University education' }),
+    desc({ label: 'Subject', section: 'University education' }),
+    desc({ label: 'Module title', id: 'mod_title_1', section: 'University education' }),
+    desc({ label: 'Overall percentage to date', section: 'University education' }),
+  ];
+  const plan = matcher.plan(page, p);
+  assert.deepEqual(types(plan), [
+    'name.prefix',
+    'name.first',
+    'name.last',
+    'edu.school#0',
+    null,
+    'edu.start#0',
+    'edu.field#0',
+    'edu.gpa#0',
+    'edu.school#0',
+    'edu.field#0',
+    null,
+    null,
+  ]);
+  assert.equal(matcher.questionText(page[6]), 'A-levels (or equivalent): Subject');
+  assert.equal(matcher.questionText(page[9]), 'Subject', 'a university heading changes nothing');
+  // School-level questions are answered from a school entry, and there is none.
+  const q = (i) => util.normalize(matcher.questionText(page[i]));
+  for (const i of [3, 5, 6, 7]) {
+    const r = plan.results[i];
+    assert.equal(
+      fields.resolve(r.type, p, { jobContext: true, index: r.index, question: q(i) }),
+      null,
+      page[i].signals.label,
+    );
+  }
+  assert.equal(
+    fields.resolve('edu.school', p, { jobContext: true, index: 0, question: q(8) }).text,
+    'University of London',
+  );
+  // With a school entry, they get the school's answers.
+  p.education.push({ school: 'Camden School', degree: 'A Levels', field: 'Maths, Physics', gpa: 'A*AA' });
+  assert.equal(fields.resolve('edu.school', p, { jobContext: true, index: 0, question: q(3) }).text, 'Camden School');
+  assert.equal(fields.resolve('edu.gpa', p, { jobContext: true, index: 0, question: q(7) }).text, 'A*AA');
+  // "September 2029 / March 2030" is a list of dates, not of months.
+  const tc = matcher.classify(
+    desc('When would you like to start your training contract?', {
+      kind: 'select',
+      options: opts('Please select', 'September 2029', 'March 2030', 'September 2030'),
+    }),
+  );
+  assert.equal(tc.type, 'job.startDate');
+  assert.equal(tc.part, null);
+  assert.equal(matcher.classify(desc('Number of GCSEs at grade 9-7 (A*-A)')), null);
+  assert.equal(matcher.classify(desc('Module name')), null);
+  assert.equal(matcher.classify(desc('Title (e.g. Mr, Mrs, Ms)')).type, 'name.prefix');
+});
+
+test('security clearance and citizenship answers', () => {
+  const p = student();
+  const yn = opts('Yes', 'No');
+  const held = 'Do you currently hold an active security clearance?';
+  assert.equal(ask(p, 'job.clearance', held), null, 'nothing in the profile: left for you');
+  p.job.clearance = 'None';
+  assert.equal(matcher.matchOption(yn, ask(p, 'job.clearance', held)), 1);
+  p.job.clearanceEligible = 'Yes';
+  assert.equal(matcher.matchOption(yn, ask(p, 'job.clearanceEligible', 'Are you willing to undergo SC clearance?')), 0);
+  p.job.clearance = 'SC';
+  p.job.clearanceEligible = '';
+  assert.equal(matcher.matchOption(yn, ask(p, 'job.clearance', held)), 0);
+  assert.equal(matcher.matchOption(yn, ask(p, 'job.clearanceEligible', 'Are you eligible for DV clearance?')), 0);
+  const levels = opts('None', 'BPSS', 'Counter-Terrorist Check (CTC)', 'Security Check (SC)', 'Developed Vetting (DV)');
+  assert.equal(matcher.matchOption(levels, ask(p, 'job.clearance', 'Current clearance level')), 3);
+  // Citizenship from nationality.
+  const us = 'Are you a US citizen or lawful permanent resident (green card holder)?';
+  assert.equal(ask(p, 'citizen', us), null, 'no nationality');
+  p.personal.nationality = 'American';
+  assert.equal(ask(p, 'citizen', us).text, 'Yes');
+  p.personal.nationality = 'British';
+  assert.equal(ask(p, 'citizen', us), null, 'could still be a permanent resident');
+  assert.equal(ask(p, 'citizen', 'Are you a U.S. citizen?').text, 'No');
+  assert.equal(ask(p, 'citizen', 'Are you a British citizen?').text, 'Yes');
+  p.personal.nationality = 'Irish';
+  assert.equal(ask(p, 'citizen', 'Are you an EU citizen?').text, 'Yes');
+});
+
+test('"Right to work / Visa status" in a text box gets a sentence; yes/no questions keep Yes / No', () => {
+  const p = student();
+  p.job.authorized = 'Yes';
+  p.job.sponsorship = 'No';
+  const text = (q, kind) => ask(p, 'job.sponsorship', q, { kind }).text;
+  assert.equal(text('Right to work/Visa Status', 'text'), 'I have the right to work and do not need visa sponsorship.');
+  assert.equal(text('Do you require visa sponsorship?', 'text'), 'No');
+  assert.equal(text('Right to work/Visa Status', 'select'), 'No');
+  p.job.sponsorship = 'Yes';
+  assert.equal(
+    ask(p, 'job.authorized', 'Work authorisation status', { kind: 'textarea' }).text,
+    'I have the right to work now but will need visa sponsorship.',
+  );
+});

@@ -4,4 +4,5 @@ package-lock.json
 extension/icons/
 # Test pages deliberately mimic real-world markup.
 tests/fixtures/*.html
+tests/fixtures/jobs/
 tests/fixtures/data/

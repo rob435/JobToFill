@@ -221,12 +221,13 @@
       const l = explicitLabel(group) || group.getAttribute('aria-label');
       if (l) return U.cleanLabel(l);
     }
+    const set = new Set(members);
+    // A fieldset around just this group; one around a whole page section ("3. Questions") is not the question.
     const fieldset = first.closest('fieldset');
-    if (fieldset && members.every((m) => fieldset.contains(m))) {
+    if (fieldset && members.every((m) => fieldset.contains(m)) && foreignControls(fieldset, set) === 0) {
       const t = fieldsetTitle(fieldset);
       if (t) return U.cleanLabel(t);
     }
-    const set = new Set(members);
     const start = members.length > 1 ? commonAncestor(members) : first;
     if (!start) return '';
     const skip = (n) => set.has(n) || (n.localName === 'label' && n.control && set.has(n.control));
@@ -255,7 +256,13 @@
 
   function optionLabel(el) {
     const own = el.localName === 'input' ? '' : textOf(el);
-    return explicitLabel(el) || el.getAttribute('aria-label') || own || nextText(el) || el.value || '';
+    // The visible <label for> ("Yes") over an aria-labelledby that repeats the question ("Do you have… yes").
+    const visible = U.cleanLabel(
+      labelsOf(el)
+        .map((l) => textOf(l))
+        .join(' '),
+    );
+    return visible || explicitLabel(el) || el.getAttribute('aria-label') || own || nextText(el) || el.value || '';
   }
 
   const optionValue = (el) =>
@@ -301,6 +308,31 @@
     const buttons = Array.from(el.ownerDocument.querySelectorAll('button[jv-add-attachment]'));
     const button = pops.length === buttons.length ? buttons[pops.indexOf(pop)] : null;
     return button ? U.cleanLabel(button.getAttribute('attachment-label') || explicitLabel(button)) : '';
+  }
+
+  const HEADING = 'h2, h3, h4, h5, h6, legend, [role="heading"]';
+
+  /**
+   * The heading of the section a control sits in ("Secondary education", "A-levels"): the last heading before it
+   * among the children of one of its ancestors. A box labelled just "Subject" or "Grade" under "A-levels" asks
+   * about A-levels, not your degree.
+   */
+  function sectionHeading(el) {
+    let node = el;
+    for (let i = 0; i < 8; i++) {
+      const parent = node.parentElement;
+      if (!parent || parent === el.ownerDocument.body) break;
+      let found = null;
+      for (const c of parent.children) {
+        if (c === node) break;
+        if (c.matches(HEADING)) found = c;
+        else if (!c.querySelector(CONTROL_SELECTOR)) found = c.querySelector(HEADING) || found;
+      }
+      const t = found ? U.cleanLabel(textOf(found), 120) : '';
+      if (t) return t;
+      node = parent;
+    }
+    return '';
   }
 
   function ancestorHints(el) {
@@ -409,14 +441,16 @@
 
   /**
    * Checkboxes each named after their option (Ashby: name="LinkedIn", name="Glassdoor") inside one titled
-   * <fieldset> are one checklist. Long labels are separate statements ("I agree…"), so those stay single.
+   * <fieldset> are one checklist. Long labels are separate statements ("I agree…"), so those stay single;
+   * one longish option ("Job Board (e.g., Indeed, Built In, AngelList, …)") doesn't make a list statements.
    */
   function fieldsetCheckboxes(el) {
     const fs = el.closest('fieldset');
     if (!fs || !fieldsetTitle(fs)) return null;
     const controls = Array.from(fs.querySelectorAll(COUNTED_SELECTOR)).filter((c) => !isShim(c));
     if (controls.length < 2 || !controls.every((c) => c.localName === 'input' && c.type === 'checkbox')) return null;
-    if (controls.some((c) => optionLabel(c).length > 60)) return null;
+    const lengths = controls.map((c) => optionLabel(c).length);
+    if (lengths.some((n) => n > 120) || lengths.filter((n) => n > 60).length * 2 >= lengths.length) return null;
     return controls.filter((m) => isUsable(m, 'checkbox'));
   }
 
@@ -470,6 +504,7 @@
       if (kind === 'select')
         desc.options = Array.from(el.options).map((o) => ({ text: o.text, value: o.value, disabled: o.disabled }));
     }
+    s.section = sectionHeading(el);
     s.attrs = ATTR_HINTS.map((a) => el.getAttribute(a))
       .filter(Boolean)
       .join(' ');

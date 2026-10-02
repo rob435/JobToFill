@@ -791,9 +791,11 @@ test('historyQuery and rankHistory: past visits to the job page rank first', () 
   const qs = jp.historyQuery(ctx, now);
   assert.deepEqual(
     qs.map((x) => x.text),
-    ['REQ-40921', 'Quantitative Researcher Intern Summer 2027', 'Fabrikam Capital'],
+    ['REQ-40921', 'Quantitative Researcher Intern Summer 2027', 'Fabrikam Capital', ''],
   );
-  assert.ok(qs.every((x) => x.startTime === now - 60 * 864e5));
+  assert.ok(qs.slice(0, 3).every((x) => x.startTime === now - 60 * 864e5));
+  // Everything from the last three hours: the job page opened just before a sign-in wall.
+  assert.deepEqual(qs[3], { text: '', startTime: now - 3 * 36e5, maxResults: 200 });
 
   const day = 864e5;
   const items = [
@@ -1298,4 +1300,813 @@ test('find: history candidates, and no fetch at all', async () => {
   } finally {
     globalThis.fetch = saved;
   }
+});
+
+/* ------------------------------------------------------- round 2: hardening */
+
+const ENTITY = /&(#\d+|#x[\da-f]+|[a-z][a-z\d]{1,8});/i;
+const noEntities = (o, what) => {
+  for (const k of ['title', 'company', 'location']) assert.ok(!ENTITY.test(o[k] || ''), `${what}.${k}: ${o[k]}`);
+};
+
+test('entities: titles, companies and places come out decoded from every source, even twice-encoded', () => {
+  const GS = 'https://higher.gs.com/roles/174813';
+  const title = '2027 | EMEA | London | FICC & Equities, Sales & Trading | Apprentice Programme';
+  // DOM text, <title> and meta tags.
+  const p = jp.fromHtml(html('entities-dom.html'), GS);
+  assert.deepEqual([p.title, p.location], [title, 'London & South East, United Kingdom']);
+  noEntities(p, 'dom posting');
+  const ctx = jp.applicationContext(doc('entities-dom.html'), GS);
+  assert.equal(ctx.title, title);
+  assert.equal(ctx.company, 'Goldman Sachs');
+  noEntities(ctx, 'context');
+  noEntities(ctx.posting, 'context.posting');
+
+  // JSON-LD (entity-encoded HTML inside JSON) and a page's embedded state.
+  const ld = jp.fromHtml(html('entities-data.html'), 'https://careers.rothwell.example/jobs/MA-2027-14');
+  assert.equal(ld.source, 'json-ld');
+  assert.deepEqual(
+    [ld.title, ld.company, ld.location],
+    ['Mergers & Acquisitions Analyst – Summer 2027 ("M&A")', 'Rothwell & Partners', 'São Paulo, BR'],
+  );
+  assert.match(ld.description, /Join our M&A team/);
+  const state = jp.fromHtml(
+    html('entities-data.html').replace(/<script type="application\/ld\+json">[\s\S]*?<\/script>/, ''),
+    'https://careers.rothwell.example/jobs/ST-27',
+  );
+  assert.equal(state.source, 'page-data');
+  assert.deepEqual(
+    [state.title, state.company, state.location],
+    ["Sales & Trading Intern '27", 'Rothwell & Partners', 'New York City'],
+  );
+
+  // Board APIs.
+  const gh = jp.fromApi(
+    'greenhouse',
+    {
+      id: 77,
+      title: 'Risk &amp;amp; Quant Analyst &#x2013; Z&uuml;rich',
+      company_name: 'Smith &amp; Wesson Capital',
+      location: { name: 'Z&uuml;rich &amp; Geneva' },
+      content:
+        '&lt;p&gt;' +
+        'Model market and credit risk with the quantitative team and our traders. '.repeat(6) +
+        '&lt;/p&gt;',
+    },
+    'https://job-boards.greenhouse.io/smithcap/jobs/77',
+  );
+  assert.deepEqual(
+    [gh.title, gh.company, gh.location],
+    ['Risk & Quant Analyst – Zürich', 'Smith & Wesson Capital', 'Zürich & Geneva'],
+  );
+  const oracle = jp.fromApi(
+    'oracle',
+    {
+      items: [
+        {
+          Id: '174813',
+          Title: '2027 | EMEA | London | FICC &amp; Equities, Sales &amp;amp; Trading | Apprentice Programme',
+          PrimaryLocation: 'London,&nbsp;United Kingdom',
+          ExternalDescriptionStr: '<p>' + 'Rotate across trading desks and learn how markets work. '.repeat(8) + '</p>',
+        },
+      ],
+    },
+    'https://hdpc.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/LateralHiring/job/174813',
+  );
+  assert.deepEqual([oracle.title, oracle.location], [title, 'London, United Kingdom']);
+  // "R&D", "AT&T" and "M&A" are not entities and stay as they are.
+  const plain = jp.fromApi(
+    'greenhouse',
+    { id: 5, title: 'R&D Engineer, AT&T M&A', content: '<p>' + 'Build test rigs for our labs. '.repeat(12) + '</p>' },
+    'https://job-boards.greenhouse.io/acme/jobs/5',
+  );
+  assert.equal(plain.title, 'R&D Engineer, AT&T M&A');
+});
+
+test('cookie banners and legal pop-ups are never the posting; an embedded Greenhouse board answers for gh_jid', async () => {
+  const URL0 = 'https://www.verition.com/open-positions?gh_jid=5239291007';
+  const ctx = jp.applicationContext(doc('gh-embed-cookies.html'), URL0);
+  assert.equal(ctx.posting, null);
+  assert.ok(!/privacy|cookie/i.test(ctx.title), ctx.title);
+  assert.deepEqual(ctx.embeds, [
+    'https://job-boards.greenhouse.io/embed/job_app?for=veritiongroupllc&token=5239291007',
+    'https://boards.greenhouse.io/embed/job_board/js?for=veritiongroupllc',
+  ]);
+  assert.equal(jp.fromHtml(html('gh-embed-cookies.html'), 'https://www.verition.com/disclosures'), null);
+  const api = 'https://boards-api.greenhouse.io/v1/boards/veritiongroupllc/jobs/5239291007';
+  assert.equal(jp.candidates(ctx)[0].url, api);
+  const found = await jp.find(ctx, { fetch: mockFetch({ [api]: json('api-greenhouse-verition.json') }) });
+  assert.deepEqual(
+    [found.verdict, found.source, found.posting.title, found.posting.company],
+    ['same', api, '2027 Investment Internship (London)', 'Verition Group LLC'],
+  );
+  assert.match(found.reasons[0], /same job ID 5239291007/);
+
+  // Text that only the page vouches for: a privacy notice is never 'same', even when it is long.
+  const notice = html('gh-embed-cookies.html')
+    .match(/<div class="noOrphanP">([\s\S]*?)<\/div>/)[1]
+    .replace(/<[^>]+>/g, ' ');
+  const privacy = {
+    ...ctx,
+    embeds: [],
+    posting: { title: 'Your Privacy', description: notice + notice, source: 'page-text', confidence: 0.65, jobIds: [] },
+  };
+  const r1 = await jp.find(privacy, { fetch: mockFetch({}) });
+  assert.notEqual(r1.verdict, 'same');
+  assert.equal(r1.posting, null);
+  // A real advert in the page text, while the board can't be reached: 'likely', not 'same'.
+  const advert = jp.htmlToText(json('api-greenhouse-verition.json').content);
+  const onPage = { ...privacy, posting: { ...privacy.posting, title: '', description: advert + '\n\n' + advert } };
+  const r2 = await jp.find(onPage, { fetch: mockFetch({}) });
+  assert.deepEqual([r2.verdict, r2.reasons[1]], ['likely', 'the job board didn’t confirm it']);
+});
+
+/* ------------------------------------------- sign-in walls: this tab's trail and history */
+
+const HSBC_JOB =
+  'https://apply.careers.hsbc.com/emergingtalent/job/London-Markets-Sales-and-Trading-Off-Cycle-Internship-E14-5HQ/1373576757/';
+const HSBC_OTHER =
+  'https://apply.careers.hsbc.com/emergingtalent/job/London-Relationship-Management-Private-Bank-Graduate-E14-5HQ/1373565757/';
+const HSBC_TITLE = 'Markets - Sales and Trading - Off-Cycle Internship Job Details | HSBC Global Services Limited';
+const OTHER_TITLE = 'Relationship Management - Private Bank - Graduate Job Details | HSBC Global Services Limited';
+const rmkPage = (title, id) =>
+  html('rmk-job.html')
+    .replace(/Markets - Sales and Trading - Off-Cycle Internship/g, title)
+    .replace(/1373576757/g, id);
+// Where SuccessFactors' Apply lands without a session: the site's home page, without the job.
+const hsbcRoot = () =>
+  jp.applicationContext(
+    parseHTML(
+      '<html><head><title>HSBC Careers</title></head><body><header><img class="logo" alt="HSBC"></header>' +
+        '<h1>SEARCH FOR JOBS THAT ARE MATCHED TO YOUR SKILL SET!</h1><div class="jobTitle"><a href="/emergingtalent/job/x/1373599999/">' +
+        'Featured: Global Banking Analyst</a></div></body></html>',
+    ).document,
+    'https://apply.careers.hsbc.com/',
+  );
+
+test('trail: the job page this tab showed before a sign-in wall is found; lists and searches are ignored', async () => {
+  const now = Date.parse('2026-10-02T10:00:00Z');
+  const ctx = hsbcRoot();
+  assert.deepEqual([ctx.title, ctx.company, ctx.jobIds], ['', 'HSBC', []]);
+  ctx.trail = [
+    { url: HSBC_JOB, title: HSBC_TITLE, at: now - 2 * 6e4 },
+    {
+      url: 'https://apply.careers.hsbc.com/emergingtalent/search/?q=trading',
+      title: 'Search results | HSBC',
+      at: now - 4 * 6e4,
+    },
+    {
+      url: 'https://www.google.com/search?q=hsbc+off+cycle',
+      title: 'hsbc off cycle - Google Search',
+      at: now - 6 * 6e4,
+    },
+    { url: HSBC_OTHER, title: OTHER_TITLE, at: now - 9 * 6e4 },
+    { url: 'https://apply.careers.hsbc.com/', title: 'HSBC Careers', at: now - 12 * 6e4 },
+    {
+      url: 'https://app.the-trackr.com/uk-finance/off-cycle-internships',
+      title: 'UK Finance - Trackr',
+      at: now - 14 * 6e4,
+    },
+  ];
+  const list = jp.candidates(ctx, now);
+  assert.equal(list[0].url, HSBC_JOB);
+  assert.equal(list[0].reason, 'the job page you opened before this one in this tab');
+  assert.ok(list[0].weight >= 0.6 && list[0].weight < 0.88, String(list[0].weight));
+  assert.ok(list[1].url === HSBC_OTHER && list[1].weight < list[0].weight);
+  assert.equal(list.length, 2, list.map((c) => c.url).join(' '));
+
+  const found = await jp.find(ctx, {
+    now,
+    fetch: mockFetch({
+      [HSBC_JOB]: html('rmk-job.html'),
+      [HSBC_OTHER]: rmkPage('Relationship Management - Private Bank - Graduate', '1373565757'),
+    }),
+  });
+  assert.deepEqual(
+    [found.verdict, found.source, found.posting.title, found.posting.location],
+    ['likely', HSBC_JOB, 'Markets - Sales and Trading - Off-Cycle Internship', 'London, GB, E14 5HQ'],
+  );
+  assert.ok(found.reasons.includes('you opened this page before this one in this tab'), found.reasons.join('; '));
+  assert.ok(found.reasons.includes('the job page you opened before this one in this tab'));
+});
+
+test('trail: pages of other jobs lose to the context’s own job, and are rejected when it names a different one', async () => {
+  const now = Date.parse('2026-10-02T10:00:00Z');
+  const CAP = 'https://careers.capgemini.com/job/Telford-Graduate-Software-Engineering-Programme-2027/1443168333/';
+  const SUBSEA = 'https://careers.subsea7.com/job/London-%28Sutton%29-Graduate-Engineers-2027-Sutton/1366219555/';
+  const LYB = 'https://careers.lyondellbasell.com/job/Houston-2027-Trading-&-Supply-Intern-TX-77056/1428780300/';
+  const ctx = {
+    url: 'https://careers.capgemini.com/talentcommunity/login/',
+    ats: jp.ats('https://careers.capgemini.com/talentcommunity/login/'),
+    title: 'Graduate Software Engineering Programme 2027',
+    company: 'Capgemini',
+    location: 'Telford',
+    jobIds: [],
+    links: [],
+    trail: [
+      { url: SUBSEA, title: 'Graduate Engineers 2027 - Sutton Job Details | Subsea7', at: now - 3 * 6e4 },
+      { url: CAP, title: 'Graduate Software Engineering Programme 2027 Job Details | Capgemini', at: now - 8 * 6e4 },
+      {
+        url: LYB,
+        title: '2027 Trading & Supply Intern Job Details | LyondellBasell North America',
+        at: now - 20 * 6e4,
+      },
+    ],
+  };
+  const list = jp.candidates(ctx, now);
+  assert.deepEqual(
+    list.map((c) => c.url),
+    [CAP, SUBSEA, LYB],
+  );
+  const page = (title, company, place) =>
+    `<script type="application/ld+json">${JSON.stringify({
+      '@type': 'JobPosting',
+      title,
+      hiringOrganization: { name: company },
+      jobLocation: { address: { addressLocality: place } },
+      description: 'Join our graduate programme and work on real projects with experienced engineers. '.repeat(10),
+    })}</script>`;
+  const routes = {
+    [CAP]: page('Graduate Software Engineering Programme 2027', 'Capgemini', 'Telford'),
+    [SUBSEA]: page('Graduate Engineers 2027 - Sutton', 'Subsea7', 'Sutton'),
+    [LYB]: page('2027 Trading & Supply Intern', 'LyondellBasell', 'Houston'),
+  };
+  const found = await jp.find(ctx, { now, fetch: mockFetch(routes) });
+  assert.deepEqual([found.verdict, found.source], ['same', CAP]);
+  // Without the right page in the trail, the other jobs are rejected, not offered.
+  const none = await jp.find(
+    { ...ctx, trail: ctx.trail.filter((e) => e.url !== CAP) },
+    { now, fetch: mockFetch(routes) },
+  );
+  assert.equal(none.posting, null);
+  assert.equal(none.verdict, 'different');
+});
+
+/** chrome.history.search over a list of visits: every word of the text in the address or title, newest first. */
+const historyOf = (visits) => async (q) =>
+  visits
+    .filter((v) => v.lastVisitTime >= (q.startTime || 0))
+    .filter((v) =>
+      String(q.text || '')
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean)
+        .every((w) => `${v.url} ${v.title}`.toLowerCase().includes(w)),
+    )
+    .sort((a, b) => b.lastVisitTime - a.lastVisitTime)
+    .slice(0, q.maxResults || 100);
+
+test('history: behind a sign-in wall, the job page opened minutes before wins over searches, lists and other jobs', async () => {
+  const now = Date.parse('2026-10-02T10:00:00Z');
+  const min = 6e4;
+  const visits = [
+    {
+      url: 'https://www.google.com/search?q=hsbc+markets+off+cycle',
+      title: 'hsbc markets off cycle - Google Search',
+      lastVisitTime: now - 31 * min,
+      visitCount: 1,
+    },
+    {
+      url: 'https://app.the-trackr.com/uk-finance/off-cycle-internships',
+      title: 'UK Finance - Trackr',
+      lastVisitTime: now - 30 * min,
+      visitCount: 6,
+    },
+    {
+      url: 'https://www.linkedin.com/jobs/search/?keywords=hsbc%20trading',
+      title: '(3) hsbc trading Jobs | LinkedIn',
+      lastVisitTime: now - 26 * min,
+      visitCount: 1,
+    },
+    {
+      url: 'https://apply.careers.hsbc.com/emergingtalent/',
+      title: 'Careers | HSBC',
+      lastVisitTime: now - 25 * min,
+      visitCount: 3,
+    },
+    {
+      url: 'https://apply.careers.hsbc.com/emergingtalent/search/?q=trading',
+      title: 'Search results | HSBC',
+      lastVisitTime: now - 24 * min,
+      visitCount: 1,
+    },
+    { url: HSBC_OTHER, title: OTHER_TITLE, lastVisitTime: now - 3 * 864e5, visitCount: 2 },
+    {
+      url: 'https://job-boards.greenhouse.io/point72/jobs/8811167002',
+      title: 'Job Application for Investment Analyst at Point72',
+      lastVisitTime: now - 8 * min,
+      visitCount: 1,
+    },
+    {
+      url: HSBC_JOB + '?utm_source=Trackr&utm_medium=tracker&utm_campaign=UK_Finance_2027',
+      title: HSBC_TITLE,
+      lastVisitTime: now - 6 * min,
+      visitCount: 1,
+    },
+  ];
+  const ctx = hsbcRoot();
+  assert.deepEqual(
+    jp.historyQuery(ctx, now).map((q) => q.text),
+    ['HSBC', ''],
+  );
+  const items = [];
+  for (const q of jp.historyQuery(ctx, now)) items.push(...(await historyOf(visits)(q)));
+  const ranked = jp.rankHistory(ctx, items, now);
+  assert.match(ranked[0].url, /1373576757/);
+  assert.deepEqual(ranked[0].history, { ageMin: 6, latest: true, rivals: 0 });
+  assert.match(ranked[0].reason, /same site, opened 6 min ago/);
+  assert.deepEqual(
+    ranked.map((r) => r.url.replace(/\?.*$/, '')),
+    [HSBC_JOB, HSBC_OTHER],
+  );
+  const routes = {
+    [HSBC_JOB + '?utm_source=Trackr&utm_medium=tracker&utm_campaign=UK_Finance_2027']: html('rmk-job.html'),
+    [HSBC_OTHER]: rmkPage('Relationship Management - Private Bank - Graduate', '1373565757'),
+  };
+  // History alone picks the right job but can't prove it (the page has nothing to compare): 'unsure', for the
+  // AI check and the user to confirm.
+  const found = await jp.find(ctx, { now, historySearch: historyOf(visits), fetch: mockFetch(routes) });
+  assert.deepEqual(
+    [found.verdict, found.posting && found.posting.title],
+    ['unsure', 'Markets - Sales and Trading - Off-Cycle Internship'],
+  );
+  assert.ok(found.reasons.some((r) => /opened 6 min ago/.test(r)) || /opened 6 min ago/.test(ranked[0].reason));
+
+  // Two HSBC jobs opened within the same few minutes (tabs): the newer one is offered, but only as 'unsure'.
+  const tabs = visits.map((v) => (v.url === HSBC_OTHER ? { ...v, lastVisitTime: now - 4 * min } : v));
+  const both = await jp.find(ctx, { now, historySearch: historyOf(tabs), fetch: mockFetch(routes) });
+  assert.equal(both.verdict, 'unsure');
+  assert.match(both.posting.title, /Relationship Management/);
+});
+
+test('history: Amazon passport sign-in, and an application page whose title rejects the newest job page', async () => {
+  const now = Date.parse('2026-10-02T10:00:00Z');
+  const min = 6e4;
+  const AMZ =
+    'https://www.amazon.jobs/en/jobs/10435672/2027-amazon-finance-rotation-program-business-unit-finance-intern';
+  const AMZ2 = 'https://www.amazon.jobs/en/jobs/10554390/financial-analyst-intern-2027';
+  const ld = (title, id, place) =>
+    `<script type="application/ld+json">${JSON.stringify({
+      '@type': 'JobPosting',
+      title,
+      identifier: id,
+      hiringOrganization: { name: 'Amazon' },
+      jobLocation: { address: { addressLocality: place } },
+      description:
+        'Rotate through finance teams, build forecasts and analyse business performance with your team. '.repeat(9),
+    })}</script>`;
+  const passport = jp.applicationContext(
+    parseHTML(
+      '<html><head><title>Amazon.jobs</title></head><body><h1>Sign in</h1><form><input name="email"></form></body></html>',
+    ).document,
+    'https://passport.amazon.jobs/',
+  );
+  assert.deepEqual([passport.title, passport.jobIds], ['', []]);
+  const visits = [
+    {
+      url: 'https://www.amazon.jobs/en/search?base_query=finance+intern',
+      title: 'Search Jobs | Amazon.jobs',
+      lastVisitTime: now - 20 * min,
+    },
+    {
+      url: AMZ2,
+      title: 'Financial Analyst Intern 2027 - Job ID: 10554390 | Amazon.jobs',
+      lastVisitTime: now - 2 * 864e5,
+    },
+    {
+      url: AMZ,
+      title: '2027 Amazon Finance Rotation Program - Business Unit Finance Intern - Job ID: 10435672 | Amazon.jobs',
+      lastVisitTime: now - 4 * min,
+    },
+  ];
+  const routes = {
+    [AMZ]: ld('2027 Amazon Finance Rotation Program - Business Unit Finance Intern', '10435672', 'Seattle'),
+    [AMZ2]: ld('Financial Analyst Intern 2027', '10554390', 'Seattle'),
+  };
+  const r = await jp.find(passport, { now, historySearch: historyOf(visits), fetch: mockFetch(routes) });
+  assert.deepEqual([r.verdict, r.source], ['unsure', AMZ]);
+  // Only another Amazon job in history: offered at most as 'unsure', never 'same' or 'likely'.
+  const onlyOther = visits
+    .filter((v) => v.url !== AMZ)
+    .map((v) => (v.url === AMZ2 ? { ...v, lastVisitTime: now - 3 * min } : v));
+  const r0 = await jp.find(passport, { now, historySearch: historyOf(onlyOther), fetch: mockFetch(routes) });
+  assert.ok(!['same', 'likely'].includes(r0.verdict), r0.verdict);
+
+  // The application page names its job: the newest job page in history is a different one and is rejected.
+  const named = {
+    url: 'https://www.amazon.jobs/en/applicant/jobs/10554390/apply',
+    ats: jp.ats('https://www.amazon.jobs/en/applicant/jobs/10554390/apply'),
+    title: 'Financial Analyst Intern 2027',
+    company: 'Amazon',
+    location: 'Seattle',
+    jobIds: ['10554390'],
+    links: [],
+  };
+  const r2 = await jp.find(named, { now, historySearch: historyOf(visits), fetch: mockFetch(routes) });
+  assert.deepEqual([r2.verdict, r2.posting.title], ['same', 'Financial Analyst Intern 2027']);
+  const amz = r2.tried.find((t) => t.url === AMZ);
+  assert.ok(!amz || /^different/.test(amz.outcome), amz && amz.outcome);
+});
+
+test('Trackr: where the user came from names the programme — a hint that breaks ties, never the description', async () => {
+  const now = Date.parse('2026-10-02T10:00:00Z');
+  const min = 6e4;
+  const TAGGED = HSBC_JOB + '?utm_source=Trackr&utm_medium=tracker&utm_campaign=UK_Finance_2027';
+  assert.deepEqual(jp.trackrHint({ url: 'https://apply.careers.hsbc.com/', referrer: 'https://app.the-trackr.com/' }), {
+    region: null,
+    industry: null,
+    season: null,
+    type: null,
+    links: [],
+  });
+  const visits = [
+    {
+      url: 'https://app.the-trackr.com/uk-finance/off-cycle-internships',
+      title: 'UK Finance - Trackr',
+      lastVisitTime: now - 9 * min,
+    },
+    { url: TAGGED, title: HSBC_TITLE, lastVisitTime: now - 6 * min },
+    { url: HSBC_OTHER, title: OTHER_TITLE, lastVisitTime: now - 3 * min },
+  ];
+  const ctx = hsbcRoot();
+  const hint = jp.trackrHint(ctx, visits);
+  assert.deepEqual(hint, {
+    region: 'UK',
+    industry: 'Finance',
+    season: '2027',
+    type: 'off-cycle-internships',
+    links: [TAGGED],
+  });
+  const API = 'https://api.the-trackr.com/programmes?region=UK&industry=Finance&season=2027&type=off-cycle-internships';
+  assert.deepEqual(
+    jp.trackrRequests(hint).map((r) => r.url),
+    [API],
+  );
+  const routes = {
+    [API]: json('trackr-uk-finance-off-cycle.json'),
+    [TAGGED]: html('rmk-job.html'),
+    [HSBC_OTHER]: rmkPage('Relationship Management - Private Bank - Graduate', '1373565757'),
+  };
+  // Two HSBC jobs opened minutes apart: history alone can't tell them apart (see above); Trackr's programme can.
+  const found = await jp.find(ctx, { now, historySearch: historyOf(visits), fetch: mockFetch(routes) });
+  assert.deepEqual(
+    [found.verdict, found.posting.title],
+    ['likely', 'Markets - Sales and Trading - Off-Cycle Internship'],
+  );
+  assert.match(found.posting.description, /rotate across sales and trading desks/);
+  assert.ok(found.reasons.includes('the programme you opened on Trackr'), found.reasons.join('; '));
+  assert.deepEqual(
+    [found.hint.source, found.hint.company, found.hint.programme, found.hint.deadline],
+    ['Trackr', 'HSBC', 'Markets - Sales and Trading - Off-Cycle Internship', '2026-10-15'],
+  );
+  assert.match(found.tried.find((t) => t.url === API).outcome, /^Trackr: Markets - Sales and Trading/);
+
+  // A page that names its own job keeps its own verdicts: the hint doesn't turn a different job into a match.
+  const other = await jp.find(
+    {
+      ...ctx,
+      url: HSBC_OTHER + 'apply',
+      title: 'Relationship Management - Private Bank - Graduate',
+      jobIds: ['1373565757'],
+    },
+    { now, historySearch: historyOf(visits), fetch: mockFetch(routes) },
+  );
+  assert.notEqual(other.posting && other.posting.title, 'Markets - Sales and Trading - Off-Cycle Internship');
+});
+
+test('closed jobs: a job address that redirects to a list of open positions is reported as closed, not as a posting', async () => {
+  const LIST = 'https://www.bluerivertechnology.com/careers/open-positions/';
+  const JOB = 'https://www.bluerivertechnology.com/job/?gh_jid=7947246';
+  // The list itself is no posting, here or at an address that doesn't look like a list.
+  assert.equal(jp.fromHtml(html('closed-redirect-list.html'), LIST), null);
+  assert.equal(
+    jp.fromHtml(html('closed-redirect-list.html'), 'https://www.bluerivertechnology.com/team/join-us/'),
+    null,
+  );
+  const listCtx = jp.applicationContext(doc('closed-redirect-list.html'), LIST);
+  assert.equal(listCtx.posting, null);
+  assert.equal(listCtx.company, 'Blue River Technology');
+  // Opened from the trail, the job's page lands on the list.
+  const ctx = {
+    url: 'https://www.bluerivertechnology.com/apply',
+    ats: jp.ats('https://www.bluerivertechnology.com/apply'),
+    title: '2026 Machine Learning Intern, Autonomy',
+    company: 'Blue River Technology',
+    jobIds: [],
+    links: [],
+    trail: [
+      { url: JOB, title: '2026 Machine Learning Intern, Autonomy | Blue River Technology', at: Date.now() - 6e4 },
+    ],
+  };
+  const redirected = () => ({
+    ok: true,
+    status: 200,
+    url: LIST,
+    headers: { get: () => 'text/html' },
+    text: async () => html('closed-redirect-list.html'),
+  });
+  const r = await jp.find(ctx, { now: Date.now(), fetch: mockFetch({ [JOB]: redirected }) });
+  assert.equal(r.posting, null);
+  const t = r.tried.find((x) => x.url === JOB);
+  assert.match(
+    t.outcome,
+    /^closed: the job page now redirects to https:\/\/www\.bluerivertechnology\.com\/careers\/open-positions/,
+  );
+  assert.ok(!/empty|no posting|shell|script/i.test(t.outcome), 'the studio must not re-read it in a tab');
+  assert.ok(
+    r.reasons.some((x) => /probably closed/.test(x)),
+    r.reasons.join('; '),
+  );
+});
+
+test('Oleeo (tal.net): opportunity pages, the apply step, and the advert inside a read-only form', () => {
+  const DESC =
+    'https://blackrock.tal.net/vx/lang-en-GB/mobile-0/brand-3/user-2489896/xf-9b8e2dccf17f/candidate/so/pm/1/pl/1/opp/11984-2027-Summer-Internship-Program-APAC/en-GB';
+  const APPLY =
+    'https://blackrock.tal.net/vx/lang-en-GB/mobile-0/brand-3/user-2489896/xf-4c3e8ca7b9cc/candidate/so/pm/1/pl/1/opp/11984/apply/en-GB';
+  assert.deepEqual(jp.ats(DESC), { name: 'tal.net', company: 'blackrock', jobId: '11984', stage: 'description' });
+  assert.deepEqual(
+    [
+      jp.ats(APPLY).stage,
+      jp.ats(APPLY).jobId,
+      jp.ats('https://nomuracampus.tal.net/vx/candidate/so/pm/1/pl/1/opp/1518-x').company,
+    ],
+    ['application', '11984', 'nomura'],
+  );
+  // The session's user number is not a job ID.
+  assert.ok(!jp.urlJobIds(DESC).includes('2489896'), jp.urlJobIds(DESC).join());
+  assert.equal(
+    jp.ats(
+      'https://jefferies.tal.net/vx/lang-en-GB/mobile-0/appcentre-ext/brand-4/user-415213/xf-5ac368c85a0a/candidate/jobboard/vacancy/2/adv/',
+    ).stage,
+    'unknown',
+  );
+  assert.deepEqual(
+    jp.descriptionUrls(APPLY).map((d) => d.url),
+    [
+      'https://blackrock.tal.net/vx/lang-en-GB/mobile-0/brand-3/user-2489896/xf-4c3e8ca7b9cc/candidate/so/pm/1/pl/1/opp/11984',
+    ],
+  );
+  const p = jp.fromHtml(html('oleeo-vacancy.html'), DESC);
+  assert.equal(p.title, '2027 Summer Internship Program - APAC');
+  assert.equal(p.company, 'BlackRock');
+  assert.deepEqual(p.jobIds, ['11984']);
+  assert.match(p.description, /one year away from finishing/);
+  assert.ok(words(p.description) > 150);
+});
+
+test('sign-in and easy-apply pages: the job they name in their address is a candidate', () => {
+  const bcg =
+    'https://studenttalent.bcg.com/candidate/login?domain=bcg.com&hl=en&utm_source=Phenom&next=https%3A%2F%2Fstudenttalent.bcg.com%2Fcareerhub%2Fexplore%2Fjobs%2F790315435619%3Fpost_onboarding_pid%3D790315435619%26amp%3Bshow_apply%3D1';
+  const ctx = jp.applicationContext(
+    parseHTML(
+      '<html><head><title>Login</title><meta property="og:site_name" content="Company"></head><body><h1>Sign in</h1></body></html>',
+    ).document,
+    bcg,
+  );
+  assert.equal(ctx.company, ''); // not "Company"
+  const c = jp.candidates(ctx)[0];
+  assert.deepEqual(
+    [c.url, c.reason],
+    [
+      'https://studenttalent.bcg.com/careerhub/explore/jobs/790315435619?post_onboarding_pid=790315435619&show_apply=1',
+      'the job this sign-in page will return to',
+    ],
+  );
+  // SAP easy-apply carries the requisition as ReqId=; Yello's /new_candidate step sits under the requisition.
+  assert.deepEqual(
+    jp.urlJobIds('https://ea-lidl.cfapps.eu20.hana.ondemand.com/easyapply/index.html?ReqId=751069&sap-language=en_GB'),
+    ['751069'],
+  );
+  assert.deepEqual(
+    jp
+      .descriptionUrls('https://db.recsolu.com/external/requisitions/KjA5VnH2SAzsZbIs-ZFeMg/new_candidate')
+      .map((d) => d.url),
+    ['https://db.recsolu.com/external/requisitions/KjA5VnH2SAzsZbIs-ZFeMg'],
+  );
+  // A portal's own sign-in page is not the job.
+  assert.deepEqual(jp.descriptionUrls('https://careers.example.com/talentcommunity/login/'), []);
+});
+
+test('German and French adverts: their own section headings, references and places; no cookie text, no similar jobs', () => {
+  const DE = 'https://www.hellweg-partner.example/karriere/stellen/hp-2027-031';
+  const de = jp.fromHtml(html('de-stellenanzeige.html'), DE);
+  assert.deepEqual(
+    [de.title, de.company, de.location],
+    ['Praktikum Corporate Finance / M&A (m/w/d)', 'Hellweg & Partner', 'Frankfurt am Main'],
+  );
+  assert.match(de.description, /Ihre Aufgaben[\s\S]*Ihr Profil[\s\S]*Wir bieten/);
+  assert.ok(!/Cookies|Debt Advisory|Restructuring/.test(de.description), de.description);
+  const deCtx = jp.applicationContext(doc('de-stellenanzeige.html'), DE);
+  assert.ok(deCtx.posting, 'a German advert counts as a real description');
+  assert.deepEqual([deCtx.jobIds, deCtx.company], [['HP-2027-031'], 'Hellweg & Partner']);
+
+  // French: the sections are a collapsed accordion, and the JSON-LD is a featured job in Lyon (another reference).
+  const FR = 'https://carrieres.banque-lumiere.example/offres/2026-118-stage-analyste-ma-paris';
+  const fr = jp.fromHtml(html('fr-offre-accordeon.html'), FR);
+  assert.equal(fr.source, 'page-text');
+  assert.equal(fr.title, 'Stage Analyste M&A – Paris (H/F)');
+  assert.match(fr.description, /Vos missions[\s\S]*valorisations[\s\S]*Profil recherché/);
+  assert.ok(!/Lyon|cookies/i.test(fr.description), fr.description);
+  const frCtx = jp.applicationContext(doc('fr-offre-accordeon.html'), FR);
+  assert.deepEqual([frCtx.title, frCtx.jobIds], ['Stage Analyste M&A – Paris (H/F)', ['2026-118']]);
+  // The featured job is 'different' from the page's own.
+  const lyon = {
+    url: 'https://carrieres.banque-lumiere.example/offres/2026-097-analyste-credit-lyon',
+    title: 'Analyste Crédit – Lyon (H/F)',
+    company: 'Banque Lumière',
+    location: 'Lyon, FR',
+    jobIds: ['2026-097'],
+  };
+  assert.equal(jp.compare(frCtx, lyon).verdict, 'different');
+});
+
+test('several JobPosting blocks with nothing to say which, requisition codes in titles, one programme in several cities', () => {
+  // A page listing three JobPostings whose heading names none of them: no posting from its JSON-LD.
+  const list = html('jsonld-list.html')
+    .replace(/<h1>[^<]*<\/h1>/, '<h1>Summer programmes</h1>')
+    .replace(/<title>[^<]*/, '<title>Summer programmes | Contoso Bank Careers');
+  const p = jp.fromHtml(list, 'https://careers.contoso.example/students/summer');
+  assert.ok(!p || p.source !== 'json-ld', p && p.title);
+
+  assert.equal(jp.titleSimilarity('Quantitative Analyst (Req #12345)', 'Quantitative Analyst'), 1);
+  assert.equal(jp.titleSimilarity('Software Engineer [JR-1234]', 'Software Engineer - R0012345'), 1);
+  assert.deepEqual(jp.textJobIds('Quantitative Analyst (Req #12345)'), ['12345']);
+
+  // The same programme in London and New York is not the same job, whether the city is in the title or the place.
+  const base = { company: 'Morgan Stanley', jobIds: [], url: 'https://ms.tal.net/vx/candidate/apply' };
+  const london = { ...base, title: '2027 Technology Summer Analyst Program – London', location: '' };
+  const nyPosting = posting({
+    title: '2027 Technology Summer Analyst Program – New York',
+    company: 'Morgan Stanley',
+    location: 'New York, NY, United States',
+    url: 'https://morganstanley.tal.net/vx/candidate/so/pm/1/pl/1/opp/17060-2027-Technology-Summer-Analyst-Program-New-York',
+  });
+  assert.equal(jp.compare(london, nyPosting).verdict, 'different');
+  assert.equal(
+    jp.compare({ ...london, title: '2027 Technology Summer Analyst Program', location: 'London' }, nyPosting).verdict,
+    'different',
+  );
+  const ldnPosting = {
+    ...nyPosting,
+    title: '2027 Technology Summer Analyst Program – London',
+    location: 'London, United Kingdom',
+  };
+  assert.equal(jp.compare(london, ldnPosting).verdict, 'same');
+  // "London, New York or remote" is not a clash.
+  assert.notEqual(jp.compare(london, { ...nyPosting, location: 'London / New York' }).verdict, 'different');
+});
+
+test('lists and logos: RMK category pages are lists, and an image file name is not a company', () => {
+  const list =
+    '<html><head><title>Early careers Jobs</title></head><body><header><img class="logo" alt="Marsh_48px"></header><main>' +
+    Array.from(
+      { length: 8 },
+      (_, i) =>
+        `<div class="job"><a href="/job/Markets-Intern-US-2027/6104${i}-en_GB">Markets Intern US 2027 ${i}</a><p>New York, United States. Apply to join our markets team for the summer programme and work with experienced traders.</p></div>`,
+    ).join('') +
+    '</main></body></html>';
+  assert.equal(jp.fromHtml(list, 'https://jobs.standardchartered.com/go/Early-careers-Jobs/9783557/'), null);
+  const ctx = jp.applicationContext(parseHTML(list).document, 'https://careers.marsh.com/global/en/apply?jobSeqNo=X');
+  assert.equal(ctx.company, 'Marsh');
+  // A template's placeholder ("Company Name" on careers.phillips66.com) is no company either.
+  const placeholder = jp.applicationContext(
+    parseHTML(
+      '<html><head><title>Careers</title><meta property="og:site_name" content="Company Name"></head><body></body></html>',
+    ).document,
+    'https://careers.phillips66.com/',
+  );
+  assert.equal(placeholder.company, '');
+  // SuccessFactors' classic apply page: "Career Opportunities: {title} - {company} ({requisition})".
+  const sf = jp.applicationContext(
+    parseHTML(
+      '<html><head><title>Career Opportunities: Student Internship Programme 1H2027 - Hang Seng Bank (HK) (55392)</title></head><body><h1>Apply</h1></body></html>',
+    ).document,
+    'https://career2.successfactors.eu/careers?company=hsbcholdin&career_ns=job_application&career_job_req_id=55392',
+  );
+  assert.deepEqual(
+    [sf.title, sf.company, sf.jobIds],
+    ['Student Internship Programme 1H2027', 'Hang Seng Bank (HK)', ['55392']],
+  );
+  // Page text whose only heading is the equal-opportunity statement: the advert's first title-like line instead.
+  const eeo = jp.fromHtml(
+    '<html><head><title>Careers | WWT</title></head><body><main><div class="job"><p>Back</p><p>Technology &amp; Analytics Intern- 2027</p><p>#26-2239</p><p>Multiple Locations</p>' +
+      '<h3>Responsibilities</h3><p>' +
+      'Work with analytics teams on dashboards, data pipelines and reporting for our customers across many industries. '.repeat(
+        4,
+      ) +
+      '</p><h3>Qualifications</h3><p>Pursuing a degree in data science, statistics, computer science or a related field, with strong communication skills.</p>' +
+      '<h2>WWT is an Equal Opportunity Employer</h2><p>We consider all qualified applicants without regard to protected characteristics, in line with applicable law.</p></div></main></body></html>',
+    'https://myjobs.adp.com/wwtexternalcareersite/cx/job-details?reqId=5001213867100',
+  );
+  assert.equal(eeo.title, 'Technology & Analytics Intern- 2027');
+  // A video player inside the application page (its frame's title once became the job's title).
+  const video = jp.applicationContext(
+    parseHTML('<html><head><title>Vimeo</title></head><body><h1>Our people</h1></body></html>').document,
+    'https://player.vimeo.com/video/1079445251?background=1',
+  );
+  assert.deepEqual([video.title, video.company, video.jobIds], ['', '', []]);
+  // A law firm's graduate portal on a recruiting platform: the subdomain is the firm, not the platform.
+  const portal = jp.applicationContext(
+    parseHTML(
+      '<html><head><title>DWF</title><meta property="og:site_name" content="AllHires"></head><body></body></html>',
+    ).document,
+    'https://dwf.grad.allhires.com/app/',
+  );
+  assert.equal(portal.company, 'DWF');
+  // An iCIMS sign-in page for careers.sig.com: the tab names the site, and "SIG" is Susquehanna International Group;
+  // another job on the company's own site is a different job.
+  const ICIMS = 'https://careers-sig.icims.com/jobs/10837/login?_sp=ec357c4d';
+  const sig = jp.applicationContext(
+    parseHTML('<html><head><title>Susquehanna International Group, LLP Careers</title></head><body></body></html>')
+      .document,
+    ICIMS,
+  );
+  assert.equal(sig.title, '');
+  assert.equal(jp.companyMatch('SIG', 'Susquehanna International Group, LLP'), true);
+  const other = posting({
+    url: 'https://careers.sig.com/intern-co-op/jobs/10838?lang=en-us',
+    title: 'Quantitative Trader Internship: Summer 2027',
+    company: 'Susquehanna International Group, LLP',
+    jobIds: ['10838'],
+  });
+  assert.equal(jp.compare(sig, other).verdict, 'different');
+  assert.equal(
+    jp.compare(sig, { ...other, url: 'https://careers.sig.com/intern-co-op/jobs/10837', jobIds: ['10837'] }).verdict,
+    'same',
+  );
+});
+
+test('one Workable programme in three cities (Clipperton, jobs.workable.com data): only the same city is the same job', () => {
+  const APPLY = 'https://apply.workable.com/clipperton/j/E398F06FC2/apply/';
+  const ctx = {
+    url: APPLY,
+    ats: jp.ats(APPLY),
+    title: 'Technology M&A Analyst - Paris - January or March 2027 (Internship)',
+    company: 'Clipperton',
+    location: 'Paris, Île-de-France, France',
+    jobIds: ['E398F06FC2'],
+  };
+  const job = (title, location) =>
+    posting({ title, company: 'Clipperton', location, url: 'https://jobs.workable.com/view/x/technology-m%26a' });
+  const munich = job('Technology M&A Analyst - Munich - Q4 2026 (Internship)', 'Munich, Bavaria, Germany');
+  const berlin = job('Technology M&A Analyst - Berlin - Q4 2026 (Internship)', 'Berlin, Berlin, Germany');
+  const paris = job(
+    'Technology M&A Analyst - Paris - January or March 2027 (Internship)',
+    'Paris, Île-de-France, France',
+  );
+  assert.equal(jp.compare(ctx, munich).verdict, 'different');
+  assert.equal(jp.compare(ctx, berlin).verdict, 'different');
+  assert.equal(jp.compare(ctx, paris).verdict, 'same');
+  // Without a location on the application page, the cities in the titles still tell them apart.
+  assert.equal(jp.compare({ ...ctx, location: '' }, munich).verdict, 'different');
+});
+
+test('50skills: the apply step, the job page behind it and its public JSON', async () => {
+  const APPLY = 'https://jobs.50skills.com/stifel/en/23155/apply';
+  assert.deepEqual(jp.ats(APPLY), { name: '50skills', company: 'stifel', jobId: '23155', stage: 'application' });
+  assert.deepEqual(
+    jp.descriptionUrls(APPLY).map((d) => d.url),
+    ['https://jobs.50skills.com/stifel/en/23155'],
+  );
+  const API = 'https://static-jobs-api.50skills.app/public/stifel/jobs/23155.json';
+  assert.equal(jp.apiRequests(APPLY)[0].url, API);
+  const p = jp.fromApi('50skills', json('api-50skills.json'), APPLY);
+  assert.deepEqual(
+    [p.title, p.company, p.location, p.jobIds],
+    ['Investment Banking - Analyst Intern - Business and Tech-Enabled Services', 'Stifel', 'Paris', ['23155']],
+  );
+  assert.match(p.description, /Duties & Responsibilities[\s\S]*Requirements/);
+  const ctx = { url: APPLY, ats: jp.ats(APPLY), title: '', company: 'Stifel', jobIds: ['23155'], links: [] };
+  const found = await jp.find(ctx, { fetch: mockFetch({ [API]: json('api-50skills.json') }) });
+  assert.deepEqual([found.verdict, found.source], ['same', API]);
+});
+
+test('Sainoo: a French board whose job page needs scripts; its JSON answers, and Lyon is not Paris', async () => {
+  const JOB = 'https://www.sainoo.com/jobs/10665';
+  assert.deepEqual(jp.ats(JOB), { name: 'sainoo', company: null, jobId: '10665', stage: 'description' });
+  const API = 'https://www.sainoo.com/api/v1/jobs/10665';
+  assert.equal(jp.apiRequests(JOB)[0].url, API);
+  const p = jp.fromApi('sainoo', json('api-sainoo.json'), JOB);
+  assert.deepEqual(
+    [p.title, p.company, p.location, p.jobIds],
+    ['Lyon - Stage Private Equity - Février 2027', 'Ciclad', 'Lyon, France', ['10665']],
+  );
+  assert.match(p.description, /Mission[\s\S]*Profil recherché/);
+  // The job page itself (a script shell) is the application page: the board's data confirms it by ID.
+  const ctx = { url: JOB, ats: jp.ats(JOB), title: '', company: '', jobIds: ['10665'], links: [] };
+  const found = await jp.find(ctx, { fetch: mockFetch({ [API]: json('api-sainoo.json') }) });
+  assert.deepEqual([found.verdict, found.source], ['same', API]);
+  // The same internship in Paris (the board's "similar job") is another vacancy.
+  const paris = posting({
+    url: 'https://www.sainoo.com/jobs/10666',
+    title: 'Paris - Stage Private Equity - Mars 2027',
+    company: 'Ciclad',
+    location: 'Paris, France',
+    jobIds: ['10666'],
+  });
+  assert.equal(
+    jp.compare({ ...ctx, title: p.title, company: 'Ciclad', location: 'Lyon, France' }, paris).verdict,
+    'different',
+  );
 });

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Analyst – application (acknowledgement groups)</title>
+    <style>
+      body {
+        font: 15px/1.4 system-ui, sans-serif;
+        margin: 32px auto;
+        max-width: 720px;
+      }
+      fieldset,
+      .field {
+        margin: 16px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Analyst</h1>
+    <form id="application">
+      <div class="field">
+        <label for="first_name">First Name</label>
+        <input id="first_name" name="first_name" />
+      </div>
+      <div class="field">
+        <label for="resume">Resume/CV</label>
+        <input id="resume" type="file" />
+      </div>
+      <!-- Greenhouse (Gemini): one required question, two statements to tick, both named question_…[]. -->
+      <fieldset class="checkbox" id="question_68277061[]">
+        <legend>Applicant Privacy Statement <span>*</span></legend>
+        <div>
+          <input type="checkbox" id="pp0" name="question_68277061[]" value="738460490" />
+          <label for="pp0"
+            >By clicking this box and submitting your application, you consent to our Applicant Privacy Statement.</label
+          >
+        </div>
+        <div>
+          <input type="checkbox" id="pp1" name="question_68277061[]" value="738460491" />
+          <label for="pp1"
+            >By clicking this box and submitting your application, you consent to third-party background checks as part
+            of your application process.</label
+          >
+        </div>
+      </fieldset>
+      <!-- An acknowledgement group with a marketing opt-in in it: only the acknowledgement is ticked. -->
+      <fieldset class="checkbox">
+        <legend>Privacy notice</legend>
+        <div>
+          <input type="checkbox" id="pn0" name="question_2[]" value="1" />
+          <label for="pn0">I have read and understood the candidate privacy notice.</label>
+        </div>
+        <div>
+          <input type="checkbox" id="pn1" name="question_2[]" value="2" />
+          <label for="pn1">Keep my details on file and contact me about future opportunities.</label>
+        </div>
+      </fieldset>
+      <!-- Ashby: an SMS opt-in whose only "consent" is the radio name. Never an acknowledgement. -->
+      <div class="field">
+        <p>
+          Check <strong>Yes</strong> or <strong>No</strong> to indicate your agreement to receive text message updates
+          regarding your job application. Message and data rates may apply.
+        </p>
+        <label><input type="radio" id="sms-yes" name="communicationConsent" value="given" /> Yes - I consent to receiving text messages</label>
+        <label><input type="radio" id="sms-no" name="communicationConsent" value="notGiven" /> No - I do not consent to receiving text messages</label>
+      </div>
+    </form>
+  </body>
+</html>

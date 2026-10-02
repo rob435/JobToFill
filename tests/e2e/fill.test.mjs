@@ -255,8 +255,88 @@ test('Ashby-style form: Yes/No toggle buttons, ARIA radios and checkboxes, label
   assert.equal(await fileName(page, '#autofill-resume'), '', '"Autofill from resume" would rewrite the form');
   assert.equal(await checked(page, '#src0'), true, 'checkbox group whose boxes have different names');
   assert.equal(await checked(page, '#src1'), false);
+  assert.equal(await checked(page, '#src6'), false, 'one long option keeps the list a list');
   assert.equal(await checked(page, '#deg0'), true);
   assert.equal(await checked(page, '#deg1'), false);
+  await page.close();
+});
+
+test('acknowledgement groups: every statement you agree to, never an opt-in or an SMS sign-up', async () => {
+  const page = await h.open('consent-groups.html');
+  const r = await h.fill(page);
+  assert.equal(r.consents, 2, 'two acknowledgement groups; the SMS question is not one');
+  assert.equal(await checked(page, '#pp0'), false, 'left for you by default');
+  await page.close();
+  try {
+    await h.setSettings({ consents: true });
+    const again = await h.open('consent-groups.html');
+    await h.fill(again);
+    assert.equal(await checked(again, '#pp0'), true, 'privacy statement ticked');
+    assert.equal(await checked(again, '#pp1'), true, 'second statement of the same question ticked too');
+    assert.equal(await checked(again, '#pn0'), true);
+    assert.equal(await checked(again, '#pn1'), false, 'marketing opt-in in the same group left alone');
+    assert.equal(await checked(again, '#sms-yes'), false, 'SMS updates are an opt-in');
+    assert.equal(await checked(again, '#sms-no'), false);
+    await again.close();
+  } finally {
+    await h.setSettings({ consents: false });
+  }
+});
+
+test('Recruitee / Personio-style form: French labels, a dial code already in the phone box, custom question ids', async () => {
+  const page = await h.open('recruitee.html');
+  const r = await h.fill(page);
+  assert.equal(r.error, undefined);
+  assert.equal(await value(page, '#input-candidate\\.name-6'), 'Ada Lovelace');
+  assert.equal(await value(page, '#input-candidate\\.email-7'), 'ada@example.com');
+  assert.equal(await value(page, '#input-candidate\\.phone-8'), '+1 415 555 0100', '"+33" is not an answer');
+  assert.equal(await text(page, '#country-select-input-candidate\\.phone-8'), 'United States', 'the widget follows');
+  assert.equal(await fileName(page, '#input-candidate\\.photo-9'), '', 'a photo upload never gets the CV');
+  assert.equal(await fileName(page, '#input-candidate\\.cv-10'), 'Ada_Lovelace_CV.pdf');
+  assert.equal(await selectedText(page, '#field-custom_attribute_4621875'), 'Please select');
+  assert.equal(await value(page, '#field-custom_attribute_4621876'), '', 'not a field of study');
+  assert.equal(await value(page, '#field-custom_attribute_4621877'), '');
+  await page.close();
+});
+
+test('UK law-firm style form: school and A-level boxes never get your degree, modules are not job titles', async () => {
+  const page = await h.open('law-firm.html');
+  const r = await h.fill(page);
+  assert.equal(r.error, undefined);
+  assert.equal(await value(page, '#title'), '', '"Title" before the name boxes is Mr / Ms, not your job title');
+  assert.equal(await value(page, '#forename'), 'Ada');
+  assert.equal(await value(page, '#surname'), 'Lovelace');
+  // Secondary education: the profile has a university only, so these stay empty.
+  assert.equal(await value(page, '#sch_name'), '', 'not "University of Cambridge"');
+  assert.equal(await value(page, '#sch_postcode'), '', "not your postcode: it's the school's");
+  assert.equal(await value(page, '#sch_from'), '');
+  assert.equal(await value(page, '#al_subject_1'), '', 'A-level subject is not your degree subject');
+  assert.equal(await value(page, '#al_grade_1'), '', 'A-level grade is not your GPA');
+  assert.equal(await selectedText(page, '#al_type_1'), 'Please select');
+  // University: entry 1 of the profile.
+  assert.equal(await value(page, '#uni'), 'University of Cambridge');
+  assert.equal(await value(page, '#uni_degree'), 'Bachelor of Science');
+  assert.equal(await value(page, '#uni_subject'), 'Mathematics');
+  assert.equal(await value(page, '#uni_from'), '09/2012');
+  assert.equal(await value(page, '#uni_to'), '06/2016');
+  assert.equal(await value(page, '#mod_title_1'), '', 'a module is not a job title');
+  assert.equal(await value(page, '#overall'), '', '"percentage to date" is not an end date');
+  assert.equal(await selectedText(page, '#tc_start'), 'Please select');
+  await page.close();
+});
+
+test('Pinpoint custom questions: Yes/No inside a page-wide fieldset, school vs degree grades, processing consent', async () => {
+  const page = await h.open('pinpoint-questions.html');
+  const r = await h.fill(page);
+  assert.equal(r.error, undefined);
+  assert.equal(await checked(page, '#answers_0_true'), true, 'right to work: the question, not "3. Questions"');
+  assert.equal(await checked(page, '#answers_1_false'), true, 'sponsorship: No');
+  assert.equal(await value(page, '#answers_2_text'), 'University of Cambridge', '"Please state" is not a US state');
+  assert.equal(await value(page, '#answers_3_text'), '', 'an Abitur grade is not your degree GPA');
+  assert.equal(await value(page, '#answers_4_text'), '3.9');
+  assert.equal(await value(page, '#answers_5_text'), 'Analytical Engines Inc');
+  assert.equal(await checked(page, '#process_information'), false, 'acknowledgements are left for you by default');
+  assert.equal(r.consents, 1, '"Allow us to process your personal information" is an acknowledgement');
   await page.close();
 });
 

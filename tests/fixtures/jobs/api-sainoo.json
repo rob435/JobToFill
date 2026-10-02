@@ -1,0 +1,34 @@
+{
+ "status": "ok",
+ "data": {
+  "id": 10665,
+  "position_title": "Lyon - Stage Private Equity - Février 2027",
+  "visible_on_board": true,
+  "employment_type": "Other",
+  "brief": "<p>Ciclad est un fonds de capital-investissement qui accompagne la transmission et le développement de PME et ETI françaises, avec une équipe basée à Paris, Lyon et Bordeaux.</p><p><strong>Mission</strong><br />Au sein de l&#39;équipe d&rsquo;investissement, le stagiaire participe aux nouveaux investissements et au suivi des participations :</p><ul><li>Analyse d&rsquo;opportunités d&rsquo;investissement et des rapports d&rsquo;audit</li><li>Recherches sectorielles</li><li>Modélisation (business plan, structuration LBO, valorisation)</li><li>Rédaction de notes pour le comité d&rsquo;investissement</li></ul><p><strong>Profil recherché</strong><br />Étudiant en école de commerce ou d&rsquo;ingénieurs, premier stage en finance d&rsquo;entreprise, rigueur et esprit d&rsquo;équipe.</p>",
+  "deadline": null,
+  "experiences": [
+   "Internship"
+  ],
+  "link": "https://ciclad.sainoo.com/jobs/10665?standalone=true",
+  "state": "published",
+  "similar_jobs": [
+   {
+    "id": 10666,
+    "position_title": "Paris - Stage Private Equity - Mars 2027",
+    "employment_type": "Other",
+    "brief": "<p>Même équipe, à Paris.</p>"
+   }
+  ],
+  "office": {
+   "id": 9091,
+   "country": "France",
+   "city": "Lyon"
+  },
+  "company": {
+   "id": 4320,
+   "name": "Ciclad",
+   "website": "https://www.ciclad.com/en/"
+  }
+ }
+}

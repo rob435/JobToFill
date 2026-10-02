@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <title>Private Equity Intern – Pinpoint custom questions</title>
+    <style>
+      body {
+        font: 15px/1.4 system-ui, sans-serif;
+        margin: 32px auto;
+        max-width: 680px;
+      }
+      .pad-v-3 {
+        margin: 14px 0;
+      }
+      label {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Modelled on *.pinpointhq.com: every custom question sits in one big "3. Questions" fieldset; a Yes/No
+         question's radios are labelled by hidden divs that repeat the question ("…the UK?  yes"). -->
+    <form id="application">
+      <fieldset>
+        <legend>1. Personal Details</legend>
+        <label for="first">First Name</label><input id="first" name="application[first_name]" />
+        <label for="last">Last Name</label><input id="last" name="application[last_name]" />
+      </fieldset>
+      <fieldset>
+        <legend>3. Questions</legend>
+        <div class="pad-v-3">
+          <label for="answers_0_boolean_answer"><span>Do you have the right to work in the UK? </span></label>
+          <div>
+            <div style="display: none" id="answer-label-0-true">Do you have the right to work in the UK? yes</div>
+            <input type="radio" id="answers_0_true" name="answers[0][boolean_answer]" value="true" aria-labelledby="answer-label-0-true" />
+            <label for="answers_0_true" aria-labelledby="answer-label-0-true">Yes</label>
+            <div style="display: none" id="answer-label-0-false">Do you have the right to work in the UK? no</div>
+            <input type="radio" id="answers_0_false" name="answers[0][boolean_answer]" value="false" aria-labelledby="answer-label-0-false" />
+            <label for="answers_0_false" aria-labelledby="answer-label-0-false">No</label>
+          </div>
+        </div>
+        <div class="pad-v-3">
+          <label for="answers_1_boolean_answer"><span>Will you now or in the future require visa sponsorship?</span></label>
+          <div>
+            <div style="display: none" id="answer-label-1-true">Will you now or in the future require visa sponsorship? yes</div>
+            <input type="radio" id="answers_1_true" name="answers[1][boolean_answer]" value="true" aria-labelledby="answer-label-1-true" />
+            <label for="answers_1_true" aria-labelledby="answer-label-1-true">Yes</label>
+            <div style="display: none" id="answer-label-1-false">Will you now or in the future require visa sponsorship? no</div>
+            <input type="radio" id="answers_1_false" name="answers[1][boolean_answer]" value="false" aria-labelledby="answer-label-1-false" />
+            <label for="answers_1_false" aria-labelledby="answer-label-1-false">No</label>
+          </div>
+        </div>
+        <div class="pad-v-3">
+          <label for="answers_2_text">Please state what university you studied at</label>
+          <input id="answers_2_text" name="answers[2][text_answer]" />
+        </div>
+        <div class="pad-v-3">
+          <label for="answers_3_text">Please confirm your final grade obtained in School Graduation (Abitur or equivalent)</label>
+          <input id="answers_3_text" name="answers[3][text_answer]" />
+        </div>
+        <div class="pad-v-3">
+          <label for="answers_4_text">Please confirm your final grade obtained in Bachelor’s Degree</label>
+          <input id="answers_4_text" name="answers[4][text_answer]" />
+        </div>
+        <div class="pad-v-3">
+          <label for="answers_5_text">Which firm/organisation do you currently work for?</label>
+          <input id="answers_5_text" name="answers[5][text_answer]" />
+        </div>
+      </fieldset>
+      <div class="pad-v-3">
+        <input type="checkbox" id="process_information" name="application[process_information]" />
+        <label for="process_information">(Required) Allow us to process your personal information.</label>
+      </div>
+    </form>
+  </body>
+</html>

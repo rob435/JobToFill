@@ -159,8 +159,9 @@
       case 'combobox':
         return !!el.value.trim() || chipsOf(el).length > 0;
       default: {
+        // A bare scheme or a dial code the widget put there ("+33" in react-phone-number-input) is still empty.
         const v = (el.value || '').trim();
-        return !!v && !/^https?:\/\/$/.test(v);
+        return !!v && !/^https?:\/\/$/.test(v) && !/^\+\d{1,4}$/.test(v);
       }
     }
   }
@@ -508,8 +509,11 @@
           return { status: 'filled', target: members[idx] };
         }
         case 'checkboxes': {
-          // A list ("London, New York") ticks every match; a single answer ticks its one option.
+          // A list ("London, New York") ticks every match; a single answer ticks its one option; an
+          // acknowledgement ticks each statement you agree to ("…you consent to our privacy statement").
           let picks = v.kind === 'list' ? M().matchAll(desc.options, v) : [];
+          if (v.consent)
+            picks = desc.options.map((o, i) => (JTF.fields.isAcknowledgement(o.text) ? i : -1)).filter((i) => i >= 0);
           if (!picks.length) {
             const idx = M().matchOption(desc.options, v);
             picks = idx >= 0 ? [idx] : M().matchAll(desc.options, v);
@@ -550,7 +554,11 @@
           return { status: 'filled' };
         }
         default: {
-          const text = M().formatForText(v, desc);
+          let text = M().formatForText(v, desc);
+          // The box already shows a dial code: type the whole international number, so the widget's own
+          // country picker follows it ("+33" -> "+44 7700 900123").
+          if (v.kind === 'phone' && v.international && /^\+\d{1,4}$/.test((el.value || '').trim()))
+            text = M().formatForText(Object.assign({}, v, { text: v.international }), desc);
           if (!text) return { status: 'nomatch' };
           history.push({ el, kind, prev: el.value });
           typeValue(el, text);
