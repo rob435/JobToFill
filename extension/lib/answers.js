@@ -128,12 +128,16 @@
     const j = profile.job || {};
     const c = profile.compliance || {};
     const p = profile.personal || {};
+    const rights = JTF.fields
+      .workCountries(profile)
+      .map((code) => (JTF.geo.COUNTRIES.find((r) => r[0] === code) || [code, '', code])[2])
+      .filter(Boolean);
     const facts = [
       p.nationality && `Nationality: ${p.nationality}`,
       j.authorized &&
         `Has the right to work where they live (${(profile.address && profile.address.country) || 'home country'}): ${j.authorized}`,
       j.sponsorship && `Needs visa sponsorship: ${j.sponsorship}`,
-      j.workCountries && `Countries where they have the right to work: ${j.workCountries}`,
+      rights.length && `Countries where they have the right to work: ${rights.join(', ')}`,
       j.relocate && `Willing to relocate: ${j.relocate}`,
       j.onsite && `Happy to work in the office / on site full time: ${j.onsite}`,
       j.locations && `Preferred locations: ${j.locations}`,
@@ -210,7 +214,7 @@
       '- First person, as the candidate. Plain, specific and confident: short declarative sentences, concrete detail from the material (what they did, how, the result), no flattery, no filler. Match the voice of the PREVIOUS ANSWERS when there are any.',
       '- Keep to each question’s "limit". Never exceed a word, sentence or character limit.',
       '- "Why us / why this role / what excites you" answers: connect two or three specific things the posting says about the work, team or programme to specific things the candidate has done or studied. Name the employer.',
-      '- Follow-up boxes ("If yes, please give details", "If other, please specify", "If not, write N/A"): look at "follows" (the question before and its answer). Answer only when it applies, with the detail it asks for; write "N/A" only when the question itself says to; otherwise skip.',
+      '- Follow-up boxes ("If yes, please give details", "If other, please specify", "If not, write N/A"): look at "follows" (the question before and its answer, or the id of a question in this list, whose answer is yours). Answer only when it applies, with the detail it asks for; write "N/A" only when the question itself says to; otherwise skip.',
       '- Short factual boxes (hometown, current university, strongest programming language, preferred name pronunciation): a few words.',
       '- Optional catch-all boxes ("Anything else you’d like to share?", "Additional information", "Use this space to clarify any answers", "Note to the hiring manager"): skip them.',
       '- No placeholders or brackets, no markdown, no headings, no bullet points unless the question asks for bullets, no dashes (— or –) as punctuation, no exclamation marks.',
@@ -220,7 +224,7 @@
     ].join('\n');
   }
 
-  function questionJson(item) {
+  function questionJson(item, batch) {
     const kind = answerKind(item);
     const q = { id: item.id, question: U.cleanLabel(item.question, 600), type: kind };
     if (item.help && norm(item.help) !== norm(item.question)) q.help = U.cleanLabel(item.help, 300);
@@ -229,7 +233,14 @@
     const limit = ['essay', 'text'].includes(kind) ? limitText(item, kind) : '';
     if (limit) q.limit = limit;
     if (item.required) q.required = true;
-    if (item.follows && item.follows.question)
+    // The question before, with its answer on the page; one being answered in this same list is named by its
+    // id, so the two answers agree ("Do you have other offers?" then "If yes, list them").
+    const before =
+      item.follows && item.follows.question && !item.follows.answer
+        ? (batch || []).find((b) => b !== item && norm(b.question) === norm(item.follows.question))
+        : null;
+    if (before) q.follows = { id: before.id };
+    else if (item.follows && item.follows.question)
       q.follows = {
         question: U.cleanLabel(item.follows.question, 200),
         answer: item.follows.answer ? U.cleanLabel(item.follows.answer, 200) : '(not answered)',
@@ -266,7 +277,15 @@
           L().clip(p.answer, 1500),
         );
     }
-    parts.push('', 'QUESTIONS:', JSON.stringify(items.map(questionJson), null, 1));
+    parts.push(
+      '',
+      'QUESTIONS:',
+      JSON.stringify(
+        items.map((it) => questionJson(it, items)),
+        null,
+        1,
+      ),
+    );
     return parts.join('\n');
   }
 

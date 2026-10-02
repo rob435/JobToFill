@@ -2271,6 +2271,7 @@
     KINDS: { TEXTISH, CHOICE, DEFAULT_KINDS },
     resolve,
     labelOf,
+    workCountries,
     eduLevelOf,
     languagesNamed,
     isAcknowledgement,

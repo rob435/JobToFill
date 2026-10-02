@@ -3,3 +3,4 @@ dist/
 test-results/
 *.log
 .DS_Store
+tests/live/*-report.json
