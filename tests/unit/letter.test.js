@@ -453,3 +453,11 @@ test('letter: finance terms and training programmes are not stock phrases or inv
   assert.doesNotMatch(say('I am applying for the 2027 ACA Graduate Programme in Deal Advisory.'), /aca/i);
   assert.match(say('I am ACA qualified.'), /doesn’t mention aca/);
 });
+
+test('letter: a letter a few words under the target is a warning, far under is an error', () => {
+  const count = L.checkLetter(good, ctx).words;
+  const check = L.checkLetter(good, { ...ctx, minWords: count + 10 });
+  assert.ok(!check.errors.some((e) => /short/i.test(e)));
+  assert.ok(check.warnings.some((w) => /A little short/.test(w)));
+  assert.ok(L.checkLetter(good, { ...ctx, minWords: count + 60 }).errors.some((e) => /Too short/.test(e)));
+});

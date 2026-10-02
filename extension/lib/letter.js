@@ -268,7 +268,9 @@
       errors.push('Start with a greeting such as “Dear … Recruitment Team,”.');
     if (paragraphs.length < 3) errors.push(`Use 4 or 5 paragraphs (there are ${paragraphs.length}).`);
     if (paragraphs.length > 6) errors.push(`Use 4 or 5 paragraphs (there are ${paragraphs.length}); merge some.`);
-    if (count < min) errors.push(`Too short: ${count} words. Write ${min}–${max} words.`);
+    // A few words under is still a full letter: say so, but don't fail it.
+    if (count < min - 40) errors.push(`Too short: ${count} words. Write ${min}–${max} words.`);
+    else if (count < min) warnings.push(`A little short: ${count} words (aim for ${min}–${max}).`);
     if (count > max) errors.push(`Too long: ${count} words. Cut it to ${min}–${max} words.`);
     const closingParagraph = paragraphs[paragraphs.length - 1] || '';
     if (paragraphs.length >= 2 && (!/\bthank(s| you)\b/i.test(closingParagraph) || words(closingParagraph) > 70))
