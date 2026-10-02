@@ -983,6 +983,24 @@
   // A format spelled out in the label: "Start date (MM/YYYY)", "Date of birth, dd-mm-yyyy".
   const DATE_PATTERN = /\b(dd|mm|yyyy|yy)(\s*[/.-]\s*(dd|mm|yyyy|yy)){1,2}\b/i;
 
+  /**
+   * How the page writes a date it doesn't describe: 'mdy' (US), 'ymd' (East Asia, Sweden), 'dmy.' (German and
+   * other day.month.year countries) or 'dmy'. From the page's language, else the site's country domain; an
+   * English page on a .com stays month first, as most US-built job sites expect.
+   */
+  function dateOrder(desc) {
+    const lang = String(desc.lang || '').toLowerCase();
+    const [code, region = ''] = lang.split(/[-_]/);
+    if (region === 'us' || region === 'ph') return 'mdy';
+    if (/^(ja|ko|sv|lt|hu)$/.test(code) || (code === 'zh' && region !== 'hk' && region !== 'sg')) return 'ymd';
+    if (/^(de|ru|pl|cs|sk|fi|no|nb|nn|da|tr|uk|ro|hr|sl|sr|et|lv|bg|is)$/.test(code)) return 'dmy.';
+    if (code && (code !== 'en' || region)) return 'dmy';
+    const host = String(desc.host || '').toLowerCase();
+    if (/\.(de|at|ch|pl|cz|sk|fi|no|dk|ru|tr)$/.test(host)) return 'dmy.';
+    if (/\.(uk|ie|eu|fr|es|it|nl|be|pt|lu|au|nz|in|hk|sg|za|ae)$|\.eu\./.test(host)) return 'dmy';
+    return 'mdy';
+  }
+
   function formatDate(v, desc) {
     const d = v.date;
     const y = String(d.year);
@@ -1036,8 +1054,13 @@
     if (/^\s*y{4}\s*$/.test(hint)) return y;
     if (v.defaultFormat === 'MM/YY')
       return desc.maxLength && desc.maxLength >= 7 ? `${mm}/${y}` : `${mm}/${y.slice(2)}`;
-    if (d.day) return [mm, dd, y].join('/');
-    if (d.month) return [mm, y].join('/');
+    const order = dateOrder(desc);
+    if (d.day) {
+      if (order === 'ymd') return [y, mm, dd].join('-');
+      if (order === 'dmy.') return [dd, mm, y].join('.');
+      return order === 'dmy' ? [dd, mm, y].join('/') : [mm, dd, y].join('/');
+    }
+    if (d.month) return order === 'ymd' ? [y, mm].join('-') : [mm, y].join(order === 'dmy.' ? '.' : '/');
     return y;
   }
 

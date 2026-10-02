@@ -475,6 +475,9 @@
       autocomplete: (el.getAttribute('autocomplete') || '').toLowerCase(),
       maxLength: el.maxLength > 0 ? el.maxLength : 0,
       placeholderRaw: el.getAttribute('placeholder') || '',
+      // The page's language and site, for formats it doesn't spell out (day or month first).
+      lang: ((el.closest && el.closest('[lang]')) || document.documentElement).getAttribute('lang') || '',
+      host: location.hostname,
       options: null,
       signals: s,
     };

@@ -1387,6 +1387,15 @@ test('round 2 (Maven / CRA): "If you selected …" boxes, first of your family, 
   assert.equal(matcher.formatForText(v, desc({ label: 'Start date', placeholder: 'Pick date...' })), '06/28/2027');
   assert.equal(matcher.formatForText(v, desc({ label: 'When can you start? (DD/MM/YYYY)' })), '28/06/2027');
   assert.equal(matcher.formatForText(v, desc('Available from')), '06/28/2027', 'a short label keeps the usual format');
+  // No format on the page: its language or country decides day or month first (Personio on a German site).
+  const on = (extra) => ({ ...desc('Available from'), ...extra });
+  assert.equal(matcher.formatForText(v, on({ lang: 'de', host: 'acme.jobs.personio.de' })), '28.06.2027');
+  assert.equal(matcher.formatForText(v, on({ lang: '', host: 'acme.jobs.personio.de' })), '28.06.2027');
+  assert.equal(matcher.formatForText(v, on({ lang: 'en-GB', host: 'careers.example.com' })), '28/06/2027');
+  assert.equal(matcher.formatForText(v, on({ lang: 'en', host: 'job-boards.eu.greenhouse.io' })), '28/06/2027');
+  assert.equal(matcher.formatForText(v, on({ lang: 'en-US', host: 'acme.co.uk' })), '06/28/2027', 'the page says US');
+  assert.equal(matcher.formatForText(v, on({ lang: 'en', host: 'jobs.lever.co' })), '06/28/2027');
+  assert.equal(matcher.formatForText(v, on({ lang: 'ja', host: 'example.jp' })), '2027-06-28');
 });
 
 test('Greenhouse education block, then screening questions asking about it again (DV Trading, Schonfeld)', () => {
