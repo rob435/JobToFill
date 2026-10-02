@@ -29,6 +29,7 @@ function sectionFor(type) {
   const prefixes = {
     'links.': 'links',
     'job.': 'work',
+    'compliance.': 'work',
     'edu.': 'education',
     'exp.': 'experience',
     'eeo.': 'eeo',
@@ -164,6 +165,11 @@ async function answerWithAi() {
 /** The AI step's card: progress while it runs, then what it answered and what it left for you. */
 function renderAi(run) {
   const box = $('#ai');
+  if (run && run.status === 'done' && !run.asked) {
+    box.hidden = false;
+    box.replaceChildren(el('p', { className: 'result-list', textContent: 'No empty questions left on this page.' }));
+    return;
+  }
   if (!run || (!run.asked && run.status !== 'running' && run.status !== 'error')) {
     box.hidden = true;
     return;
@@ -212,7 +218,7 @@ function renderAi(run) {
       el('strong', {
         textContent: filled ? `AI answered ${plural(filled, 'question')}` : 'AI answers',
       }),
-      aiButton('Again', answerWithAi),
+      aiButton('Answer empty ones', answerWithAi),
     );
     if (filled)
       body.push(

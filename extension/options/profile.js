@@ -162,9 +162,24 @@ const FORMS = {
           f('job.authorized', 'Legally authorized to work?', {
             type: 'select',
             options: YES_NO,
-            hint: 'In the country you are applying in.',
+            hint: 'In the country you live in.',
           }),
           f('job.sponsorship', 'Need visa sponsorship (now or later)?', { type: 'select', options: YES_NO }),
+          f('job.workCountries', 'Countries you can work in', {
+            wide: true,
+            placeholder: 'e.g. United Kingdom, Ireland',
+            hint: 'A question about another country (“…authorized to work in the United States?”) is answered No, with sponsorship needed. Leave empty to use your nationality and, if authorized, where you live. EU citizens count for the whole EU / EEA, British and Irish citizens for both countries.',
+          }),
+          f('job.onsite', 'Happy to work in the office full time?', {
+            type: 'select',
+            options: YES_NO,
+            hint: '“Are you willing to work in the office 5 days a week?”',
+          }),
+          f('job.adjustments', 'Need adjustments for the recruitment process?', {
+            type: 'select',
+            options: YES_NO,
+            hint: '“Do you require any reasonable adjustments to take part in interviews or assessments?”',
+          }),
           f('job.relocate', 'Willing to relocate?', { type: 'select', options: YES_NO }),
           f('job.over18', 'At least 18 years old?', { type: 'select', options: YES_NO }),
           f('job.clearance', 'Security clearance held', {
@@ -187,6 +202,7 @@ const FORMS = {
         hint: 'Banks and law firms ask these. Answer for most employers; add a custom answer for the exceptions.',
         fields: [
           f('compliance.previouslyEmployed', 'Worked for the employer before?', { type: 'select', options: YES_NO }),
+          f('compliance.previouslyApplied', 'Applied to the employer before?', { type: 'select', options: YES_NO }),
           f('compliance.relatives', 'Relatives working for the employer?', { type: 'select', options: YES_NO }),
           f('compliance.relativesDetails', 'Relatives: details', {
             wide: true,
@@ -521,7 +537,7 @@ function renderAnswers({ state, scheduleSave }) {
 
 /* -------------------------------------------------------------- documents */
 
-const DOC_LABELS = { resume: 'Resume / CV', coverLetter: 'Cover letter' };
+const DOC_LABELS = { resume: 'Resume / CV', coverLetter: 'Cover letter', transcript: 'Academic transcript' };
 const MAX_DOC_BYTES = 10 * 1048576;
 
 function readAsDataUrl(file) {
@@ -599,7 +615,7 @@ function renderDocuments({ state }) {
   return [
     sectionHead(
       'Resume & files',
-      'Attached automatically to resume / CV and cover-letter upload buttons. Stored per profile, so a “Data analyst” profile can carry a different resume.',
+      'Attached automatically to resume / CV, cover-letter and transcript upload buttons. Stored per profile, so a “Data analyst” profile can carry a different resume.',
     ),
     group(null, null, wrap),
   ];

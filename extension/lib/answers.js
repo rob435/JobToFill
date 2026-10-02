@@ -212,6 +212,7 @@
       '- "Why us / why this role / what excites you" answers: connect two or three specific things the posting says about the work, team or programme to specific things the candidate has done or studied. Name the employer.',
       '- Follow-up boxes ("If yes, please give details", "If other, please specify", "If not, write N/A"): look at "follows" (the question before and its answer). Answer only when it applies, with the detail it asks for; write "N/A" only when the question itself says to; otherwise skip.',
       '- Short factual boxes (hometown, current university, strongest programming language, preferred name pronunciation): a few words.',
+      '- Optional catch-all boxes ("Anything else you’d like to share?", "Additional information", "Use this space to clarify any answers", "Note to the hiring manager"): skip them.',
       '- No placeholders or brackets, no markdown, no headings, no bullet points unless the question asks for bullets, no dashes (— or –) as punctuation, no exclamation marks.',
       `- Avoid these words and phrases: ${L().CLICHES.slice(0, 44).join(', ')}.`,
       '',

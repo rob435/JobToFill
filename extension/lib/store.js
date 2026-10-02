@@ -51,7 +51,7 @@
     answerNotes: '',
   };
 
-  const DOC_TYPES = ['resume', 'coverLetter'];
+  const DOC_TYPES = ['resume', 'coverLetter', 'transcript'];
   const HISTORY_LIMIT = 500;
   const LETTER_LIMIT = 25;
   const area = () => JTF.api.storage.local;
@@ -546,7 +546,7 @@
     if (Array.isArray(data.answers)) set.answers = data.answers;
     if (data.vault) set.vault = data.vault;
     for (const [key, doc] of Object.entries(data.documents || {})) {
-      if (/^doc:[^:]+:(resume|coverLetter)$/.test(key)) set[key] = doc;
+      if (/^doc:[^:]+:(resume|coverLetter|transcript)$/.test(key)) set[key] = doc;
     }
     for (const [key, kit] of Object.entries(data.kits || {})) {
       if (/^kit:[^:]+$/.test(key) && kit && typeof kit === 'object') set[key] = kit;

@@ -5,7 +5,7 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { PROFILE, checked, launch, selectedText, value } from './harness.mjs';
+import { PROFILE, checked, launch, selectedText, until, value } from './harness.mjs';
 
 const ESSAY = (n) =>
   `I want to join Acme Capital’s Rates desk because the work is building pricing and risk tools in Python that traders use every day. I built a reconciliation tool in Python that checks ${n} trades a night, and explaining breaks to traders is how I learnt that a tool is only useful when people trust it.`;
@@ -93,23 +93,28 @@ test('the questions a fill leaves empty are answered by the AI, checked, filled 
   assert.equal(await value(page, '#why'), ESSAY('40,000'), 'the invented 90,000 was sent back and fixed');
   assert.equal(await selectedText(page, '#python'), 'Yes');
   assert.equal(await checked(page, 'input[value="rates"]'), true);
-  assert.equal(await selectedText(page, '#hear'), 'Online job board', '"Trackr" isn’t an option: the AI mapped it');
+  // "Trackr" isn't an option: the rules take its kind of option, so the model isn't asked.
+  assert.equal(await selectedText(page, '#hear'), 'Online job board');
   assert.equal(await selectedText(page, '#sat'), 'Did not take');
-  assert.equal(r.ai.filled, 5, JSON.stringify(r.ai.items));
+  assert.equal(r.ai.filled, 4, JSON.stringify(r.ai.items));
 
   // Never sent: a diversity question, a declaration, and a legal question there's no answer guidance for.
   const sent = answerCalls()
     .map((c) => c.last)
     .join('\n');
   assert.doesNotMatch(sent, /socio-economic|privacy notice|convicted/i);
+  const asked = answerCalls()
+    .filter((c) => c.last.includes('QUESTIONS:'))
+    .flatMap((c) => JSON.parse(c.last.slice(c.last.indexOf('QUESTIONS:') + 10)).map((q) => q.question));
+  assert.ok(!asked.some((q) => /how did you hear/i.test(q)), asked.join(' | '));
   assert.equal(await selectedText(page, '#ses'), 'Select...');
   assert.equal(await selectedText(page, '#convicted'), 'Select...');
   assert.equal(await checked(page, '#privacy'), false);
   const left = r.ai.skipped.map((s) => s.question).join(' | ');
   assert.match(left, /convicted/, 'the legal question is listed as left for you');
-  // The job's description (JSON-LD on the page) went with the questions, as did the profile's "Trackr".
+  // The job's description (JSON-LD on the page) went with the questions, and so did where the job was found.
   assert.match(sent, /Rates desk makes markets in government bonds/);
-  assert.match(sent, /"profileValue": "Trackr"/);
+  assert.match(sent, /Where they found this job: Trackr/);
   const fixes = answerCalls().filter((c) => /^Some answers need fixing/.test(c.last));
   assert.equal(fixes.length, 1);
   assert.match(fixes[0].last, /90000/);
@@ -118,11 +123,16 @@ test('the questions a fill leaves empty are answered by the AI, checked, filled 
   const saved = await h.bg(() => globalThis.JTF.store.getAnswers());
   assert.equal(saved.length, 1);
   assert.equal(saved[0].company, 'Acme Capital');
-  assert.equal(saved[0].items.length, 5);
+  assert.equal(saved[0].items.length, 4);
+
+  // "Learn from this page" doesn't offer the AI's answers as custom answers (they name this employer).
+  const learnt = await h.handler('jtf:learn', page);
+  assert.ok(!learnt.suggestions.some((x) => /why do you want/i.test(x.question || '')), JSON.stringify(learnt));
 
   // Undo takes the AI's answers back along with the rest of the fill.
   const undone = await h.handler('jtf:undo', page);
   assert.ok(undone.undone >= 8, JSON.stringify(undone));
+  assert.equal(await selectedText(page, '#hear'), 'Select...');
   assert.equal(await value(page, '#why'), '');
   assert.equal(await selectedText(page, '#python'), 'Select...');
   await page.close();
@@ -156,5 +166,41 @@ test('with AI answers switched off, the fill says how many questions are left an
   assert.equal(run.status, 'done', JSON.stringify(run));
   assert.equal(await selectedText(page, '#python'), 'Yes');
   await h.setSettings({ aiAnswers: true });
+  await page.close();
+});
+
+test('the popup shows the AI step as it runs, then what it answered and what it left', async () => {
+  await h.bg(() => globalThis.JTF.api.storage.local.set({ answers: [] }));
+  const page = await h.open('ai-questions.html');
+  const tabId = await h.tabId(page);
+  const popup = await h.extPage(`popup/popup.html?tab=${tabId}`);
+  await popup.call(() => document.querySelector('#fill').click());
+  const text = await until(
+    popup.call,
+    () => {
+      const box = document.querySelector('#ai');
+      return box && !box.hidden && /AI answered/.test(box.textContent) ? box.textContent : null;
+    },
+    null,
+    20000,
+  );
+  assert.match(text, /AI answered 4 questions/);
+  assert.match(text, /Do you have practical Python experience\?/);
+  assert.match(text, /Rates and inflation/);
+  assert.match(text, /2 questions left for you/);
+  assert.match(text, /convicted/);
+  assert.equal(await selectedText(page, '#python'), 'Yes');
+  await popup.close();
+  await page.close();
+});
+
+test('a page that isn’t a job application (a checkout) never goes to the AI', async () => {
+  const before = ai.calls.length;
+  const page = await h.open('checkout.html');
+  const r = await fillAndWait(page);
+  assert.ok(r.filled > 0);
+  assert.equal(r.pending, 0);
+  assert.equal(r.ai, undefined);
+  assert.equal(ai.calls.length, before);
   await page.close();
 });

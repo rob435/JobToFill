@@ -11,7 +11,16 @@
 
   // lastFill: what the latest fill changed (AI answers are added to it, so one Undo takes both back);
   // pending: the questions it left empty, by id, for the AI's answers; hold: keeps the background awake.
-  const state = { history: [], lastFill: [], overlay: null, ui: null, pending: new Map(), hold: null };
+  // aiFilled: field -> the answer the AI put there (remembered with the application, so not "learnt" again).
+  const state = {
+    history: [],
+    lastFill: [],
+    overlay: null,
+    ui: null,
+    pending: new Map(),
+    hold: null,
+    aiFilled: new WeakMap(),
+  };
 
   function send(message) {
     return JTF.api.runtime.sendMessage(message).catch((err) => ({ error: String((err && err.message) || err) }));
@@ -328,7 +337,8 @@
     if (history.length) state.history = history;
     state.lastFill = history;
     report.undoable = state.history.length > 0;
-    if (!only) report.pending = await pendingQuestions(profile, context, { peek: !!payload.ai });
+    // Only a job application's leftovers go to the AI (never a checkout's gift message or a sign-up page).
+    if (!only && context.jobContext) report.pending = await pendingQuestions(profile, context, { peek: !!payload.ai });
     return report;
   }
 
@@ -475,6 +485,7 @@
       });
       if (res.status === 'filled') {
         filled++;
+        state.aiFilled.set(field.el, JTF.fill.currentValue(field));
         if (settings.highlight !== false) JTF.fill.highlight(res.target || field.el, true);
       }
       results.push({ id: a.id, status: res.status });
@@ -532,6 +543,8 @@
       const r = results[i];
       const value = JTF.fill.currentValue(field);
       if (U.isBlank(value) || value.length > 4000) return;
+      // The AI's answers are kept for this application already, and often name this employer: not custom answers.
+      if (state.aiFilled.get(field.el) === value) return;
       const question = JTF.matcher.questionText(field.desc);
       if (r && r.type === 'custom') {
         if (U.normalize(r.answer) !== U.normalize(value))

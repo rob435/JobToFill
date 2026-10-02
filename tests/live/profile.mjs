@@ -41,6 +41,8 @@ export const SURVEY_PROFILE = {
     otherOffers: 'No',
     clearance: 'None',
     clearanceEligible: 'Yes',
+    onsite: 'Yes',
+    adjustments: 'No',
   },
   eeo: {
     gender: 'Male',
@@ -64,6 +66,7 @@ export const SURVEY_PROFILE = {
   },
   compliance: {
     previouslyEmployed: 'No',
+    previouslyApplied: 'No',
     relatives: 'No',
     relativesDetails: '',
     governmentOfficial: 'No',
