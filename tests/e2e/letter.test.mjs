@@ -53,6 +53,8 @@ const CV = {
 /** An OpenAI-compatible endpoint that answers by prompt type and records every request. */
 function mockAi() {
   const calls = [];
+  // Set `fail.status` to answer every request with that HTTP error instead.
+  const fail = { status: 0 };
   let drafts = 0;
   const server = http.createServer((req, res) => {
     let body = '';
@@ -61,6 +63,11 @@ function mockAi() {
       const json = JSON.parse(body || '{}');
       const system = (json.messages && json.messages[0] && json.messages[0].content) || '';
       calls.push({ path: req.url, auth: req.headers.authorization, json });
+      if (fail.status) {
+        res.writeHead(fail.status, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'No auth credentials found', code: fail.status } }));
+        return;
+      }
       let reply;
       if (/extract facts from a job posting/.test(system))
         reply = {
@@ -86,7 +93,7 @@ function mockAi() {
       );
     });
   });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, calls })));
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, calls, fail })));
 }
 
 async function cvPdf() {
@@ -274,6 +281,32 @@ test('studio: a job that cannot be found asks for the description', async () => 
   assert.match(await studio.call(() => document.querySelector('#job-verdict').textContent), /Your description/);
   await studio.close();
   await page.close();
+});
+
+test('studio: a rejected key is explained, and Try again carries on once it works', async () => {
+  const apply = await h.open('letters/apply.html?try=again');
+  const studio = await h.extPage(`studio/studio.html?tab=${await h.tabId(apply)}`);
+  ai.fail.status = 401;
+  try {
+    // The job is found without the AI (the letter from the first test is declined); the first AI
+    // call, reading the posting, fails.
+    await until(studio.call, () => !!document.querySelector('#previous'), null, 30000);
+    await studio.call(() =>
+      [...document.querySelectorAll('#previous button')].find((b) => b.textContent === 'Write a new one').click(),
+    );
+    await until(studio.call, () => !document.querySelector('#error').hidden, null, 30000);
+    assert.match(await studio.call(() => document.querySelector('#error').textContent), /rejected the API key/);
+    assert.equal(await studio.call(() => document.querySelector('#retry').hidden), false);
+    assert.equal(await studio.call(() => document.querySelector('#editor').hidden), true, 'no letter without the AI');
+  } finally {
+    ai.fail.status = 0;
+  }
+  await studio.call(() => document.querySelector('#retry').click());
+  await until(studio.call, () => !document.querySelector('#editor').hidden, null, 30000);
+  assert.equal(await studio.call(() => document.querySelector('#error').hidden), true);
+  assert.match(await studio.call(() => document.querySelector('#body').value), /Acme Capital/);
+  await studio.close();
+  await apply.close();
 });
 
 test('job context: the job page a tab showed before is remembered, also in tabs it opens', async () => {
