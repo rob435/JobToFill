@@ -177,7 +177,7 @@ Implemented ✅ · Ideas for later 💡
 - Sections that only appear after clicking _Add another_ aren't added automatically yet.
 - It can't fill CAPTCHAs or closed shadow roots, and won't run on browser pages or extension stores.
 - The cover letter writer needs an AI provider account (OpenRouter, DeepSeek or similar). Its checks catch invented numbers, skills, names and claims, but read the letter before you send it: the AI can still describe something more strongly than you would.
-- The job description is found and checked for about 94% of live postings tested (over 250 graduate and internship roles from Trackr's UK, US, Hong Kong, French and German trackers, across 25+ job sites), and for all of them when you go to the application from the job's page. No posting from another job was ever accepted as the same job. Some employers (SuccessFactors career sites, Amazon, law firm portals) send _Apply_ to a sign-in page that drops the job's ID: start from the job's page, switch on the browsing-history search, or paste the description.
+- The job description is found and checked for 97% of the live postings tested (236 graduate and internship roles from Trackr's UK, US, Hong Kong, French and German trackers, across 25+ job sites) when you open the application from the job's page, and for 86% when you land on the application directly. No posting for another job was ever accepted as the same job. Some employers (SuccessFactors career sites, Amazon, law firm portals) send _Apply_ to a sign-in page that drops the job's ID: start from the job's page, switch on the browsing-history search, or paste the description.
 - CV text is read from text-based PDFs and Word files. Scanned (image-only) PDFs have no text to read.
 
 ## Development
