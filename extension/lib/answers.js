@@ -38,6 +38,9 @@
   // Sent only when the candidate's answer guidance has something to say: legal and regulatory history, health.
   const LEGAL =
     /\b(convict\w*|criminal|offen[cs]es?|felon\w*|misdemeanou?rs?|arrest\w*|caution\w*|plead\w*|pled|nolo|bankrupt\w*|insolven\w*|judge?ments?|liens?|bond(ing)? company|disciplin\w*|sanction\w*|suspend\w*|revok\w*|regulat(or|ory) (authority|body|action)|finra|form u ?4|registered representative|securities licen[cs]es?|lie detector|polygraph|drug (test|screen)\w*|background (check|screen)\w*|credit (check|history)|debarred|dismissed|export control\w*|itar)\b/;
+  // Security vetting: where you've lived, other citizenships. Inferring these from a CV is a guess.
+  const VETTING =
+    /\b(continuous(ly)? (uk |us )?(resident|residency|residence)|resident in (the )?[a-z ]+ for (the )?(last|past)|lived (outside|abroad)|outside (of )?the (uk|us|united kingdom|united states) (for|in the past)|consecutive days outside|(other|another|dual|second|previous|former) (citizenships?|nationalit(y|ies))|held citizenship|citizenship (of|for) any other)\b/;
   const HEALTH =
     /\b(reasonable adjustments?|adjustments? (to|during|in) (the |our )?(recruitment|application|interview|assessment)|accommodations?|medical|health|impairment|essential functions)\b/;
   // Facts only the candidate knows: answered from their material or guidance, never guessed.
@@ -58,7 +61,8 @@
     if (/\b(male|female|non binary)\b.*\b(male|female|non binary)\b|\bwhite\b.*\b(black|asian)\b/.test(options))
       return 'eeo';
     if (CONSENT.test(norm(item.question)) || (item.kind === 'checkbox' && CONSENT.test(options))) return 'consent';
-    if ((LEGAL.test(text) || HEALTH.test(text)) && !String(guidance || '').trim()) return 'guidance';
+    if ((LEGAL.test(text) || HEALTH.test(text) || VETTING.test(text)) && !String(guidance || '').trim())
+      return 'guidance';
     return null;
   }
 

@@ -262,7 +262,8 @@
         settled = true;
       }
       const v = await valueFor(field, r, def, question);
-      if (v && r.type !== 'custom' && FOLLOW_UP.test(question) && v.canonical !== 'yes') return null;
+      if (v && r.type !== 'custom' && FOLLOW_UP.test(question) && !JTF.fields.followUpAnswer(v, field.kind))
+        return null;
       if (!v) {
         if (count && !(def && def.secret)) {
           report.missing.push(label);
@@ -381,7 +382,8 @@
           question: q,
         });
         // A follow-up after a "No" ("If yes, give details") or a box the profile said no to stays empty.
-        if (v && (field.kind === 'checkbox' || (FOLLOW_UP.test(q) && v.canonical !== 'yes'))) continue;
+        if (v && (field.kind === 'checkbox' || (FOLLOW_UP.test(q) && !JTF.fields.followUpAnswer(v, field.kind))))
+          continue;
         if (v) guess = { type: r.type, value: v.text };
       }
       const prev = prevOf(i);

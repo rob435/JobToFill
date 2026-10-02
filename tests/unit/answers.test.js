@@ -329,3 +329,20 @@ test('reuse and the answer bank: same question and options come back; similar es
     ['Goldman Sachs'],
   );
 });
+
+test('withheld: security-vetting history needs answer guidance', () => {
+  const w = (question) => A.withheld({ question, kind: 'select' }, '');
+  assert.equal(w('Have you been continually resident in the UK for the last 5 years?'), 'guidance');
+  assert.equal(w('Do you hold or have previously held citizenship for any other countries?'), 'guidance');
+  assert.equal(
+    w('If you have spent more than 30 consecutive days outside of the UK in the past 5 years please provide details'),
+    'guidance',
+  );
+  assert.equal(
+    A.withheld(
+      { question: 'Have you been continually resident in the UK for the last 5 years?', kind: 'select' },
+      'I have lived in the UK all my life.',
+    ),
+    null,
+  );
+});

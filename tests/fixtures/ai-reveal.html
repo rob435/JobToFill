@@ -22,6 +22,11 @@
         <textarea id="details" name="details"></textarea>
       </div>
     </form>
-    <script src="ai-reveal.js"></script>
+    <script>
+      // "If yes, …" only appears once the question before it is answered Yes.
+      document.querySelector('#internship').addEventListener('change', (e) => {
+        document.querySelector('#details-row').hidden = e.target.value !== 'Yes';
+      });
+    </script>
   </body>
 </html>

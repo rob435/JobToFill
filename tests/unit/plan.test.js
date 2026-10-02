@@ -1569,3 +1569,36 @@ test('round 3: new questions get their own profile answers', () => {
   assert.equal(matcher.matchOption(choices, ask(p, 'compliance.previouslyApplied', 'Have you applied before?')), 2);
   assert.equal(ask(p, 'job.onsite', 'Are you willing to work in the office 5 days a week?').text, 'Yes');
 });
+
+test('round 3: "If yes" yes/no questions, citizenship-status lists, agreements with past employers', () => {
+  const p = student();
+  p.personal.nationality = 'British';
+  Object.assign(p.address, { country: 'United Kingdom' });
+  p.job.authorized = 'Yes';
+  p.job.sponsorship = 'No';
+  p.job.nonCompete = 'No';
+  const yn = opts('Yes', 'No');
+  // A yes/no question after "If yes" takes a No; a details box after "If yes" doesn't.
+  const q = 'If yes, will you now or in the future require Appian to file a petition for employment-based visa status?';
+  const sel = ask(p, 'job.sponsorship', q, { kind: 'select' });
+  assert.equal(yn[matcher.matchOption(yn, sel)].text, 'No');
+  assert.equal(
+    ask(p, 'job.sponsorship', 'If yes, please give details of the visa you need', { kind: 'textarea' }),
+    null,
+  );
+  // A US citizenship-status list for a British applicant: "Other (please explain)".
+  const status = opts(
+    '1) U.S. citizen or national of the United States',
+    '2) U.S. lawful permanent resident (green card holder)',
+    '3) Refugee under 8 U.S.C 1157',
+    '6) Other (please explain)',
+  );
+  assert.equal(matcher.matchOption(status, ask(p, 'nationality', 'Citizenship Status')), 3);
+  assert.equal(matcher.matchOption(opts('France', 'United Kingdom', 'Other'), ask(p, 'nationality', 'Nationality')), 1);
+  // "Do you have any agreements with prior employers (for example, non-compete…)?"
+  const agreements = desc(
+    'Do you have any agreements with prior employers or other entities (for example, non-compete, non-solicitation, or confidentiality agreements) that may restrict your ability to work for us?',
+    { kind: 'select', options: opts('Yes', 'No', 'Not Known') },
+  );
+  assert.equal(matcher.classify(agreements).type, 'job.nonCompete');
+});

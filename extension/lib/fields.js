@@ -1019,6 +1019,8 @@
         // Lists of nationalities ("American", "British") as well as of countries.
         const v = countryVal(p.personal.nationality);
         if (v && v.iso2) v.candidates = [...new Set([...v.candidates, ...JTF.geo.demonyms(v.iso2)])];
+        // A US citizenship-status list ("U.S. citizen / green card holder / … / Other (please explain)").
+        if (v) v.fallback = ['Other', 'Other (please explain)', 'Other (please specify)', 'None of the above'];
         return v;
       },
     },
@@ -1722,7 +1724,10 @@
         test: (desc) => !looksLikeMoneyUnits(desc.options),
       },
     ),
-    R('job.nonCompete', /non ?compete|non ?solicit|restrictive (covenant|agreement|clause)|garden leave/),
+    R(
+      'job.nonCompete',
+      /non ?compete|non ?solicit|restrictive (covenant|agreement|clause)|garden leave|\bagreements? with (any )?(prior|previous|former|current|past) employers?\b|\b(may |might |could |that )?restrict (your|my) ability to (work|join)\b/,
+    ),
     R(
       'job.noticePeriod',
       /notice ?period|notice (required|do you need)|how much notice|weeks notice|kundigungsfrist|\bpreavis\b|\bpreavviso\b/,
@@ -2239,6 +2244,14 @@
   // "If yes, please tell us more": only answered when the answer to the question before was yes.
   const FOLLOW_UP = /^if (yes|so|you (said|answered|selected|chose|checked|ticked) yes)\b/;
 
+  /**
+   * Does an "If yes, …" question take this answer? A yes always; a no only as the answer to a yes/no choice ("If
+   * yes, will you require Appian to file a visa petition? Yes / No"), never as the details a box asks for.
+   */
+  function followUpAnswer(v, kind) {
+    return !!v && (v.canonical === 'yes' || (v.canonical === 'no' && CHOICE.includes(kind)));
+  }
+
   /** Resolve a field type to a value object (or null when the profile has nothing for it). */
   function resolve(type, profile, ctx) {
     ctx = ctx || {};
@@ -2247,7 +2260,7 @@
     if (!def || !profile) return null;
     try {
       const v = def.get(profile, ctx) || null;
-      return v && FOLLOW_UP.test(ctx.question || '') && v.canonical !== 'yes' ? null : v;
+      return v && FOLLOW_UP.test(ctx.question || '') && !followUpAnswer(v, ctx.kind) ? null : v;
     } catch (err) {
       return null;
     }
@@ -2272,6 +2285,7 @@
     resolve,
     labelOf,
     workCountries,
+    followUpAnswer,
     eduLevelOf,
     languagesNamed,
     isAcknowledgement,

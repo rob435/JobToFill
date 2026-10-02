@@ -52,7 +52,10 @@ const GH_KIND = {
 
 function greenhouseIds(url) {
   const u = new URL(url);
-  const id = u.searchParams.get('gh_jid') || (u.pathname.match(/\/jobs\/(\d+)/) || [])[1];
+  const id =
+    u.searchParams.get('gh_jid') ||
+    (u.pathname.match(/\/jobs\/(\d+)/) || [])[1] ||
+    (/\/embed\/job_app/.test(u.pathname) ? u.searchParams.get('token') : null);
   const board = u.searchParams.get('for') || (u.pathname.match(/^\/([^/]+)\/jobs\//) || [])[1];
   return id && board ? { board, id } : null;
 }
@@ -61,8 +64,8 @@ async function greenhouse(url, fetchJson) {
   const ids = greenhouseIds(url);
   if (!ids) return null;
   const host = new URL(url).hostname.includes('.eu.') ? 'job-boards.eu.greenhouse.io' : 'job-boards.greenhouse.io';
-  const api = host.includes('.eu.') ? 'boards-api.eu.greenhouse.io' : 'boards-api.greenhouse.io';
-  const job = await fetchJson(`https://${api}/v1/boards/${ids.board}/jobs/${ids.id}?questions=true`);
+  // EU boards (job-boards.eu.greenhouse.io) answer on the same API host.
+  const job = await fetchJson(`https://boards-api.greenhouse.io/v1/boards/${ids.board}/jobs/${ids.id}?questions=true`);
   if (!job || !job.questions) return null;
   const out = [];
   const add = (q, section) => {

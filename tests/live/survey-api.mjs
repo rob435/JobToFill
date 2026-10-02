@@ -55,7 +55,7 @@ export function simulate(JTF, descs, profile, settings = {}) {
       consents: !!settings.consents,
       today: settings.today,
     });
-    if (v && r.type !== 'custom' && FOLLOW_UP.test(q) && v.canonical !== 'yes')
+    if (v && r.type !== 'custom' && FOLLOW_UP.test(q) && !fields.followUpAnswer(v, d.kind))
       return { outcome: 'skipped', type: r.type };
     if (!v) return { outcome: 'missing', type: r.type };
     const opts = d.options || [];
