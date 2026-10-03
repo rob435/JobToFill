@@ -502,7 +502,7 @@ test('"Which country do you live in?" after the education section is still yours
   assert.deepEqual(types(plan), [
     'edu.school#0',
     'edu.degree#0',
-    null,
+    'edu.country#0',
     'edu.field#0',
     'address.country',
     'address.state',
@@ -655,7 +655,7 @@ test('a question naming a level of study answers from that degree', () => {
     'edu.school#0',
     null,
     'edu.field#0',
-    'edu.gpa#0',
+    'edu.classification#0',
     'edu.end#0:year',
   ]);
 });
@@ -1613,4 +1613,334 @@ test('nickname-style boxes always get the legal name, never the profile preferre
   assert.equal(name('Preferred first name'), 'Ada');
   assert.equal(name('Nickname'), 'Ada');
   assert.equal(name('Name you go by (first name)'), 'Ada');
+});
+
+/** A University of Glasgow undergraduate expecting a 2:1 in 2027, living in Glasgow. */
+function glasgow() {
+  const p = fields.createProfile('Glasgow');
+  Object.assign(p.address, { city: 'Glasgow', country: 'United Kingdom' });
+  p.education = [
+    Object.assign(fields.blankEducation(), {
+      school: 'University of Glasgow',
+      degree: 'BSc (Hons)',
+      field: 'Computer Science',
+      classification: '2:1',
+      startDate: '2023-09',
+      endDate: '2027-06',
+    }),
+  ];
+  return p;
+}
+const TODAY = new Date('2026-10-03');
+
+test('degree classification: your class, else a class kept as the GPA; GPA questions keep to GPAs', () => {
+  const p = glasgow();
+  const q = (type, question, extra) => ask(p, type, question, Object.assign({ today: TODAY }, extra));
+  const cls = q('edu.classification', 'Expected/Achieved Degree Classification');
+  assert.equal(cls.text, '2:1', 'a free-text box gets it as written');
+  assert.equal(cls.cls, 'upper');
+  assert.equal(cls.expected, true, 'still studying: predicted');
+  assert.equal(q('edu.gpa', 'GPA'), null, 'a class is not a GPA');
+  assert.equal(q('edu.gpa', 'Grade').text, '2:1', 'a plain "Grade" box with no GPA takes the class');
+  assert.equal(q('edu.gpa', 'GPA / grade').text, '2:1');
+  assert.equal(q('edu.gpa', 'Grade point average'), null);
+  assert.equal(
+    q('edu.classification', 'Degree result', { today: new Date('2028-01-01') }).expected,
+    false,
+    'graduated',
+  );
+  // The class kept in the GPA box ("2:1") answers both, except a question that wants a number.
+  p.education[0].classification = '';
+  p.education[0].gpa = '2:1';
+  assert.equal(q('edu.classification', 'Predicted degree classification').cls, 'upper');
+  assert.equal(q('edu.gpa', 'GPA').text, '2:1', 'as before: all there is');
+  assert.equal(q('edu.gpa', 'Cumulative GPA (out of 4.0)'), null);
+  assert.equal(q('edu.gpa', 'GPA', { kind: 'number' }), null);
+  // A numeric GPA stays a GPA, and is what a classification box gets when there's nothing else.
+  p.education[0].gpa = '3.8/4.0';
+  assert.equal(q('edu.gpa', 'GPA (out of 4.0)').number, 3.8);
+  assert.equal(q('edu.classification', 'Final degree grade (or predicted)').text, '3.8/4.0');
+  assert.equal(
+    matcher.matchOption(opts('1st', '2:1', '2:2'), q('edu.classification', 'Degree classification')),
+    -1,
+    'never a class for a GPA',
+  );
+  p.education[0].gpa = '';
+  assert.equal(q('edu.classification', 'Degree classification'), null);
+  // A school-level question is answered from a school entry: A-level grades never get the degree class.
+  p.education[0].classification = 'First';
+  assert.equal(q('edu.gpa', 'A-level grades'), null);
+  assert.equal(q('edu.classification', 'Final grade obtained in School Graduation (Abitur or equivalent)'), null);
+});
+
+test('degree classes pick their option however the list spells them, predicted or achieved', () => {
+  const p = glasgow();
+  const pick = (classification, ...options) => {
+    p.education[0].classification = classification;
+    const v = ask(p, 'edu.classification', 'Expected/Achieved Degree Classification', { today: TODAY });
+    const i = matcher.matchOption(opts(...options), v);
+    return i < 0 ? null : options[i];
+  };
+  const alloyed = ['1st', '2:1', '2:2', 'Pass', 'Merit', 'Distinction', 'Other'];
+  assert.equal(pick('2:1', ...alloyed), '2:1');
+  assert.equal(pick('First', ...alloyed), '1st');
+  assert.equal(pick('Distinction', ...alloyed), 'Distinction');
+  const long = [
+    'First Class Honours (1st)',
+    'Upper Second Class Honours (2:1)',
+    'Lower Second Class Honours (2:2)',
+    'Third Class Honours',
+    'Ordinary/Pass',
+    'Other',
+    'N/A – not yet known',
+  ];
+  assert.equal(pick('2:1', ...long), 'Upper Second Class Honours (2:1)');
+  assert.equal(pick('Upper second', ...long), 'Upper Second Class Honours (2:1)');
+  assert.equal(pick('2:2', ...long), 'Lower Second Class Honours (2:2)');
+  assert.equal(pick('Third', ...long), 'Third Class Honours');
+  assert.equal(pick('Pass', ...long), 'Ordinary/Pass');
+  assert.equal(pick('2:1', 'First', '2(i)', '2(ii)', 'Third'), '2(i)');
+  assert.equal(pick('2:2', 'First', '2i', '2ii', 'Third'), '2ii');
+  assert.equal(pick('2:1', 'First', '2.1', '2.2', 'Third'), '2.1');
+  assert.equal(pick('Merit', ...long), null, 'never "Other" or a wrong class');
+  const both = ['Upper Second (2:1) – achieved', 'Upper Second (2:1) – predicted', 'Lower Second (2:2) – predicted'];
+  assert.equal(pick('2:1', ...both), 'Upper Second (2:1) – predicted', 'still studying');
+  p.education[0].endDate = '2025-06';
+  assert.equal(pick('2:1', ...both), 'Upper Second (2:1) – achieved', 'graduated');
+  assert.equal(
+    pick('2:1', 'Upper Second (2:1) – predicted', 'First (1st) – predicted'),
+    'Upper Second (2:1) – predicted',
+  );
+  assert.equal(pick('2:1', '3.00 - 3.49', '3.50 - 4.00'), null, 'GPA bands');
+});
+
+test('a school picks the same institution from a list, never a similarly named one', () => {
+  const p = glasgow();
+  const pick = (school, ...options) => {
+    p.education[0].school = school;
+    const i = matcher.matchOption(opts(...options), ask(p, 'edu.school', 'University'));
+    return i < 0 ? null : options[i];
+  };
+  const confusers = [
+    'Glasgow Caledonian University',
+    'Glasgow School of Art',
+    'University of Strathclyde (Glasgow)',
+    'Royal Conservatoire of Scotland (Glasgow)',
+    'University of the West of Scotland',
+  ];
+  for (const spelling of [
+    'The University of Glasgow',
+    'Glasgow, University of',
+    'University of Glasgow (UofG)',
+    'Glasgow University',
+    'University of Glasgow',
+  ])
+    assert.equal(pick('University of Glasgow', ...confusers, spelling), spelling, spelling);
+  assert.equal(pick('University of Glasgow', ...confusers), null, 'the wrong Glasgow never wins');
+  assert.equal(
+    pick('Glasgow University', 'Glasgow Caledonian University', 'University of Glasgow'),
+    'University of Glasgow',
+  );
+  assert.equal(pick('Glasgow Caledonian University', 'University of Glasgow', 'Glasgow School of Art'), null);
+  assert.equal(pick('Queen Mary University of London', 'University of London', 'King’s College London'), null);
+  assert.equal(
+    pick("King's College London", 'Imperial College London', 'King’s College London'),
+    'King’s College London',
+  );
+  assert.equal(
+    pick('Imperial College London', 'Imperial College', 'University College London (UCL)'),
+    'Imperial College',
+  );
+  assert.equal(
+    pick(
+      'University of the West of England',
+      'University of the West of Scotland',
+      'UWE Bristol (University of the West of England)',
+    ),
+    'UWE Bristol (University of the West of England)',
+  );
+  assert.equal(
+    pick('UCL', 'University College London (UCL)', 'University of London'),
+    'University College London (UCL)',
+  );
+  assert.equal(
+    pick('London School of Economics', 'London School of Economics and Political Science', 'London Business School'),
+    'London School of Economics and Political Science',
+  );
+});
+
+test('"Degree Type" (Alloyed): an MEng is an integrated master’s, an MSc a master’s, a Scottish MA (Hons) a bachelor’s', () => {
+  const p = glasgow();
+  const kinds = ['Bachelors Degree', 'Integrated Masters Degree', 'Masters Degree', 'PhD', 'Other'];
+  const pick = (degree) => {
+    p.education[0].degree = degree;
+    const i = matcher.matchOption(opts(...kinds), ask(p, 'edu.degree', 'Degree Type'));
+    return i < 0 ? null : kinds[i];
+  };
+  assert.equal(pick('BSc (Hons) Computer Science'), 'Bachelors Degree');
+  assert.equal(pick('MEng Electronic Engineering'), 'Integrated Masters Degree');
+  assert.equal(pick('MSc Data Science'), 'Masters Degree');
+  assert.equal(pick('MA (Hons) Economics'), 'Bachelors Degree');
+  assert.equal(pick('PhD'), 'PhD');
+});
+
+test('transcript uploads only for a level of study you have an entry at (Databricks on Greenhouse)', () => {
+  const p = glasgow(); // a BSc
+  const applies = (question) => fields.uploadApplies('file.transcript', p, util.normalize(question));
+  assert.equal(applies('Please provide a recent transcript of your undergraduate studies.'), true);
+  assert.equal(applies('If applicable, please provide a recent transcript of your graduate studies.'), false);
+  for (const q of ['Postgraduate transcript', 'Master’s transcript', 'Graduate school transcript (if applicable)'])
+    assert.equal(applies(q), false, q);
+  assert.equal(applies('Graduate transcript'), false);
+  assert.equal(applies('High school transcript'), false, 'no school entry');
+  for (const q of [
+    'University transcript',
+    'Transcript of your most recent degree',
+    'Academic transcripts (undergraduate and postgraduate)',
+    'Transcript',
+  ])
+    assert.equal(applies(q), true, q);
+  assert.equal(fields.uploadApplies('file.resume', p, util.normalize('Graduate CV')), true, 'only level-bound uploads');
+  // A master's student has both; an integrated master's (MEng) is the undergraduate course too; a Scottish MA (Hons)
+  // is a first degree.
+  p.education.unshift(Object.assign(fields.blankEducation(), { school: 'University of Edinburgh', degree: 'MSc' }));
+  assert.equal(applies('If applicable, please provide a recent transcript of your graduate studies.'), true);
+  p.education = [Object.assign(fields.blankEducation(), { school: 'Imperial College London', degree: 'MEng' })];
+  assert.equal(applies('Undergraduate transcript'), true);
+  assert.equal(applies('Graduate transcript'), true);
+  p.education = [
+    Object.assign(fields.blankEducation(), { school: 'University of Glasgow', degree: 'MA (Hons) Economics' }),
+  ];
+  assert.equal(applies('Undergraduate transcript'), true);
+  assert.equal(applies('Graduate transcript'), false);
+  // A degree with no level ("Computer Science") rules nothing out.
+  p.education = [
+    Object.assign(fields.blankEducation(), { school: 'University of Glasgow', degree: 'Computer Science' }),
+  ];
+  assert.equal(applies('Graduate transcript'), true);
+});
+
+test('"Country of School" / "Country of Employer": from the entry’s location, else your home town', () => {
+  const p = glasgow();
+  const country = (location, type = 'edu.country') => {
+    (type === 'edu.country' ? p.education : p.experience)[0].location = location;
+    const v = ask(p, type, 'Country');
+    return v ? v.iso2 : null;
+  };
+  assert.equal(country('Glasgow, Scotland'), 'GB');
+  assert.equal(country('Edinburgh, UK'), 'GB');
+  assert.equal(country('Cambridge, MA'), 'US', 'a state code, not Morocco');
+  assert.equal(country('San Francisco, CA'), 'US', 'California, not Canada');
+  assert.equal(country('Toronto, ON'), 'CA');
+  assert.equal(country('Munich, Germany'), 'DE');
+  assert.equal(country('Glasgow'), 'GB', 'your town: the country you live in');
+  assert.equal(country(''), 'GB', '"University of Glasgow" for someone living in Glasgow');
+  assert.equal(country('Paris'), null, 'not worked out');
+  p.education[0].school = 'Harvard University';
+  assert.equal(country(''), null);
+  p.experience = [Object.assign(fields.blankExperience(), { company: 'Acme', location: 'London, United Kingdom' })];
+  assert.equal(country('London, United Kingdom', 'exp.country'), 'GB');
+  assert.equal(country('Dublin, Ireland', 'exp.country'), 'IE');
+  const v = ask(p, 'edu.country', 'Country of School');
+  assert.equal(v, null);
+  p.education[0].location = 'Glasgow, Scotland';
+  const pick = matcher.matchOption(
+    opts('No Selection', 'France', 'United Kingdom'),
+    ask(p, 'edu.country', 'Country of School'),
+  );
+  assert.equal(pick, 2);
+});
+
+test('SuccessFactors: a "From Date" that starts the education block after the work history is the degree’s', () => {
+  const date = (label) => desc({ label, placeholder: 'MM/DD/YYYY' });
+  const countries = { kind: 'select', options: opts('No Selection', 'France', 'United Kingdom') };
+  const page = [
+    desc('First Name'),
+    date('From Date'),
+    date('End Date'),
+    desc('Employer'),
+    desc('Job Title'),
+    desc('Country of Employer', countries),
+    date('From Date'),
+    date('Expected or Completed Graduation'),
+    desc('School (Please use the full name, for example, University of Connecticut)'),
+    desc('Country of School', countries),
+    desc('State/City/Region of School'),
+    desc('Major'),
+    desc('* Degree', { kind: 'select', options: opts('No Selection', "Bachelor's Degree") }),
+    desc('* Highest Level of Education', { kind: 'select', options: opts('No Selection', "Bachelor's") }),
+  ];
+  assert.deepEqual(types(matcher.plan(page, sample())), [
+    'name.first',
+    'exp.start#0',
+    'exp.end#0',
+    'exp.company#0',
+    'exp.title#0',
+    'exp.country#0',
+    'edu.start#0',
+    'edu.end#0',
+    'edu.school#0',
+    'edu.country#0',
+    'edu.location#0',
+    'edu.field#0',
+    'edu.degree#0',
+    'edu.level',
+  ]);
+  // Without dates in the work history, "From Date" then "…Graduation" still pair up; with an education heading too.
+  assert.deepEqual(
+    types(
+      matcher.plan(
+        [desc('Employer'), desc('Job Title'), date('From Date'), date('Graduation Date'), desc('School')],
+        sample(),
+      ),
+    ),
+    ['exp.company#0', 'exp.title#0', 'edu.start#0', 'edu.end#0', 'edu.school#0'],
+  );
+  assert.deepEqual(
+    types(
+      matcher.plan(
+        [desc('Employer'), desc('Job Title'), desc({ label: 'From', section: 'Education' }), desc('School')],
+        sample(),
+      ),
+    ),
+    ['exp.company#0', 'exp.title#0', 'edu.start#0', 'edu.school#0'],
+  );
+  // A second education block ("+ Add") is the second entry.
+  const second = [date('From Date'), date('Expected or Completed Graduation'), desc('School')];
+  assert.deepEqual(types(matcher.plan(second.concat(second), sample())), [
+    'edu.start#0',
+    'edu.end#0',
+    'edu.school#0',
+    'edu.start#1',
+    'edu.end#1',
+    'edu.school#1',
+  ]);
+  const p = sample();
+  const v = fields.resolve('edu.start', p, { jobContext: true, index: 0 });
+  assert.equal(matcher.formatForText(v, desc({ label: 'From Date', placeholder: 'MM/DD/YYYY' })), '09/01/2015');
+});
+
+test('Teamtailor: "Start Date" after the graduation year and degree class is not when the degree started', () => {
+  const radios = (label, ...options) => desc({ question: label }, { kind: 'radio', options: opts(...options) });
+  const plan = matcher.plan(
+    [
+      desc('University: Required', { kind: 'combo' }),
+      desc('University Course Required'),
+      radios('Gender Required', 'Male', 'Female'),
+      radios('Degree Type Required', 'Bachelors Degree', 'Masters Degree'),
+      radios('Year of Graduation Required', '2025', '2026', 'Other', '2027', '2028', '2029'),
+      desc('Expected/Achieved Degree Classification Required', { kind: 'combo' }),
+      desc('Start Date Required', { kind: 'date', inputType: 'date' }),
+    ],
+    glasgow(),
+  );
+  assert.deepEqual(types(plan), [
+    'edu.school#0',
+    'edu.field#0',
+    'eeo.gender',
+    'edu.degree#0',
+    'edu.end#0:year',
+    'edu.classification#0',
+    null,
+  ]);
 });

@@ -15,7 +15,17 @@
   /* ------------------------------------------------------------------ profile */
 
   function blankEducation() {
-    return { school: '', degree: '', field: '', gpa: '', location: '', startDate: '', endDate: '' };
+    return {
+      school: '',
+      degree: '',
+      field: '',
+      gpa: '',
+      // UK degree class, expected or achieved: "2:1", "First"; "Distinction" or "Merit" for a master's.
+      classification: '',
+      location: '',
+      startDate: '',
+      endDate: '',
+    };
   }
 
   function blankExperience() {
@@ -443,49 +453,121 @@
     });
   }
 
-  // UK degree classes and the ways forms spell them ("Upper Second Class", "Second class honours: Grade 1").
-  const DEGREE_CLASSES = [
-    [
-      /^(first|1st|1)( class)?( honours)?$/,
-      ['First', '1st', 'First Class', 'First Class Honours', '1st Class', 'First / 1st'],
+  // UK degree classes (and a master's Distinction / Merit) and the ways forms spell them.
+  const DEGREE_CLASSES = {
+    first: ['First', '1st', 'First Class', 'First Class Honours', '1st Class', 'First / 1st'],
+    upper: [
+      '2:1',
+      '2.1',
+      '2i',
+      'Upper Second',
+      'Upper Second Class',
+      'Upper Second Class Honours',
+      'Second Class Honours Grade 1',
+      'Second Class Honours (Upper Division)',
+      'Second Class Upper',
     ],
-    [
-      /^(2 ?1|2 ?i|upper second|2 1 upper second)( class)?( honours)?$/,
-      [
-        '2:1',
-        '2.1',
-        '2i',
-        'Upper Second',
-        'Upper Second Class',
-        'Upper Second Class Honours',
-        'Second Class Honours Grade 1',
-        'Second Class Honours (Upper Division)',
-        'Second Class Upper',
-      ],
+    lower: [
+      '2:2',
+      '2.2',
+      '2ii',
+      'Lower Second',
+      'Lower Second Class',
+      'Lower Second Class Honours',
+      'Second Class Honours Grade 2',
+      'Second Class Honours (Lower Division)',
+      'Second Class Lower',
     ],
-    [
-      /^(2 ?2|2 ?ii|lower second)( class)?( honours)?$/,
-      [
-        '2:2',
-        '2.2',
-        '2ii',
-        'Lower Second',
-        'Lower Second Class',
-        'Lower Second Class Honours',
-        'Second Class Honours Grade 2',
-        'Second Class Honours (Lower Division)',
-        'Second Class Lower',
-      ],
-    ],
-    [/^(third|3rd)( class)?( honours)?$/, ['Third', '3rd', 'Third Class', 'Third Class Honours', '3rd Class']],
-  ];
+    third: ['Third', '3rd', 'Third Class', 'Third Class Honours', '3rd Class'],
+    pass: ['Pass', 'Ordinary', 'Ordinary degree', 'Pass degree'],
+    distinction: ['Distinction', 'Pass with Distinction'],
+    merit: ['Merit', 'Pass with Merit'],
+  };
+
+  /**
+   * The class an answer or option names: "Upper Second Class Honours (2:1)", "2(i)", "2.1" or "Second class honours:
+   * Grade 1" -> 'upper'; also 'first', 'lower', 'third', 'pass', 'distinction', 'merit'. Null for anything else,
+   * GPA bands ("3.00 - 3.49") included.
+   */
+  function degreeClassOf(text) {
+    const raw = String(text || '');
+    if (/\d\.\d+\s*(-|–|—|to)\s*\d/.test(raw) && !/class|honou?r|first|second|third|division/i.test(raw)) return null;
+    const t = U.normalize(raw.replace(/\b2\s*\(\s*(i{1,2})\s*\)/gi, '2$1'));
+    if (!t || t.length > 120) return null;
+    if (
+      /\b(2 ?1|2 ?i|upper second|second (class )?upper|upper (second )?division)\b|\bsecond class( honou?rs)?( grade| division)? (1|i|one|upper)\b/.test(
+        t,
+      )
+    )
+      return 'upper';
+    if (
+      /\b(2 ?2|2 ?ii|lower second|second (class )?lower|lower (second )?division)\b|\bsecond class( honou?rs)?( grade| division)? (2|ii|two|lower)\b/.test(
+        t,
+      )
+    )
+      return 'lower';
+    if (/\bdistinction\b/.test(t)) return 'distinction';
+    if (/\bmerit\b/.test(t)) return 'merit';
+    if (/^(first|1st)\b(?! (name|half|year|time|choice|language|semester|term))|^1$|\b(first|1st) class\b/.test(t))
+      return 'first';
+    if (/^(third|3rd)\b(?! (party|year))|^3$|\b(third|3rd) class\b/.test(t)) return 'third';
+    if (/^(pass|ordinary|unclassified)\b|\b(pass|ordinary) (degree|honou?rs)\b/.test(t)) return 'pass';
+    return null;
+  }
+
+  // "Upper Second (2:1) – predicted", "2:1 (expected)": a class you are on course for, not one you have.
+  const EXPECTED_CLASS = /\b(predicted|expected|anticipated|projected|forecast|on track|working towards)\b/;
+
+  /** A degree class: "2:1" also picks "Upper Second Class Honours (2:1)", "2(i)" or "Second class honours: Grade 1". */
+  function classVal(text, expected) {
+    const v = val(text);
+    const cls = v && degreeClassOf(v.text);
+    if (!cls) return v;
+    return Object.assign(v, {
+      kind: 'class',
+      cls,
+      expected: !!expected,
+      candidates: [...new Set([v.text, ...DEGREE_CLASSES[cls]])],
+    });
+  }
 
   /** "3.9" or "3.9/4.0" also matches ranges like "3.80 - 4.00"; "2:1" or "First" matches its spellings. */
   function gpaVal(text) {
     const m = String(text || '').match(/^\s*(\d(?:\.\d+)?)\s*(?:\/\s*\d(?:\.\d+)?)?\s*$/);
     if (m && !/:/.test(text)) return val(text, { kind: 'number', number: parseFloat(m[1]) });
-    const cls = DEGREE_CLASSES.find(([re]) => re.test(U.normalize(text)));
-    return cls ? val(text, { candidates: [String(text).trim(), ...cls[1]] }) : val(text);
+    return classVal(text);
+  }
+
+  // "GPA (out of 4.0)", "Cumulative GPA", "Grade point average": a number, never "2:1".
+  const NUMERIC_GPA = /\b(4 0|4 point|5 0|10 0|out of|scale|grade point|cumulative|cgpa|numeric|decimal)\b/;
+
+  /**
+   * A GPA question: your GPA (a class written there too, unless the question wants a number). With no GPA, a "Grade"
+   * or "GPA / grade" box takes your degree classification; one that only asks for a GPA doesn't.
+   */
+  function gpaFor(e, ctx) {
+    const q = ctx.question || '';
+    const numeric = ctx.kind === 'number' || NUMERIC_GPA.test(q);
+    if (!U.isBlank(e.gpa)) {
+      const v = gpaVal(e.gpa);
+      return numeric && v && v.kind === 'class' ? null : v;
+    }
+    const gpaOnly = /\bgpa\b/.test(q) && !/\b(grades?|class|classification|results?)\b/.test(q);
+    return numeric || gpaOnly ? null : classFor(e, ctx);
+  }
+
+  /**
+   * "Expected/Achieved Degree Classification", "Predicted grade", "Degree result": your classification, else a class
+   * written as your GPA ("2:1"), else the GPA as it is (a free-text box on a UK form takes a US student's "3.8").
+   * Predicted while the course is still running, or when you wrote so ("2:1 (predicted)").
+   */
+  function classFor(e, ctx) {
+    const own = !U.isBlank(e.classification) ? e.classification : degreeClassOf(e.gpa) ? e.gpa : '';
+    if (U.isBlank(own)) return U.isBlank(e.gpa) ? null : gpaVal(e.gpa);
+    const end = U.parseDate(e.endDate);
+    const now = ctx.today || new Date();
+    const studying = !!end && end.year * 12 + (end.month || 6) - 1 >= now.getFullYear() * 12 + now.getMonth();
+    return classVal(own, studying || EXPECTED_CLASS.test(U.normalize(own)));
   }
 
   /**
@@ -925,19 +1007,92 @@
       /\b(high school|secondary( school)?|sixth form|a levels?|gcses?|academy school|abitur|baccalaureat|matura|leaving cert\w*|school graduation|school leaving|highers|international baccalaureate|ib diploma)\b/,
     ],
     ['bachelor', /\b(undergrad\w*|bachelor\w*|bsc)\b/],
+    // "Graduate studies" / "graduate transcript" is postgraduate (US usage); "undergraduate" never matches here.
     [
       'master',
-      /\b(master\w*|msc|mba|post ?grad\w*|graduate (degree|school|program|programme|gpa|studies|student|level))\b|\bgpa graduate\b/,
+      /\b(master\w*|msc|mba|post ?grad\w*|graduate (degree|school|program|programme|gpa|studies|study|student|level|transcripts?|records?|coursework))\b|\b(gpa|transcripts?) graduate\b/,
     ],
     ['doctorate', /\b(doctora\w*|ph ?d|dphil)\b/],
   ];
 
-  /** The one level of study a question names, or null (none, or several). */
-  function eduLevelOf(question) {
+  /** Every level of study a question names: "academic transcripts (undergraduate and postgraduate)" names two. */
+  function levelsOf(question) {
     // Examples don't count: "…graduate? This includes … studies e.g. a Masters".
     const q = String(question || '').replace(/\b(e g|eg|i e|such as|for example|including|includes|include)\b.*$/, '');
-    const hits = LEVEL_WORDS.filter(([, re]) => re.test(q)).map(([level]) => level);
+    return LEVEL_WORDS.filter(([, re]) => re.test(q)).map(([level]) => level);
+  }
+
+  /** The one level of study a question names, or null (none, or several). */
+  function eduLevelOf(question) {
+    const hits = levelsOf(question);
     return hits.length === 1 ? hits[0] : null;
+  }
+
+  /**
+   * The levels of study an education entry covers: a BSc (or a Scottish MA (Hons)) is 'bachelor', an integrated
+   * master's (MEng, MSci…) both 'bachelor' and 'master'.
+   */
+  function entryLevels(e) {
+    const d = U.normalize(e.degree);
+    if (JTF.matcher.isIntegratedMasters(d)) return ['bachelor', 'master'];
+    const level = JTF.matcher.degreeGroup(d);
+    return level ? [level] : [];
+  }
+
+  // Uploads that belong to one level of study: the transcript of your graduate studies is not your undergraduate one.
+  const LEVEL_UPLOADS = new Set(['file.transcript']);
+
+  /**
+   * Does upload `type` take your file? "If applicable, please provide a recent transcript of your graduate studies."
+   * (or "Master's transcript", "High school transcript") only when your education has an entry at that level;
+   * "University transcript", "Transcript of your most recent degree" or "Academic transcripts (undergraduate and
+   * postgraduate)" when you have any. An entry whose degree says no level ("Computer Science") can't rule one out.
+   */
+  function uploadApplies(type, profile, question) {
+    if (!LEVEL_UPLOADS.has(type)) return true;
+    const asked = levelsOf(question);
+    if (!asked.length) return true;
+    const entries = ((profile && profile.education) || []).filter((e) => !U.isBlank(e.school) || !U.isBlank(e.degree));
+    const levels = entries.map(entryLevels);
+    if (!levels.length || levels.some((l) => !l.length)) return true;
+    return asked.some((level) => levels.some((l) => l.includes(level)));
+  }
+
+  /**
+   * The country a place names: "Glasgow, Scotland" and "Edinburgh, UK" -> United Kingdom, "Cambridge, MA" -> United
+   * States (a state code after a town is the state, not a country), "Paris" -> null.
+   */
+  function placeCountry(text) {
+    const parts = String(text || '')
+      .split(/\s*[,;|/]\s*|\s+[-–]\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (let k = parts.length - 1; k >= 0; k--) {
+      const part = parts[k];
+      const short = part.replace(/\./g, '').length <= 3;
+      const region = (k > 0 || !short) && JTF.geo.regionCountry(part);
+      if (region && short) return JTF.geo.findCountry(region);
+      const row = JTF.geo.findCountry(part);
+      if (row) return row;
+      if (region) return JTF.geo.findCountry(region);
+    }
+    const named = JTF.geo.countriesNamed(text).filter((c) => c !== 'EU');
+    return named.length === 1 ? JTF.geo.findCountry(named[0]) : null;
+  }
+
+  /**
+   * "Country of School", "Country of Employer": from the entry's location, else the country you live in when the
+   * entry is in your town ("Glasgow", or "University of Glasgow" with no location, for someone living in Glasgow).
+   * Anything else is left: most students live where they study, but not all, and a wrong country is worse than none.
+   */
+  function entryCountry(e, p) {
+    const row = placeCountry(e.location);
+    if (row) return countryVal(row[2]);
+    const city = U.normalize(p.address.city);
+    const words = ' ' + U.normalize(U.isBlank(e.location) ? e.school || e.company : e.location) + ' ';
+    if (city && words.includes(' ' + city + ' ') && JTF.geo.findCountry(p.address.country))
+      return countryVal(p.address.country);
+    return null;
   }
 
   function entry(label, list, key, kind) {
@@ -981,7 +1136,10 @@
           return degreeVal(withSubject ? `${e.degree} in ${e.field}` : e[key]);
         }
         if (kind === 'number') return numberVal(e[key]);
-        if (kind === 'gpa') return gpaVal(e[key]);
+        if (kind === 'gpa') return gpaFor(e, ctx);
+        if (kind === 'class') return classFor(e, ctx);
+        if (kind === 'school') return val(e[key], { kind: 'school' });
+        if (kind === 'country') return entryCountry(e, p);
         return val(e[key]);
       },
     };
@@ -1379,11 +1537,15 @@
     },
 
     'edu.level': { label: 'Highest education', get: (p) => degreeVal(((p.education || [])[0] || {}).degree) },
-    'edu.school': entry('School / university', 'education', 'school'),
+    // A school is matched by the words that tell institutions apart: never "Glasgow Caledonian" for "Glasgow".
+    'edu.school': entry('School / university', 'education', 'school', 'school'),
     'edu.degree': entry('Degree', 'education', 'degree', 'degree'),
     'edu.field': entry('Field of study', 'education', 'field'),
     'edu.gpa': entry('GPA', 'education', 'gpa', 'gpa'),
+    'edu.classification': entry('Degree classification', 'education', 'classification', 'class'),
     'edu.location': entry('School location', 'education', 'location'),
+    // Worked out from the entry's location (never learnt into it).
+    'edu.country': Object.assign(entry('Country of school', 'education', 'location', 'country'), { derived: true }),
     'edu.start': entry('Education start date', 'education', 'startDate', 'date'),
     'edu.end': entry('Graduation date', 'education', 'endDate', 'date'),
     'edu.year': { label: 'Year of study', get: (p, ctx) => studyYear(p, ctx.today) },
@@ -1392,6 +1554,7 @@
     'exp.company': entry('Company', 'experience', 'company'),
     'exp.title': entry('Job title', 'experience', 'title'),
     'exp.location': entry('Job location', 'experience', 'location'),
+    'exp.country': Object.assign(entry('Country of employer', 'experience', 'location', 'country'), { derived: true }),
     'exp.start': entry('Job start date', 'experience', 'startDate', 'date'),
     'exp.end': entry('Job end date', 'experience', 'endDate', 'date'),
     'exp.current': entry('Currently work here', 'experience', 'current', 'bool'),
@@ -1445,6 +1608,7 @@
 
     'file.resume': { label: 'Resume file', file: 'resume', get: () => null },
     'file.coverLetter': { label: 'Cover letter file', file: 'coverLetter', get: () => null },
+    // Only for a level of study you have an entry at (uploadApplies): not "…of your graduate studies" for a BSc.
     'file.transcript': { label: 'Transcript file', file: 'transcript', get: () => null },
 
     'account.username': {
@@ -1942,8 +2106,9 @@
       'edu.end',
       /\bgraduat(ion|ed|e|ing)\b|expected graduation|completion (date|year)|year of (graduation|completion|passing)|class of|passing year|year (graduated|completed)|\b(course|degree|studies|programme|program) (finish|end|complete)s?\b|\b(finish|finishing|complete|completing|end|ending) (your |my |the )?(university |college |undergraduate |current |academic )?(course|degree|studies|programme|program)\b|\bend (date |year )?of (your |the )?(course|degree|studies)\b|\bleav(e|ing) (academia|university|full time education)\b/,
       {
-        // "undergraduate" no longer matches (\b), so "graduation year (undergraduate degrees…)" is still a date
-        not: /^(did|have) you|^are you (a |an )?(recent |new )?(graduate|grad|undergrad)|\binterested in\b|\bopportunit|post ?grad|\bgraduate (degree|school|program|student)|high school|secondary school|sixth form|a levels?\b|\bgpa\b|\bgrades?\b/,
+        // "undergraduate" no longer matches (\b), so "graduation year (undergraduate degrees…)" is still a date.
+        // "Graduate Engineer / Summer Internship" is a job for graduates, not a date.
+        not: /^(did|have) you|^are you (a |an )?(recent |new )?(graduate|grad|undergrad)|\binterested in\b|\bopportunit|post ?grad|\bgraduate (degree|school|program|student)|\bgraduate (engineer|analyst|scheme|role|position|job|programme|trainee|consultant|developer|intake|associate|internship)s?\b|high school|secondary school|sixth form|a levels?\b|\bgpa\b|\bgrades?\b/,
       },
     ),
     R(
@@ -1966,14 +2131,49 @@
       'edu.school',
       /^(which|what) (university|school|college|institution)\b|^name of (the |your )?(university|college)\b/,
       {
-        not: /\b(university|college) degree\b|\bschool (type|diploma|grades?|did you attend)\b|type of school|\bgraduat\w* (year|date)|\byear\b|\bgpa\b|\bcity\b|\bcountry\b|\blocation\b/,
+        not: /\b(university|college) degree\b|\b(university|college|school) (course|programme|program|subject)s?\b|\bschool (type|diploma|grades?|did you attend)\b|type of school|\bgraduat\w* (year|date)|\byear\b|\bgpa\b|\bcity\b|\bcountry\b|\blocation\b/,
       },
     ),
+    // "University Course" is what you study there, not the university.
     R(
       'edu.school',
       /\bschool\b|universit|college|institut(e|ion)|alma mater|academy|hochschule|\becole\b|universidad/,
       {
-        not: /high school (diploma|graduate|completion)|degree|major|minor|gpa|\byear\b|\bdates?\b|\bstart|\bend\b|graduat|\blocation\b|\bcity\b|(?<!\b(please|kindly) )\bstate\b|country|^(did|have|has|are|do|does|were|was|will|would|can|is) you\b|e ?mail|address|transcript|meals|type of school|school type|kind of school|fee paying|state school|grammar school|grading|\bscale\b/,
+        not: /high school (diploma|graduate|completion)|degree|major|minor|gpa|\byear\b|\bdates?\b|\bstart|\bend\b|graduat|\blocation\b|\bcity\b|(?<!\b(please|kindly) )\bstate\b|country|^(did|have|has|are|do|does|were|was|will|would|can|is) you\b|e ?mail|address|transcript|meals|type of school|school type|kind of school|fee paying|state school|grammar school|grading|\bscale\b|\bcourses?\b/,
+      },
+    ),
+    // "State/City/Region of School", "School Location", "City of university": where that school is.
+    R(
+      'edu.location',
+      /\b(city|town|state|region|location|province|county|place)\b.*\b(school|universit\w*|college|institution|campus)\b|\b(school|universit\w*|college|institution|campus) (city|town|state|region|location|province|county)\b/,
+      {
+        kinds: TEXTISH.concat(CHOICE),
+        not: /\bcountry\b|type of school|\bschool type\b|state (school|run|funded)|grammar|fee paying|independent|private|\b(14|fourteen|aged?)\b|post ?code|\bzip\b|^(are|do|did|have|were|was) you\b/,
+      },
+    ),
+    // "Country of School", "Institution country", "Country where you obtained your degree"; "Country of Employer".
+    R(
+      'edu.country',
+      /\bcountr(y|ies)\b.*\b(school|universit\w*|college|institution|campus|studies|studied|degree)\b|\b(school|universit\w*|college|institution|campus)\b.*\bcountr(y|ies)\b/,
+      {
+        not: /\b(want|wish|like|prefer\w*|plan|intend|interested)\b|citizen|nationalit|\bbirth\b|residen|\blive\b|\bwork\b|\bvisa\b|authori|\bphone\b|\bcode\b|which countries/,
+      },
+    ),
+    R(
+      'exp.country',
+      /\bcountr(y|ies)\b.*\b(employer|company|organi[sz]ation|employment|workplace)\b|\b(employer|company|organi[sz]ation|employment|workplace)\b.*\bcountr(y|ies)\b/,
+      {
+        not: /\b(want|wish|like|prefer\w*|plan|intend|interested|seek\w*|looking|desired|apply\w*)\b|citizen|nationalit|\bbirth\b|residen|\blive\b|\bvisa\b|authori|\bphone\b|\bcode\b|which countries|headquarter|\bhq\b|\bthis (role|position|job)\b/,
+      },
+    ),
+    // "Expected/Achieved Degree Classification", "Predicted degree class", "Degree result", "Final degree grade (or
+    // predicted)": your class, never the degree. A-level grades, UCAS points and "role classification" are not, and
+    // "Overall Result (GPA)" (Workday) asks for the GPA.
+    R(
+      'edu.classification',
+      /\bclassification\b|\bclass of (your |the )?degree\b|\bdegree class\b|\bhonou?rs (class|classification|level|grade)\b|\bclass of honou?rs\b|\b(predicted|expected|achieved|anticipated|projected|final|actual|overall)( or (predicted|expected|achieved))? (degree )?(class(es)?|grades?|results?|outcomes?|honou?rs)\b|\bdegree (grade|result|outcome)s?\b|^honou?rs$/,
+      {
+        not: /\b(role|job|position|security|visa|employment|worker|tax|data|risk|occupation\w*|industry|product)\b classification|a levels?|\bas levels?\b|gcses?|ucas|highers|\bib\b|baccalaureat|btec|leaving cert|school|sixth form|\bmodules?\b|\bgpa\b|\bcgpa\b|grade point|^(do|are|have|will|did|would|can) you\b/,
       },
     ),
     // "What degree are you currently pursuing?" asks for a degree; "Are you pursuing a degree?" is yes/no.
@@ -1981,12 +2181,12 @@
       'edu.degree',
       /\b(what|which) (type of |kind of )?degree\b|\b(type|kind|name) of (the |your )?degree\b|\bdegree (type|name|title|program(me)?)\b|\bdegree (are you|you are|you re|will you be) (currently )?(pursuing|studying|completing|enrolled|working|seeking|undertaking|earning|obtaining)/,
       {
-        not: /major|field|subject|discipline|\byear\b|\bdate\b|minimum|equivalent/,
+        not: /major|field|subject|discipline|\byear\b|\bdate\b|minimum|equivalent|\bclass\b|classification|\bgrades?\b|\bresults?\b/,
         test: (desc) => !hasYesNoOptions(desc),
       },
     ),
     R('edu.degree', /\bdegree\b|qualification|diploma|\baward\b/, {
-      not: /major|field|subject|discipline|\byear\b|\bdate\b|level of|highest|degree of|\bdid you|have you|do you|are you|minimum|equivalent|\bclass\b|classification|\bgpa\b|\bgrades?\b|\bscore\b/,
+      not: /major|field|subject|discipline|\byear\b|\bdate\b|level of|highest|degree of|\bdid you|have you|do you|are you|minimum|equivalent|\bclass\b|classification|\bgpa\b|\bgrades?\b|\bscore\b|\bresults?\b|\boutcome\b/,
       test: (desc) => !hasYesNoOptions(desc),
     }),
     R(
@@ -1996,9 +2196,18 @@
         not: /minor|\bdid\b|field (sales|service|work|engineer|marketing|operations)|form ?field|field ?(set|label|wrapper|group|container|row|section|input)|\bsubjects? to\b|export control/,
       },
     ),
+    // "University Course", "Course", "Course title", "Course studied", "Name of course", "Programme name": what you
+    // study. Not its dates, code, grade or provider, a list of courses or modules, or "the course of the internship".
+    R(
+      'edu.field',
+      /\bcourse\b|\b(programme|program) (name|title)\b|\bname of (the |your )?(degree )?(programme|program)\b/,
+      {
+        not: /\bcourses\b|(?<!\b(name|title) )\bof course\b|\bthe course of\b|relevant|\bmodules?\b|\b(code|provider|leader|tutor|director|fees?|dates?|start\w*|end|ends|ending|finish\w*|complet\w*|graduat\w*|years?|months?|duration|length|type|mode|level|load|credits?|grades?|results?|marks?|score|classification|gpa|location|city|country|work)\b|full ?time|part ?time|\bappl(y|ying|ied)\b|\binterested\b|preference|\bjob\b|\brole\b|internship|placement|scheme|training|\bonline\b|certif/,
+      },
+    ),
     R(
       'edu.gpa',
-      /\bgpa\b|grade point|\bcgpa\b|cumulative (grade|average)|grade average|\bgrades?\b|degree classification|class of degree|\bdegree class\b|\bclassification\b|\bhonou?rs\b/,
+      /\bgpa\b|grade point|\bcgpa\b|cumulative (grade|average)|grade average|\bgrades?\b/,
       // "Number of GCSEs at grade 9-7" is a count, not your grade.
       {
         not: /test score|credit score|maximum|max possible|highest possible|grading scale|scale used|\bnumber of\b|\bhow many\b/,
@@ -2298,6 +2507,9 @@
     workCountries,
     followUpAnswer,
     eduLevelOf,
+    degreeClassOf,
+    uploadApplies,
+    placeCountry,
     languagesNamed,
     isAcknowledgement,
     parseEthnicity,
