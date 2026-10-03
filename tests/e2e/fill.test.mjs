@@ -82,6 +82,7 @@ test('Workday-style form: listbox buttons, automation ids, two work-history entr
   assert.equal(await text(page, '#btn-pdt'), 'Mobile');
   assert.equal(await value(page, '#input-7'), 'ada@example.com');
   assert.equal(await checked(page, '#prev-no'), true, 'custom answer for “previously worked for”');
+  assert.equal(await text(page, '#btn-source'), 'LinkedIn', 'two-level prompt: Social Media, then LinkedIn');
 
   assert.equal(await value(page, '#we1-title'), 'Senior Engineer');
   assert.equal(await value(page, '#we1-company'), 'Analytical Engines Inc');

@@ -69,6 +69,27 @@ const QUESTIONS = {
   school: opts(schools),
 };
 const OFFICES = opts(['Chicago', 'London', 'New York', 'Singapore']);
+
+// ?databricks adds Databricks' own questions (boards-api.greenhouse.io/v1/boards/databricks/jobs/8133715002):
+// "How did you hear about this job?" as free text, and the US sanctions question and its follow-up, both multi-selects.
+const DATABRICKS = new URLSearchParams(location.search).has('databricks');
+const SANCTIONS = opts([
+  'Citizen or permanent resident of Cuba, Iran, North Korea, or Syria',
+  'Ordinarily a resident of Cuba, Iran, North Korea, Syria or the Crimea, Donetsk, Luhansk, Zaporizhzhia, or Kherson regions of Ukraine',
+  'Ordinarily a resident of Russia or Belarus and not willing to relocate for a Databricks role',
+  'None of the above',
+]);
+const SANCTIONS_FOLLOW_UP = opts([
+  'U.S. citizen',
+  'U.S. non-citizen national',
+  'U.S. permanent resident (Green Card holder)',
+  'Individual granted asylum in the U.S.',
+  'Individual granted refugee status in the U.S.',
+  'Individual granted citizenship in a country other than Cuba, Iran, North Korea, or Syria',
+  'Individual granted permanent residency in a country other than Cuba, Iran, North Korea, or Syria',
+  'None of these apply to me',
+  'Not applicable (i.e., I selected “none of the above” for the prior question)',
+]);
 const RELOCATION = opts([
   'Chicago',
   'New York',
@@ -282,6 +303,7 @@ function App() {
     source: label(s.source),
     offices: label(s.offices),
     relocation: s.relocation.map((v) => RELOCATION.find((o) => o.value === v).label),
+    ...(DATABRICKS ? { sanctions: label(s.sanctions), sanctionsFollowUp: label(s.sanctionsFollowUp) } : {}),
   };
   return (
     <>
@@ -434,6 +456,34 @@ function App() {
             value={s.otherSource}
             onChange={set('otherSource')}
           />
+          {DATABRICKS && (
+            <>
+              <Text
+                id="question_1013"
+                label="How did you hear about this job?"
+                value={s.heard}
+                onChange={set('heard')}
+              />
+              <GhSelect
+                id="question_1014[]"
+                label="Please confirm whether any of the below applies to you.  Select all that apply. Note: This information will only be used to ensure compliance with U.S. sanctions and export controls."
+                required
+                isMulti
+                options={SANCTIONS}
+                value={s.sanctions || []}
+                onChange={set('sanctions')}
+              />
+              <GhSelect
+                id="question_1015[]"
+                label="If you selected a response to the prior question other than “none of the above,” please confirm whether any of the following also applies to you.  Select all that apply."
+                required
+                isMulti
+                options={SANCTIONS_FOLLOW_UP}
+                value={s.sanctionsFollowUp || []}
+                onChange={set('sanctionsFollowUp')}
+              />
+            </>
+          )}
         </div>
         <button type="submit" className="btn btn--pill">
           Submit application

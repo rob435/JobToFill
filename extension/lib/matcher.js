@@ -70,6 +70,8 @@
     'job.locations',
     'skills',
     'languages',
+    'compliance.sanctions', // one statement of a sanctions list, or its "None of the above"
+    'job.availability', // one interview slot
   ]);
 
   // "…outside of the classroom? For example: student clubs, partner organisations…": the examples don't say
@@ -140,6 +142,9 @@
 
     const signals = signalTexts(desc);
     const s = desc.signals || {};
+    // "Citizen or permanent resident of Cuba, Iran, North Korea, or Syria" among the options: a sanctions question,
+    // whatever it says ("If you selected a response other than none of the above…" too).
+    if (sanctionsOptions(desc)) return { type: 'compliance.sanctions', part: null, score: 1, source: 'options' };
     // "Which university…? Please select "Other" if yours is not listed" is the question, not its follow-up box.
     const asked = String(s.question || s.label || s.aria || s.nearby || '');
     const head = asked.split('?')[0];
@@ -178,6 +183,8 @@
       if (yesNo && NEVER_YES_NO.test(rule.type) && !linkBox) continue;
       // "AI policy … our tools" with Yes / No options is not a list of skills; "Are you fluent in French?" is.
       if (rule.type === 'skills' && yesNoOptions(desc)) continue;
+      // "Are you available for an interview next week? Yes / No" names no slot to tick; "Is email OK?" no method.
+      if ((rule.type === 'job.availability' || rule.type === 'contact.preference') && yesNoOptions(desc)) continue;
       if (rule.type === 'languages' && yesNoOptions(desc) && !F().languagesNamed(hitText).length) continue;
       score += 0.05 * (hits - 1);
       const candidate = { type: rule.type, part: rule.part || null, score, source: 'rule', rule };
@@ -203,6 +210,12 @@
       }
     }
     return refine({ type: best.type, part: best.part, score: best.score, source: best.source }, desc);
+  }
+
+  /** A choice whose options are sanctions statements (each names two sanctioned places). */
+  function sanctionsOptions(desc) {
+    if (!F().KINDS.CHOICE.includes(desc.kind) && desc.kind !== 'checkbox') return false;
+    return (desc.options || []).some((o) => F().TWO_SANCTIONED_PLACES.test(norm(o.text)));
   }
 
   // UK degree classes and their usual spellings.
@@ -391,7 +404,11 @@
     results.forEach((r, i) => {
       if (!['text', 'textarea'].includes(descs[i].kind)) return;
       const q = norm(questionText(descs[i]));
-      if (!/^(if (yes|so|applicable|you answered yes)|please (give|provide|list) (details|more|their|the))\b/.test(q))
+      if (
+        !/^(if (yes|so|applicable|you (answered|selected|chose|said|ticked|checked) yes)|please (give|provide|list) (details|more|their|the))\b/.test(
+          q,
+        )
+      )
         return;
       for (let j = i - 1; j >= Math.max(0, i - 2); j--) {
         const prev = results[j] && DETAILS_OF[results[j].type];
@@ -400,6 +417,15 @@
           return;
         }
       }
+    });
+
+    // "If you selected a response to the prior question other than "none of the above"…" right after a sanctions
+    // question (its options unseen in a closed dropdown): that question's follow-up.
+    results.forEach((r, i) => {
+      if ((r && r.type) || !(F().KINDS.CHOICE.includes(descs[i].kind) || descs[i].kind === 'checkbox')) return;
+      if (!F().isSanctionsFollowUp(norm(questionText(descs[i])))) return;
+      if (results.slice(Math.max(0, i - 2), i).some((x) => x && x.type === 'compliance.sanctions'))
+        results[i] = { type: 'compliance.sanctions', part: null, score: 1, source: 'follow-up' };
     });
 
     const state = { edu: { index: -1, seen: new Set() }, exp: { index: -1, seen: new Set() } };
@@ -516,7 +542,9 @@
   function isPlaceholder(n) {
     return (
       !n ||
-      /^(select|choose|please (select|choose|specify)|pick (one|an option)|none selected|click to select)\b/.test(n)
+      /^(select|choose|please (select|choose|specify)|pick (one|an option)|none selected|no selection|nothing selected|click to select)\b/.test(
+        n,
+      )
     );
   }
 
@@ -884,6 +912,7 @@
 
   function matchAll(options, v) {
     if (!v) return [];
+    if (JUDGED.has(v.kind)) return judgedPicks(optionList(options), v, true);
     const items =
       v.items ||
       String(v.text)
@@ -895,6 +924,93 @@
       if (idx >= 0 && !picks.includes(idx)) picks.push(idx);
     }
     return picks;
+  }
+
+  /* ------------------------------------------- statements and slots, one by one */
+
+  // Values whose options are each judged against your profile: sanctions statements, interview slots.
+  const JUDGED = new Set(['sanctions', 'availability']);
+  // "None of the above", "None of these apply to me", "Not applicable".
+  const NONE_OPTION =
+    /^(none|neither|n a|not applicable)\b|\bnone of (the above|these|the following|them)\b|\b(do(es)?|did) not apply\b|\bnot applicable\b/;
+  // The follow-up's "Not applicable (i.e., I selected "none of the above" for the prior question)".
+  const PRIOR_NONE =
+    /\b(selected|chose|ticked|checked|answered|picked) none of the above\b|\bnone of the above (for|in|to|on) the (prior|previous|first|above|preceding) question\b/;
+
+  /**
+   * The options a sanctions answer takes: each statement true of you (fields.sanctionsApplies), else "None of the
+   * above"; in the follow-up just "Not applicable (I selected none of the above)", when nothing could apply to you.
+   * Yes / No options take the question's own answer. Empty when your profile can't tell.
+   */
+  function sanctionPicks(opts, v) {
+    if (v.followUp || opts.some((o) => PRIOR_NONE.test(o.n))) {
+      const na = opts.find((o) => PRIOR_NONE.test(o.n)) || opts.find((o) => /^(not applicable|n a)\b/.test(o.n));
+      return v.clear && na ? [na.i] : [];
+    }
+    const judged = opts.map((o) => ({ o, applies: F().sanctionsApplies(o.text, v.facts) }));
+    const statements = judged.filter((x) => x.applies !== undefined);
+    if (statements.length) {
+      if (statements.some((x) => x.applies === null)) return [];
+      const yes = statements.filter((x) => x.applies).map((x) => x.o.i);
+      if (yes.length) return yes;
+      const rest = judged.filter((x) => x.applies === undefined).map((x) => x.o);
+      const none = rest.find((o) => NONE_OPTION.test(o.n)) || rest.find((o) => canonicalOf(o.text) === 'no');
+      return none ? [none.i] : [];
+    }
+    if (opts.some((o) => canonicalOf(o.text) === 'yes') && opts.some((o) => canonicalOf(o.text) === 'no')) {
+      const hit = v.canonical ? opts.find((o) => canonicalOf(o.text) === v.canonical) : null;
+      return hit ? [hit.i] : [];
+    }
+    // A lone "None of the above" box (its statements are separate boxes): only when nothing could apply.
+    const none = opts.find((o) => NONE_OPTION.test(o.n));
+    return none && v.clear ? [none.i] : [];
+  }
+
+  /**
+   * The options interview availability takes: every slot that suits you (fields.slotFits), "Any time" when every
+   * slot offered does, "None of these dates work for me" only when none does. One choice takes the earliest.
+   */
+  function slotPicks(opts, v, all) {
+    const texts = opts.map((o) => o.text);
+    const slots = F().parseSlots(texts, v);
+    const judged = opts.map((o, k) => ({ o, slot: slots[k], fits: F().slotFits(slots[k], v.avail) }));
+    const real = judged.filter((x) => x.fits !== undefined);
+    const fitting = real.filter((x) => x.fits);
+    const any = judged.find((x) => x.slot.any);
+    const anyFits = any && real.length && real.every((x) => x.fits) ? any : null;
+    const none = real.length && !fitting.length ? judged.find((x) => x.slot.none) : null;
+    if (all) {
+      const picks = (anyFits ? [...fitting, anyFits] : fitting).map((x) => x.o.i).sort((a, b) => a - b);
+      return picks.length ? picks : none ? [none.o.i] : [];
+    }
+    const start = (x) =>
+      Math.min(...x.slot.ranges.map(([from]) => Math.max(from, v.avail.today))) * 1440 +
+      (x.slot.time ? x.slot.time[0] : 0);
+    const dated = fitting.filter((x) => x.slot.ranges.length).sort((a, b) => start(a) - start(b));
+    const pick = dated[0] || anyFits || fitting[0] || none;
+    return pick ? [pick.o.i] : [];
+  }
+
+  function judgedPicks(opts, v, all) {
+    if (!opts.length) return [];
+    if (v.kind === 'availability') return slotPicks(opts, v, all);
+    const picks = sanctionPicks(opts, v);
+    return all ? picks : picks.slice(0, 1);
+  }
+
+  /** The options worth matching: enabled, not a placeholder, with their normalised text and value. */
+  function optionList(options) {
+    const opts = [];
+    (options || []).forEach((o, i) => {
+      if (!o || o.disabled) return;
+      const text = String(o.text || '').trim();
+      const value = String(o.value == null ? '' : o.value).trim();
+      const n = norm(text);
+      if (isPlaceholder(n)) return;
+      // "<3.7" and "> 3 Months" lose their sign when normalised: never an exact spelling of "3.7".
+      opts.push({ i, text, value, n, nv: norm(value), signed: /[<>≤≥]/.test(text) });
+    });
+    return opts;
   }
 
   /**
@@ -911,19 +1027,15 @@
       }
       return -1;
     }
-    const opts = [];
-    options.forEach((o, i) => {
-      if (!o || o.disabled) return;
-      const text = String(o.text || '').trim();
-      const value = String(o.value == null ? '' : o.value).trim();
-      const n = norm(text);
-      if (isPlaceholder(n)) return;
-      // "<3.7" and "> 3 Months" lose their sign when normalised: never an exact spelling of "3.7".
-      opts.push({ i, text, value, n, nv: norm(value), signed: /[<>≤≥]/.test(text) });
-    });
+    const opts = optionList(options);
     if (!opts.length) return -1;
 
     if (v.kind === 'phoneCode') return bestPhoneCode(opts, v);
+    // Sanctions statements and interview slots: each option judged on its own; one choice takes the first (earliest).
+    if (JUDGED.has(v.kind)) {
+      const picks = judgedPicks(opts, v, false);
+      return picks.length ? picks[0] : -1;
+    }
 
     // Notice periods against "< 1 Month" / "1-2 Months" / "4 weeks": compared in weeks (before spellings:
     // "> 3 Months" reads "3 months" once its sign is stripped).
@@ -953,6 +1065,12 @@
     for (const c of cands) {
       const hit = opts.find((o) => o.n === c && !o.signed) || opts.find((o) => o.nv === c && !o.signed);
       if (hit) return hit.i;
+    }
+    // An option that names the value ("Job Board / LinkedIn", "Social Media (LinkedIn, Instagram…)") over broader ones.
+    if (v.named) {
+      const named = opts.filter((o) => v.named.test(o.n));
+      if (named.length === 1) return named[0].i;
+      if (named.length > 1) return bestText(named, cands, v).i;
     }
     // Options this value only takes when they name it exactly ("Campus job board" for another job site).
     if (v.avoid) {
@@ -1157,6 +1275,7 @@
     degreeGroup,
     formatForText,
     isPlaceholder,
+    dateOrder,
   };
   JTF.matcher = matcher;
   if (typeof module === 'object' && module.exports) module.exports = matcher;
