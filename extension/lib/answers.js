@@ -215,6 +215,7 @@
       '- About the candidate, use only CANDIDATE MATERIAL, ANSWER GUIDANCE (the candidate’s own rules, always true) and PREVIOUS ANSWERS (their own words). Never invent or round numbers, employers, job titles, grades, test scores, awards, tools, dates, results, people’s names or anecdotes.',
       '- About the employer and the role, use the JOB POSTING and COMPANY notes. Widely known facts about what the employer does are fine; specific numbers, dates, deals, products, offices or people only when the posting has them.',
       '- When a question asks for a fact the material and guidance don’t give (a score, an ID, a referee or referrer, a past application, a relative, an offer, a visa detail, a grade not stated, a criminal, regulatory or health matter), skip it. Never guess about the candidate.',
+      '- Grades are given as the material states them: a UK degree class stays a class (2:1, First). Never convert one into a GPA or onto another scale (a "0-4.0 scale" in the question is not the candidate’s grade); skip a question that only takes a GPA when the material has none.',
       '- Previous answers were written for other employers: reuse their facts and voice, never another employer’s name or reasons.',
       '- Never answer diversity or equal-opportunity monitoring (gender, ethnicity, disability, religion, sexuality, social background, in any language), declarations, consents or signatures: skip them.',
       '',
@@ -367,6 +368,24 @@
     return t.trim();
   }
 
+  // A box for a grade ("Overall Result (GPA)", "Predicted degree classification", "A-level results"): the candidate's
+  // own, so its numbers come from the grades their material gives, never from the scale the question names ("on a 0-
+  // 4.0 scale") or the posting's minimum. An essay about their studies may still quote the material.
+  const GRADE =
+    /\b(gpa|cgpa|grade point|grades?|degree class\w*|classification|(overall|final|predicted|expected|achieved|academic|degree|exam|a level) (results?|marks?|scores?))\b/;
+  const asksGrade = (item) => answerKind(item) !== 'essay' && GRADE.test(norm(item.question));
+
+  /** The numbers the candidate's material gives as grades: "GPA: 3.8/4.0", "3.8 GPA", "degree classification 2:1". */
+  function gradeNumbers(text) {
+    const t = String(text || '');
+    const after =
+      t.match(
+        /\b(c?gpa|grade point|grades?|classification|class|predicted|expected|achieved|honours|hons|results?|average|marks?|scores?)\b[^\n]{0,30}/gi,
+      ) || [];
+    const before = t.match(/[^\n]{0,12}\bc?gpa\b/gi) || [];
+    return L().numbers([...after, ...before].join('\n'));
+  }
+
   /**
    * Check one written answer. ctx: { facts (all allowed text), mine (candidate text), company, role, others
    * (employers it must not name), today }. Returns { errors, warnings, severe }.
@@ -392,9 +411,12 @@
       errors.push(`Too short: ${n} words; write ${lim.minWords}–${lim.maxWords}.`);
     if (kind === 'text' && !lim.maxWords && n > 45) errors.push(`This box wants a short answer, not ${n} words.`);
 
-    // Numbers must come from the material, the posting or the question itself ("In 150 words…").
+    // Numbers must come from the material, the posting or the question itself ("In 150 words…"); a grade's from the
+    // grades the candidate's material gives.
     const allowed = new Set(
-      L().numbers([ctx.facts, item.question, item.help, item.follows && item.follows.answer].join('\n')),
+      asksGrade(item)
+        ? gradeNumbers(ctx.mine)
+        : L().numbers([ctx.facts, item.question, item.help, item.follows && item.follows.answer].join('\n')),
     );
     const year = new Date(ctx.today || Date.now()).getFullYear();
     for (let y = year - 1; y <= year + 4; y++) allowed.add(String(y));
@@ -490,7 +512,7 @@
       const m = text.replace(/,/g, '').match(/-?\d+(\.\d+)?/);
       if (!m) return { id: item.id, skip: true, reason: 'not a number' };
       text = m[0];
-      const allowed = new Set(L().numbers(ctx.facts));
+      const allowed = new Set(asksGrade(item) ? gradeNumbers(ctx.mine) : L().numbers(ctx.facts));
       if (!allowed.has(text) && !allowed.has(text.replace(/\.0+$/, '')))
         return { id: item.id, skip: true, reason: `${text} isn’t in your material` };
       return { id: item.id, kind, value: text, basis, warnings: [], errors: [], severe: 0 };

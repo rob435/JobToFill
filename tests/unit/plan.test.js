@@ -2736,6 +2736,184 @@ test('Workday education dates: "From (Actual)", "To (Actual or Expected)", "End 
   assert.equal(matcher.classify(desc('Expected start date')).type, 'job.startDate', 'still the job’s start');
 });
 
+// Shell's Workday "My Experience": the instructions under "Education", above every entry.
+const SHELL_HELP =
+  "If your school/university uses a GPA system, enter your GPA on a 0- 4.0 scale. Otherwise, provide your overall result in your school/university's grading system. If you haven't graduated, enter your predicted result.";
+
+/** What a fill puts in each box, with the help the page gives each one (content/main.js passes it as ctx.help). */
+function fillWithHelp(page, p, today = TODAY) {
+  const { results, context } = matcher.plan(page, p);
+  return page.map((d, i) => {
+    const r = results[i];
+    if (!r || !r.type) return null;
+    const v = fields.resolve(r.type, p, {
+      ...context,
+      index: r.index || 0,
+      part: r.part,
+      kind: d.kind,
+      question: util.normalize(matcher.questionText(d)),
+      help: util.normalize(matcher.helpText(d)),
+      options: d.options,
+      today,
+    });
+    if (!v) return null;
+    if (!d.options) return matcher.formatForText(v, d);
+    const k = matcher.matchOption(d.options, v);
+    return k < 0 ? null : d.options[k].text;
+  });
+}
+
+test('Workday (Shell): year-only "From" / "To (Actual or Expected)" boxes are the degree’s years', () => {
+  const p = glasgow(); // 2023-09 → 2027-06
+  const box = (signals) =>
+    desc({ section: 'Education 1', sectionHelp: SHELL_HELP, ...signals }, { placeholderRaw: 'YYYY' });
+  const variants = {
+    'label without for: the text around it': [
+      box({
+        nearby: 'From*',
+        placeholder: 'YYYY',
+        attrs: 'dateSectionYear-input',
+        ancestors: 'dateInputWrapper formField-startDate education-1',
+      }),
+      box({
+        nearby: 'To (Actual or Expected)*',
+        placeholder: 'YYYY',
+        attrs: 'dateSectionYear-input',
+        ancestors: 'dateInputWrapper formField-endDate education-1',
+      }),
+    ],
+    'aria-label "Year": the wrapper’s id': [
+      box({
+        aria: 'Year',
+        placeholder: 'YYYY',
+        attrs: 'dateSectionYear-input',
+        ancestors: 'dateInputWrapper formField-startDate education-1',
+      }),
+      box({
+        aria: 'Year',
+        placeholder: 'YYYY',
+        attrs: 'dateSectionYear-input',
+        ancestors: 'dateInputWrapper formField-endDate education-1',
+      }),
+    ],
+    'a group labelled by the date’s label': [
+      box({ aria: 'Year', group: 'From', placeholder: 'YYYY', ancestors: 'dateInputWrapper formField-startDate' }),
+      box({
+        aria: 'Year',
+        group: 'To (Actual or Expected)',
+        placeholder: 'YYYY',
+        ancestors: 'dateInputWrapper formField-endDate',
+      }),
+    ],
+    'a proper label': [
+      box({ label: 'From', placeholder: 'YYYY' }),
+      box({ label: 'To (Actual or Expected)', placeholder: 'YYYY' }),
+    ],
+  };
+  const entry = (s) => desc({ section: 'Education 1', sectionHelp: SHELL_HELP, ...s });
+  for (const [name, [from, to]] of Object.entries(variants)) {
+    const page = [
+      desc({ label: 'Job Title', section: 'Work Experience 1' }),
+      desc({ label: 'Company', section: 'Work Experience 1' }),
+      desc({ label: 'From', aria: 'Month', placeholder: 'MM', ancestors: 'dateInputWrapper formField-startDate' }),
+      desc({ label: 'From', aria: 'Year', placeholder: 'YYYY', ancestors: 'dateInputWrapper formField-startDate' }),
+      entry({ label: 'School or University' }),
+      desc({ label: 'Degree', section: 'Education 1' }, { kind: 'combo' }),
+      entry({ label: 'Field of Study' }),
+      entry({ label: 'Overall Result (GPA)' }),
+      from,
+      to,
+    ];
+    assert.deepEqual(
+      types(matcher.plan(page, p)).slice(4),
+      ['edu.school#0', 'edu.degree#0', 'edu.field#0', 'edu.gpa#0', 'edu.start#0:year', 'edu.end#0:year'],
+      name,
+    );
+    assert.deepEqual(
+      fillWithHelp(page, p).slice(4),
+      ['University of Glasgow', 'BSc (Hons)', 'Computer Science', '2:1', '2023', '2027'],
+      name,
+    );
+  }
+  // A four-digit box keeps the whole year; a two-digit one gets "27".
+  const year = (extra) =>
+    matcher.formatForText(fields.resolve('edu.end', p, { index: 0, part: 'year', jobContext: true }), {
+      ...variants['a proper label'][1],
+      ...extra,
+    });
+  assert.equal(year({ maxLength: 4 }), '2027');
+  assert.equal(year({ maxLength: 2, placeholderRaw: 'YY' }), '27');
+});
+
+test('"Overall Result (GPA)": your class when the page takes your own grading system; a GPA box that wants a number stays empty', () => {
+  const p = glasgow(); // a 2:1, still studying, no GPA
+  const gpa = (question, help, extra) =>
+    ask(p, 'edu.gpa', question, Object.assign({ kind: 'text', today: TODAY, help: util.normalize(help || '') }, extra));
+  const shell = gpa('Overall Result (GPA)', SHELL_HELP);
+  assert.equal(shell.text, '2:1', 'the class as written, never a number');
+  assert.equal(shell.cls, 'upper');
+  assert.equal(shell.expected, true, 'predicted while studying');
+  // The same instructions in the label, or in a help text the box points to.
+  assert.equal(gpa(`Overall Result (GPA) ${SHELL_HELP}`).text, '2:1');
+  assert.equal(gpa('GPA', SHELL_HELP).text, '2:1', 'the page says another system is fine');
+  assert.equal(gpa('GPA', 'If your university does not use GPA, enter your degree classification').text, '2:1');
+  assert.equal(gpa('Overall Result (GPA)').text, '2:1', 'as before, with nothing else said');
+  // Boxes that want a GPA number never get "2:1" or a converted number.
+  assert.equal(gpa('GPA'), null);
+  assert.equal(gpa('Cumulative GPA (out of 4.0)'), null);
+  assert.equal(gpa('Overall Result (GPA)', 'Enter your GPA on a 0-4.0 scale.'), null, 'only a GPA on that scale');
+  assert.equal(gpa('Overall Result (GPA)', SHELL_HELP, { kind: 'number' }), null, 'a number box');
+  // Graduated: the class achieved; a GPA you have stays your GPA.
+  assert.equal(gpa('Overall Result (GPA)', SHELL_HELP, { today: new Date('2028-01-01') }).expected, false);
+  p.education[0].classification = '';
+  p.education[0].gpa = '2:1';
+  assert.equal(gpa('Overall Result (GPA)', SHELL_HELP).text, '2:1', 'a class kept as the GPA');
+  assert.equal(gpa('GPA (out of 4.0)'), null);
+  p.education[0].gpa = '3.8/4.0';
+  assert.equal(gpa('Overall Result (GPA)', SHELL_HELP).number, 3.8);
+  p.education[0].gpa = '';
+  assert.equal(gpa('Overall Result (GPA)', SHELL_HELP), null, 'nothing to give');
+});
+
+test('a grade your profile holds never goes to the AI; school and subject come from the entry under Shell’s help', () => {
+  const p = glasgow();
+  const held = (type, question) => fields.gradeHeld(type, p, { index: 0, question: util.normalize(question) });
+  assert.equal(held('edu.gpa', 'GPA'), true, 'a GPA box left empty for a UK class stays empty');
+  assert.equal(held('edu.gpa', 'Overall Result (GPA)'), true);
+  assert.equal(held('edu.classification', 'Degree classification'), true);
+  assert.equal(held('edu.gpaScale', 'GPA Scale'), true);
+  assert.equal(held('edu.classAtLeast', 'Do you have a 2:1 or above?'), true);
+  assert.equal(held('edu.school', 'School or University'), false, 'not a grade');
+  const scientist = computingScientist(); // a BSc (gpa "2:1") and Advanced Highers ("AAB")
+  const school = (question) => fields.gradeHeld('edu.gpa', scientist, { index: 0, question: util.normalize(question) });
+  assert.equal(school('Highers / Advanced Highers results'), true);
+  assert.equal(school('Maths GCSE grade'), false, 'GCSEs aren’t in the profile: the AI may find them in the CV');
+  p.education[0].classification = '';
+  assert.equal(held('edu.gpa', 'GPA'), false, 'no grade at all: the AI may find one in the CV');
+  // "School or University" and "Field of Study" under the help text are still the school and the subject.
+  const page = [
+    desc({ label: 'School or University', section: 'Education 1', sectionHelp: SHELL_HELP }),
+    desc({ label: 'Field of Study', section: 'Education 1', sectionHelp: SHELL_HELP }),
+  ];
+  assert.deepEqual(types(matcher.plan(page, scientist)), ['edu.school#0', 'edu.field#0']);
+  assert.deepEqual(fillWithHelp(page, scientist), ['University of Glasgow', 'Computing Science']);
+  const subject = fields.resolve('edu.field', scientist, { index: 0, jobContext: true, question: 'field of study' });
+  assert.ok(subject.candidates.includes('Computer Science'), 'a list offers "Computer Science" for it');
+});
+
+test('your CV’s upload, when it takes several files, also takes your letter and transcript', () => {
+  const p = glasgow();
+  const also = (label, opt) =>
+    fields.uploadAlso(util.normalize(label), Object.assign({ multiple: true, profile: p, separate: new Set() }, opt));
+  assert.deepEqual(also('Resume/CV/Transcripts Upload a file (5MB max)'), ['file.coverLetter', 'file.transcript']);
+  assert.deepEqual(also('Resume, cover letter and transcripts'), ['file.coverLetter', 'file.transcript']);
+  assert.deepEqual(also('CV and cover letter'), ['file.coverLetter']);
+  assert.deepEqual(also('Resume/CV'), ['file.coverLetter'], 'no letter upload of its own on the form');
+  assert.deepEqual(also('Resume/CV/Transcripts', { separate: new Set(['file.coverLetter']) }), ['file.transcript']);
+  assert.deepEqual(also('Resume/CV/Transcripts', { multiple: false }), [], 'one file: just the CV');
+  assert.deepEqual(also('Resume / graduate transcript'), ['file.coverLetter'], 'no graduate studies, no transcript');
+});
+
 test('a parent’s highest qualification: only an option your answer settles', () => {
   const p = computingScientist();
   const talos = [

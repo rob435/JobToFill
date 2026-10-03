@@ -357,6 +357,38 @@
     return '';
   }
 
+  /**
+   * The instructions right under the heading of a section a control sits in: the text between that heading and the
+   * section's first field ("If your school/university uses a GPA system, enter your GPA on a 0- 4.0 scale. Otherwise,
+   * provide your overall result…" under Workday's "Education", above every entry). The nearest section that has any.
+   */
+  function sectionHelp(el) {
+    let node = el;
+    for (let i = 0; i < 8; i++) {
+      const parent = node.parentElement;
+      if (!parent || parent === el.ownerDocument.body) break;
+      let parts = null; // the text after the last heading before `node`
+      let open = false; // until a field or a field's label comes
+      for (const c of parent.children) {
+        if (c === node) break;
+        const field = c.matches(CONTROL_SELECTOR) || !!c.querySelector(CONTROL_SELECTOR);
+        const heading = c.matches(HEADING) ? c : field ? null : Array.from(c.querySelectorAll(HEADING)).pop();
+        if (heading) {
+          // A header block can hold the instructions after its heading.
+          const all = textOf(c);
+          const head = textOf(heading);
+          parts = [head && all.includes(head) ? all.slice(all.lastIndexOf(head) + head.length) : ''];
+          open = true;
+        } else if (field || c.matches('label') || c.querySelector('label')) open = false;
+        else if (open) parts.push(textOf(c));
+      }
+      const t = parts ? U.cleanLabel(parts.join(' '), 400) : '';
+      if (t) return t;
+      node = parent;
+    }
+    return '';
+  }
+
   function ancestorHints(el) {
     const out = [];
     let a = el.parentElement;
@@ -554,6 +586,9 @@
         }));
     }
     s.section = sectionHeading(el);
+    s.sectionHelp = sectionHelp(el);
+    // An upload that takes several files ("Resume/CV/Transcripts" on Workday) can take the letter and transcript too.
+    if (kind === 'file') desc.multiple = !!el.multiple;
     s.attrs = ATTR_HINTS.map((a) => el.getAttribute(a))
       .filter(Boolean)
       .join(' ');

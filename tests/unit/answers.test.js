@@ -164,6 +164,36 @@ test('validate: written answers use only the material’s numbers, tools and emp
   assert.match(cliche.errors.join(' '), /passionate/);
 });
 
+test('validate: a grade is the candidate’s own, never a GPA made from the question’s scale', () => {
+  const ctx = {
+    ...CTX,
+    facts: `${CTX.facts} Minimum GPA 3.5/4.0 or a 2:1.`,
+    mine: 'University College London, BSc Economics (2024 – 2027), degree classification 2:1\nYear 4 of 4. Built 4 apps.',
+  };
+  const help =
+    "If your school/university uses a GPA system, enter your GPA on a 0- 4.0 scale. Otherwise, provide your overall result in your school/university's grading system.";
+  const item = { id: 'q1', question: 'Overall Result (GPA)', help, kind: 'text' };
+  for (const invented of ['4', '4.0', '3.7', '3.5'])
+    assert.ok(A.validate({ answer: invented }, item, ctx).severe >= 1, `${invented} is not the candidate’s`);
+  assert.equal(A.validate({ answer: '2:1' }, item, ctx).severe, 0);
+  assert.equal(A.validate({ answer: 'Upper Second Class Honours (2:1), predicted' }, item, ctx).severe, 0);
+  const number = { id: 'q2', question: 'Cumulative GPA', kind: 'number' };
+  assert.equal(A.validate({ answer: '3.5' }, number, ctx).skip, true, 'the posting’s minimum is not a GPA you have');
+  assert.equal(A.validate({ answer: '4' }, number, ctx).skip, true, '"Year 4 of 4" is not a grade');
+  const us = { ...ctx, mine: 'Columbia University, BA Economics, GPA: 3.8/4.0' };
+  assert.equal(A.validate({ answer: '3.8' }, number, us).value, '3.8', 'a GPA the material gives');
+  // Other questions may still use the question's and the posting's numbers, and an essay about results the material's.
+  const essay = { id: 'q3', question: 'Why Acme Capital? (100 words)', kind: 'textarea' };
+  assert.equal(
+    A.validate({ answer: 'Its Rates desk models 40 retailers, in 100 words or less.' }, essay, ctx).severe,
+    0,
+  );
+  const results = { id: 'q4', question: 'Tell us about your academic results (100 words)', kind: 'textarea' };
+  const modules = { ...ctx, facts: `${ctx.facts}\nModules: Algorithms 92%` };
+  assert.equal(A.validate({ answer: 'I scored 92% in Algorithms and expect a 2:1.' }, results, modules).severe, 0);
+  assert.match(A.systemPrompt({}), /Never convert one into a GPA/);
+});
+
 test('polish and cut: dashes, bullets and quotes go; answers end on a sentence within the limit', () => {
   const item = { question: 'Why us?', kind: 'textarea' };
   assert.equal(A.polish('"I like it — a lot!"', item), 'I like it, a lot.');
