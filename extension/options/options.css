@@ -418,3 +418,9 @@ td a {
   color: var(--muted);
   white-space: pre-line;
 }
+
+.steps {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  line-height: 1.7;
+}
