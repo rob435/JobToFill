@@ -4,12 +4,16 @@ import http from 'node:http';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { build } from 'esbuild';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 
-// build/<name>.js is src/<name>.jsx bundled on first request (pages that use real React widgets).
+// build/<name>.js is src/<name>.jsx bundled on first request (pages that use real widget libraries: React, Vue,
+// jQuery plugins). A stylesheet imported there is its text (`import css from 'select2/dist/css/select2.css'`, then
+// put into a <style>), and the fonts and images it names are inlined.
 const bundles = new Map();
+const require = createRequire(import.meta.url);
 function bundle(name) {
   if (!bundles.has(name)) {
     bundles.set(
@@ -20,7 +24,24 @@ function bundle(name) {
         write: false,
         format: 'iife',
         jsx: 'automatic',
-        define: { 'process.env.NODE_ENV': '"production"' },
+        define: {
+          'process.env.NODE_ENV': '"production"',
+          __VUE_OPTIONS_API__: 'true',
+          __VUE_PROD_DEVTOOLS__: 'false',
+          __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: 'false',
+        },
+        // Vue templates written as strings need the build that compiles them.
+        alias: { vue: require.resolve('vue/dist/vue.esm-bundler.js') },
+        loader: {
+          '.css': 'text',
+          '.woff': 'dataurl',
+          '.woff2': 'dataurl',
+          '.ttf': 'dataurl',
+          '.eot': 'dataurl',
+          '.png': 'dataurl',
+          '.gif': 'dataurl',
+          '.svg': 'dataurl',
+        },
         minify: true,
         logLevel: 'silent',
       }).then((r) => r.outputFiles[0].contents),
