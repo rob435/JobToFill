@@ -2033,7 +2033,10 @@
         const num = String(p.contact.phone || '').trim();
         if (!num) return null;
         const cc = phoneCode(p);
-        const international = cc && !num.startsWith('+') ? `${cc} ${num}` : num;
+        // From abroad "07386 526574" is dialled without its trunk zero: "+44 7386 526574". In Italy, San Marino and
+        // the Vatican the zero is part of the number.
+        const dialled = /^\+(39|378|379)$/.test(cc) ? num : num.replace(/^0(?=[\s().-]*[1-9])/, '');
+        const international = cc && !num.startsWith('+') ? `${cc} ${dialled}` : num;
         // "Country/Region Code" in a box of its own: the number goes in without it.
         const national = nationalNumber(num, cc);
         const full = ctx.hasCountryCodeField ? national : international;

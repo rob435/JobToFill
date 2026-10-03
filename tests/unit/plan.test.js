@@ -1744,6 +1744,13 @@ test('phone numbers and dialling codes for a separate "Country/Region Code" list
   assert.equal(fields.resolve('phone', bare, {}).text, '+44 7700 900123');
   bare.contact.phone = '07700 900123';
   assert.equal(code(bare, sf), 'UNITED KINGDOM (+44)', 'from the country you live in');
+  // With its code, a number written the way it is dialled at home loses its trunk zero; an Italian one keeps it.
+  const home = sample();
+  Object.assign(home.contact, { phoneCountryCode: '+44', phone: '07386 526574' });
+  assert.equal(fields.resolve('phone', home, {}).text, '+44 7386 526574');
+  assert.equal(fields.resolve('phone', home, { hasCountryCodeField: true }).text, '07386 526574');
+  Object.assign(home.contact, { phoneCountryCode: '+39', phone: '06 1234 5678' });
+  assert.equal(fields.resolve('phone', home, {}).text, '+39 06 1234 5678');
   // A number written with its code drops it when the code has a box of its own.
   const both = sample();
   Object.assign(both.contact, { phoneCountryCode: '+44', phone: '+44 (0)20 7946 0958' });
