@@ -914,9 +914,13 @@
     'Goal: a recruiter or applicant tracking system scanning for the posting’s keywords should find every one the candidate honestly has. Go through the MISSING KEYWORDS: for each, decide whether the CV’s facts truly support it, and if so work the posting’s exact term into the most relevant bullet, heading or skills line (e.g. a tool that records, checks and archives market data honestly is “a data pipeline” that protects “data integrity”). Skip a keyword only when no fact supports it.',
     'Also allowed: reorder sections, entries, bullets and skills so the most relevant come first; reword and tighten bullets (start with a strong verb); drop or merge the least relevant bullets so the CV fits on one page.',
     'Never: add or change employers, job titles, schools, degrees, grades, dates, locations, numbers, tools, skills, languages, awards or achievements that aren’t in the CV or the candidate material. Keep dates exactly as written. Keep the candidate’s section names unless a rename clearly helps.',
+    'Layout: every entry is one organisation, school or project, and its "heading" is only that name (it is set in bold). For a job or a degree: "right" the dates, "subheading" the role or degree, "subright" the place. For a project: "tagline" says what it is in a few words; don’t list its technologies under or beside its name (no tech list in "subheading", "right" or "subright"): they belong in its bullets and in Skills.',
+    'Achievements, awards, certifications, skills, languages and interests are rows in "lines" ({"label": "a short label", "text": "the rest, as written"}), never entries.',
     'Reply with JSON only:',
     '{"name": "...", "contact": ["phone", "email", "link"],',
     ' "sections": [{"title": "Education", "entries": [{"heading": "organisation", "right": "dates", "subheading": "role or degree", "subright": "location", "bullets": ["..."]}]},',
+    '              {"title": "Projects", "entries": [{"heading": "project name", "tagline": "what it is", "bullets": ["..."]}]},',
+    '              {"title": "Achievements", "lines": [{"label": "Topic", "text": "the award or result"}]},',
     '              {"title": "Skills", "lines": [{"label": "Languages", "text": "Python, Rust"}]}],',
     ' "changes": ["one line per meaningful change: what and why (e.g. “Projects: ‘records every trade’ → ‘data pipeline that records every trade’ to match ‘data pipelining’”)"]}',
   ].join('\n');
@@ -994,6 +998,59 @@
     const cv = tex ? tex.normalize(out) : out;
     cv.changes = (Array.isArray(r.changes) ? r.changes : []).map(str).filter(Boolean).slice(0, 20);
     return cv;
+  }
+
+  const TECH_WORDS =
+    /\bapis?\b|websockets?|\bhtml\b|\bcss\b|\bregex|\bjs\b|\.js\b|\bsqlite\b|\bredis\b|\bgraphql\b|\brest\b|\bci\/cd\b|\bsystemd\b|\bbash\b/i;
+
+  /** "Python, eBay API, SQLite, Telegram": a list of technologies, not a role, place or date. */
+  function looksLikeTech(text) {
+    const s = String(text || '');
+    if (!s || /\d{4}|\b(present|current|now|today)\b/i.test(s)) return false;
+    const items = s
+      .split(/\s*[,;·•|]\s*/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    if (items.length < 2 || items.some((t) => t.length > 32 || t.split(/\s+/).length > 4)) return false;
+    return items.some((t) => TECH_WORDS.test(t) || SKILL_RES.some(([, re]) => re.test(t)));
+  }
+
+  // Sections made of rows ("Label: text"), not of entries.
+  const ROW_SECTIONS =
+    /achiev|award|honou?r|certif|prize|scholarship|accomplish|competition|skill|language|interest|hobb|activit|extra.?curricular/i;
+
+  /**
+   * The layout the CV writer asks for, whatever the model sent back: no tech list under or beside a project's
+   * name (the technologies are in its bullets and Skills), achievements and the like as label rows (not bold
+   * headings). Only for a CV rebuilt from text; a CV from the person's own LaTeX keeps its layout.
+   */
+  function tidyCvLayout(cv) {
+    for (const s of cv.sections || []) {
+      const rows = ROW_SECTIONS.test(s.title || '');
+      const projects = /project|portfolio/i.test(s.title || '');
+      const keep = [];
+      for (const e of s.entries || []) {
+        if (projects || e.tagline)
+          for (const k of ['subheading', 'subright', 'right']) if (e[k] && looksLikeTech(e[k])) delete e[k];
+        const alone = !e.right && !e.subheading && !e.subright && !(e.bullets && e.bullets.length);
+        const heading = e.heading || '';
+        const rest = [e.tagline, e.text].filter(Boolean).join(' ');
+        const labelled = /^([^:]{1,40}):\s*(\S.*)$/.exec(heading);
+        if (alone && heading && /:$/.test(heading) && rest)
+          s.lines.push({ label: heading.replace(/:$/, '').trim(), text: rest });
+        else if (alone && labelled)
+          s.lines.push({ label: labelled[1].trim(), text: [labelled[2], rest].filter(Boolean).join(' ') });
+        else if (alone && heading && rows) s.lines.push(rest ? { label: heading, text: rest } : { text: heading });
+        else keep.push(e);
+      }
+      s.entries = keep;
+      s.lines = (s.lines || []).map((l) => {
+        if (l.label) return l;
+        const m = /^([^:\d]{1,40}):\s+(\S.*)$/.exec(l.text || '');
+        return m && m[1].trim().split(/\s+/).length <= 4 ? { label: m[1].trim(), text: m[2] } : l;
+      });
+    }
+    return JTF.cvtex ? Object.assign(JTF.cvtex.normalize(cv), { changes: cv.changes }) : cv;
   }
 
   const cvText = (cv) =>
@@ -1267,6 +1324,7 @@
       const r = await chat(messages, { json: true, temperature: 0.3, maxTokens: 6000, signal });
       let cv = cleanCv(r.json, header);
       let restored = [];
+      if (!useMaster) cv = tidyCvLayout(cv);
       if (useMaster) {
         const forced = enforceCv(master, cv);
         cv = { ...forced.cv, changes: cv.changes };
@@ -1348,6 +1406,8 @@
     sameJob,
     coverage,
     cleanCv,
+    tidyCvLayout,
+    looksLikeTech,
     enforceCv,
     frozenDiffs,
     cvMasterPrompt,

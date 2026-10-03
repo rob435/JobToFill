@@ -142,13 +142,31 @@ async function fillPayload(tabId) {
   return { payload: { profile: filled, settings, docs, vault: await vault.status() }, letter: mine };
 }
 
+/**
+ * Fill the form in a tab. Options: toast (say what happened on the page), only (just these field types,
+ * replacing what is there unless force: false), hold (leave these types alone), replace (overwrite these
+ * types even when they hold something), consents (tick acknowledgements whatever the setting says), ai
+ * (false: no AI answers), aiToast (say on the page when the AI answers are in), waitAi, quick (a fill
+ * Quick apply makes itself).
+ */
 async function fillTab(tabId, options) {
   const opts = { toast: false, ...options };
   const { payload, letter } = await fillPayload(tabId);
-  const { profile, settings } = payload;
-  if (opts.only) Object.assign(payload, { only: opts.only, force: true });
+  const { profile } = payload;
+  if (opts.consents) payload.settings = { ...payload.settings, consents: true };
+  const { settings } = payload;
+  if (opts.only) Object.assign(payload, { only: opts.only, force: opts.force !== false });
+  if (opts.replace) payload.replace = opts.replace;
+  let hold = opts.hold || null;
+  // Quick apply is still writing this application's letter and tailoring its CV: a Fill meanwhile leaves
+  // those uploads to it, so the tailored CV doesn't find the usual one already in its place.
+  if (!opts.quick && !opts.only && (await quickRunningFor(tabId))) {
+    hold = [...new Set([...(hold || []), ...QUICK_DOCS])];
+    payload.quickHeld = true;
+  }
+  if (hold) payload.hold = hold;
   // With AI answers on, the page opens custom dropdowns it left empty to read their options for the model.
-  const aiReady = opts.only ? { ok: false } : await aiAvailable(settings);
+  const aiReady = opts.only || opts.ai === false ? { ok: false, reason: 'off' } : await aiAvailable(settings);
   payload.ai = aiReady.ok;
 
   let frames;
@@ -167,6 +185,11 @@ async function fillTab(tabId, options) {
 
   const summary = mergeReports(frames);
   summary.letter = letter ? { id: letter.id, company: letter.posting && letter.posting.company } : null;
+  summary.quickHeld = !!payload.quickHeld;
+  if (payload.quickHeld && summary.held)
+    summary.notes.unshift(
+      'Quick apply is still writing your cover letter and tailoring your CV: it puts them in when they’re ready.',
+    );
   const top = frames.find((f) => f.frameId === 0);
   if (summary.jobContext && !opts.only && settings.logApplications !== false && top && top.url) {
     await store.addHistory({
@@ -180,10 +203,11 @@ async function fillTab(tabId, options) {
   // What the rules left empty goes to the AI, in the background: the fill doesn't wait for it.
   const pending = frames.flatMap((f) => (f.pending || []).map((item) => ({ ...item, frameId: f.frameId })));
   summary.pending = pending.length;
-  if (pending.length && !opts.only) {
+  if (pending.length && !opts.only && opts.ai !== false) {
     if (aiReady.ok) {
       summary.ai = { status: 'running', stage: 'job', asked: pending.length };
-      const run = answerWithAi(tabId, pending, { toast: opts.toast && settings.toast !== false });
+      const aiToast = opts.aiToast != null ? opts.aiToast : opts.toast;
+      const run = answerWithAi(tabId, pending, { toast: aiToast && settings.toast !== false });
       if (opts.waitAi) summary.ai = await run;
     } else summary.ai = { status: aiReady.reason, asked: pending.length };
   }
@@ -211,11 +235,18 @@ function mergeReports(frames) {
     undoable: false,
     jobContext: false,
     wantsLetter: false,
+    ticked: 0,
+    held: 0,
+    // Upload fields by type: 'filled' when any frame put the document in, else how it went.
+    docs: {},
   };
   for (const f of frames) {
     if (typeof f.filled !== 'number') continue;
-    for (const key of ['filled', 'detected', 'skipped', 'failed', 'unknown', 'consents', 'restored', 'revealed'])
+    // prettier-ignore
+    for (const key of ['filled', 'detected', 'skipped', 'failed', 'unknown', 'consents', 'restored', 'revealed', 'ticked', 'held'])
       summary[key] = (summary[key] || 0) + (f[key] || 0);
+    for (const [type, status] of Object.entries(f.docs || {}))
+      if (summary.docs[type] !== 'filled') summary.docs[type] = status;
     for (const key of ['missing', 'missingTypes', 'unmatched', 'notes']) summary[key].push(...(f[key] || []));
     summary.undoable = summary.undoable || !!f.undoable;
     summary.jobContext = summary.jobContext || (f.jobContext && f.filled > 0);
@@ -229,6 +260,10 @@ function consentText(n) {
   return `${n === 1 ? 'One acknowledgement box is' : `${n} acknowledgement boxes are`} left for you to tick.`;
 }
 
+function tickedText(n) {
+  return `Ticked ${n === 1 ? 'an acknowledgement box' : `${n} acknowledgement boxes`} (privacy notice, terms): untick any you don’t agree to.`;
+}
+
 function summaryText(s) {
   if (s.error) return s.error;
   if (!s.detected) return 'No fillable fields found on this page.';
@@ -236,6 +271,7 @@ function summaryText(s) {
   if (s.missing.length)
     lines.push(`Add to your profile: ${s.missing.slice(0, 5).join(', ')}${s.missing.length > 5 ? '…' : ''}`);
   if (s.consents) lines.push(consentText(s.consents));
+  if (s.ticked) lines.push(tickedText(s.ticked));
   lines.push(...s.notes.slice(0, 2));
   if (s.ai && s.ai.status === 'running') lines.push(`Answering ${plural(s.ai.asked, 'more question')} with AI…`);
   else if (s.ai && s.ai.status === 'setup')
@@ -623,6 +659,7 @@ const aiRuns = new Map();
 const runView = (run) => {
   const view = { ...run };
   delete view.controller;
+  delete view.toast;
   return view;
 };
 
@@ -733,6 +770,7 @@ const sessionArea = () =>
   (api.storage && api.storage.session) || {
     get: async (k) => (memory.has(k) ? { [k]: memory.get(k) } : {}),
     set: async (o) => Object.entries(o).forEach(([k, v]) => memory.set(k, v)),
+    remove: async (keys) => [].concat(keys).forEach((k) => memory.delete(k)),
   };
 
 async function sessionGet(key, fallback) {
@@ -977,6 +1015,8 @@ async function answerWithAi(tabId, pending, opts = {}) {
     skipped: [],
     startedAt: Date.now(),
     controller,
+    // Say on the page when it's done (Quick apply turns this on for a run it finds still going).
+    toast: !!opts.toast,
   };
   aiRuns.set(tabId, run);
   const report = (patch) => {
@@ -1028,12 +1068,12 @@ async function answerWithAi(tabId, pending, opts = {}) {
       cost: ctx.cost,
       finishedAt: Date.now(),
     });
-    if (opts.toast) await showToast(tabId, aiSummaryText(run), { undo: total.filled > 0 });
+    if (run.toast) await showToast(tabId, aiSummaryText(run), { undo: total.filled > 0 });
     return runView(run);
   } catch (err) {
     const error = err && err.name === 'AbortError' ? 'Stopped.' : String((err && err.message) || err);
     report({ status: 'error', stage: 'done', error });
-    if (opts.toast && error !== 'Stopped.') await showToast(tabId, aiSummaryText(run));
+    if (run.toast && error !== 'Stopped.') await showToast(tabId, aiSummaryText(run));
     return runView(run);
   } finally {
     callFrames(tabId, 'release', [], [0]).catch(() => {});
@@ -1060,11 +1100,24 @@ api.runtime.onConnect.addListener((port) => {
 /* ------------------------------------------------------------ quick apply */
 
 const QUICK_STALE = 15 * 60e3;
+// What Quick apply writes for the application: the CV and letter uploads and the pasted letter wait for it.
+const QUICK_DOCS = ['file.resume', 'file.coverLetter', 'coverLetter'];
+// tabId -> the fill Quick apply starts with (a promise of its summary). What it did is kept in session
+// storage too (quickFirst:<tabId>), in case this worker is restarted while the letter is being written.
+const quickFirst = new Map();
+const quickFirstKey = (tabId) => `quickFirst:${tabId}`;
+
+/** Is Quick apply still writing the letter and CV for the application in this tab? */
+async function quickRunningFor(tabId) {
+  const status = await store.getQuickStatus().catch(() => null);
+  return !!status && status.state === 'running' && status.tabId === tabId && Date.now() - status.at < QUICK_STALE;
+}
 
 /**
- * "Quick apply": the whole letter, CV and form in one go. The AI work runs in the studio page (long calls
- * die in the worker), opened here as a background tab next to the application with ?quick=1; it reports
- * progress through store.setQuickStatus and asks for the fill with 'jtf:quick-fill'.
+ * "Quick apply": the whole letter, CV and form in one go. The form gets your details at once (everything
+ * but the CV and letter, which it is about to write). The AI work runs in the studio page (long calls die in
+ * the worker), opened here as a background tab next to the application with ?quick=1; it reports progress
+ * through store.setQuickStatus and asks for the rest of the fill with 'jtf:quick-fill'.
  */
 async function quickStart(tabId) {
   const tab = await api.tabs.get(tabId).catch(() => null);
@@ -1077,40 +1130,158 @@ async function quickStart(tabId) {
     if (alive && fresh < QUICK_STALE) return { error: 'Quick apply is already running.' };
   }
   await store.clearQuickApply(); // the previous result goes as soon as a new one is requested
-  await store.setQuickStatus({ state: 'running', message: 'starting…', tabId, studioTabId: null });
+  await sessionArea()
+    .remove(quickFirstKey(tabId))
+    .catch(() => {});
+  await store.setQuickStatus({ state: 'running', message: 'filling in your details…', tabId, studioTabId: null });
   const url = api.runtime.getURL('studio/studio.html') + `?tab=${tabId}&quick=1`;
   const studio = await api.tabs.create({ url, active: false, windowId: tab.windowId, index: tab.index + 1 });
   const now = await store.getQuickStatus();
   if (now && now.state === 'running' && now.studioTabId == null)
     await store.setQuickStatus({ ...now, studioTabId: studio.id });
+  quickFirst.set(tabId, quickFirstFill(tabId));
   return { ok: true, studioTabId: studio.id };
 }
 
-/** The studio finished writing: attach its letter (and CV) to this tab, fill the whole form, say so on the page. */
+/** Quick apply's first fill: your details (acknowledgements ticked) while the letter and CV are written. */
+async function quickFirstFill(tabId) {
+  let summary;
+  try {
+    summary = await fillTab(tabId, { quick: true, hold: QUICK_DOCS, consents: true, aiToast: false });
+  } catch (err) {
+    return { error: String((err && err.message) || err) };
+  }
+  if (summary.error) return summary;
+  await sessionArea()
+    .set({ [quickFirstKey(tabId)]: { filled: summary.filled, detected: summary.detected, ticked: summary.ticked } })
+    .catch(() => {});
+  // Unless the letter is already done and the last fill has said its piece.
+  if (!(await quickRunningFor(tabId))) return summary;
+  const lines = [];
+  if (summary.filled) lines.push(`Quick apply: your details are in (${plural(summary.filled, 'field')}).`);
+  lines.push(
+    summary.detected || summary.held
+      ? 'Now writing your cover letter and tailoring your CV: they go in by themselves when ready (a minute or two), no need to press Fill.'
+      : 'Quick apply is writing your cover letter and tailoring your CV.',
+  );
+  if (summary.ticked) lines.push(tickedText(summary.ticked));
+  if (summary.ai && summary.ai.status === 'running')
+    lines.push(`The AI is answering ${plural(summary.ai.asked, 'other question')}.`);
+  await showToast(tabId, lines.join('\n'), { undo: summary.undoable, duration: 30000 });
+  return summary;
+}
+
+/** What Quick apply's first fill did in this tab ({} when it didn't run), and forget it. */
+async function takeQuickFirst(tabId) {
+  const running = quickFirst.get(tabId);
+  quickFirst.delete(tabId);
+  if (running) await running.catch(() => null);
+  const kept = await sessionGet(quickFirstKey(tabId), null);
+  await sessionArea()
+    .remove(quickFirstKey(tabId))
+    .catch(() => {});
+  return kept || {};
+}
+
+/**
+ * The studio finished writing: attach its letter (and tailored CV) to this tab and fill the rest of the form.
+ * The letter and tailored CV take the place of anything already in their fields (the usual CV a Fill put
+ * there, say); everything else is only filled where it is still empty. Says what happened on the page.
+ */
 async function quickFill(tabId, letterId, options) {
   const tab = await api.tabs.get(tabId).catch(() => null);
   if (!tab) return { error: 'The application tab was closed.' };
   const letter = (await store.getLetters()).find((l) => l.id === letterId);
   if (!letter) return { error: 'The letter could not be found.' };
   await store.saveLetter({ id: letterId, tabId, attachedAt: Date.now(), url: tab.url });
-  const summary = await fillTab(tabId, { toast: false });
-  if (summary.error) return { error: summary.error };
+  const first = await takeQuickFirst(tabId);
   const withCv = !!(options && options.cv);
-  const lines = [
-    `Quick apply done — letter${withCv ? ', CV' : ''} and form filled${withCv ? '' : ' (CV not tailored)'}. Review before submitting.`,
-  ];
-  if (summary.ai && summary.ai.status === 'running')
-    lines.push(`The AI is answering ${plural(summary.ai.asked, 'leftover question')}: check them before you submit.`);
-  else if (summary.ai && summary.ai.filled)
-    lines.push(`AI filled ${summary.ai.filled}: check ${summary.ai.filled === 1 ? 'it' : 'them'}.`);
-  await showToast(tabId, lines.join('\n'), { undo: summary.undoable, duration: 10000 });
-  return { filled: summary.filled, detected: summary.detected, ai: summary.ai && summary.ai.filled };
+  // AI answers the first fill started carry on (and say when they're in): a new run would start them over.
+  const prior = aiRuns.get(tabId);
+  const busy = !!prior && prior.status === 'running';
+  const replace = ['file.coverLetter', 'coverLetter', ...(withCv ? ['file.resume'] : [])];
+  const summary = await fillTab(tabId, { quick: true, consents: true, replace, ai: !busy, aiToast: true });
+  if (summary.error) return { error: summary.error };
+  if (busy) prior.toast = true;
+  const run = summary.ai && summary.ai.status === 'running' ? summary.ai : aiRuns.get(tabId);
+  const done = quickDoneText(summary, first, { withCv, run: run ? runView(run) : null });
+  await showToast(tabId, done.text, { undo: summary.undoable, duration: 20000 });
+  return {
+    filled: summary.filled + (first.filled || 0),
+    detected: summary.detected,
+    ai: summary.ai && summary.ai.filled,
+    letter: done.letter,
+    cv: done.cv,
+    ticked: summary.ticked + (first.ticked || 0),
+  };
+}
+
+/** The toast at the end of a Quick apply: what went in, and anything left to do by hand. */
+function quickDoneText(summary, first, { withCv, run }) {
+  const docs = summary.docs || {};
+  const letter = docs['file.coverLetter'] === 'filled' || docs.coverLetter === 'filled';
+  const cv = docs['file.resume'] === 'filled';
+  const lines = [];
+  if (!summary.detected && !first.detected) {
+    lines.push(
+      'Quick apply wrote your cover letter and tailored your CV, but this page has no form. On the application form, press Fill: they go in with your details.',
+    );
+    return { text: lines.join('\n'), letter, cv };
+  }
+  const parts = [letter && 'cover letter', cv && (withCv ? 'tailored CV' : 'CV'), 'your details'].filter(Boolean);
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
+  lines.push(`Quick apply done: ${list} are in.${withCv ? '' : ' (CV not tailored.)'} Review before submitting.`);
+  if (withCv && !cv)
+    lines.push(
+      docs['file.resume']
+        ? 'The tailored CV couldn’t go into the CV upload: attach it by hand (it’s under Last quick apply in the JobToFill popup).'
+        : 'There’s no free CV upload here. If your usual CV is already attached, remove it and press Fill: the tailored one goes in (a later step gets it too).',
+    );
+  if (!letter)
+    lines.push(
+      summary.wantsLetter
+        ? 'The cover letter couldn’t go in: attach it by hand (it’s under Last quick apply in the JobToFill popup).'
+        : 'This page doesn’t ask for a cover letter; it’s under Last quick apply if you need it.',
+    );
+  const ticked = (summary.ticked || 0) + (first.ticked || 0);
+  if (ticked) lines.push(tickedText(ticked));
+  if (summary.missing.length)
+    lines.push(
+      `Add to your profile: ${summary.missing.slice(0, 5).join(', ')}${summary.missing.length > 5 ? '…' : ''}`,
+    );
+  if (run && run.status === 'running')
+    lines.push(`The AI is still answering ${plural(run.asked, 'question')}: it says here when they’re in.`);
+  else if (run && run.status === 'done' && run.filled)
+    lines.push(`AI answered ${plural(run.filled, 'question')} (dashed orange outline): check them.`);
+  return { text: lines.join('\n'), letter, cv };
+}
+
+/**
+ * Quick apply stopped before the letter was ready: put in what its first fill held back (your usual CV and
+ * letter, as a Fill would), so the form isn't left without them, and say why it stopped.
+ */
+async function quickRelease(tabId, message) {
+  await takeQuickFirst(tabId);
+  const tab = await api.tabs.get(tabId).catch(() => null);
+  if (!tab) return { attached: false };
+  const summary = await fillTab(tabId, { quick: true, only: QUICK_DOCS, force: false });
+  const attached = !summary.error && (summary.docs || {})['file.resume'] === 'filled';
+  if (message)
+    await showToast(
+      tabId,
+      `Quick apply stopped: ${message}${attached ? '\nYour usual CV was attached instead.' : ''}`,
+      { duration: 20000 },
+    );
+  return { attached };
 }
 
 api.tabs.onRemoved.addListener(async (tabId) => {
   const status = await store.getQuickStatus().catch(() => null);
-  if (status && status.state === 'running' && status.studioTabId === tabId)
-    await store.setQuickStatus({ ...status, state: 'error', message: 'Quick apply stopped: its tab was closed.' });
+  if (status && status.state === 'running' && status.studioTabId === tabId) {
+    const message = 'its tab was closed.';
+    await store.setQuickStatus({ ...status, state: 'error', message: `Quick apply stopped: ${message}` });
+    if (status.tabId != null) await quickRelease(status.tabId, message).catch(() => {});
+  }
 });
 
 /**
@@ -1322,6 +1493,7 @@ const HANDLERS = {
   },
   'jtf:quick-start': (msg) => quickStart(msg.tabId),
   'jtf:quick-fill': (msg) => quickFill(msg.tabId, msg.letterId, msg),
+  'jtf:quick-release': (msg) => quickRelease(msg.tabId, msg.message ? String(msg.message) : ''),
   'jtf:toast': async (msg) => (
     await showToast(msg.tabId, String(msg.message || ''), { duration: 10000 }),
     { ok: true }
@@ -1459,6 +1631,8 @@ globalThis.JTFBackground = {
   answerPage,
   jobFor,
   quickStart,
+  quickFill,
+  quickRelease,
   callFrames,
   ensureInjected,
   handleMenuClick,

@@ -622,3 +622,118 @@ test('letter: tailor() without a master still rebuilds the CV from the file text
   assert.equal(result.cv.name, 'Ada Lovelace');
   assert.match(calls[0].messages[1].content, /text extracted from their file/);
 });
+
+test('letter: a CV rebuilt from text has no tech list under a project’s name, and label rows, whatever the model sent', () => {
+  const reply = {
+    sections: [
+      {
+        title: 'Projects',
+        entries: [
+          // A tech list under the name: it goes (the technologies are in the bullets and Skills).
+          {
+            heading: 'eBaySpy',
+            tagline: 'eBay deal detector',
+            subheading: 'Python, eBay API, SQLite, Telegram',
+            bullets: ['Built a bot that flags underpriced eBay listings.'],
+          },
+          // …or beside it, or in a field of its own.
+          {
+            heading: 'Market Tape',
+            tagline: 'crypto market-data recorder',
+            right: 'Python, WebSockets, Linux, systemd',
+            tech: ['Python', 'WebSockets'],
+            bullets: ['Records every trade for around 500 markets.'],
+          },
+        ],
+      },
+      {
+        title: 'Education',
+        entries: [
+          {
+            heading: 'University of Glasgow',
+            right: 'Sep 2025 – Jun 2028',
+            subheading: 'BSc Computing Science',
+            subright: 'Glasgow, Scotland',
+          },
+        ],
+      },
+      {
+        title: 'Achievements',
+        entries: [
+          { heading: 'Chess: University of Glasgow Chess Champion; 2000+ Rapid rating on Chess.com' },
+          { heading: 'Mathematics:', text: 'UKMT Gold Award' },
+          { heading: 'Duke of Edinburgh Silver Award' },
+        ],
+      },
+      { title: 'Skills', lines: [{ text: 'Programming/Data: Python, SQL, Bash' }] },
+    ],
+  };
+  const cv = L.tidyCvLayout(L.cleanCv(reply, { name: 'Robin Li', contact: [] }));
+  const [proj, edu, ach, skills] = cv.sections;
+  assert.deepEqual(proj.entries[0], {
+    heading: 'eBaySpy',
+    tagline: 'eBay deal detector',
+    bullets: ['Built a bot that flags underpriced eBay listings.'],
+  });
+  assert.deepEqual(proj.entries[1], {
+    heading: 'Market Tape',
+    tagline: 'crypto market-data recorder',
+    bullets: ['Records every trade for around 500 markets.'],
+  });
+  // A place or a date is never mistaken for a tech list.
+  assert.equal(edu.entries[0].subright, 'Glasgow, Scotland');
+  assert.equal(edu.entries[0].right, 'Sep 2025 – Jun 2028');
+  // Achievements are rows with a bold label, not bold headings.
+  assert.deepEqual(ach.entries, []);
+  assert.deepEqual(ach.lines, [
+    { label: 'Chess', text: 'University of Glasgow Chess Champion; 2000+ Rapid rating on Chess.com' },
+    { label: 'Mathematics', text: 'UKMT Gold Award' },
+    { text: 'Duke of Edinburgh Silver Award' },
+  ]);
+  assert.deepEqual(skills.lines, [{ label: 'Programming/Data', text: 'Python, SQL, Bash' }]);
+  assert.equal(L.looksLikeTech('Glasgow, Scotland'), false);
+  assert.equal(L.looksLikeTech('Sep 2025 – Jun 2028'), false);
+  assert.equal(L.looksLikeTech('Python, WebSockets'), true);
+  // It renders as LaTeX that reads back the same.
+  const back = cvtex.parse(cvtex.render(cv)).cv;
+  assert.deepEqual(back.sections[0].entries, proj.entries);
+  assert.deepEqual(back.sections[2].lines, ach.lines);
+  assert.deepEqual(back.sections[3].lines, skills.lines);
+});
+
+test('letter: tailor() without a master asks for no tech list and for label rows, and tidies the reply', async () => {
+  const cvText = [
+    'Robin Li',
+    'Projects: eBaySpy, eBay deal detector. Python, eBay API, SQLite, Telegram.',
+    'Built a bot that flags underpriced eBay listings and sends alerts to Telegram.',
+    'Achievements: Chess: University of Glasgow Chess Champion.',
+    'Skills: Python, SQL, Bash, pandas, NumPy, Git, Linux, systemd, pytest, WebSockets.',
+  ]
+    .join('\n')
+    .concat('\nBuilt and tested data tools in Python with SQL and pandas.'.repeat(8));
+  const { chat, calls } = scripted([
+    {
+      sections: [
+        {
+          title: 'Projects',
+          entries: [
+            {
+              heading: 'eBaySpy',
+              tagline: 'eBay deal detector',
+              subheading: 'Python, eBay API, SQLite, Telegram',
+              bullets: ['Built a bot that flags underpriced eBay listings and sends alerts to Telegram.'],
+            },
+          ],
+        },
+        { title: 'Achievements', entries: [{ heading: 'Chess: University of Glasgow Chess Champion' }] },
+      ],
+    },
+  ]);
+  const result = await L.tailor(chat, { profile, kit, cvText, analysis: { keywords: ['Python'], requirements: [] } });
+  assert.match(calls[0].messages[0].content, /don’t list its technologies under or beside its name/);
+  assert.doesNotMatch(calls[0].messages[0].content, /"tech"/);
+  assert.match(calls[0].messages[0].content, /rows in "lines"/);
+  assert.equal(result.cv.sections[0].entries[0].subheading, undefined);
+  assert.equal(result.cv.sections[0].entries[0].tagline, 'eBay deal detector');
+  assert.deepEqual(result.cv.sections[1].lines, [{ label: 'Chess', text: 'University of Glasgow Chess Champion' }]);
+});

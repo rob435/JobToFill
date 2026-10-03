@@ -212,10 +212,17 @@
       notes,
       unknown: 0,
       consents: 0,
+      ticked: 0,
+      held: 0,
+      docs: {},
       wantsLetter: false,
     };
     // Attaching a cover letter fills just those fields, replacing whatever is in them.
     const only = payload.only ? new Set(payload.only) : null;
+    // Quick apply: `hold` leaves the CV and letter for later (they are still being written); `replace` puts
+    // the tailored ones in place of whatever an earlier fill or the person attached.
+    const hold = payload.hold ? new Set(payload.hold) : null;
+    const replace = payload.replace ? new Set(payload.replace) : null;
     const docCache = {};
     const valueFor = async (field, r, def, question) => {
       if (def && def.file) return documentValue(r.type, payload, docCache);
@@ -238,8 +245,10 @@
     const order = fields.map((f, i) => i).sort((a, b) => (fields[b].kind === 'file') - (fields[a].kind === 'file'));
     let uploaded = false;
     let settled = false;
-    // Exactly which fields were filled (a follow-up box can share its type with the question it follows).
+    // Exactly which fields were filled (a follow-up box can share its type with the question it follows), and
+    // which already had an answer (an earlier fill's): a CV parse that clears either gets them put back.
     const filledKeys = new Set();
+    const keptKeys = new Set();
     const keyOf = (r, question) => [r.type, r.index || 0, r.part || '', question].join('|');
     /** Fill one field from the profile; `count` adds what it asks about to the report's lists. */
     const fillOne = async (field, r, { count = true } = {}) => {
@@ -249,6 +258,10 @@
       }
       if (r.type === 'file.coverLetter' || r.type === 'coverLetter') report.wantsLetter = true;
       if (only && !only.has(r.type)) return null;
+      if (hold && hold.has(r.type)) {
+        report.held++;
+        return null;
+      }
       report.detected++;
       const def = JTF.fields.DEFS[r.type];
       const label = labelFor(field, r);
@@ -272,17 +285,21 @@
         return null;
       }
       const res = await JTF.fill.apply(field, v, {
-        overwrite: settings.overwrite || !!payload.force,
+        overwrite: settings.overwrite || !!payload.force || !!(replace && replace.has(r.type)),
         comboboxes: settings.comboboxes !== false,
         history,
       });
+      if ((def && def.file) || r.type === 'coverLetter')
+        report.docs[r.type] = res.status === 'filled' ? 'filled' : report.docs[r.type] || res.status;
       if (res.status === 'filled') {
         report.filled++;
+        if (def && def.consent) report.ticked++;
         if (field.kind === 'file') uploaded = true;
         else filledKeys.add(keyOf(r, question));
         if (settings.highlight !== false) JTF.fill.highlight(res.target || field.el);
       } else if (res.status === 'skipped') {
         report.skipped++;
+        if (field.kind !== 'file' && res.reason === 'has value') keptKeys.add(keyOf(r, question));
       } else {
         report.failed++;
         report.unmatched.push(label);
@@ -291,16 +308,21 @@
     };
     for (const i of order) await fillOne(fields[i], results[i]);
 
-    // A late CV parse can still clear or re-render fields after they were filled: fill those again.
-    if (uploaded && filledKeys.size) {
+    // A late CV parse can still clear or re-render fields after they were filled (by this fill or an earlier
+    // one, as Quick apply's details go in before its CV): fill those again.
+    if (uploaded && (filledKeys.size || keptKeys.size)) {
       await settle();
       const again = scan(profile);
       for (let i = 0; i < again.fields.length; i++) {
         const field = again.fields[i];
         const r = again.results[i];
         if (!r || !r.type || field.kind === 'file' || JTF.fill.hasValue(field)) continue;
+        if (hold && hold.has(r.type)) continue;
         const question = U.normalize(JTF.matcher.questionText(field.desc));
-        if (!filledKeys.has(keyOf(r, question))) continue;
+        const key = keyOf(r, question);
+        if (!filledKeys.has(key) && !keptKeys.has(key)) continue;
+        const def = JTF.fields.DEFS[r.type];
+        if (def && def.consent && !settings.consents) continue;
         const v = await valueFor(field, r, JTF.fields.DEFS[r.type], question);
         if (!v) continue;
         const res = await JTF.fill.apply(field, v, {
@@ -318,7 +340,7 @@
     // please give details", the country once "Yes, I need sponsorship" is chosen. Fill fields that
     // weren't on the page before, a couple of rounds at most.
     const seen = new Set(fields.map((f) => f.el));
-    for (let round = 0; round < 2 && filledKeys.size; round++) {
+    for (let round = 0; round < 2 && (filledKeys.size || uploaded); round++) {
       await settle(1500, 300);
       const next = scan(profile);
       const fresh = next.fields

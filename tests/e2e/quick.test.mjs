@@ -55,10 +55,12 @@ function mockAi() {
   const calls = [];
   // Set `fail.status` to answer every request with that HTTP error instead.
   const fail = { status: 0 };
+  // Set `gate.letter` to a promise to hold the cover letter's reply until it settles.
+  const gate = { letter: null };
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));
-    req.on('end', () => {
+    req.on('end', async () => {
       const json = JSON.parse(body || '{}');
       const system = (json.messages && json.messages[0] && json.messages[0].content) || '';
       calls.push({ path: req.url, auth: req.headers.authorization, json });
@@ -76,8 +78,10 @@ function mockAi() {
           keywords: ['reconcile trades', 'breaks', 'Python', 'data quality', 'VBA'],
           requirements: ['Python or SQL'],
         };
-      else if (/write job application cover letters/.test(system)) reply = LETTER('40,000');
-      else if (/strict fact-checker/.test(system)) reply = { unsupported: [] };
+      else if (/write job application cover letters/.test(system)) {
+        if (gate.letter) await gate.letter;
+        reply = LETTER('40,000');
+      } else if (/strict fact-checker/.test(system)) reply = { unsupported: [] };
       else if (/compare an application page/.test(system))
         reply = { same: true, confidence: 0.9, reason: 'same title' };
       else if (/tailor a candidate’s CV/.test(system)) reply = CV;
@@ -92,7 +96,7 @@ function mockAi() {
       );
     });
   });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, calls, fail })));
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, calls, fail, gate })));
 }
 
 async function cvPdf() {
@@ -130,11 +134,16 @@ after(async () => {
 
 const status = () => h.bg(() => globalThis.JTF.store.getQuickStatus());
 
-/** Start Quick apply for the page the way the popup does, and wait for it to finish. */
-async function quickApply(page) {
+/** Start Quick apply for the page the way the popup does. */
+async function quickStart(page) {
   const started = await h.handler('jtf:quick-start', page);
   assert.equal(started.error, undefined);
   assert.ok(started.studioTabId != null);
+  return started;
+}
+
+/** Wait for the Quick apply that is running to finish. */
+async function quickDone() {
   await until(
     h.bg,
     async () => {
@@ -145,6 +154,21 @@ async function quickApply(page) {
     60000,
   );
   return status();
+}
+
+/** Start Quick apply for the page the way the popup does, and wait for it to finish. */
+async function quickApply(page) {
+  await quickStart(page);
+  return quickDone();
+}
+
+const fileName = (page, sel) => page.$eval(sel, (el) => (el.files[0] ? el.files[0].name : ''));
+
+async function closeStudios() {
+  await h.bg(async () => {
+    const tabs = await globalThis.JTF.api.tabs.query({});
+    for (const t of tabs) if (/studio\/studio\.html/.test(t.url)) await globalThis.JTF.api.tabs.remove(t.id);
+  });
 }
 
 test('quick apply: letter, tailored CV and the form are done in one go, and kept only until the next one', async () => {
@@ -219,10 +243,81 @@ test('quick apply: a page with no job on it stops with a clear error and keeps n
   assert.equal(done.state, 'error');
   assert.match(done.message, /couldn’t find this job’s description/);
   assert.equal(await h.bg(() => globalThis.JTF.store.getQuickApply()), null);
-  await h.bg(async () => {
-    // The tab it left open for the details.
-    const tabs = await globalThis.JTF.api.tabs.query({});
-    for (const t of tabs) if (/studio\/studio\.html/.test(t.url)) await globalThis.JTF.api.tabs.remove(t.id);
-  });
+  await closeStudios(); // the tab it left open for the details
   await page.close();
+});
+
+test('quick apply: your details go in at once, a Fill meanwhile leaves the CV to it, the tailored CV and letter follow', async () => {
+  assert.equal((await h.bg(() => globalThis.JTF.store.getSettings())).consents, false);
+  let release;
+  ai.gate.letter = new Promise((resolve) => (release = resolve));
+  const page = await h.open('letters/apply-full.html?job=R-1234');
+  try {
+    await quickStart(page);
+    // Before the letter is written: the details are in, the privacy notice acknowledged (whatever the setting
+    // says), the job-alerts opt-in left alone, and the CV and letter fields kept free for what's coming.
+    await until(page.evaluate.bind(page), () => document.querySelector('#first').value === 'Ada');
+    assert.equal(await page.$eval('#email', (el) => el.value), 'ada@example.com');
+    assert.ok(await page.$eval('#phone', (el) => el.value));
+    assert.equal(await page.$eval('#privacy', (el) => el.checked), true);
+    assert.equal(await page.$eval('#alerts', (el) => el.checked), false);
+    assert.equal(await fileName(page, '#resume'), '');
+    assert.equal(await fileName(page, '#cover'), '');
+    assert.equal(await page.$eval('#cover-text', (el) => el.value), '');
+    assert.equal((await status()).state, 'running');
+
+    // Pressing Fill while it writes doesn't put the usual CV where the tailored one is going.
+    const meanwhile = await h.fill(page);
+    assert.ok(meanwhile.held >= 3, `held ${meanwhile.held}`);
+    assert.match(meanwhile.notes.join(' '), /still writing your cover letter/);
+    assert.equal(await fileName(page, '#resume'), '');
+
+    release();
+    const done = await quickDone();
+    assert.equal(done.state, 'done', done.message);
+    assert.equal(done.message, 'done', 'nothing left to attach by hand');
+    assert.equal(await fileName(page, '#resume'), 'ada_lovelace_cv_acme_capital.pdf');
+    assert.equal(await fileName(page, '#cover'), 'ada_lovelace_cover_letter_acme_capital.pdf');
+    assert.match(await page.$eval('#cover-text', (el) => el.value), /^Dear Acme Capital Recruitment Team,/);
+    // The page cleared the phone box when the CV went in: it was put back.
+    await until(page.evaluate.bind(page), () => !!document.querySelector('#phone').value);
+    assert.equal(await page.$eval('#privacy', (el) => el.checked), true);
+    assert.equal(await page.$eval('#alerts', (el) => el.checked), false);
+    // The setting itself is untouched: a plain Fill still leaves acknowledgements to you.
+    assert.equal((await h.bg(() => globalThis.JTF.store.getSettings())).consents, false);
+  } finally {
+    ai.gate.letter = null;
+    if (release) release();
+    await page.close();
+  }
+});
+
+test('quick apply: the tailored CV takes the place of the usual one a Fill attached before', async () => {
+  await h.bg(() => globalThis.JTF.store.clearQuickApply()); // the last test's letter is for this job too
+  const page = await h.open('letters/apply.html?job=R-1234&filled=1');
+  await h.fill(page);
+  assert.equal(await fileName(page, '#resume'), 'ada_cv.pdf');
+  const done = await quickApply(page);
+  assert.equal(done.state, 'done', done.message);
+  assert.equal(done.message, 'done');
+  assert.equal(await fileName(page, '#resume'), 'ada_lovelace_cv_acme_capital.pdf');
+  assert.equal(await fileName(page, '#cover'), 'ada_lovelace_cover_letter_acme_capital.pdf');
+  await page.close();
+});
+
+test('quick apply: when the AI fails, the form still gets your details and your usual CV', async () => {
+  ai.fail.status = 401;
+  const page = await h.open('letters/apply-full.html?job=R-1234&fails=1');
+  try {
+    const done = await quickApply(page);
+    assert.equal(done.state, 'error');
+    await until(page.evaluate.bind(page), () => !!document.querySelector('#resume').files.length);
+    assert.equal(await fileName(page, '#resume'), 'ada_cv.pdf');
+    assert.equal(await page.$eval('#first', (el) => el.value), 'Ada');
+    assert.equal(await page.$eval('#privacy', (el) => el.checked), true);
+  } finally {
+    ai.fail.status = 0;
+    await closeStudios();
+    await page.close();
+  }
 });
