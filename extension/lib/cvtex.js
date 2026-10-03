@@ -388,7 +388,9 @@
         const body = arg();
         if (body != null) {
           flush();
-          out.push(...lex(body, st, ctx, math, depth + 1).map((x) => (x.t === 'text' ? { ...x, s: x.s.toUpperCase() } : x)));
+          out.push(
+            ...lex(body, st, ctx, math, depth + 1).map((x) => (x.t === 'text' ? { ...x, s: x.s.toUpperCase() } : x)),
+          );
         }
       } else if (STYLE_ARG[name]) {
         const body = arg();
@@ -407,7 +409,6 @@
   }
 
   const plain = (runs) => str(runs.map((r) => r.s).join(''));
-  const urlish = (s) => /^[a-z]+:/i.test(s);
 
   /** Tokens → lines, lists, gaps and section starts. */
   function structure(tokens, warnings) {
@@ -587,7 +588,8 @@
       if (gaps.some((g) => g !== gaps[0]))
         warnings.add(`Section “${title}” spaces its entries unevenly; one spacing (${gaps[0]}pt) is used.`);
     }
-    if (order === 'lel' || order === 'le') warnings.add(`Section “${title}” mixes rows and entries; entries come first.`);
+    if (order === 'lel' || order === 'le')
+      warnings.add(`Section “${title}” mixes rows and entries; entries come first.`);
     return section;
   }
 
@@ -654,19 +656,19 @@
   /** Plain text → LaTeX text. */
   function escape(value) {
     return String(value == null ? '' : value)
-      .replace(/\\/g, '\u0000')
+      .replace(/\\/g, '\uE000')
       .replace(/[&%$#_{}]/g, (c) => `\\${c}`)
       .replace(/~/g, '\\textasciitilde{}')
       .replace(/\^/g, '\\textasciicircum{}')
-      .replace(/\u0000/g, '\\textbackslash{}')
+      .replace(/\uE000/g, '\\textbackslash{}')
       .replace(/-(?=-)/g, '-{}')
-      .replace(/—/g, '---')
-      .replace(/–/g, '--')
-      .replace(/“/g, '``')
-      .replace(/”/g, "''")
-      .replace(/‘/g, '`')
-      .replace(/’/g, "'")
-      .replace(/ /g, '~')
+      .replace(/\u2014/g, '---')
+      .replace(/\u2013/g, '--')
+      .replace(/\u201c/g, '``')
+      .replace(/\u201d/g, "''")
+      .replace(/\u2018/g, '`')
+      .replace(/\u2019/g, "'")
+      .replace(/\u00a0/g, '~')
       .replace(/\s+/g, ' ')
       .trim();
   }
@@ -679,7 +681,9 @@
     if (e.tagline) left.push(`${e.heading ? '-- ' : ''}${escape(e.tagline)}`);
     const rows = [];
     if (left.length || e.right)
-      rows.push(`\\noindent ${[left.join(' '), e.right ? `\\hfill \\textit{${escape(e.right)}}` : ''].filter(Boolean).join(' ')}`);
+      rows.push(
+        `\\noindent ${[left.join(' '), e.right ? `\\hfill \\textit{${escape(e.right)}}` : ''].filter(Boolean).join(' ')}`,
+      );
     if (e.subheading || e.subright) {
       const row = [lead(escape(e.subheading || '')), e.subright ? `\\hfill \\textit{${escape(e.subright)}}` : '']
         .filter(Boolean)
@@ -689,11 +693,7 @@
     if (e.text) rows.push(rows.length ? lead(escape(e.text)) : `\\noindent ${escape(e.text)}`);
     const out = [rows.join(' \\\\\n')];
     if (e.bullets && e.bullets.length)
-      out.push(
-        '\\begin{itemize}',
-        ...e.bullets.map((b) => `    \\item ${escape(b)}`),
-        '\\end{itemize}',
-      );
+      out.push('\\begin{itemize}', ...e.bullets.map((b) => `    \\item ${lead(escape(b))}`), '\\end{itemize}');
     return out.filter(Boolean).join('\n');
   }
 

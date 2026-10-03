@@ -10,7 +10,8 @@
  *   vault         encrypted blob, managed by vault.js
  *   backupInfo    { at, path, error, paused, previous, dismissed }  the automatic backup file (background.js)
  *   kit:<id>      cover letter material per profile: { notes, samples: [{ id, name, text }], contact, closing,
- *                 spelling, paper, cv: { updatedAt, text } (text read from the resume file) }
+ *                 spelling, paper, cv: { updatedAt, text } (text read from the resume file),
+ *                 cvTex (the user's CV as LaTeX, as pasted) and cvMaster (cvtex.parse() of it: the model tailoring edits) }
  *   aiKeys        the AI providers' API keys ({ openrouter, deepseek, custom }); in backups unless switched off
  *   letters       generated letters, newest first (see saveLetter)
  */
@@ -35,7 +36,17 @@
     searchHistory: false,
   };
 
-  const DEFAULT_KIT = { notes: '', samples: [], contact: '', closing: '', spelling: 'auto', paper: 'a4', cv: null };
+  const DEFAULT_KIT = {
+    notes: '',
+    samples: [],
+    contact: '',
+    closing: '',
+    spelling: 'auto',
+    paper: 'a4',
+    cv: null,
+    cvTex: '',
+    cvMaster: null,
+  };
 
   const DOC_TYPES = ['resume', 'coverLetter'];
   const HISTORY_LIMIT = 500;

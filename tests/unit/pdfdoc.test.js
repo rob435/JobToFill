@@ -201,3 +201,110 @@ test('pdfdoc: a CV with sections, right-aligned dates, bullets and skills on one
   assert.equal(long.pages, 2);
   assertValidPdf(long.bytes);
 });
+
+/* -------------------------------------------------- the LaTeX template CV */
+
+require('../../extension/lib/cvtex.js');
+const TEMPLATE_CV = globalThis.JTF.cvtex.parse(
+  fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'cv', 'robin-li.tex'), 'utf8'),
+).cv;
+
+test('pdfdoc: the template CV lays out on one A4 page at the full 11pt, with real link annotations', async () => {
+  const fonts = await fontsReady;
+  const out = await P.cv(TEMPLATE_CV, { fonts, paper: 'a4', fit: true });
+  assert.equal(out.pages, 1);
+  assert.equal(out.overflow, false);
+  assert.equal(out.fontSize, 10.95, 'no shrinking was needed');
+  assert.deepEqual(out.missing, []);
+  const raw = assertValidPdf(out.bytes);
+  assert.match(raw, /\/MediaBox \[0 0 595\.276 841\.89\]/);
+  assert.match(raw, /\/URI \(mailto:robinlipersonal@gmail\.com\)/);
+  assert.match(raw, /\/URI \(https:\/\/github\.com\/rob435\)/);
+  assert.equal((raw.match(/\/Subtype \/Link/g) || []).length, 2, 'the phone number is not a link');
+  assert.match(raw, /\/Border \[0 0 0\]/, 'hidelinks: no box');
+  if (pdftotext) {
+    const text = pdftotext(out.bytes);
+    assert.match(text, /^Robin Li\n/);
+    assert.match(text, /07386 526574 \| robinlipersonal@gmail\.com \| github\.com\/rob435/);
+    assert.match(text, /EDUCATION\n/);
+    assert.match(text, /University of Glasgow\s+Glasgow, Scotland\nBSc Computing Science\s+Sep 2025 – Jun 2028/);
+    assert.match(text, /eBaySpy – eBay deal detector\s+Python, eBay API, SQLite, Telegram/);
+    assert.match(text, /• Built a personal finance dashboard/);
+    assert.match(text, /Programming\/Data: Python, SQL, Bash, pandas, NumPy/);
+  }
+});
+
+test('pdfdoc: nothing in the template CV is set past the margins or on top of its neighbour', async () => {
+  const fonts = await fontsReady;
+  const lay = P.layoutCv(TEMPLATE_CV, { fonts, paper: 'a4', fit: true });
+  const left = 46.8;
+  const right = lay.W - 46.8;
+  const rows = new Map();
+  for (const it of lay.items) {
+    assert.ok(it.y > left && it.y <= lay.bottom + 2, `inside the page: ${it.kind} at ${it.y}`);
+    if (it.kind === 'line') {
+      assert.ok(it.x >= left - 0.01, 'starts inside the left margin');
+      assert.ok(
+        it.x + P.lineWidth(it.line) <= right + 0.5,
+        `ends inside the right margin: ${it.x + P.lineWidth(it.line)}`,
+      );
+      rows.set(it.y, { ...rows.get(it.y), end: it.x + P.lineWidth(it.line) });
+    } else if (it.kind === 'right') {
+      const width = P.lineWidth(
+        P.setParagraph([{ text: it.text, ...it.run }], 1e6, { fonts, missing: new Set() }, { justify: false })[0],
+      );
+      assert.ok(it.x <= right + 0.01 && it.x - width >= left, 'a right-aligned part stays inside the margins');
+      rows.set(it.y, { ...rows.get(it.y), start: it.x - width });
+    }
+  }
+  for (const r of rows.values())
+    if (r.end != null && r.start != null) assert.ok(r.end < r.start - 5, 'hfill parts never touch');
+  const sections = lay.items.filter((i) => i.kind === 'section');
+  assert.deepEqual(
+    sections.map((s) => s.text),
+    ['EDUCATION', 'EXPERIENCE', 'PROJECTS', 'ACHIEVEMENTS', 'SKILLS'],
+  );
+  assert.equal(lay.items.filter((i) => i.kind === 'rule').length, 5, 'a rule under every title');
+  assert.ok(sections.every((s, k) => !k || s.y > sections[k - 1].y));
+});
+
+test('pdfdoc: a CV too long for a page loses spacing before type size, and says so when it still overflows', async () => {
+  const fonts = await fontsReady;
+  const more = structuredClone(TEMPLATE_CV);
+  more.sections[1].entries[0].bullets.push(...Array(3).fill(PARAGRAPH));
+  const squeezed = await P.cv(more, { fonts, fit: true });
+  assert.equal(squeezed.pages, 1);
+  assert.equal(squeezed.fontSize, 10.95, 'tighter spacing was enough, the type stays 11pt');
+  const tight = structuredClone(TEMPLATE_CV);
+  tight.sections[1].entries[0].bullets.push(...Array(5).fill(PARAGRAPH));
+  const small = await P.cv(tight, { fonts, fit: true });
+  assert.equal(small.pages, 1);
+  assert.ok(small.fontSize < 10.95 && small.fontSize >= 9.5, `type shrinks a little: ${small.fontSize}`);
+  const huge = structuredClone(TEMPLATE_CV);
+  huge.sections[1].entries[0].bullets.push(...Array(40).fill(PARAGRAPH));
+  const over = await P.cv(huge, { fonts, fit: true });
+  assert.equal(over.overflow, true, 'overflow is reported, not hidden');
+  assert.ok(over.pages > 1);
+  assert.ok(over.fontSize >= 9.5, 'never below 9.5pt');
+  assertValidPdf(over.bytes);
+});
+
+test('pdfdoc: a CV contact item can carry its own link, and a long contact line wraps', async () => {
+  const fonts = await fontsReady;
+  const data = {
+    ...TEMPLATE_CV,
+    contact: [
+      { text: 'My portfolio', href: 'https://example.com/me?a=1' },
+      'a@b.co',
+      ...Array(6).fill('+44 (0) 7700 900123 extension'),
+    ],
+  };
+  const out = await P.cv(data, { fonts });
+  const raw = assertValidPdf(out.bytes);
+  assert.match(raw, /\/URI \(https:\/\/example\.com\/me\?a=1\)/);
+  const lay = P.layoutCv(data, { fonts });
+  assert.ok(
+    lay.items.filter((i) => i.kind === 'contact').length > 1,
+    'wrapped onto more rows instead of running off the page',
+  );
+});

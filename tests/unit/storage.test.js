@@ -221,6 +221,29 @@ test('store: cover letter material is per profile, exported, and the API key is 
   assert.equal((await store.exportData({ keys: true })).aiKeys.deepseek, 'sk-secret');
 });
 
+test('store: the master CV (LaTeX source and parsed model) is kept per profile and travels in backups', async () => {
+  installChrome();
+  const { profile } = await store.getActive();
+  assert.equal((await store.getKit(profile.id)).cvMaster, null, 'none by default');
+  assert.equal((await store.getKit(profile.id)).cvTex, '');
+  const cvMaster = {
+    name: 'Ada Example',
+    contact: ['ada@example.com'],
+    sections: [{ title: 'Skills', entries: [], lines: [{ label: 'Tools', text: 'Python' }] }],
+  };
+  await store.saveKit(profile.id, { cvTex: '\\section{Skills}', cvMaster });
+  await store.saveKit(profile.id, { notes: 'later edits keep it' });
+  assert.deepEqual((await store.getKit(profile.id)).cvMaster, cvMaster);
+  const backup = JSON.parse(JSON.stringify(await store.exportData()));
+  assert.deepEqual(backup.kits[`kit:${profile.id}`].cvMaster, cvMaster);
+  assert.equal(backup.kits[`kit:${profile.id}`].cvTex, '\\section{Skills}');
+  installChrome();
+  await store.importData(backup);
+  assert.deepEqual((await store.getKit(profile.id)).cvMaster, cvMaster);
+  await store.saveKit(profile.id, { cvTex: '', cvMaster: null });
+  assert.equal((await store.getKit(profile.id)).cvMaster, null, 'and can be removed');
+});
+
 test('store: each AI provider keeps its own key and model; another key stands in when one fails', async () => {
   installChrome();
   // Older versions kept one key and one model, for the provider chosen then.

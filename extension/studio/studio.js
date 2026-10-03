@@ -15,7 +15,7 @@ import {
   requestSiteAccess,
 } from '../ui/common.js';
 
-const { store, ai, letter: L, jobpage, doctext, pdfdoc, util } = globalThis.JTF;
+const { store, ai, letter: L, jobpage, doctext, pdfdoc, cvtex, util } = globalThis.JTF;
 
 const params = new URLSearchParams(location.search);
 const tabId = params.has('tab') ? Number(params.get('tab')) : null;
@@ -32,7 +32,7 @@ const state = {
   result: null, // JTF.letter.write() result, kept in sync with the editor
   entry: null, // the saved letter (store.saveLetter)
   letterPdf: null, // { bytes, url, overflow, pages }
-  cv: null, // { result, pdf }
+  cv: null, // { result, pdf, tex }
   showing: 'letter',
   controller: null,
   cost: 0,
@@ -58,10 +58,10 @@ const slug = (s) =>
     .slice(0, 40);
 
 /** "ada_lovelace_cover_letter_acme_capital.pdf", like people name these files themselves. */
-function fileName(kind) {
+function fileName(kind, ext = 'pdf') {
   const company = slug((state.analysis && state.analysis.company) || (state.job && state.job.posting.company) || '');
   const parts = [slug(L.fullName(state.profile)), kind === 'cv' ? 'cv' : 'cover_letter', company];
-  return parts.filter(Boolean).join('_') + '.pdf';
+  return parts.filter(Boolean).join('_') + '.' + ext;
 }
 
 /** The AI call used by JTF.letter, with the running cost shown in the top bar. */
@@ -391,6 +391,9 @@ async function useManual() {
 
 /** The text of the stored resume, read once per file and cached with the cover letter material. */
 async function readCv() {
+  // The pasted LaTeX master (Settings › Cover letters) is cleaner than text scraped from a PDF.
+  const master = state.kit.cvMaster && state.kit.cvMaster.sections && state.kit.cvMaster.sections.length;
+  if (master) return { text: L.cvText(state.kit.cvMaster), note: '' };
   const doc = await store.getDoc(state.profile.id, 'resume');
   if (!doc) return { text: '', note: 'No CV uploaded (Settings › Resume & files), so the letter uses your profile.' };
   if (state.kit.cv && state.kit.cv.updatedAt === doc.updatedAt && state.kit.cv.name === doc.name)
@@ -651,50 +654,73 @@ function cvExtra() {
   };
 }
 
+/**
+ * Tailor the CV to the analysed job and lay it out: no buttons, no page updates, so "Quick apply" can
+ * call it too. Uses the master CV (Settings › Cover letters) when there is one, else the text of the
+ * uploaded file. Returns { result, pdf, tex }: result is letter.tailor()'s { cv, check, before, after },
+ * pdf is pdfdoc.cv()'s { bytes, pages, overflow, ... }, tex the same CV as a LaTeX file.
+ */
+async function buildTailoredCv({ instructions = '' } = {}) {
+  const master = state.kit.cvMaster && state.kit.cvMaster.sections && state.kit.cvMaster.sections.length;
+  if (!master && !state.cvText)
+    throw new Error(
+      'JobToFill needs your CV to tailor it: paste it as LaTeX in Settings › Cover letters, or add the file in Settings › Resume & files.',
+    );
+  const result = await L.tailor(chat, {
+    profile: state.profile,
+    kit: state.kit,
+    cvText: state.cvText,
+    analysis: state.analysis,
+    instructions,
+  });
+  const pdf = await pdfdoc.cv(result.cv, { fonts: await fonts(), paper: state.kit.paper || 'a4', fit: true });
+  return { result, pdf, tex: cvtex.render(result.cv) };
+}
+
+/** Keep a built CV as the current one and show it (preview, keywords, checks, changes). */
+function showTailoredCv({ result, pdf, tex }) {
+  if (state.cv && state.cv.pdf.url) URL.revokeObjectURL(state.cv.pdf.url);
+  state.cv = {
+    result,
+    tex,
+    pdf: { ...pdf, url: URL.createObjectURL(new Blob([pdf.bytes], { type: 'application/pdf' })) },
+  };
+  const { before, after, check } = result;
+  $('#cv-coverage').hidden = false;
+  $('#cv-coverage').className = 'pill ok';
+  $('#cv-coverage').textContent =
+    `Keywords: ${before.matched.length} → ${after.matched.length} of ${after.matched.length + after.missing.length}`;
+  $('#cv-keywords').textContent = after.missing.length
+    ? `Not in your CV (and not added, because it isn’t in your material): ${after.missing.slice(0, 12).join(', ')}`
+    : 'Your CV now uses every keyword the job lists.';
+  $('#cv-checks').replaceChildren(
+    ...[
+      ...(check.errors.length
+        ? check.errors.map((t) => ['bad', t])
+        : [['ok', 'No new facts: every number, skill and organisation is from your CV.']]),
+      ...check.warnings.map((t) => ['warn', t]),
+      ...(result.restored && result.restored.length
+        ? [['ok', `Kept your names, dates, places and titles exactly (${result.restored.length} edit(s) undone).`]]
+        : []),
+      [pdf.overflow || pdf.pages > 1 ? 'warn' : 'ok', pdf.pages > 1 ? `${pdf.pages} pages.` : 'One page.'],
+    ].map(([cls, text]) => el('li', { className: cls, textContent: text })),
+  );
+  $('#cv-changes').replaceChildren(...result.cv.changes.map((c) => el('li', { textContent: c })));
+  $('#cv-result').hidden = false;
+  $('#cv-use-wrap').hidden = false;
+  $('#cv-download').hidden = false;
+  $('#cv-download-tex').hidden = false;
+  $('#tab-cv').hidden = false;
+  showPreview('cv');
+}
+
 async function tailorCv() {
   const button = $('#cv-make');
   button.disabled = true;
   button.textContent = 'Tailoring…';
   state.controller = new AbortController();
   try {
-    if (!state.cvText)
-      throw new Error('JobToFill needs your CV file to tailor it: add it in Settings › Resume & files.');
-    const result = await L.tailor(chat, {
-      profile: state.profile,
-      kit: state.kit,
-      cvText: state.cvText,
-      analysis: state.analysis,
-      instructions: $('#instructions').value,
-    });
-    const out = await pdfdoc.cv(result.cv, { fonts: await fonts(), paper: state.kit.paper || 'a4', fit: true });
-    if (state.cv && state.cv.pdf.url) URL.revokeObjectURL(state.cv.pdf.url);
-    state.cv = {
-      result,
-      pdf: { ...out, url: URL.createObjectURL(new Blob([out.bytes], { type: 'application/pdf' })) },
-    };
-    const { before, after, check } = result;
-    $('#cv-coverage').hidden = false;
-    $('#cv-coverage').className = 'pill ok';
-    $('#cv-coverage').textContent =
-      `Keywords: ${before.matched.length} → ${after.matched.length} of ${after.matched.length + after.missing.length}`;
-    $('#cv-keywords').textContent = after.missing.length
-      ? `Not in your CV (and not added, because it isn’t in your material): ${after.missing.slice(0, 12).join(', ')}`
-      : 'Your CV now uses every keyword the job lists.';
-    $('#cv-checks').replaceChildren(
-      ...[
-        ...(check.errors.length
-          ? check.errors.map((t) => ['bad', t])
-          : [['ok', 'No new facts: every number, skill and organisation is from your CV.']]),
-        ...check.warnings.map((t) => ['warn', t]),
-        [out.overflow || out.pages > 1 ? 'warn' : 'ok', out.pages > 1 ? `${out.pages} pages.` : 'One page.'],
-      ].map(([cls, text]) => el('li', { className: cls, textContent: text })),
-    );
-    $('#cv-changes').replaceChildren(...result.cv.changes.map((c) => el('li', { textContent: c })));
-    $('#cv-result').hidden = false;
-    $('#cv-use-wrap').hidden = false;
-    $('#cv-download').hidden = false;
-    $('#tab-cv').hidden = false;
-    showPreview('cv');
+    showTailoredCv(await buildTailoredCv({ instructions: $('#instructions').value }));
     if (state.entry) await saveEntry(cvExtra());
   } catch (err) {
     if (err.name !== 'AbortError') alert(err.message);
@@ -984,6 +1010,8 @@ async function boot() {
   $('#cv-use').onchange = () => state.entry && saveEntry(cvExtra());
   $('#cv-download').onclick = () =>
     state.cv && download(new Blob([state.cv.pdf.bytes], { type: 'application/pdf' }), fileName('cv'));
+  $('#cv-download-tex').onclick = () =>
+    state.cv && download(new Blob([state.cv.tex], { type: 'application/x-tex' }), fileName('cv', 'tex'));
   $('#tab-letter').onclick = () => showPreview('letter');
   $('#tab-cv').onclick = () => showPreview('cv');
 

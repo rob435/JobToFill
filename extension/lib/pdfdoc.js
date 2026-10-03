@@ -1215,7 +1215,8 @@
       lines.forEach((line, k) => {
         const ly = place();
         items.push({ kind: 'line', y: ly, line, x: m });
-        if (right && k === lines.length - 1) items.push({ kind: 'right', y: ly, text: right, run: rightRun, x: m + width });
+        if (right && k === lines.length - 1)
+          items.push({ kind: 'right', y: ly, text: right, run: rightRun, x: m + width });
       });
       if (right && !lines.length) items.push({ kind: 'right', y: place(), text: right, run: rightRun, x: m + width });
     };
