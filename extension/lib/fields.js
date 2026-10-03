@@ -1628,7 +1628,7 @@
     // EEO notices ("Government officials engaged in enforcing laws…") are not questions.
     R(
       'compliance.government',
-      /\bgovernment (official|employee|position|role|connection|body|agency|department|entity|minister)s?\b|\bpublic (official|office|servant)s?\b|\bpolitically exposed|\bpeps?\b|\bstate ?owned (entit|enterprise|compan|business)|\bforeign (government )?official|\bcivil servant|\binvolved (in|with) (the )?(government|politics)\b|\b(public|political|government) (office|position|appointment)s?\b|\bsenior political figure/,
+      /\bgovernment (official|employee|position|role|connection|body|agency|department|entity|minister)s?\b|\bpublic (official|office|servant)s?\b|\bpolitically exposed|\bpeps?\b|\bstate ?owned (entit|enterprise|compan|business)|\bforeign (government )?official|\bcivil servant|\binvolved (in|with) (the )?(government|politics)\b|\b(public|political|government) (office|position|appointment)s?\b|\bpublic (function|trust|role|post)s?\b|\bprominent public\b|\bsenior political figure/,
       {
         kinds: CHOICE.concat(LONG_TEXT),
         not: /\bengaged in enforcing\b|\benforcing (the )?laws?\b|\bequal (employment|opportunity)\b|\bfederal contractor|\bgovernment (contracts?|contractors?|funding|grants?)\b|\bvisa\b|\bsponsor/,
@@ -1673,7 +1673,7 @@
     R('eeo.veteran', /veteran|military (service|status)|armed forces|served in the/, { kinds: CHOICE }),
     R('eeo.disability', /disabilit|disabled|handicap|impairment/, { kinds: CHOICE, not: /adjustments?\b|accommodat/ }),
     R('eeo.gender', /\bgender\b|\bsex\b|geschlecht|\bgenre\b|\bsexo\b/, {
-      not: /orientation|transgender|same as|(registered|assigned) at birth/,
+      not: /orientation|transgender|same as|(registered|assigned) at birth|\bpronouns?\b/,
     }),
     // UK social-mobility monitoring
     // "Were you eligible for free school meals?", "…receive FSM", pupil premium, the US free or reduced-price lunch.

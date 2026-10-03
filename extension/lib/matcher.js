@@ -848,7 +848,7 @@
     const tries = [t, t.replace(/\([^)]*\)/g, ' '), t.replace(/\+\s*\d[\d\s-]*/g, ' ')];
     for (const m of t.matchAll(/\(([^)]+)\)/g)) tries.push(m[1]);
     tries.push(t.replace(/\([^)]*\)/g, ' ').replace(/\+\s*\d[\d\s-]*/g, ' '));
-    tries.push(...t.split(/\s+[-–—|:\/]\s+|\s*[|\/]\s*/));
+    tries.push(...t.split(/\s+[-–—|:/]\s+|\s*[|/]\s*/));
     const lead = t.match(/^([A-Za-z]{2,3})\s*[-–—:(]/);
     if (lead) tries.push(lead[1]);
     for (const x of tries) {

@@ -952,14 +952,21 @@
     return null;
   }
 
+  /** A contact item is "text" or { text, href }. */
+  function contactItem(c) {
+    return c && typeof c === 'object'
+      ? { text: String(c.text || '').trim(), href: c.href ? String(c.href) : '' }
+      : { text: String(c || '').trim(), href: '' };
+  }
+
   /** "phone | email | site": two interword spaces, a bar, two interword spaces, like the template. */
   function contactLine(page, items, x, y, run, ctx, align = 'left', width = 0) {
-    const pieces = items.map((t) => String(t || '').trim()).filter(Boolean);
+    const pieces = items.map(contactItem).filter((c) => c.text);
     if (!pieces.length) return;
     const space = ((run.font.widths[run.font.cmap.get(32)] || 333) * run.size) / 1000;
     const bar = shape('|', run.font, ctx.missing);
     const barWidth = (glyphsWidth(bar) * run.size) / 1000;
-    const parts = pieces.map((p) => ({ text: p, glyphs: shape(p, run.font, ctx.missing) }));
+    const parts = pieces.map((p) => ({ text: p.text, href: p.href, glyphs: shape(p.text, run.font, ctx.missing) }));
     for (const p of parts) p.width = (glyphsWidth(p.glyphs) * run.size) / 1000;
     const gap = 2 * space;
     const total = parts.reduce((w, p) => w + p.width, 0) + (parts.length - 1) * (gap * 2 + barWidth);
@@ -973,7 +980,7 @@
         cx += barWidth + gap;
       }
       page.line(boxLine(p.glyphs, run), cx, y, ctx.doc);
-      const uri = linkFor(p.text);
+      const uri = p.href || linkFor(p.text);
       if (uri) page.link(cx, y, p.width, ascent * 0.8, descent, uri);
       cx += p.width;
     });
@@ -1102,184 +1109,211 @@
 
   /* ------------------------------------------------------------------ CV */
 
-  // A one-page CV in the spirit of the classic LaTeX "Jake's Resume", in the same typeface as the letter.
+  // The CV reproduces the user's LaTeX template (see lib/cvtex.js): 11pt A4 article, Latin Modern, 0.65in
+  // margins, left-aligned \Huge name and contact line, \large bold uppercase section titles over a
+  // \titlerule, \hfill rows, itemize with leftmargin=*. TeX points scaled to PDF points.
   const CV = {
-    margin: 40,
-    top: 40,
-    nameSize: 22,
-    contactSize: 9.5,
-    sectionSize: 12,
-    headSize: 10.5,
-    subSize: 9.5,
-    bodySize: 9.75,
-    bodyLead: 11.6,
-    sectionGap: 11,
-    ruleGap: 3.5,
-    afterRule: 14.5,
-    entryGap: 5,
-    bulletIndent: 7,
-    textIndent: 16,
+    margin: 46.8, // 0.65in
+    nameSize: 24.88 * PT, // \Huge at 11pt
+    nameHeight: 17.213, // top margin to the name's baseline (same box as the letter's name)
+    contactGap: 16.538, // name baseline to contact baseline: baselineskip + \\[3pt]
+    size: 10.95 * PT, // \normalsize
+    lead: 13.6 * PT, // \baselineskip
+    depth: 2.5 * PT, // a typical line's depth
+    ascent: 0.694, // x size: height of ascenders
+    sectionSize: 12 * PT, // \large
+    sectionCap: 0.686, // cap height of the bold title font
+    before: 10 * PT, // \titlespacing before
+    after: 5 * PT, // \titlespacing after
+    ruleGap: 3.4 * PT, // baseline of the title to the \titlerule
+    rule: 0.4 * PT,
+    itemsep: 1 * PT,
+    topsep: 1 * PT,
+    entryGap: 4 * PT, // \vspace{4pt} between entries
+    labelWidth: 5.475 * PT, // natural width of the bullet label
+    labelSep: 5 * PT,
+    hfillGap: 10, // least room kept between a row's left and right parts
   };
 
-  const CV_STEPS = [1, 0.97, 0.94, 0.91, 0.88];
+  // Ways to make a long CV fit on one page, mildest first: spacing before leading before type size,
+  // never below 9.5pt.
+  const CV_STEPS = [
+    { size: 1, space: 1, lead: 1 },
+    { size: 1, space: 0.75, lead: 1 },
+    { size: 1, space: 0.5, lead: 1 },
+    { size: 1, space: 0.35, lead: 0.97 },
+    { size: 0.96, space: 0.35, lead: 0.96 },
+    { size: 0.92, space: 0.3, lead: 0.95 },
+    { size: 9.5 / 10.95, space: 0.25, lead: 0.94 },
+  ];
 
-  /** Small capitals the way \scshape sets them: capitals stay, lower case uses the caps font. */
-  function smallCapsRun(text, f, size) {
-    return [{ text: String(text), font: f.caps, size }];
+  /** Contact items in rows no wider than `width` (the template's single line when it fits). */
+  function contactRows(items, run, ctx, width) {
+    const space = ((run.font.widths[run.font.cmap.get(32)] || 333) * run.size) / 1000;
+    const bar = (glyphsWidth(shape('|', run.font, ctx.missing)) * run.size) / 1000;
+    const rows = [];
+    let row = [];
+    let w = 0;
+    for (const c of items || []) {
+      const itemW = textWidth(contactItem(c).text, run, ctx);
+      if (!contactItem(c).text) continue;
+      const add = row.length ? 4 * space + bar + itemW : itemW;
+      if (row.length && w + add > width) {
+        rows.push(row);
+        row = [];
+        w = 0;
+      }
+      w += row.length ? 4 * space + bar + itemW : itemW;
+      row.push(c);
+    }
+    if (row.length) rows.push(row);
+    return rows;
   }
 
-  function layCv(cv, opts, k) {
+  function layCv(data, opts, step) {
     const [W, H] = PAPER[opts.paper] || PAPER.a4;
     const f = opts.fonts;
     const ctx = { fonts: f, missing: new Set() };
-    const s = (v) => v * k;
-    const width = W - 2 * CV.margin;
-    const items = []; // { kind, y, ... } in page coordinates of a virtual tall page
-    let y = CV.top + s(CV.nameSize);
-    items.push({ kind: 'name', y, text: cv.name || '' });
-    y += s(CV.contactSize) + s(6);
-    items.push({ kind: 'contact', y });
-    const body = { font: f.regular, size: s(CV.bodySize) };
-    const bold = { font: f.bold, size: s(CV.bodySize) };
-    for (const section of cv.sections || []) {
-      y += s(CV.sectionGap) + s(CV.sectionSize) * 0.7;
-      const keepFrom = items.length;
-      items.push({ kind: 'section', y, text: section.title, keep: true });
-      y += s(CV.ruleGap);
-      items.push({ kind: 'rule', y });
-      y += s(CV.afterRule) - s(CV.ruleGap);
-      let first = true;
-      for (const e of section.entries || []) {
-        if (!first) y += s(CV.entryGap);
-        first = false;
-        const startY = y;
-        if (e.heading || e.right) {
-          const headRun = { font: f.bold, size: s(CV.headSize) };
-          const rightRun = { font: f.regular, size: s(CV.headSize) };
-          const rightW = e.right ? textWidth(e.right, rightRun, ctx) : 0;
-          const lines = e.heading
-            ? setParagraph([{ text: e.heading, ...headRun }], width - rightW - 12, ctx, { justify: false })
-            : [];
-          lines.forEach((line, i) => {
-            if (i) y += s(CV.headSize) * 1.15;
-            items.push({ kind: 'line', y, line, x: CV.margin });
+    const m = CV.margin;
+    const width = W - 2 * m;
+    const bottom = H - m;
+    const size = CV.size * step.size;
+    const lead = CV.lead * step.size * step.lead;
+    const sp = step.space;
+    const nameSize = CV.nameSize * Math.min(1, step.size * 1.04);
+    const regular = { font: f.regular, size };
+    const bold = { font: f.bold, size };
+    const italic = { font: f.italic, size };
+    const items = [];
+
+    let y = m + CV.nameHeight * (nameSize / CV.nameSize);
+    items.push({ kind: 'name', y, text: data.name || '', run: { font: f.title, size: nameSize } });
+    const rows = contactRows(data.contact, regular, ctx, width);
+    rows.forEach((row, k) => {
+      y += k ? lead : CV.contactGap * (0.8 + 0.2 * step.lead);
+      items.push({ kind: 'contact', y, row });
+    });
+    if (!rows.length) y = items[0].y;
+
+    // Where the next line's baseline goes: after a heading it is fixed, otherwise a line below the last.
+    let first = null;
+    let extra = 0;
+    const place = () => {
+      y = first != null ? first : y + lead + extra;
+      first = null;
+      extra = 0;
+      return y;
+    };
+    const put = (lines, x, justify) => {
+      lines.forEach((line) => items.push({ kind: 'line', y: place(), line, x }));
+    };
+    // "left \hfill right": the left part wraps in what the right part leaves, the right part sits on its last line.
+    const row = (leftRuns, right, rightRun) => {
+      const rightW = right ? textWidth(right, rightRun, ctx) : 0;
+      const room = width - (right ? rightW + CV.hfillGap : 0);
+      const lines = leftRuns.length ? setParagraph(leftRuns, room, ctx, { justify: false }) : [];
+      lines.forEach((line, k) => {
+        const ly = place();
+        items.push({ kind: 'line', y: ly, line, x: m });
+        if (right && k === lines.length - 1) items.push({ kind: 'right', y: ly, text: right, run: rightRun, x: m + width });
+      });
+      if (right && !lines.length) items.push({ kind: 'right', y: place(), text: right, run: rightRun, x: m + width });
+    };
+
+    for (const section of data.sections || []) {
+      const entries = section.entries || [];
+      const rowsOf = section.lines || [];
+      y += CV.depth + CV.before * sp + CV.sectionCap * CV.sectionSize;
+      const title = String(section.title || '').toUpperCase();
+      const head = items.length;
+      items.push({ kind: 'section', y, text: title, run: { font: f.title, size: CV.sectionSize } });
+      items.push({ kind: 'rule', y: y + CV.ruleGap });
+      first = y + CV.ruleGap + CV.rule + CV.after * sp + CV.ascent * size;
+      const gap = (section.entryGap == null ? 4 : section.entryGap) * PT * sp;
+      let afterList = false;
+      entries.forEach((e, idx) => {
+        if (idx) extra += gap + (afterList ? CV.topsep * sp : 0);
+        afterList = false;
+        const left = [];
+        if (e.heading) left.push({ text: e.heading, ...bold });
+        if (e.tagline) left.push({ text: `${e.heading ? ' – ' : ''}${e.tagline}`, ...regular });
+        if (left.length || e.right) row(left, e.right, italic);
+        if (e.subheading || e.subright)
+          row(e.subheading ? [{ text: e.subheading, ...regular }] : [], e.subright, italic);
+        if (e.text) put(setParagraph([{ text: e.text, ...regular }], width, ctx), m);
+        const bullets = e.bullets || [];
+        const indent = (CV.labelWidth + CV.labelSep) * step.size;
+        bullets.forEach((b, k) => {
+          extra += (k ? CV.itemsep : CV.topsep) * sp;
+          const lines = setParagraph([{ text: b, ...regular }], width - indent, ctx);
+          lines.forEach((line, j) => {
+            const ly = place();
+            if (!j) items.push({ kind: 'bullet', y: ly, run: regular });
+            items.push({ kind: 'line', y: ly, line, x: m + indent });
           });
-          if (e.right) items.push({ kind: 'right', y: startY, text: e.right, run: rightRun, x: CV.margin + width });
-          y += s(CV.headSize) * 1.2;
-        }
-        if (e.subheading || e.subright) {
-          const subRun = { font: f.italic, size: s(CV.subSize) };
-          const subRightW = e.subright ? textWidth(e.subright, subRun, ctx) : 0;
-          const lines = e.subheading
-            ? setParagraph([{ text: e.subheading, ...subRun }], width - subRightW - 12, ctx, { justify: false })
-            : [];
-          const subY = y;
-          lines.forEach((line, i) => {
-            if (i) y += s(CV.subSize) * 1.15;
-            items.push({ kind: 'line', y, line, x: CV.margin });
-          });
-          if (e.subright) items.push({ kind: 'right', y: subY, text: e.subright, run: subRun, x: CV.margin + width });
-          y += s(CV.subSize) * 1.25;
-        }
-        if (e.text) {
-          const lines = setParagraph([{ text: e.text, ...body }], width, ctx);
-          lines.forEach((line, i) => {
-            if (i) y += s(CV.bodyLead);
-            items.push({ kind: 'line', y, line, x: CV.margin });
-          });
-          y += s(CV.bodyLead);
-        }
-        for (const bullet of e.bullets || []) {
-          const lines = setParagraph([{ text: bullet, ...body }], width - s(CV.textIndent), ctx);
-          items.push({ kind: 'bullet', y, run: body });
-          lines.forEach((line, i) => {
-            if (i) y += s(CV.bodyLead);
-            items.push({ kind: 'line', y, line, x: CV.margin + s(CV.textIndent) });
-          });
-          y += s(CV.bodyLead);
-        }
-        if (!(e.heading || e.right || e.subheading || e.subright || e.text || (e.bullets || []).length)) continue;
-        y -= s(CV.bodyLead) - s(CV.bodySize);
-      }
-      for (const l of section.lines || []) {
+        });
+        afterList = bullets.length > 0;
+      });
+      rowsOf.forEach((l, idx) => {
+        if (idx === 0 && entries.length && afterList) extra += CV.topsep * sp;
         const runs = l.label
           ? [
-              { text: `${l.label}: `, ...bold },
-              { text: l.text, ...body },
+              { text: `${l.label}:`, ...bold },
+              { text: ` ${l.text}`, ...regular },
             ]
-          : [{ text: l.text, ...body }];
-        const lines = setParagraph(runs, width, ctx, { justify: false });
-        lines.forEach((line, i) => {
-          if (i) y += s(CV.bodyLead);
-          items.push({ kind: 'line', y, line, x: CV.margin });
-        });
-        y += s(CV.bodyLead);
-      }
-      // Headings never end a page on their own.
-      items[keepFrom].keepUntil = items.length > keepFrom + 3 ? items[keepFrom + 3].y : y;
+          : [{ text: l.text, ...regular }];
+        put(setParagraph(runs, width, ctx), m);
+      });
+      // A title never ends a page on its own: it stays with the first line after it.
+      const firstLine = items.slice(head).find((it) => it.kind === 'line' || it.kind === 'right');
+      items[head].keepUntil = firstLine ? firstLine.y : y;
+      items[head + 1].keepUntil = items[head].keepUntil;
     }
-    return { W, H, ctx, items, width, height: y, fits: y <= H - CV.top + 0.01, body, k };
+    return { W, H, ctx, items, width, bottom, y, fits: y <= bottom + 2, size, step };
+  }
+
+  /** The CV's layout without the PDF: where every line goes (for previews and tests). */
+  function layoutCv(data, opts = {}) {
+    if (!opts.fonts) throw new Error('pdfdoc.layoutCv needs { fonts } from loadFonts()');
+    const steps = opts.fit === false ? CV_STEPS.slice(0, 1) : CV_STEPS;
+    let lay;
+    for (const step of steps) {
+      lay = layCv(data, opts, step);
+      if (lay.fits) break;
+    }
+    return lay;
   }
 
   async function cv(data, opts = {}) {
     if (!opts.fonts) throw new Error('pdfdoc.cv needs { fonts } from loadFonts()');
-    const steps = opts.fit === false ? CV_STEPS.slice(0, 1) : CV_STEPS;
-    let lay;
-    for (const k of steps) {
-      lay = layCv(data, opts, k);
-      if (lay.fits) break;
-    }
+    const lay = layoutCv(data, opts);
     const f = opts.fonts;
-    const k = lay.k;
     const doc = new Doc(lay.W, lay.H, { title: `CV — ${data.name || ''}`.trim(), author: data.name || '' });
     const ctx = Object.assign(lay.ctx, { doc });
     let page = doc.page();
     let offset = 0;
-    const bottom = lay.H - CV.top;
-    const bullet = shape('\u2022', f.regular, null).some((g) => g.gid) ? '\u2022' : '\u00b7';
+    const m = CV.margin;
     for (const it of lay.items) {
       let y = it.y - offset;
-      const limit = it.keep ? it.keepUntil - offset : y;
-      if (limit > bottom + 0.01 && it.kind !== 'rule') {
+      const limit = it.keepUntil != null ? it.keepUntil - offset : y;
+      if (limit > lay.bottom + 0.01 && it.kind !== 'bullet') {
         page = doc.page();
-        offset = it.y - (CV.top + 14);
+        offset = it.y - (m + lay.size);
         y = it.y - offset;
       }
       if (it.kind === 'name') {
-        const run = { font: f.title, size: CV.nameSize * k };
-        const w = textWidth(it.text, run, ctx);
-        page.line(boxLineText(it.text, run, ctx), CV.margin + (lay.width - w) / 2, y, doc);
+        page.line(boxLineText(it.text, it.run, ctx), m, y, doc);
       } else if (it.kind === 'contact') {
-        contactLine(
-          page,
-          data.contact || [],
-          CV.margin,
-          y,
-          { font: f.regular, size: CV.contactSize * k },
-          ctx,
-          'center',
-          lay.width,
-        );
+        contactLine(page, it.row, m, y, { font: f.regular, size: lay.size }, ctx);
       } else if (it.kind === 'section') {
-        page.line(
-          setParagraph(smallCapsRun(it.text, f, CV.sectionSize * k), 1e6, ctx, { justify: false })[0],
-          CV.margin,
-          y,
-          doc,
-        );
+        page.line(boxLineText(it.text, it.run, ctx), m, y, doc);
       } else if (it.kind === 'rule') {
-        page.rule(CV.margin, y, lay.width, 0.4);
+        page.rule(m, y, lay.width, CV.rule);
       } else if (it.kind === 'right') {
         const w = textWidth(it.text, it.run, ctx);
         page.line(boxLineText(it.text, it.run, ctx), it.x - w, y, doc);
       } else if (it.kind === 'bullet') {
-        const run = { font: f.regular, size: it.run.size * 0.8 };
-        page.line(
-          boxLine(shape(bullet, run.font, ctx.missing), run),
-          CV.margin + CV.bulletIndent * k,
-          y - it.run.size * 0.08,
-          doc,
-        );
+        page.line(boxLine(shape('•', f.regular, ctx.missing), it.run), m, y, doc);
       } else if (it.kind === 'line') {
         page.line(it.line, it.x, y, doc);
       }
@@ -1287,7 +1321,7 @@
     return {
       bytes: await doc.bytes(),
       pages: doc.pages.length,
-      fontSize: Math.round(CV.bodySize * k * 100) / 100,
+      fontSize: Math.round((lay.size / PT) * 100) / 100,
       overflow: !lay.fits,
       missing: [...ctx.missing],
     };
@@ -1306,6 +1340,7 @@
     lineWidth,
     coverLetter,
     cv,
+    layoutCv,
   };
   JTF.pdfdoc = pdfdoc;
   if (typeof module === 'object' && module.exports) module.exports = pdfdoc;
