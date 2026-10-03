@@ -45,3 +45,27 @@ test('a number over several short boxes gets a slice in each', async () => {
   assert.equal(await value(page, '#zip'), '94105');
   assert.equal(await value(page, '#zip4'), '');
 });
+
+test('questions that take several answers get each of them', async () => {
+  await h.setProfile({
+    job: { ...PROFILE.job, locations: 'New York, San Francisco' },
+    customAnswers: [
+      ...PROFILE.customAnswers,
+      { id: 'teams', question: 'which teams', answer: 'Technology, Quantitative Research' },
+    ],
+  });
+  try {
+    const page = await h.open('multi.html');
+    const r = await h.fill(page);
+    assert.equal(r.error, undefined);
+    const picked = (sel) => page.$eval(sel, (el) => Array.from(el.selectedOptions).map((o) => o.text));
+    assert.deepEqual(await picked('#offices'), ['New York', 'San Francisco']);
+    assert.deepEqual(await page.$$eval('input[name="teams"]:checked', (els) => els.map((el) => el.value)), [
+      'qr',
+      'tech',
+    ]);
+    assert.deepEqual(await picked('#teams2'), ['Quantitative Research', 'Technology']);
+  } finally {
+    await h.setProfile(PROFILE);
+  }
+});

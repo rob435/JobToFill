@@ -163,17 +163,11 @@ test('antd RangePicker: the dates of study go into its start and end boxes', asy
   await page.close();
 });
 
-test(
-  'antd DatePicker (DD/MM/YYYY) on a page that only says lang="en": the day and month are not swapped',
-  {
-    todo: 'the page gives no format and "06/01/2027" parses either way: needs apply() to try the order (see report)',
-  },
-  async () => {
-    await h.setProfile(STUDENT);
-    const page = await open('?lang=en');
-    await h.fill(page);
-    const s = await formState(page);
-    assert.equal(s.values.graduationDate, '2027-06-01');
-    await page.close();
-  },
-);
+test('antd DatePicker (DD/MM/YYYY) on a page that only says lang="en": the day and month are not swapped', async () => {
+  await h.setProfile(STUDENT);
+  const page = await open('?lang=en');
+  await h.fill(page);
+  const s = await formState(page);
+  assert.equal(s.values.graduationDate, '2027-06-01');
+  await page.close();
+});

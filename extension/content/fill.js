@@ -96,6 +96,16 @@
     typeValue(el, typed.slice(-kept.length));
   }
 
+  /** Focus and leave a control the way a person's pick does: forms that check a field on blur check it then. */
+  function focusIn(el) {
+    el.dispatchEvent(new FocusEvent('focus'));
+    el.dispatchEvent(new FocusEvent('focusin', { bubbles: true, composed: true }));
+  }
+  function focusOut(el) {
+    el.dispatchEvent(new FocusEvent('blur'));
+    el.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true }));
+  }
+
   /**
    * A box that only takes keys: Workday's date spin buttons ("YYYY") put back a value set from script, and a date in
    * parts that aren't inputs (MUI X's and React Aria's "MM/DD/YYYY" spans) has no value to set at all.
@@ -313,9 +323,15 @@
    * Did the box take `want`? Exactly, or reshaped by a mask ("+1 415 555 0100" shown as "(415) 555-0100"), or cut
    * to the box's length. A box left empty, put back as it was, or holding only the first key or two did not.
    */
-  function textTook(el, want) {
+  function textTook(el, want, strict) {
     const have = textIn(el);
     if (have === want) return true;
+    if (strict) {
+      // Every digit, or all but a dialling code the widget moved into its own country picker; never just the first.
+      const a = have.replace(/\D/g, '');
+      const b = want.replace(/\D/g, '');
+      return a === b || (a.length >= 7 && b.endsWith(a));
+    }
     const a = bare(have);
     const b = bare(want);
     if (!a || !b) return !a && !b;
@@ -340,13 +356,13 @@
    * Write `text` the first way the box keeps it; resolves to that way's index, or -1 when none did. An editor that
    * applies a paste a moment later (Lexical) is given that moment before the next way is tried on top of it.
    */
-  async function writeText(el, text, from) {
+  async function writeText(el, text, from, strict) {
     const ways = writeWays(el);
     for (let i = from || 0; i < ways.length; i++) {
       await ways[i](el, text);
-      if (textTook(el, text)) return i;
+      if (textTook(el, text, strict)) return i;
       if (isEditable(el)) for (let waited = 0; waited < 200 && !textTook(el, text); waited += 25) await sleep(25);
-      if (textTook(el, text)) return i;
+      if (textTook(el, text, strict)) return i;
     }
     return -1;
   }
@@ -1545,6 +1561,40 @@
     return { status: 'filled', confirmed: shows(), target: trigger.box };
   }
 
+  /* ------------------------------------------------------------- dates */
+
+  /**
+   * The day and month order of a date box that shows no format, on a page whose language doesn't settle it ("en",
+   * no region): "06/01/2027" reads either way, so the box is asked. The same date on the 13th, which reads only one
+   * way, goes in the page's order; turned down (a message, aria-invalid, the box emptied) and taken the other way
+   * round, the other order it is. A box that takes either keeps the page's order.
+   */
+  async function dateOrderAsked(el, v, desc, text) {
+    const m = /^(\d{1,2})([/.-])(\d{1,2})\2\d{4}$/.exec(text);
+    if (el.localName !== 'input' || !m || +m[1] > 12 || +m[3] > 12 || m[1] === m[3]) return text;
+    const lang = String(desc.lang || '').toLowerCase();
+    if (/[-_]/.test(lang) || (lang && !/^en\b/.test(lang))) return text;
+    const s = desc.signals || {};
+    if (/\b(dd|mm)\b/i.test([desc.placeholderRaw, s.label, s.describedby].join(' '))) return text;
+    const inOrder = (value, order) => M().formatForText(value, Object.assign({}, desc, { lang: order }));
+    const us = inOrder(v, 'en-US');
+    const gb = inOrder(v, 'en-GB');
+    if (us === gb || (text !== us && text !== gb)) return text;
+    const [mine, other] = text === us ? ['en-US', 'en-GB'] : ['en-GB', 'en-US'];
+    const thirteenth = Object.assign({}, v, { date: Object.assign({}, v.date, { day: 13 }) });
+    const said = complaint(el);
+    const refused = async (order) => {
+      const probe = inOrder(thirteenth, order);
+      typeValue(el, probe);
+      await sleep(80);
+      const now = complaint(el);
+      return (!!now && now !== said) || !textTook(el, probe);
+    };
+    const answer = !(await refused(mine)) || (await refused(other)) ? text : inOrder(v, other);
+    typeValue(el, '');
+    return answer;
+  }
+
   /* ------------------------------------------------------------- apply */
 
   /**
@@ -1561,17 +1611,35 @@
     try {
       switch (kind) {
         case 'select': {
+          // A list that takes several (<select multiple>) gets every one of your answers it offers.
+          if (el.multiple && (v.kind === 'list' || v.many)) {
+            const picks = M().matchAll(desc.options, v);
+            if (!picks.length) return { status: 'nomatch' };
+            history.push({ el, kind, prev: el.selectedIndex, prevMany: Array.from(el.options, (o) => o.selected) });
+            focusIn(el);
+            picks.forEach((i) => (el.options[i].selected = true));
+            fire(el, 'input');
+            fire(el, 'change');
+            focusOut(el);
+            return { status: 'filled', check: { idx: el.selectedIndex, picks } };
+          }
           const idx = M().matchOption(desc.options, v);
           if (idx < 0) return { status: 'nomatch' };
           history.push({ el, kind, prev: el.selectedIndex });
+          // Picked as a person does, focused and left: a form that checks on blur (Formik, react-hook-form's
+          // "onBlur") then drops its "Select your degree".
+          focusIn(el);
           el.selectedIndex = idx;
           fire(el, 'input');
           fire(el, 'change');
+          focusOut(el);
           return { status: 'filled', check: { idx } };
         }
         case 'radio': {
           const idx = M().matchOption(desc.options, v);
           if (idx < 0) return { status: 'nomatch' };
+          // Already your answer (a page that writes the checked attribute makes every choice look like its default).
+          if (isChecked(members[idx])) return { status: 'skipped', reason: 'has value' };
           history.push({ el, kind, members, prev: members.map(isChecked) });
           setChecked(members[idx], true);
           return { status: 'filled', target: members[idx], check: { targets: [members[idx]] } };
@@ -1614,7 +1682,8 @@
             const prev = el.value;
             // The site's chip ("Italy (+39)") goes first, or the right one would only join it.
             if (correcting && kind === 'combobox' && chipsOf(el).length) {
-              if (!clearPicked(el)) return { status: 'skipped', reason: 'has value' };
+              // A single choice is replaced by the next pick: only a list that takes several must be emptied first.
+              if (!clearPicked(el) && isMulti(el)) return { status: 'skipped', reason: 'has value' };
               await sleep(150);
               key(el, 'Escape'); // clearing can pop the menu open again
             }
@@ -1639,6 +1708,10 @@
           if (v.kind === 'phone' && v.international && /^\+\d{1,4}$/.test((el.value || '').trim()))
             text = M().formatForText(Object.assign({}, v, { text: v.international }), desc);
           if (!text) return { status: 'nomatch' };
+          history.push({ el, kind, prev: textIn(el) });
+          const before = openPopups(el.ownerDocument);
+          const said = complaint(el);
+          if (v.date && v.kind === 'date') text = await dateOrderAsked(el, v, desc, text);
           // The other ways to write it, for a box that turns this one down: those its own rules (pattern, length,
           // type) accept go first, so "+44 7700 900123" never meets a box that only takes digits.
           const variants = [
@@ -1648,17 +1721,18 @@
               .filter((s) => s !== text),
           ].slice(0, 12);
           const ways = [...variants.filter((s) => fits(el, s)), ...variants.filter((s) => !fits(el, s))];
-          history.push({ el, kind, prev: textIn(el) });
-          const before = openPopups(el.ownerDocument);
-          const said = complaint(el);
+          // A phone number must keep every digit: a mask that cut "+1 415 555 0100" to "(141) 555-5010" didn't take it.
+          const strict = v.kind === 'phone';
           let wrote = ways[0];
-          let way = await writeText(el, wrote);
-          // Its rules reject what went in at once (a pattern or type the attributes didn't show): the next way.
+          let way = await writeText(el, wrote, 0, strict);
+          // Not kept, or rejected at once by its rules (a pattern or type the attributes didn't show): the next way of
+          // writing it ("415 555 0100" for a US mask), and the first back when none does.
           const rejected = () => !!el.validity && !el.validity.valid && !el.validity.valueMissing;
-          for (let i = 1; i < ways.length && way >= 0 && rejected(); i++) way = await writeText(el, (wrote = ways[i]));
-          if (way >= 0 && rejected() && wrote !== ways[0]) way = await writeText(el, (wrote = ways[0]));
+          for (let i = 1; i < Math.min(ways.length, 8) && (way < 0 || rejected()); i++)
+            way = await writeText(el, (wrote = ways[i]), 0, strict);
+          if ((way < 0 || rejected()) && wrote !== ways[0]) way = await writeText(el, (wrote = ways[0]), 0, strict);
           await closePopups(el, before);
-          return { status: 'filled', check: { text: wrote, ways, way, said } };
+          return { status: 'filled', check: { text: wrote, ways, way, said, strict } };
         }
       }
     } catch (err) {
@@ -1677,6 +1751,7 @@
     if (!el.isConnected) return { gone: true };
     switch (kind) {
       case 'select':
+        if (check.picks) return check.picks.every((i) => el.options[i].selected) ? { ok: true } : { lost: true };
         return el.selectedIndex === check.idx ? { ok: true } : { lost: true };
       case 'radio':
       case 'checkbox':
@@ -1689,7 +1764,7 @@
       case 'file':
         return { ok: true };
       default: {
-        if (!textTook(el, check.text)) return { lost: true };
+        if (!textTook(el, check.text, check.strict)) return { lost: true };
         const said = complaint(el);
         return said && said !== check.said ? { refused: said } : { ok: true };
       }
@@ -1727,7 +1802,8 @@
     const first = verify(field, check);
     if (first.ok || first.gone) return first;
     if (kind === 'select') {
-      el.selectedIndex = check.idx;
+      if (check.picks) check.picks.forEach((i) => (el.options[i].selected = true));
+      else el.selectedIndex = check.idx;
       fire(el, 'input');
       fire(el, 'change');
     } else if (kind === 'radio' || kind === 'checkbox' || kind === 'checkboxes') {
@@ -1747,7 +1823,7 @@
       let fixed = false;
       for (const text of check.ways.slice(0, 8)) {
         if (text === check.text) continue;
-        if ((await writeText(el, text)) < 0) continue;
+        if ((await writeText(el, text, 0, check.strict)) < 0) continue;
         await sleep(150);
         const said = complaint(el);
         if (!said || said === check.said) {
@@ -1756,7 +1832,7 @@
           break;
         }
       }
-      if (!fixed) await writeText(el, check.ways[0]);
+      if (!fixed) await writeText(el, check.ways[0], 0, check.strict);
     }
     const now = verify(field, check);
     return now.ok ? { ok: true, fixed: true } : now;
@@ -1770,14 +1846,14 @@
     let a = el.parentElement;
     for (let i = 0; a && i < 5; i++, a = a.parentElement) {
       const clear = a.querySelector(
-        '[class*="clear-indicator"], [class*="clearIndicator"], [aria-label="Clear" i], [aria-label*="clear selection" i]',
+        '[class*="clear-indicator"], [class*="clearIndicator"], [aria-label="Clear" i], [aria-label*="clear selection" i], [title="Clear" i], [title^="Remove all" i], [title*="clear selection" i]',
       );
       if (clear) {
         pointerClick(clear);
         return true;
       }
       const removes = a.querySelectorAll(
-        '[class*="multi-value__remove"], [class*="multiValueRemove"], [aria-label^="Remove" i], [data-automation-id="DELETE_charm"]',
+        '[class*="multi-value__remove"], [class*="multiValueRemove"], [aria-label^="Remove" i], [title^="Remove" i], [data-automation-id="DELETE_charm"]',
       );
       if (removes.length && chipsOf(el).length) {
         Array.from(removes).forEach((r) => pointerClick(r));
@@ -1793,7 +1869,8 @@
       try {
         if (!h.el.isConnected) continue;
         if (h.kind === 'select') {
-          h.el.selectedIndex = h.prev;
+          if (h.prevMany) h.prevMany.forEach((on, i) => h.el.options[i] && (h.el.options[i].selected = on));
+          else h.el.selectedIndex = h.prev;
           fire(h.el, 'change');
         } else if (h.kind === 'radio' || h.kind === 'checkboxes') {
           h.members.forEach((m, i) => setChecked(m, h.prev[i]));

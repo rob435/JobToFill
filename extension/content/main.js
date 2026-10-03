@@ -92,6 +92,23 @@
     }
   }
 
+  /** Does the question take several answers: a checklist, a <select multiple>, a widget standing in for one? */
+  const takesSeveral = (field) =>
+    field.kind === 'checkboxes' ||
+    (field.kind === 'select' && !!field.el.multiple) ||
+    (field.kind !== 'file' && !!field.desc.multiple);
+
+  /** A custom answer as the list it names, when every item is one of the question's options (or none are known). */
+  function listAnswer(v, field) {
+    const items = String(v.text || '')
+      .split(/\s*[,;\n]\s*/)
+      .filter(Boolean);
+    if (items.length < 2) return null;
+    const options = (field.desc.options || []).filter((o) => !o.disabled);
+    if (options.length && !items.every((t) => JTF.matcher.matchOption(options, JTF.fields.val(t)) >= 0)) return null;
+    return { text: items.join(', '), kind: 'list', items, candidates: items, canonical: null };
+  }
+
   /**
    * One box's slice of a number split over several (see splitBoxes): the digits that fill exactly the first boxes
    * (all of them, or the first ones: a ZIP code without its +4), a phone number's taken without its country code
@@ -553,6 +570,9 @@
       let v = await valueFor(field, r, def, question);
       if (v && r.type !== 'custom' && FOLLOW_UP.test(question) && !JTF.fields.followUpAnswer(v, field.kind))
         return null;
+      // A custom answer naming several of the options ("Technology, Quantitative Research") picks each of them where
+      // the question takes several.
+      if (v && r.type === 'custom' && takesSeveral(field)) v = listAnswer(v, field) || v;
       // A box that holds part of a number (see splitBoxes) gets its part, or nothing when the number doesn't fit.
       if (v && r.segment) {
         v = segmentValue(v, r.segment);

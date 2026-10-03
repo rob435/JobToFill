@@ -110,15 +110,11 @@ test('Formik + Yup: the phone and date of birth pass the schema’s patterns, th
   await page.close();
 });
 
-test(
-  'Formik validated on blur only: the picked degree leaves no stale “Select your degree” behind',
-  { todo: 'apply() changes a <select> without focusing and blurring it, so blur validation never runs' },
-  async () => {
-    const { page, s } = await fillPage('lib-forms.html?section=formik', STUDENT, '#fk-phone');
-    assert.deepEqual(s.formik.errors, {});
-    await page.close();
-  },
-);
+test('Formik validated on blur only: the picked degree leaves no stale “Select your degree” behind', async () => {
+  const { page, s } = await fillPage('lib-forms.html?section=formik', STUDENT, '#fk-phone');
+  assert.deepEqual(s.formik.errors, {});
+  await page.close();
+});
 
 test('react-imask (UK): +{44} 0000 000000, a DD/MM/YYYY date showing its empty slots, a postcode', async () => {
   const { page, report, s } = await fillPage('lib-forms.html?section=imask', STUDENT, '#im-phone');
@@ -131,15 +127,11 @@ test('react-imask (UK): +{44} 0000 000000, a DD/MM/YYYY date showing its empty s
   await page.close();
 });
 
-test(
-  'react-imask (US): (000) 000-0000 takes the national number',
-  { todo: 'the mask reshapes "+1 415 555 0100" into "(141) 555-5010": needs format negotiation in apply()' },
-  async () => {
-    const { page, s } = await fillPage('lib-forms.html?section=imask&us', US, '#im-phone');
-    assert.equal(s.imask.phone, '(415) 555-0100');
-    await page.close();
-  },
-);
+test('react-imask (US): (000) 000-0000 takes the national number', async () => {
+  const { page, s } = await fillPage('lib-forms.html?section=imask&us', US, '#im-phone');
+  assert.equal(s.imask.phone, '(415) 555-0100');
+  await page.close();
+});
 
 test('react-imask (US): an MM/DD/YYYY date and a ZIP code', async () => {
   const { page, s } = await fillPage('lib-forms.html?section=imask&us', US, '#im-phone');

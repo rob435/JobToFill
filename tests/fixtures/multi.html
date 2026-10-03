@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply: Summer Analyst 2027</title>
+    <!--
+      Questions that take several answers: a native <select multiple> of offices, and "Which teams interest you?" as a
+      checkbox list and as a <select multiple>, answered by a custom answer that names two teams.
+    -->
+    <style>
+      body { font: 15px/1.4 system-ui, sans-serif; margin: 32px auto; max-width: 620px; }
+      .row { margin: 14px 0; }
+      .row > label, legend { display: block; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <h1>Summer Analyst 2027</h1>
+    <form onsubmit="return false">
+      <div class="row"><label for="first">First name</label><input id="first" /></div>
+      <div class="row">
+        <label for="offices">Which offices would you consider? (hold Ctrl to choose several)</label>
+        <select id="offices" multiple size="5">
+          <option>Hong Kong</option>
+          <option>London</option>
+          <option>New York</option>
+          <option>Paris</option>
+          <option>San Francisco</option>
+        </select>
+      </div>
+      <fieldset class="row">
+        <legend>Which teams interest you?</legend>
+        <label><input type="checkbox" name="teams" value="ib" /> Investment Banking</label>
+        <label><input type="checkbox" name="teams" value="qr" /> Quantitative Research</label>
+        <label><input type="checkbox" name="teams" value="sales" /> Sales &amp; Trading</label>
+        <label><input type="checkbox" name="teams" value="tech" /> Technology</label>
+      </fieldset>
+      <div class="row">
+        <label for="teams2">Which teams would you like to be considered for?</label>
+        <select id="teams2" multiple size="4">
+          <option>Investment Banking</option>
+          <option>Quantitative Research</option>
+          <option>Sales &amp; Trading</option>
+          <option>Technology</option>
+        </select>
+      </div>
+    </form>
+  </body>
+</html>
