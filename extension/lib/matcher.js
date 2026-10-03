@@ -165,8 +165,13 @@
     let best = null;
     for (const rule of F().RULES) {
       if (!kindAllowed(rule, desc)) continue;
-      // A strong signal naming something else ("cover letter" on an "Attach" button) rules this type out.
-      if (rule.notAny && signals.some((s) => s.weight >= 0.6 && rule.notAny.test(s.text))) {
+      // A strong signal naming something else ("cover letter" on an "Attach" button) rules this type out, unless what
+      // the control visibly says names this type too ("Resume/CV/Transcripts" over a note about transcripts).
+      if (
+        rule.notAny &&
+        signals.some((s) => s.weight >= 0.6 && rule.notAny.test(s.text)) &&
+        !(rule.unlessAny && signals.some((s) => s.weight >= 0.75 && rule.unlessAny.test(s.text)))
+      ) {
         ruledOut.add(rule.type);
         continue;
       }
@@ -340,6 +345,16 @@
     if (s.section && (SCHOOL_SECTION.test(norm(s.section)) || A_LEVELS.test(s.section)) && !F().eduLevelOf(norm(q)))
       return U.cleanLabel(`${s.section}: ${q}`);
     return q;
+  }
+
+  /**
+   * What the page says about a control besides its question: the help text it points to (aria-describedby) and the
+   * instructions under its section's heading ("If your school/university uses a GPA system… Otherwise, provide your
+   * overall result in your school/university's grading system" under Workday's "Education").
+   */
+  function helpText(desc) {
+    const s = desc.signals || {};
+    return U.cleanLabel([s.describedby, s.sectionHelp].filter(Boolean).join(' '), 600);
   }
 
   /** "how did you hear|referral" -> phrases; "/^why .* us\??$/i" -> RegExp. */
@@ -1603,6 +1618,7 @@
     classify,
     plan,
     questionText,
+    helpText,
     canonicalOf,
     matchOption,
     matchAll,

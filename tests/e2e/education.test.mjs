@@ -117,6 +117,82 @@ test('SuccessFactors: each block starts with its "From Date"; school country and
   await page.close();
 });
 
+const uploads = (page) =>
+  page.$$eval('[data-automation-id="file-upload-item-name"]', (items) => items.map((i) => i.textContent));
+const setLetter = (name) =>
+  h.bg(
+    ([id, file, dataUrl]) =>
+      globalThis.JTF.store.setDoc(id, 'coverLetter', { name: file, type: 'application/pdf', size: 60, dataUrl }),
+    [profileId, name, RESUME_PDF],
+  );
+const fillWith = async (page, options) =>
+  h.bg(([id, opts]) => globalThis.JTFBackground.fillTab(id, opts), [await h.tabId(page), options]);
+
+test('Workday (Shell): "Resume/CV/Transcripts" takes CV, letter and transcript; the class for the GPA; year-only dates', async () => {
+  await setLetter('Ada_Lovelace_letter.pdf');
+  const CV = 'Ada_Lovelace_CV.pdf';
+  const TRANSCRIPT = 'Ada_Lovelace_transcript.pdf';
+  try {
+    const page = await h.open('workday-experience.html');
+    const r = await h.fill(page);
+    assert.equal(r.error, undefined);
+    assert.equal(await value(page, '#ed1-school'), 'University of Glasgow');
+    assert.equal(await text(page, '#btn-degree'), "Bachelor's Degree");
+    assert.equal(await value(page, '#ed1-field'), 'Computer Science');
+    assert.equal(await value(page, '#ed1-gpa'), '2:1', '"…Otherwise, provide your overall result…": the class, no GPA');
+    assert.equal(await value(page, '#ed1-from'), '2023', 'the "YYYY" box under "From"');
+    assert.equal(await value(page, '#ed1-to'), '2027', 'and under "To (Actual or Expected)"');
+    assert.deepEqual(
+      await uploads(page),
+      [CV, 'Ada_Lovelace_letter.pdf', TRANSCRIPT],
+      'the CV first, then the letter and the transcript, in one go',
+    );
+    assert.equal(r.docs['file.resume'], 'filled');
+    assert.equal(r.docs['file.coverLetter'], 'filled');
+    assert.equal(r.docs['file.transcript'], 'filled');
+    assert.ok(!r.missing.length, JSON.stringify(r.missing));
+
+    // Filling again puts nothing in twice: the drop zone lists what it has.
+    await h.fill(page);
+    assert.deepEqual(await uploads(page), [CV, 'Ada_Lovelace_letter.pdf', TRANSCRIPT]);
+
+    // "Use for this application" with the letter written for Shell: only the letter goes in, never the CV again.
+    await setLetter('Ada_Lovelace_Shell_letter.pdf');
+    const attach = await fillWith(page, { only: ['file.coverLetter', 'coverLetter'] });
+    assert.equal(attach.filled, 1);
+    assert.deepEqual(await uploads(page), [CV, 'Ada_Lovelace_letter.pdf', TRANSCRIPT, 'Ada_Lovelace_Shell_letter.pdf']);
+    await page.close();
+
+    // Quick apply: its first fill leaves the upload for later (the letter is being written)…
+    const quick = await h.open('workday-experience.html');
+    const QUICK_DOCS = ['file.resume', 'file.coverLetter', 'coverLetter'];
+    const first = await fillWith(quick, { quick: true, hold: QUICK_DOCS, consents: true, ai: false });
+    assert.ok(first.held >= 1, JSON.stringify(first));
+    assert.deepEqual(await uploads(quick), []);
+    assert.equal(await value(quick, '#ed1-gpa'), '2:1', 'the details go in at once');
+    // …and its last one puts the CV, the new letter and the transcript in together.
+    const last = await fillWith(quick, {
+      quick: true,
+      consents: true,
+      replace: ['file.coverLetter', 'coverLetter'],
+      ai: false,
+    });
+    assert.deepEqual(await uploads(quick), [CV, 'Ada_Lovelace_Shell_letter.pdf', TRANSCRIPT]);
+    assert.equal(last.docs['file.coverLetter'], 'filled');
+    assert.equal(last.docs['file.resume'], 'filled');
+    await quick.close();
+
+    // A box that takes one file gets just the CV.
+    const single = await h.open('workday-experience.html');
+    await single.$eval('#upload', (input) => input.removeAttribute('multiple'));
+    await h.fill(single);
+    assert.deepEqual(await uploads(single), [CV]);
+    await single.close();
+  } finally {
+    await h.bg(([id]) => globalThis.JTF.store.removeDoc(id, 'coverLetter'), [profileId]);
+  }
+});
+
 test('Greenhouse (Databricks): the undergraduate transcript is attached, the graduate one is left for a BSc', async () => {
   const page = await h.open('greenhouse-transcripts.html');
   const r = await h.fill(page);

@@ -12,6 +12,7 @@
   // lastFill: what the latest fill changed (AI answers are added to it, so one Undo takes both back);
   // pending: the questions it left empty, by id, for the AI's answers; hold: keeps the background awake.
   // aiFilled: field -> the answer the AI put there (remembered with the application, so not "learnt" again).
+  // attached: upload -> the file names a fill put there, by type (a new letter takes the place of the one before).
   const state = {
     history: [],
     lastFill: [],
@@ -20,6 +21,7 @@
     pending: new Map(),
     hold: null,
     aiFilled: new WeakMap(),
+    attached: new WeakMap(),
   };
 
   function send(message) {
@@ -179,6 +181,26 @@
     return cache[which] ? { text: cache[which].name, kind: 'file', document: cache[which], candidates: [] } : null;
   }
 
+  // A file the page lists as taken ("Ada_Lovelace_CV.pdf Successfully Uploaded!").
+  const FILE_NAME = /[\w)\]-]\.(pdf|docx?|rtf|odt|txt|pages)\b/i;
+
+  /** An upload's container (its drop zone, label and the files it lists): up to where other fields start. */
+  function uploadBox(el) {
+    let box = el.parentElement || el;
+    for (let a = box, n = 0; a && a !== document.body && n < 6; a = a.parentElement, n++) {
+      const others = a.querySelectorAll('input:not([type="hidden"]), select, textarea');
+      if (Array.from(others).some((c) => c !== el)) break;
+      box = a;
+    }
+    return box;
+  }
+
+  /** Does an upload's box show this document as taken (by its name, as a drop zone lists what it uploaded)? */
+  function shows(text, doc) {
+    const name = U.normalize(String(doc.name || '').replace(/\.[a-z0-9]+$/i, ''));
+    return !!name && U.normalize(text).includes(name);
+  }
+
   /** Wait until the page stops changing (an uploaded CV being parsed), for at most `max` ms. */
   function settle(max = 2500, quiet = 500) {
     return new Promise((resolve) => {
@@ -280,6 +302,7 @@
           secrets,
           answer: r.answer,
           question,
+          help: U.normalize(JTF.matcher.helpText(field.desc)),
           options: field.desc.options,
           consents: !!settings.consents || accountTerms,
           // How the page writes "03/11" (interview slots).
@@ -294,8 +317,25 @@
     let settled = false;
 
     // Upload tiles that make their file box only once "Upload from Device" is chosen (SuccessFactors): first too.
-    for (const tile of JTF.fill.uploadTriggers(document)) {
-      const r = JTF.matcher.classify(tile.desc);
+    const tiles = JTF.fill.uploadTriggers(document).map((tile) => ({ tile, r: JTF.matcher.classify(tile.desc) }));
+    // The uploads the form has, by type: your letter goes into your CV's upload only when the form has no letter upload.
+    const uploadTypes = new Set(
+      [...results, ...tiles.map((t) => t.r)]
+        .filter((r) => r && r.type && JTF.fields.DEFS[r.type] && JTF.fields.DEFS[r.type].file)
+        .map((r) => r.type),
+    );
+    /**
+     * The documents an upload takes, its own first: your CV's upload, when it takes several files, also takes your
+     * letter and transcript (fields.uploadAlso), those you have.
+     */
+    const carriedBy = (field, r) => {
+      if (r.type !== 'file.resume' || field.kind !== 'file' || !field.desc.multiple) return [r.type];
+      const s = field.desc.signals;
+      const text = U.normalize([s.question, s.label, s.aria, s.nearby, s.group, s.section].filter(Boolean).join(' '));
+      const also = JTF.fields.uploadAlso(text, { multiple: true, profile, separate: uploadTypes });
+      return [r.type, ...also.filter((t) => payload.docs && payload.docs[JTF.fields.DEFS[t].file])];
+    };
+    for (const { tile, r } of tiles) {
       const def = r && JTF.fields.DEFS[r.type];
       if (!def || !def.file) continue;
       if (r.type === 'file.coverLetter') report.wantsLetter = true;
@@ -330,6 +370,68 @@
     const filledKeys = new Set();
     const keptKeys = new Set();
     const keyOf = (r, question) => [r.type, r.index || 0, r.part || '', question].join('|');
+    /**
+     * Your CV's upload that takes several files (`types`: the CV, then your letter and transcript): an empty box gets
+     * them all in one go. One that already has files only gets what must go in anew (the letter just written, a
+     * tailored CV: `only`, `replace`, Overwrite), never your CV a second time: a drop zone that uploads and empties
+     * its file box (Workday) gets just the new files, a plain file box keeps what it holds beside them (or, for a new
+     * CV, takes the whole set again).
+     */
+    const fillUpload = async (field, types, label) => {
+      const docs = {};
+      for (const t of types) {
+        const v = await documentValue(t, payload, docCache);
+        if (v) docs[t] = v.document;
+      }
+      if (!docs['file.resume']) {
+        report.missing.push(label);
+        report.missingTypes.push('file.resume');
+        return null;
+      }
+      const have = types.filter((t) => docs[t]);
+      // Asked for anew by this fill (the letter Quick apply or the studio just wrote, a tailored CV), or by Overwrite.
+      const asked = (t) => !!((payload.force && only && only.has(t)) || (replace && replace.has(t)));
+      const renew = have.filter((t) => settings.overwrite || asked(t));
+      const el = field.el;
+      const kept = (el.files && el.files.length) || 0;
+      const text = uploadBox(el).textContent || '';
+      let put = have;
+      let keep = false;
+      if (kept || FILE_NAME.test(text)) {
+        if (kept) {
+          put = renew.includes('file.resume') ? have : renew;
+          keep = !renew.includes('file.resume');
+        } else put = renew.filter((t) => asked(t) || !shows(text, docs[t]));
+        if (!put.length) {
+          report.skipped++;
+          return 'skipped';
+        }
+      }
+      // A plain file box keeps what it holds, but the letter a fill put there before gives way to the new one.
+      const before = state.attached.get(el) || {};
+      const v = {
+        text: put.map((t) => docs[t].name).join(', '),
+        kind: 'file',
+        documents: put.map((t) => docs[t]),
+        keep: keep ? { except: put.map((t) => before[t]).filter(Boolean) } : null,
+      };
+      const res = await JTF.fill.apply(field, v, {
+        overwrite: true,
+        comboboxes: settings.comboboxes !== false,
+        history,
+      });
+      for (const t of put) report.docs[t] = res.status === 'filled' ? 'filled' : report.docs[t] || res.status;
+      if (res.status === 'filled') {
+        state.attached.set(el, Object.assign({}, before, ...put.map((t) => ({ [t]: docs[t].name }))));
+        report.filled++;
+        uploaded = true;
+        if (settings.highlight !== false) JTF.fill.highlight(res.target || el);
+      } else {
+        report.failed++;
+        report.unmatched.push(label);
+      }
+      return res.status;
+    };
     /** Fill one field from the profile; `count` adds what it asks about to the report's lists. */
     const fillOne = async (field, r, { count = true } = {}) => {
       if (!r || !r.type) {
@@ -337,14 +439,17 @@
         return null;
       }
       if (r.type === 'file.coverLetter' || r.type === 'coverLetter') report.wantsLetter = true;
-      if (only && !only.has(r.type)) return null;
-      if (hold && hold.has(r.type)) {
+      // Your CV's upload that takes your letter too is in a fill of just the letter, and held with either.
+      const carried = carriedBy(field, r);
+      if (only && !carried.some((t) => only.has(t))) return null;
+      if (hold && carried.some((t) => hold.has(t))) {
         report.held++;
         return null;
       }
       report.detected++;
       const def = JTF.fields.DEFS[r.type];
       const label = labelFor(field, r);
+      if (carried.length > 1) return fillUpload(field, carried, label);
       const question = U.normalize(JTF.matcher.questionText(field.desc));
       // "If applicable, please provide a recent transcript of your graduate studies.": not for a level you haven't
       // studied at, and nothing missing from your profile either.
@@ -546,14 +651,19 @@
       else if (r && r.type) {
         const def = JTF.fields.DEFS[r.type];
         if (NOT_FOR_AI.test(r.type) || !def || def.consent || def.secret || def.file) continue;
-        const v = JTF.fields.resolve(r.type, profile, {
+        const ctx = {
           ...context,
           index: r.index || 0,
           part: r.part,
           kind: field.kind,
           question: q,
+          help: U.normalize(JTF.matcher.helpText(field.desc)),
           options: field.desc.options,
-        });
+        };
+        // A grade your profile holds is the rules' to give (or to leave, as a class in a GPA box that wants a
+        // number): the AI never turns a 2:1 into a GPA.
+        if (JTF.fields.gradeHeld(r.type, profile, ctx)) continue;
+        const v = JTF.fields.resolve(r.type, profile, ctx);
         // A follow-up after a "No" ("If yes, give details") or a box the profile said no to stays empty.
         if (v && (field.kind === 'checkbox' || (FOLLOW_UP.test(q) && !JTF.fields.followUpAnswer(v, field.kind))))
           continue;
@@ -785,6 +895,7 @@
             kind: field.kind,
             answer: r.answer,
             question,
+            help: U.normalize(JTF.matcher.helpText(field.desc)),
             options: field.desc.options,
           });
           status = JTF.fields.resolve(r.type, profile, ctx) ? 'ok' : 'empty';

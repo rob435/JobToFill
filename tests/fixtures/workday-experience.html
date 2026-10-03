@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>My Experience - Workday-style application (Shell)</title>
+  <style>
+    body { font: 14px system-ui; max-width: 720px; margin: 24px auto; }
+    [data-automation-id^="formField"] { margin: 10px 0; display: grid; gap: 4px; }
+    button[aria-haspopup] { text-align: left; padding: 6px; }
+    ul[role="listbox"] { position: absolute; list-style: none; margin: 0; padding: 4px; background: #fff; border: 1px solid #888; z-index: 10; }
+    li[role="option"] { padding: 4px 8px; cursor: pointer; }
+    [data-automation-id="dateInputWrapper"] input { width: 70px; }
+    [data-automation-id="file-upload-drop-zone"] { border: 1px dashed #888; padding: 12px; display: flex; gap: 8px; align-items: center; }
+    .note { color: #555; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>My Experience</h1>
+  <div data-automation-id="applyFlowMyExpPage">
+    <!-- Shell's Education section: its instructions sit under the heading, above the entry. -->
+    <div role="group" aria-labelledby="Education-section" data-automation-id="educationSection">
+      <h3 id="Education-section">Education</h3>
+      <div data-automation-id="richText"><p>If your school/university uses a GPA system, enter your GPA on a 0- 4.0 scale. Otherwise, provide your overall result in your school/university's grading system. If you haven't graduated, enter your predicted result.</p></div>
+      <div role="group" aria-labelledby="Education-1-panel" data-automation-id="education-1">
+        <h4 id="Education-1-panel">Education 1</h4>
+        <div data-automation-id="formField-schoolName"><label for="ed1-school">School or University<abbr title="required">*</abbr></label><input type="text" id="ed1-school" data-automation-id="school"></div>
+        <div data-automation-id="formField-degree"><label id="lbl-degree">Degree<abbr title="required">*</abbr></label>
+          <button type="button" id="btn-degree" aria-haspopup="listbox" aria-labelledby="lbl-degree btn-degree" data-automation-id="degree"
+            data-options="A-Levels|Bachelor's Degree|Master's Degree|Doctorate|Other">Select One</button></div>
+        <div data-automation-id="formField-fieldOfStudy"><label for="ed1-field">Field of Study<abbr title="required">*</abbr></label><input type="text" id="ed1-field" data-automation-id="fieldOfStudy"></div>
+        <div data-automation-id="formField-gradeAverage"><label for="ed1-gpa">Overall Result (GPA)<abbr title="required">*</abbr></label><input type="text" id="ed1-gpa" data-automation-id="gpa"></div>
+        <!-- Year-only dates: one "YYYY" spin box each. -->
+        <div data-automation-id="formField-startDate"><label id="lbl-from">From<abbr title="required">*</abbr></label>
+          <div data-automation-id="dateInputWrapper">
+            <input type="text" id="ed1-from" role="spinbutton" aria-valuemin="1900" aria-valuemax="2100" placeholder="YYYY" data-automation-id="dateSectionYear-input">
+          </div></div>
+        <div data-automation-id="formField-endDate"><label id="lbl-to">To (Actual or Expected)<abbr title="required">*</abbr></label>
+          <div data-automation-id="dateInputWrapper">
+            <input type="text" id="ed1-to" role="spinbutton" aria-valuemin="1900" aria-valuemax="2100" placeholder="YYYY" data-automation-id="dateSectionYear-input">
+          </div></div>
+      </div>
+    </div>
+
+    <!-- One drop zone for the CV, the transcript and anything else: it uploads each file it is given and lists it,
+         then empties its file box (so the same file can be picked again), as Workday's does. -->
+    <div role="group" aria-labelledby="Resume-section" data-automation-id="resumeSection">
+      <h3 id="Resume-section">Resume/CV/Transcripts</h3>
+      <p class="note">(transcripts are required for all US applications)</p>
+      <div data-automation-id="formField-resume">
+        <label id="lbl-upload">Upload a file (5MB max)<abbr title="required">*</abbr></label>
+        <div data-automation-id="file-upload-drop-zone">
+          <span>Drop files here</span><span>or</span>
+          <button type="button" data-automation-id="select-files">Select files</button>
+          <input type="file" id="upload" multiple data-automation-id="file-upload-input-ref" style="display: none">
+        </div>
+        <ul id="uploaded"></ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Minimal Workday-like dropdown: a button that opens a listbox portal appended to <body>.
+    let open = null;
+    function close() { if (open) { open.list.remove(); open.btn.setAttribute('aria-expanded', 'false'); open = null; } }
+    document.querySelectorAll('button[aria-haspopup="listbox"]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (open && open.btn === btn) return close();
+        close();
+        const list = document.createElement('ul');
+        list.setAttribute('role', 'listbox');
+        list.id = btn.id + '-listbox';
+        const r = btn.getBoundingClientRect();
+        list.style.left = r.left + scrollX + 'px';
+        list.style.top = r.bottom + scrollY + 'px';
+        for (const text of btn.dataset.options.split('|')) {
+          const li = document.createElement('li');
+          li.setAttribute('role', 'option');
+          li.innerHTML = '<div>' + text + '</div>';
+          li.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            btn.textContent = text; btn.dataset.value = text; close();
+          });
+          list.appendChild(li);
+        }
+        document.body.appendChild(list);
+        btn.setAttribute('aria-expanded', 'true');
+        btn.setAttribute('aria-controls', list.id);
+        open = { btn, list };
+      });
+    });
+    document.addEventListener('click', close);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+
+    // The drop zone: every file it is given is uploaded and listed, then its file box is emptied.
+    const upload = document.getElementById('upload');
+    upload.addEventListener('change', () => {
+      for (const file of upload.files) {
+        const li = document.createElement('li');
+        li.setAttribute('data-automation-id', 'file-upload-item');
+        li.innerHTML = '<span data-automation-id="file-upload-item-name"></span> Successfully Uploaded! <button type="button">Delete</button>';
+        li.firstChild.textContent = file.name;
+        li.querySelector('button').addEventListener('click', () => li.remove());
+        document.getElementById('uploaded').appendChild(li);
+      }
+      upload.value = '';
+    });
+  </script>
+</body>
+</html>

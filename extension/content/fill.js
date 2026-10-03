@@ -732,9 +732,16 @@
     return new File([bytes], doc.name, { type: doc.type || 'application/octet-stream', lastModified: Date.now() });
   }
 
-  function setFile(el, doc) {
+  /**
+   * Put one document or several (in that order) into a file box. `keep`: after the files it already holds, but for
+   * those named in `keep.except` and those of the same name as a new one, which give way to the new ones.
+   */
+  function setFile(el, docs, keep) {
+    const files = [].concat(docs).map(dataUrlToFile);
+    const gone = new Set([...files.map((f) => f.name), ...((keep && keep.except) || [])]);
     const dt = new DataTransfer();
-    dt.items.add(dataUrlToFile(doc));
+    if (keep) for (const f of Array.from(el.files || [])) if (!gone.has(f.name)) dt.items.add(f);
+    for (const f of files) dt.items.add(f);
     el.files = dt.files;
     fire(el, 'input');
     fire(el, 'change');
@@ -927,9 +934,11 @@
           return { status: 'filled' };
         }
         case 'file': {
-          if (!v.document) return { status: 'nomatch' };
+          // A box that takes several files gets them in one go ("Resume/CV/Transcripts": CV, letter, transcript).
+          const docs = v.documents || (v.document ? [v.document] : []);
+          if (!docs.length) return { status: 'nomatch' };
           history.push({ el, kind, prev: el.files });
-          setFile(el, v.document);
+          setFile(el, docs, v.keep);
           return { status: 'filled' };
         }
         case 'combo':

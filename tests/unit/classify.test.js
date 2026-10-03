@@ -282,6 +282,44 @@ test('uploads: an "Attach" button takes its meaning from its group, id or name',
   assert.equal(file({ label: 'Attach' }), 'file.resume');
 });
 
+test('uploads that name the CV with other documents are the CV’s; one naming only a letter or transcript is not', () => {
+  const file = (signals) => typeOf(desc(signals, { kind: 'file', inputType: 'file' }));
+  // Shell's Workday: "Resume/CV/Transcripts" over "(transcripts are required for all US applications)".
+  const shell = {
+    question: 'Resume/CV/Transcripts',
+    nearby: 'Upload a file (5MB max)* Drop files here or',
+    attrs: 'file-upload-input-ref',
+    ancestors: 'file-upload-drop-zone formField-resume resumeSection',
+    section: 'Resume/CV/Transcripts',
+  };
+  assert.equal(file(shell), 'file.resume');
+  assert.equal(
+    file({ ...shell, nearby: '(transcripts are required for all US applications) Upload a file (5MB max)*' }),
+    'file.resume',
+    'the note about transcripts doesn’t make it the transcript’s upload',
+  );
+  assert.equal(
+    file({
+      nearby: 'Resume/CV/Transcripts (transcripts are required for all US applications) Upload a file (5MB max)*',
+    }),
+    'file.resume',
+  );
+  for (const label of [
+    'CV and cover letter',
+    'Resume, cover letter and transcripts',
+    'Resume / CV / Transcript',
+    'Transcripts and CV',
+  ])
+    assert.equal(file({ label }), 'file.resume', label);
+  // An upload naming only one other document stays that document's.
+  assert.equal(file({ label: 'Transcript' }), 'file.transcript');
+  assert.equal(file({ label: 'Upload', question: 'Transcript', id: 'file-upload' }), 'file.transcript');
+  assert.equal(file({ label: 'Academic transcripts (undergraduate and postgraduate)' }), 'file.transcript');
+  assert.equal(file({ label: 'Cover letter' }), 'file.coverLetter');
+  assert.equal(file({ label: 'Attach', question: 'Cover Letter', id: 'resume-cover-letter' }), 'file.coverLetter');
+  assert.equal(file({ label: 'Upload a file', question: 'Transcript', section: 'Resume' }), 'file.transcript');
+});
+
 test('a country picker inside a "Phone" group is the dialling code', () => {
   assert.equal(typeOf(desc({ label: 'Country', group: 'Phone' }, { kind: 'combobox' })), 'phone.countryCode');
   assert.equal(typeOf(desc({ label: 'Country', group: 'Address' }, { kind: 'combobox' })), 'address.country');
