@@ -3140,3 +3140,43 @@ test('round-up from the survey: code samples, AI disclosures, ranked lists, relo
   Object.assign(p.address, { city: 'Austin', state: 'TX', country: 'United States' });
   assert.equal(choose(p, 'address.state', na, states), 'TX');
 });
+
+test('other ways to write an answer, for a box that turns the first one down', () => {
+  const p = sample();
+  p.personal.dob = '1990-12-10';
+  p.links.linkedin = 'https://www.linkedin.com/in/ada';
+  const ways = (type, d, extra) =>
+    matcher.textVariants(
+      fields.resolve(type, p, Object.assign({ jobContext: true, index: 0 }, extra)),
+      Object.assign({ inputType: 'text', maxLength: 0, placeholderRaw: '', signals: {} }, d),
+    );
+  const phone = ways('phone');
+  assert.equal(phone[0], matcher.formatForText(fields.resolve('phone', p, { jobContext: true }), { signals: {} }));
+  for (const d of ['+442079460958', '2079460958', '02079460958', '020 7946 0958'])
+    assert.ok(phone.includes(d), `${d} in ${phone.join(' | ')}`);
+  assert.ok(
+    ways('phone', { maxLength: 10 }).every((s) => s.length <= 10),
+    'nothing longer than the box',
+  );
+
+  // The page's own order first, ISO right after, then the other order and words.
+  const dob = ways('dob', { lang: 'en-GB' });
+  assert.deepEqual(dob.slice(0, 4), ['10/12/1990', '10-12-1990', '10.12.1990', '1990-12-10']);
+  assert.ok(dob.includes('12/10/1990') && dob.includes('10 December 1990'));
+  const us = ways('dob', { lang: 'en-US' });
+  assert.deepEqual(us.slice(0, 2), ['12/10/1990', '12-10-1990']);
+
+  const link = ways('links.linkedin');
+  assert.deepEqual(link.slice(0, 3), [
+    'https://www.linkedin.com/in/ada',
+    'www.linkedin.com/in/ada',
+    'linkedin.com/in/ada',
+  ]);
+});
+
+test('other ways to write a postcode and a number', () => {
+  const v = (text) => fields.val(text);
+  const d = { inputType: 'text', maxLength: 0, placeholderRaw: '', signals: {} };
+  assert.deepEqual(matcher.textVariants(v('sw1a1aa'), d), ['sw1a1aa', 'SW1A 1AA', 'SW1A1AA']);
+  assert.deepEqual(matcher.textVariants(v('£45,000'), d), ['£45,000', '45000']);
+});

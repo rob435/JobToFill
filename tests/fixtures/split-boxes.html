@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply: Operations Analyst</title>
+    <!--
+      Numbers written over several short boxes, as older US forms and checkouts have them: a phone as
+      "(___) ___-____" with an extension box after it, a ZIP code and its +4, and a card number in fours.
+    -->
+    <style>
+      body { font: 15px/1.4 system-ui, sans-serif; margin: 32px auto; max-width: 640px; }
+      .row { margin: 12px 0; }
+      .row > label { display: block; font-weight: 600; }
+      input[maxlength] { width: 4em; }
+    </style>
+  </head>
+  <body>
+    <h1>Operations Analyst</h1>
+    <form onsubmit="return false">
+      <div class="row"><label for="first">First name</label><input id="first" /></div>
+      <div class="row">
+        <label for="area">Phone number</label>
+        <span class="phone">
+          (<input id="area" maxlength="3" inputmode="numeric" aria-label="Area code" />)
+          <input id="prefix" maxlength="3" inputmode="numeric" aria-label="Prefix" /> -
+          <input id="line" maxlength="4" inputmode="numeric" aria-label="Line number" />
+          ext. <input id="ext" maxlength="4" inputmode="numeric" aria-label="Extension" />
+        </span>
+      </div>
+      <div class="row">
+        <label for="zip">ZIP code</label>
+        <span><input id="zip" maxlength="5" /> - <input id="zip4" maxlength="4" aria-label="ZIP+4" /></span>
+      </div>
+    </form>
+  </body>
+</html>

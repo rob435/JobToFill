@@ -34,7 +34,87 @@
       fields.map((f) => f.desc),
       profile,
     );
+    splitBoxes(fields, planned.results);
     return { fields, results: planned.results, context: planned.context };
+  }
+
+  // Numbers written over several short boxes, by what the first box asks for.
+  const PHONE_PART = /^phone(\.national)?$/;
+  const SPLIT_FAMILIES = [PHONE_PART, /^cc\.number$/, /^address\.postalCode$/];
+  const SHORT_BOXES = new Set(['text', 'tel', 'number']);
+
+  /** Do two boxes sit in the same small row: a common ancestor within three levels of both? */
+  function sameRow(a, b) {
+    for (let x = a.parentElement, i = 0; x && i < 3; x = x.parentElement, i++) {
+      if (!x.contains(b)) continue;
+      for (let y = b.parentElement, j = 0; y && j < 3; y = y.parentElement, j++) if (y === x) return true;
+      return false;
+    }
+    return false;
+  }
+
+  /**
+   * A number split over short boxes in one row: "(___) ___-____" for a US phone, a card number in fours, a ZIP code
+   * and its +4. The first box is recognised, the next are short boxes beside it that ask for nothing else (or for
+   * part of the same: "Prefix" in a phone row); each gets `segment`: its place and every box's length.
+   */
+  function splitBoxes(fields, results) {
+    for (let i = 0; i < fields.length; i++) {
+      const r = results[i];
+      const family = r && r.type && !r.part && SPLIT_FAMILIES.find((re) => re.test(r.type));
+      const short = (k) => SHORT_BOXES.has(fields[k].kind) && fields[k].el.maxLength > 0 && fields[k].el.maxLength <= 5;
+      if (!family || !short(i)) continue;
+      // A box beside it with no label of its own is part of the same answer, whatever its screen-reader name makes
+      // it look like ("Prefix", the middle three digits of a US number, reads like Mr or Ms).
+      const joins = (k) => {
+        const other = results[k];
+        if (!other || !other.type) return true;
+        if (other.part) return false;
+        return (
+          family.test(other.type) ||
+          (family === PHONE_PART && /^phone/.test(other.type)) ||
+          !fields[k].desc.signals.label
+        );
+      };
+      const group = [i];
+      for (let j = i + 1; j < fields.length && group.length < 8 && short(j); j++) {
+        if (!joins(j)) break;
+        if (!sameRow(fields[j - 1].el, fields[j].el)) break;
+        group.push(j);
+      }
+      if (group.length < 2) continue;
+      const lengths = group.map((k) => fields[k].el.maxLength);
+      group.forEach((k, index) => (results[k] = Object.assign({}, r, { segment: { index, lengths } })));
+      i = group[group.length - 1];
+    }
+  }
+
+  /**
+   * One box's slice of a number split over several (see splitBoxes): the digits that fill exactly the first boxes
+   * (all of them, or the first ones: a ZIP code without its +4), a phone number's taken without its country code
+   * or leading 0 when that is what fits. Null when no way of writing it fits the boxes.
+   */
+  function segmentValue(v, segment) {
+    const digits = (t) => String(t || '').replace(/\D/g, '');
+    // Letters too, but for a phone number: a Dutch postcode is "1234" and "AB".
+    const ways = [v.kind === 'phone' ? digits(v.text) : String(v.text || '').replace(/[^\p{L}\p{N}]/gu, '')];
+    if (v.kind === 'phone') {
+      const nat = digits(v.national);
+      const code = (String(v.international || '').match(/^\+(\d{1,3})/) || [])[1] || '';
+      ways.push(nat, nat.replace(/^0/, ''), digits(v.international));
+      if (code) ways.push(digits(v.international).slice(code.length));
+    }
+    const { index, lengths } = segment;
+    for (const d of ways) {
+      let at = 0;
+      let k = 0;
+      for (; k < lengths.length && at < d.length; k++) at += lengths[k];
+      if (at !== d.length) continue;
+      const start = lengths.slice(0, index).reduce((a, b) => a + b, 0);
+      const text = d.slice(start, start + lengths[index]);
+      return Object.assign({}, v, { text, kind: 'text', candidates: [text], international: null, national: null });
+    }
+    return null;
   }
 
   // Where application pages show the job's location: Greenhouse (new and old boards), Lever, Workday.
@@ -467,9 +547,14 @@
         await settle();
         settled = true;
       }
-      const v = await valueFor(field, r, def, question);
+      let v = await valueFor(field, r, def, question);
       if (v && r.type !== 'custom' && FOLLOW_UP.test(question) && !JTF.fields.followUpAnswer(v, field.kind))
         return null;
+      // A box that holds part of a number (see splitBoxes) gets its part, or nothing when the number doesn't fit.
+      if (v && r.segment) {
+        v = segmentValue(v, r.segment);
+        if (!v || !v.text) return null;
+      }
       if (!v) {
         if (count && !(def && def.secret)) {
           report.missing.push(label);
@@ -632,7 +717,8 @@
   }
 
   // One question's identity across re-renders: what it asks for and how it is worded.
-  const keyOf = (r, question) => [r.type, r.index || 0, r.part || '', question].join('|');
+  const keyOf = (r, question) =>
+    [r.type, r.index || 0, r.part || '', r.segment ? r.segment.index : '', question].join('|');
 
   /**
    * Read back what a fill wrote (`written`: { field, v, check, label, key }) once the page has settled, and put right

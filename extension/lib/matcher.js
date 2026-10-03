@@ -1639,6 +1639,9 @@
       const intl = v.international || text;
       const nat = v.national || '';
       [intl, compact(intl), nat, compact(nat), compact(nat).replace(/^0/, '')].forEach(add);
+      // Written at home with its trunk 0 ("020 7946 0958"), but for North American numbers, which have none.
+      const code = (compact(intl).match(/^\+(\d{1,3})/) || [])[1];
+      if (nat && code && code !== '1' && !/^0/.test(compact(nat))) ['0' + nat, '0' + compact(nat)].forEach(add);
       if (/^\+/.test(compact(intl))) [compact(intl).slice(1), '00' + compact(intl).slice(1)].forEach(add);
     } else if (v.date && v.kind === 'date' && v.date.month) {
       const d = v.date;

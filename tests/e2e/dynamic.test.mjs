@@ -33,3 +33,15 @@ test('a form drawn after the page loads is waited for', async () => {
   assert.equal(await value(page, '#last'), 'Lovelace');
   assert.equal(await value(page, '#email'), 'ada@example.com');
 });
+
+test('a number over several short boxes gets a slice in each', async () => {
+  const page = await h.open('split-boxes.html');
+  const r = await h.fill(page);
+  assert.equal(r.error, undefined);
+  assert.equal(await value(page, '#area'), '415');
+  assert.equal(await value(page, '#prefix'), '555');
+  assert.equal(await value(page, '#line'), '0100');
+  assert.equal(await value(page, '#ext'), '', 'nothing left over for the extension');
+  assert.equal(await value(page, '#zip'), '94105');
+  assert.equal(await value(page, '#zip4'), '');
+});
