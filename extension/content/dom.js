@@ -458,9 +458,15 @@
 
   /* --------------------------------------------------------------- scan */
 
+  /** What a control says it opens (aria-haspopup): "listbox", "dialog" (a date picker's calendar), "menu"… */
+  const popupOf = (el) => (el.getAttribute('aria-haspopup') || '').toLowerCase();
+
   function isComboInput(el) {
     const role = el.getAttribute('role');
     const ac = (el.getAttribute('aria-autocomplete') || '').toLowerCase();
+    // A combobox whose popup is a dialog is a date picker's box (WAI-ARIA's date picker combobox; Element Plus's
+    // el-date-picker): the date is typed into it, the calendar beside it is no list of options.
+    if (popupOf(el) === 'dialog' && ac !== 'list' && ac !== 'both') return false;
     return (
       role === 'combobox' ||
       ac === 'list' ||
@@ -585,6 +591,11 @@
     if (el.matches(SEGMENT)) return !el.closest('[aria-hidden="true"]') && isVisible(el, { ignoreOpacity: true });
     if (el.readOnly) return false;
     if (el.closest('[aria-hidden="true"]')) return false;
+    // A <select> made transparent and laid over what shows its choice (react-phone-number-input's country, over the
+    // flag) is what a person clicks.
+    // The one a widget stands in for (choices.js, select2…) is filled through the widget.
+    if (kind === 'select')
+      return !isStandIn(el) && isVisible(el, { ignoreOpacity: true }) && isVisible(el.parentElement);
     return isVisible(el);
   }
 
@@ -685,6 +696,8 @@
       // The page's language and site, for formats it doesn't spell out (day or month first).
       lang: ((el.closest && el.closest('[lang]')) || document.documentElement).getAttribute('lang') || '',
       host: location.hostname,
+      // A box that opens a calendar (aria-haspopup="dialog") takes a whole date.
+      popup: popupOf(el),
       options: null,
       signals: s,
     };

@@ -183,6 +183,21 @@
     return list.find((c) => DIAL_HOME.includes(c)) || list[0] || '';
   }
 
+  // Where the 0 a number starts with at home is part of it, and so dialled after the country code too: Italy, San
+  // Marino and the Vatican ("+39 06 6988 3145"), Côte d'Ivoire and the Republic of the Congo.
+  const ZERO_KEPT = new Set(['39', '378', '379', '225', '242']);
+
+  /**
+   * A number written the way it is dialled at home, as it goes after its country code: the trunk 0 is left out
+   * ("07700 900123" after +44 is "7700 900123", "(0)20 7946 0958" is "20 7946 0958"). A mask such as
+   * "+{44} 0000 000000" takes "+44 07700 900123" as "+44 0770 090012".
+   */
+  function afterCode(number, code) {
+    const n = String(number || '').trim();
+    if (ZERO_KEPT.has(String(code || '').replace(/\D/g, '')) || !/^\(?0\)?\s*[1-9]/.test(n)) return n;
+    return n.replace(/^\(?0\)?\s*/, '');
+  }
+
   /** "+44 7700 900123" or "0044 7700…" -> { code: "44", national: "7700 900123" }; null for a national number. */
   function splitPhone(number) {
     const m = String(number || '')
@@ -610,6 +625,7 @@
     dialCode,
     countryOfDial,
     splitPhone,
+    afterCode,
   };
   JTF.geo = geo;
   if (typeof module === 'object' && module.exports) module.exports = geo;

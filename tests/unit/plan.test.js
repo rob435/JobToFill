@@ -203,6 +203,12 @@ test('formatting for text boxes', () => {
       Object.assign({ inputType: 'text', maxLength: 0, placeholderRaw: '' }, d),
     );
   assert.equal(f('edu.start', {}, {}), '09/2015');
+  // A box that opens a calendar takes a whole date, in the page's order.
+  assert.equal(f('edu.start', {}, { popup: 'dialog', lang: 'en-GB' }), '01/09/2015');
+  assert.equal(f('edu.start', {}, { popup: 'dialog' }), '09/01/2015');
+  const asked = { signals: { label: 'When did you start this degree?' }, lang: 'en-GB' };
+  assert.equal(f('edu.start', {}, asked), 'September 2015');
+  assert.equal(f('edu.start', {}, { ...asked, popup: 'dialog' }), '01/09/2015');
   assert.equal(f('edu.start', {}, { inputType: 'month' }), '2015-09');
   assert.equal(f('edu.start', {}, { inputType: 'date' }), '2015-09-01');
   assert.equal(f('edu.start', {}, { placeholderRaw: 'YYYY-MM' }), '2015-09');
@@ -1757,6 +1763,21 @@ test('phone numbers and dialling codes for a separate "Country/Region Code" list
   assert.equal(fields.resolve('phone', both, { hasCountryCodeField: true }).text, '20 7946 0958');
 });
 
+test('a number written as at home loses its trunk 0 after the country code (but not in Italy)', () => {
+  const p = sample();
+  const phone = (code, number, ctx = {}) => {
+    Object.assign(p.contact, { phoneCountryCode: code, phone: number });
+    return fields.resolve('phone', p, ctx).text;
+  };
+  assert.equal(phone('+44', '07386 526574'), '+44 7386 526574');
+  assert.equal(phone('+44', '07386 526574', { hasCountryCodeField: true }), '07386 526574', 'a national box keeps it');
+  assert.equal(phone('+44', '(0)20 7946 0958'), '+44 20 7946 0958');
+  assert.equal(phone('+33', '06 12 34 56 78'), '+33 6 12 34 56 78');
+  assert.equal(phone('+39', '06 6988 3145'), '+39 06 6988 3145', 'Italian numbers keep their 0');
+  assert.equal(phone('+1', '415 555 0100'), '+1 415 555 0100');
+  assert.equal(phone('+44', '+44 7386 526574'), '+44 7386 526574');
+});
+
 test('a SuccessFactors sign-up page is a sign-up page with a country-code box', () => {
   const page = [
     desc('Email Address:*'),
@@ -1833,6 +1854,24 @@ test('live survey (Glasgow undergraduate): a whole-number phone box gets the int
   );
   assert.equal(matcher.matchOption(page[0].options, fields.resolve('phone.countryCode', p, context)), 1);
   assert.equal(fields.resolve('phone', p, context).text, '7700 900123');
+  // Only the number box beside the code box: another phone box further down takes the whole number.
+  const long = [
+    desc('Phone number'),
+    desc('Email'),
+    desc('First name'),
+    desc('Last name'),
+    desc('Phone number country', { kind: 'select', options: opts('Italy', 'United Kingdom', 'United States') }),
+    desc('Mobile phone number', { kind: 'tel', inputType: 'tel' }),
+  ];
+  const planned = matcher.plan(long, p);
+  assert.deepEqual(
+    planned.results.map((r) => r.type),
+    ['phone', 'email', 'name.first', 'name.last', 'phone.countryCode', 'phone'],
+  );
+  const phoneAt = (i) =>
+    fields.resolve('phone', p, Object.assign({}, planned.context, { part: planned.results[i].part })).text;
+  assert.equal(phoneAt(0), '+44 7700 900123');
+  assert.equal(phoneAt(5), '7700 900123');
 });
 
 /** A University of Glasgow undergraduate expecting a 2:1 in 2027, living in Glasgow. */

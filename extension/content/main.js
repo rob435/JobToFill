@@ -43,6 +43,9 @@
   const SPLIT_FAMILIES = [PHONE_PART, /^cc\.number$/, /^address\.postalCode$/];
   const SHORT_BOXES = new Set(['text', 'tel', 'number']);
 
+  // A part that is one piece of a date (month, year…); a phone's "whole" or "national" says which number, not a piece.
+  const datePart = (r) => !!r.part && r.part !== 'whole' && r.part !== 'national';
+
   /** Do two boxes sit in the same small row: a common ancestor within three levels of both? */
   function sameRow(a, b) {
     for (let x = a.parentElement, i = 0; x && i < 3; x = x.parentElement, i++) {
@@ -61,7 +64,7 @@
   function splitBoxes(fields, results) {
     for (let i = 0; i < fields.length; i++) {
       const r = results[i];
-      const family = r && r.type && !r.part && SPLIT_FAMILIES.find((re) => re.test(r.type));
+      const family = r && r.type && !datePart(r) && SPLIT_FAMILIES.find((re) => re.test(r.type));
       const short = (k) => SHORT_BOXES.has(fields[k].kind) && fields[k].el.maxLength > 0 && fields[k].el.maxLength <= 5;
       if (!family || !short(i)) continue;
       // A box beside it with no label of its own is part of the same answer, whatever its screen-reader name makes
@@ -69,7 +72,7 @@
       const joins = (k) => {
         const other = results[k];
         if (!other || !other.type) return true;
-        if (other.part) return false;
+        if (datePart(other)) return false;
         return (
           family.test(other.type) ||
           (family === PHONE_PART && /^phone/.test(other.type)) ||
