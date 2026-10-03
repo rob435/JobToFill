@@ -1494,3 +1494,26 @@ test('live survey (Glasgow undergraduate): what each education and background qu
     null,
   );
 });
+
+test('ordinal lists that are not degree classes: dates, rankings, years of study', () => {
+  const ask = (label, options) => typeOf(desc(label, { kind: 'select', options: opts(...options) }));
+  // "1st" and "First" open these options too, but they rank or date something else.
+  assert.notEqual(
+    ask('Which intake would you like?', ['1st June 2027', '1st July 2027', '1st September 2027']),
+    'edu.classification',
+  );
+  assert.notEqual(ask('Rank this office', ['First choice', 'Second choice', 'Third choice']), 'edu.classification');
+  assert.notEqual(ask('Preference', ['1st preference', '2nd preference', '3rd preference']), 'edu.classification');
+  assert.notEqual(ask('Status', ['First year', 'Second year', 'Third year', 'Final year']), 'edu.classification');
+  // Real class lists still are, with or without a label.
+  assert.equal(ask('Expected degree', ['First', '2:1', '2:2']), 'edu.classification');
+  assert.equal(
+    ask('Result', [
+      'First Class Honours (1st)',
+      'Upper Second Class Honours (2:1)',
+      'Lower Second Class Honours (2:2)',
+      'Third Class Honours',
+    ]),
+    'edu.classification',
+  );
+});

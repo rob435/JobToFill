@@ -244,9 +244,14 @@
   const DEGREE_CLASS =
     /^(first|1st|upper second|lower second|second|2 ?[1i]|2 ?2|2 ?ii|third|3rd|distinction|merit|pass)\b|\b(first|second|third) class\b|\bclass honours\b|\b(upper|lower) second$/;
 
+  // Ordinals of something else: "1st June 2027", "First choice", "2nd preference", "Second year", "Third round".
+  const OTHER_ORDINAL =
+    /\b(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?|choice|preference|priority|option|round|stage|week|half|quarter|term|semester|year|time|place|rank(ed|ing)?)\b/;
+
   function looksLikeDegreeClasses(options) {
     const opts = (options || []).filter((o) => !isPlaceholder(norm(o.text)));
-    return opts.length >= 2 && opts.filter((o) => DEGREE_CLASS.test(norm(o.text))).length / opts.length >= 0.5;
+    const isClass = (t) => DEGREE_CLASS.test(t) && !OTHER_ORDINAL.test(t);
+    return opts.length >= 2 && opts.filter((o) => isClass(norm(o.text))).length / opts.length >= 0.5;
   }
 
   /**
