@@ -1551,7 +1551,7 @@ test('round 3: new questions get their own profile answers', () => {
     (matcher.classify(desc(q, { kind, options: o ? opts(...o) : null })) || {}).type || null;
   assert.equal(type('Are you willing to work in the office 5 days a week?'), 'job.onsite');
   assert.equal(type('Are you able to work from our NYC office at least three days per week?'), 'job.onsite');
-  assert.equal(type('Are you able to commute into our London office?'), null);
+  assert.equal(type('Are you able to commute into our London office?'), 'location.commute');
   assert.equal(
     type('Have you applied to Marshall Wace before?', 'select', ['Yes - in a previous year', 'Yes- this year', 'No']),
     'compliance.previouslyApplied',
@@ -1613,4 +1613,307 @@ test('nickname-style boxes always get the legal name, never the profile preferre
   assert.equal(name('Preferred first name'), 'Ada');
   assert.equal(name('Nickname'), 'Ada');
   assert.equal(name('Name you go by (first name)'), 'Ada');
+});
+
+/* ------------------------------------------- live survey: a British student in Glasgow */
+
+function glaswegian() {
+  const p = student();
+  p.personal.nationality = 'British';
+  Object.assign(p.address, { city: 'Glasgow', state: 'Scotland', postalCode: 'G12 8RS', country: 'United Kingdom' });
+  Object.assign(p.job, { authorized: 'Yes', sponsorship: 'No', relocate: 'Yes', onsite: 'Yes' });
+  return p;
+}
+
+/** The option a fill picks: the question goes through resolve with its options, as content/main.js does. */
+function choose(p, type, question, list, extra) {
+  const options = opts(...list);
+  const v = ask(p, type, question, Object.assign({ kind: 'select', options }, extra));
+  const i = v ? matcher.matchOption(options, v) : -1;
+  return i < 0 ? null : options[i].text;
+}
+
+test('live survey: US work questions that name no country by name — visa words, options, the job, the form', () => {
+  const p = glaswegian();
+  const yn = ['Yes', 'No'];
+  // Visa words name the country: H-1B, OPT, F-1… are the US; Tier 4, settled status… the UK.
+  const h1b = 'Will you now or in the future require sponsorship for employment visa status (e.g., H-1B visa status)?';
+  assert.equal(choose(p, 'job.sponsorship', h1b, yn), 'Yes');
+  const imc =
+    'Will you require immigration sponsorship to begin working for IMC? Examples of sponsorship would include (but is not limited to) F-1 OPT, H-1B, H-4 EAD, L-1, L-2, TN, O-1';
+  assert.equal(choose(p, 'job.sponsorship', imc, ['Yes', 'No', 'Maybe/I don’t know']), 'Yes');
+  const { geo } = globalThis.JTF;
+  assert.deepEqual(geo.visaCountries('Do you have settled status or a BRP?'), ['GB']);
+  assert.deepEqual(geo.visaCountries('Do you hold an EU Blue Card?'), ['EU']);
+  assert.deepEqual(geo.visaCountries('Opt in to text messages about your application'), []);
+  // Countries named in the options (CTC: "…to work in the US" / "…in the United States with no restrictions").
+  const ctc = (country) => [
+    `Now or at any point the future, I will require visa sponsorship to work in the ${country}. For example, if I were to start full time in the future with CTC I will need visa sponsorship at some point.`,
+    `Now or at any point in the future, I am eligible to work in the ${country === 'US' ? 'United States' : country} with no restrictions and will not require sponsorship.`,
+  ];
+  const statements = 'Please select one of the following statements based on your work authorization:';
+  assert.match(choose(p, 'job.authorized', statements, ctc('US')), /will require visa sponsorship/);
+  assert.match(choose(p, 'job.authorized', statements, ctc('United Kingdom')), /eligible to work/);
+  // Maven's Amsterdam programme: a British citizen has no right to work in the Netherlands.
+  const maven = [
+    'I am a Netherlands citizen',
+    'I am an EU citizen',
+    'Other Netherlands right to work holder',
+    'I do not have the right to work in the Netherlands',
+  ];
+  assert.equal(choose(p, 'job.authorized', 'What is your current right to work status?', maven), maven[3]);
+  // Notion's list of US visa types: not "None"; the AI picks one.
+  const notion =
+    'Will you now or at any time in the future require sponsorship for employment visa status (e.g. H1B, OPT)?';
+  assert.equal(choose(p, 'job.sponsorship', notion, ['OPT', 'H1B', 'TN', 'None', 'Other']), null);
+  // "…the country where this role is based?": where the job is, when that is known; else your home answers.
+  const based = 'Are you legally authorized to work in the country where this role is based?';
+  assert.equal(choose(p, 'job.authorized', based, yn, { jobLocation: 'New York, NY' }), 'No');
+  assert.equal(choose(p, 'job.authorized', based, yn, { jobLocation: 'Chicago, Illinois, United States' }), 'No');
+  assert.equal(choose(p, 'job.authorized', based, yn, { jobLocation: 'London, England, United Kingdom' }), 'Yes');
+  assert.equal(choose(p, 'job.authorized', based, yn, { jobLocation: 'Dublin, Ireland' }), 'Yes');
+  assert.equal(choose(p, 'job.authorized', based, yn), 'Yes');
+  const dv = [
+    'Yes, I am authorized to work in this country for any employer',
+    'No, I am not authorized to work in this country for any employer',
+    'I am authorized to work in this country for my present employer only',
+  ];
+  assert.equal(choose(p, 'job.authorized', based, dv, { jobLocation: 'New York' }), dv[1]);
+  const visa = 'Will you require any Visa sponsorship now or in the future?';
+  assert.equal(choose(p, 'job.sponsorship', visa, yn, { jobLocation: 'Chicago' }), 'Yes');
+  assert.equal(choose(p, 'job.sponsorship', visa, yn, { jobLocation: 'Amsterdam, North Holland, Netherlands' }), 'Yes');
+  // A job in London or New York: the London answer stands.
+  assert.equal(choose(p, 'job.sponsorship', visa, yn, { jobLocation: 'London, New York' }), 'No');
+  assert.equal(choose(p, 'job.sponsorship', visa, yn), 'No');
+  // "…the country you live in" is about home, wherever the job is.
+  const home = 'Are you authorized to work in the country where you live?';
+  assert.equal(choose(p, 'job.authorized', home, yn, { jobLocation: 'New York, NY' }), 'Yes');
+  // UK and EU answers never flip for a UK or EU job, nor for an EU citizen in the EU.
+  p.personal.nationality = 'French';
+  assert.equal(choose(p, 'job.sponsorship', visa, yn, { jobLocation: 'Amsterdam' }), 'No');
+});
+
+test('live survey: a form asking about one country answers its countryless questions for it', () => {
+  const p = glaswegian();
+  const yn = opts('Yes', 'No');
+  const select = (label) => desc(label, { kind: 'select', options: yn });
+  const fill = (...labels) => {
+    const descs = labels.map(select);
+    const { results, context } = matcher.plan(descs, p);
+    return descs.map((d, i) => {
+      const v = fields.resolve(results[i].type, p, {
+        ...context,
+        index: 0,
+        kind: 'select',
+        question: util.normalize(matcher.questionText(d)),
+        options: d.options,
+      });
+      return yn[matcher.matchOption(yn, v)].text;
+    });
+  };
+  const generic = 'Will you now or in the future require sponsorship for employment visa status?';
+  // Five Rings (New York) and Five Rings (London) ask the same second question.
+  assert.deepEqual(fill('Are you legally eligible to work in the United States?', generic), ['No', 'Yes']);
+  assert.deepEqual(fill('Are you legally eligible to work in the United Kingdom?', generic), ['Yes', 'No']);
+  // Both countries on one form: the second question is anyone's guess, so your home answer.
+  assert.deepEqual(
+    fill('Are you authorized to work in the United States?', 'Are you authorized to work in the UK?', generic),
+    ['No', 'Yes', 'No'],
+  );
+  // The Netherlands and "an EU citizen" in the options are one country.
+  const { context } = matcher.plan(
+    [
+      desc('What is your current right to work status?', {
+        kind: 'select',
+        options: opts(
+          'I am a Netherlands citizen',
+          'I am an EU citizen',
+          'I do not have the right to work in the Netherlands',
+        ),
+      }),
+      select('Will you require visa sponsorship to join the programme?'),
+    ],
+    p,
+  );
+  assert.deepEqual(context.formCountries, ['NL']);
+});
+
+test('live survey: authorization options that contradict each other, and text boxes that want a sentence', () => {
+  const p = glaswegian();
+  // circleback: "Yes, but I will need visa sponsorship" is a Yes to being authorized, which a British student isn't.
+  const circleback = [
+    'Yes, but I will need visa sponsorship in the future',
+    'Yes, but I will need a visa transfer',
+    'Yes',
+    "No, I can't legally work in the US yet",
+  ];
+  const q = 'Are you authorized to work in the United States?';
+  assert.equal(choose(p, 'job.authorized', q, circleback), circleback[3]);
+  // The same from your own answers (no nationality to go by): not authorized, sponsorship needed.
+  const own = student();
+  Object.assign(own.job, { authorized: 'No', sponsorship: 'Yes' });
+  assert.equal(choose(own, 'job.authorized', q, circleback), circleback[3]);
+  // Authorized now, sponsorship later: the sponsorship one is yours.
+  own.job.authorized = 'Yes';
+  assert.equal(choose(own, 'job.authorized', q, circleback.slice(0, 2).concat(circleback[3])), circleback[0]);
+  // IMC's context box and DRW's "If yes, please explain": a sentence, never a bare Yes.
+  assert.equal(
+    ask(
+      p,
+      'job.sponsorship',
+      'Is there any other context you’d like to share about your U.S. Immigration sponsorship needs?',
+      {
+        kind: 'textarea',
+      },
+    ).text,
+    'I don’t have the right to work in the United States and would need visa sponsorship.',
+  );
+  assert.match(
+    ask(
+      p,
+      'job.sponsorship',
+      'Will you now or in the future require sponsorship for employment visa status (e.g. H-1B visa status)? If yes, please explain.',
+      { kind: 'text' },
+    ).text,
+    /don’t have the right to work in the United States/,
+  );
+  assert.equal(
+    ask(p, 'job.sponsorship', 'Is there any other context you’d like to share about your sponsorship needs?', {
+      kind: 'textarea',
+    }).text,
+    'I have the right to work and do not need visa sponsorship.',
+  );
+  assert.equal(
+    ask(p, 'job.sponsorship', 'Do you require visa sponsorship to work in the US?', { kind: 'text' }).text,
+    'Yes',
+  );
+});
+
+test('live survey: "Are you located in London?", commuting and working somewhere, from your address', () => {
+  const p = glaswegian();
+  const yes = (type, q, extra) => {
+    const v = ask(p, type, q, Object.assign({ kind: 'select' }, extra));
+    return v ? v.text : null;
+  };
+  // Glasgow is in the UK and Scotland, not London or England.
+  assert.equal(yes('location.in', 'Are you located in London?'), 'No');
+  assert.equal(yes('location.in', 'Are you based in the UK?'), 'Yes');
+  assert.equal(yes('location.in', 'Are you currently living in the UK?'), 'Yes');
+  assert.equal(yes('location.in', 'Are you based in Scotland?'), 'Yes');
+  assert.equal(yes('location.in', 'Are you based in England?'), 'No');
+  assert.equal(yes('location.in', 'Are you located in the United States?'), 'No');
+  // Commuting is the same metro area.
+  assert.equal(yes('location.commute', 'Are you able to commute into our London office?'), 'No');
+  assert.equal(yes('location.commute', 'Do you live within commuting distance of our London office?'), 'No');
+  assert.equal(
+    yes('location.commute', 'Are you able to commute into our Rowayton, CT and/or New York, NY offices?'),
+    'No',
+  );
+  assert.equal(yes('location.commute', 'Are you able to commute to our office?', { jobLocation: 'Edinburgh' }), 'No');
+  assert.equal(yes('location.commute', 'Are you able to commute to our office?', { jobLocation: 'Glasgow' }), 'Yes');
+  assert.equal(yes('location.commute', 'Are you able to commute to our office?'), null);
+  // Willing to work there: yes where you live or will relocate to; with "onsite 5 days a week", your on-site answer too.
+  assert.equal(yes('job.workIn', 'Willing to work in London?'), 'Yes');
+  assert.equal(yes('job.workIn', 'Would you be willing to be based in our London office?'), 'Yes');
+  assert.equal(yes('job.workIn', 'Are you willing to work onsite at our London office 5 days a week?'), 'Yes');
+  p.job.onsite = 'No';
+  assert.equal(yes('job.workIn', 'Are you willing to work onsite at our London office 5 days a week?'), 'No');
+  p.job.onsite = '';
+  assert.equal(yes('job.workIn', 'Are you willing to work onsite at our London office 5 days a week?'), null);
+  p.job.relocate = 'No';
+  assert.equal(yes('job.workIn', 'Willing to work in London?'), 'No');
+  assert.equal(yes('job.workIn', 'Willing to work in Glasgow?'), 'Yes');
+  p.job.relocate = '';
+  assert.equal(yes('job.workIn', 'Willing to work in London?'), null);
+  // A Londoner (a borough counts); a town the list doesn't know can't be told apart from London.
+  Object.assign(p.address, { city: 'Croydon', state: '', country: 'United Kingdom' });
+  assert.equal(yes('location.in', 'Are you located in London?'), 'Yes');
+  assert.equal(yes('location.commute', 'Are you able to commute into our London office?'), 'Yes');
+  assert.equal(yes('location.in', 'Are you based in Scotland?'), 'No');
+  Object.assign(p.address, { city: 'Slough' });
+  assert.equal(yes('location.in', 'Are you located in London?'), null);
+  assert.equal(yes('location.commute', 'Are you able to commute into our London office?'), null);
+  assert.equal(yes('location.in', 'Are you based in the UK?'), 'Yes');
+  assert.equal(yes('location.commute', 'Are you able to commute into our New York office?'), 'No');
+});
+
+test('live survey: UK visas, immigration status and citizenship for a British citizen, and for others', () => {
+  const p = glaswegian();
+  const yn = ['Yes', 'No'];
+  // A citizen holds no visa: "Not applicable – British/Irish citizen" when offered, else No.
+  assert.equal(choose(p, 'job.visa', 'Do you hold a valid UK visa?', yn), 'No');
+  const held = ['Yes – Skilled Worker visa', 'Yes – Student visa', 'No', 'Not applicable – British/Irish citizen'];
+  assert.equal(choose(p, 'job.visa', 'Do you currently hold a UK visa?', held), held[3]);
+  assert.equal(choose(p, 'job.visa', 'Do you currently hold a valid U.S. visa?', yn), 'No');
+  // An Irish citizen needs no UK visa either; a French one in Paris has none; a French one living and working in
+  // Glasgow might have settled status or a visa, so that is left alone.
+  p.personal.nationality = 'Irish';
+  assert.equal(choose(p, 'job.visa', 'Do you currently hold a UK visa?', held), held[3]);
+  p.personal.nationality = 'French';
+  assert.equal(choose(p, 'job.visa', 'Do you hold a valid UK visa?', yn), null);
+  Object.assign(p.address, { city: 'Paris', state: '', country: 'France' });
+  assert.equal(choose(p, 'job.visa', 'Do you hold a valid UK visa?', yn), 'No');
+  assert.equal(
+    choose(p, 'job.visa', 'Do you currently hold a UK visa?', held),
+    'No',
+    'never the British/Irish citizen option',
+  );
+  // Immigration status lists and citizenship yes/no questions.
+  const uk = glaswegian();
+  const status = [
+    'British citizen',
+    'Settled status',
+    'Pre-settled status',
+    'Skilled Worker visa',
+    'Student visa',
+    'Other',
+  ];
+  assert.equal(choose(uk, 'job.authorized', 'What is your immigration status in the UK?', status), 'British citizen');
+  assert.equal(choose(uk, 'citizen', 'Do you hold British citizenship?', yn), 'Yes');
+  assert.equal(choose(uk, 'citizen', 'Do you hold US citizenship?', yn), 'No');
+  const where = 'Are you a citizen of the country where this job is located?';
+  assert.equal(choose(uk, 'citizen', where, yn, { jobLocation: 'London, UK' }), 'Yes');
+  assert.equal(choose(uk, 'citizen', where, yn, { jobLocation: 'New York, NY' }), 'No');
+  assert.equal(choose(uk, 'citizen', where, yn), null);
+});
+
+test('geo: places in sentences and job locations', () => {
+  const { geo } = globalThis.JTF;
+  const countries = (s) => geo.countriesIn(s);
+  assert.deepEqual(countries('New York, NY'), ['US']);
+  assert.deepEqual(countries('Chicago, IL'), ['US']);
+  assert.deepEqual(countries('Indianapolis, IN'), ['US']);
+  assert.deepEqual(countries('Mumbai, IN'), ['IN']);
+  assert.deepEqual(countries('Berlin, DE'), ['DE']);
+  assert.deepEqual(countries('Remote - US'), ['US']);
+  assert.deepEqual(countries('USA - Remote'), ['US']);
+  assert.deepEqual(countries('London'), ['GB']);
+  assert.deepEqual(countries('Glasgow, Scotland'), ['GB']);
+  assert.deepEqual(countries('Amsterdam, North Holland, Netherlands'), ['NL']);
+  assert.deepEqual(countries('London, England, New York, New York').sort(), ['GB', 'US']);
+  assert.deepEqual(countries('San Francisco, California / New York, New York'), ['US']);
+  assert.deepEqual(countries('Hybrid'), []);
+  // A longer name wins: New York is not York, Northern Ireland not Ireland.
+  assert.deepEqual(
+    geo.placesNamed('Do you have the right to work in Northern Ireland?').map((pl) => pl.country),
+    ['GB'],
+  );
+  assert.deepEqual(
+    geo.placesNamed('Are you able to commute to our HQ in the South Bay Area of Los Angeles?').map((pl) => pl.metro),
+    ['los angeles'],
+  );
+  assert.deepEqual(geo.whereIs({ city: 'Glasgow', state: 'Scotland', country: 'United Kingdom' }), {
+    country: 'GB',
+    region: 'Scotland',
+    metro: 'glasgow',
+  });
+  assert.deepEqual(geo.whereIs({ city: 'Brooklyn', state: 'NY', country: 'United States' }), {
+    country: 'US',
+    region: 'NY',
+    metro: 'new york',
+  });
+  // Two Cambridges, told apart by the country.
+  assert.equal(geo.whereIs({ city: 'Cambridge', state: 'MA', country: 'United States' }).metro, 'boston');
+  assert.equal(geo.whereIs({ city: 'Cambridge', country: 'UK' }).metro, 'cambridge');
+  assert.equal(geo.whereIs({ city: 'Greenwich', country: 'United Kingdom' }).metro, '');
 });

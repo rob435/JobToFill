@@ -277,9 +277,11 @@
     return v;
   }
 
-  function sponsorAware(v, p) {
+  function sponsorAware(v, p, about) {
     const canon = (t) => (JTF.matcher ? JTF.matcher.canonicalOf(t) : null);
     const need = canon(p.job.sponsorship);
+    // Which question this answers: a "Yes, but I will need sponsorship" is a Yes to being authorized, not to needing one.
+    if (v) v.about = about;
     if (v && (need === 'yes' || need === 'no')) v.sponsor = need;
     // Options that describe your status ("German citizen", "I am not currently authorized…") need these too.
     const authorized = canon(p.job.authorized);
@@ -324,18 +326,58 @@
     return [...new Set(out)];
   }
 
+  const optionTexts = (ctx) => (ctx.options || []).map((o) => U.normalize(o && typeof o === 'object' ? o.text : o));
+
+  /**
+   * The countries a work-authorisation question is about: the places it names ("…in London" is the UK) and whether
+   * it needs all of them ("…in the UK and the US?") or one ("…in the UK or the US?"); else the country its visa words
+   * name ("(e.g., H-1B visa status)"), or its options ("…eligible to work in the United States with no restrictions").
+   */
+  function countriesAsked(question, options) {
+    const q = question || '';
+    // Countries and states first: "…in the UK? Our offices are in London and New York" is about the UK.
+    const places = JTF.geo.placesNamed(q);
+    const wide = places.filter((pl) => pl.type !== 'metro');
+    const named = [...new Set((wide.length ? wide : places).map((pl) => pl.country))];
+    if (named.length) return { codes: named, all: !/\bor\b/.test(q) };
+    let codes = JTF.geo.visaCountries(q);
+    if (!codes.length) {
+      const texts = optionTexts({ options });
+      codes = [...new Set(texts.flatMap((t) => [...JTF.geo.countriesNamed(t), ...JTF.geo.visaCountries(t)]))];
+    }
+    return { codes, all: false };
+  }
+
+  /**
+   * A question that names no country ("…in the country where this role is based?", "Will you require sponsorship?")
+   * is about where the job is: its location when known, else the one country the form's other work questions name.
+   * Never for "the country you live in".
+   */
+  function jobCountries(ctx) {
+    if (
+      /\b(you|your) (live|reside|currently live|home country|country of (residence|citizenship))\b/.test(
+        ctx.question || '',
+      )
+    )
+      return [];
+    const there = JTF.geo.countriesIn(ctx.jobLocation || '');
+    const form = ctx.formCountries || [];
+    // A job in "Dallas, TX / London" whose form asks "…the right to work in the United States?": the US.
+    return !there.length || (there.length > 1 && form.length && there.includes(form[0])) ? form : there;
+  }
+
   /**
    * A work-authorisation question about a country you have no right to work in ("Are you authorized to work in
    * the United States?" for a British student): the country it names, else null.
    */
   function noRightIn(p, ctx) {
-    const asked = JTF.geo.countriesNamed(ctx.question || '');
+    const { codes, all } = countriesAsked(ctx.question, ctx.options);
+    const asked = codes.length ? codes : jobCountries(ctx);
     if (!asked.length) return null;
     const mine = workCountries(p);
     if (!mine.length) return null;
     const rights = JTF.geo.workRights(mine);
-    const either = /\bor\b/.test(ctx.question || '');
-    const ok = either ? asked.some((c) => rights.has(c)) : asked.every((c) => rights.has(c));
+    const ok = all ? asked.every((c) => rights.has(c)) : asked.some((c) => rights.has(c));
     if (ok) return null;
     const code = asked.find((c) => !rights.has(c));
     const row = code === 'EU' ? null : JTF.geo.COUNTRIES.find((r) => r[0] === code);
@@ -345,17 +387,22 @@
     };
   }
 
+  // "Is there any other context you'd like to share about your U.S. Immigration sponsorship needs?" or "…? If yes,
+  // please explain." in a text box wants a sentence, never a bare Yes or No.
+  const YES_NO_START = /^(do|does|are|is|will|would|have|has|can|could|shall)\b/;
+  const WANTS_DETAILS =
+    /\b(context|details?|explain|elaborate|describe|specify|tell us|share|provide|more information|anything else)\b/;
+  const wantsSentence = (ctx) =>
+    LONG_TEXT.includes(ctx.kind) && (!YES_NO_START.test(ctx.question || '') || WANTS_DETAILS.test(ctx.question || ''));
+
   /** Not authorised there, so sponsorship needed: for options like "No, I will require sponsorship" too. */
   function elsewhere(p, ctx, which) {
     const where = noRightIn(p, ctx);
     if (!where) return null;
-    if (
-      LONG_TEXT.includes(ctx.kind) &&
-      !/^(do|does|are|is|will|would|have|has|can|could|shall)\b/.test(ctx.question || '')
-    )
+    if (wantsSentence(ctx))
       return val(`I don’t have the right to work in ${where.name} and would need visa sponsorship.`);
     const v = val(which === 'authorized' ? 'No' : 'Yes');
-    return Object.assign(v, { sponsor: 'yes', authorized: 'no', citizen: [] });
+    return Object.assign(v, { sponsor: 'yes', authorized: 'no', citizen: [], about: which });
   }
 
   /**
@@ -363,11 +410,7 @@
    * Null for yes/no questions ("Do you require sponsorship?") and choice controls.
    */
   function workStatus(p, ctx) {
-    if (
-      !LONG_TEXT.includes(ctx.kind) ||
-      /^(do|does|are|is|will|would|have|has|can|could|shall)\b/.test(ctx.question || '')
-    )
-      return null;
+    if (!wantsSentence(ctx)) return null;
     const canon = (t) => (JTF.matcher ? JTF.matcher.canonicalOf(t) : null);
     const ok = canon(p.job.authorized);
     const sponsor = canon(p.job.sponsorship);
@@ -375,6 +418,71 @@
     if (ok === 'yes' && sponsor === 'yes') return val('I have the right to work now but will need visa sponsorship.');
     if (ok === 'no' || sponsor === 'yes') return val('I will need visa sponsorship to work in this role.');
     return null;
+  }
+
+  /**
+   * "Do you hold a valid UK visa?": a citizen there (or an Irish or EU citizen with free movement) needs none, so
+   * "Not applicable – British/Irish citizen" when offered, else No; No too where you have no right to work. Left
+   * alone where you have the right to work some other way (a visa, settled status).
+   */
+  function visaHeld(p, ctx) {
+    let { codes } = countriesAsked(ctx.question, null);
+    if (!codes.length) codes = jobCountries(ctx);
+    if (codes.length !== 1) return null;
+    const nation = JTF.geo.findCountry(p.personal.nationality);
+    if (nation && JTF.geo.workRights([nation[0]]).has(codes[0])) {
+      const mine = JTF.geo.citizenWords(p.personal.nationality);
+      const ours = (n) => mine.some((w) => (' ' + n + ' ').includes(' ' + w + ' '));
+      const i = optionTexts(ctx).findIndex(
+        (n) =>
+          (/\bnot applicable\b|^n ?a\b|\bno visa (is )?(needed|required)\b|\b(do not|don t) (need|require) a visa\b/.test(
+            n,
+          ) &&
+            (!/\b(citizen|national)s?\b/.test(n) || ours(n))) ||
+          (/\b(citizen|national)s?\b/.test(n) && !/\b(not|non)\b/.test(n) && ours(n)),
+      );
+      return i >= 0 ? val(ctx.options[i].text || String(ctx.options[i])) : val('No');
+    }
+    const rights = workCountries(p);
+    return rights.length && !JTF.geo.workRights(rights).has(codes[0]) ? val('No') : null;
+  }
+
+  /** Is your address in any of `places`? true, false, or null when it can't tell (a town that isn't listed). */
+  function livesIn(p, places, metroOnly) {
+    const home = JTF.geo.whereIs(p.address);
+    // "Commute to our New Jersey office": only a city says how far it is, though another country is too far.
+    const hits = places.map((pl) => {
+      const there = JTF.geo.within(pl, home);
+      return metroOnly && pl.type !== 'metro' && there !== false ? null : there;
+    });
+    if (hits.includes(true)) return true;
+    return hits.length && hits.every((h) => h === false) ? false : null;
+  }
+
+  /** The places a question names, else (for "our office") where the job is. */
+  function placesAsked(ctx) {
+    const named = JTF.geo.placesNamed(ctx.question || '');
+    return named.length ? named : JTF.geo.placesNamed(ctx.jobLocation || '');
+  }
+
+  const ONSITE_DAYS =
+    /\b(\d|two|three|four|five) days (a|per|each) week\b|\bon ?site\b|\bin person\b|\bfull ?time in\b/;
+
+  /**
+   * "Would you be willing to be based in our London office?": yes where you live, else your relocation answer; with
+   * "…onsite… 5 days a week" your on-site answer too.
+   */
+  function workThere(p, ctx) {
+    const canon = (t) => (JTF.matcher ? JTF.matcher.canonicalOf(t) : null);
+    const here = livesIn(p, placesAsked(ctx));
+    const move = canon(p.job.relocate);
+    let ok = here === true || move === 'yes' ? 'yes' : here === false && move === 'no' ? 'no' : null;
+    if (ok && ONSITE_DAYS.test(ctx.question || '')) {
+      const onsite = canon(p.job.onsite);
+      if (onsite === 'no') ok = 'no';
+      else if (onsite !== 'yes' && ok === 'yes') ok = null;
+    }
+    return ok ? val(ok === 'yes' ? 'Yes' : 'No') : null;
   }
 
   /** "Are you related to anyone working here? If yes, give their name" in a text box: "No", or the details. */
@@ -1043,6 +1151,13 @@
         if (!mine.length) return null;
         const q = ' ' + (ctx.question || '') + ' ';
         if (mine.some((w) => q.includes(' ' + w + ' '))) return val('Yes');
+        // "Are you a citizen of the country where this job is based?" asks about the job's country; a question that
+        // names none and has no job country to go by stays unanswered.
+        if (!JTF.geo.nationalitiesNamed(q).length) {
+          const there = jobCountries(ctx);
+          if (!there.length) return null;
+          if (there.includes(JTF.geo.findCountry(p.personal.nationality)[0])) return val('Yes');
+        }
         return /permanent resident|green card|asylee|refugee|resident/.test(q) ? null : val('No');
       },
     },
@@ -1176,17 +1291,39 @@
     'job.yearsExperience': simple('Years of experience', 'job.yearsExperience', numberVal),
     // Both carry whether you need sponsorship, for options like "Yes, will require sponsorship".
     // A question naming a country you can't work in gets "No" / "Yes, I'd need sponsorship", whatever you said for home.
+    // A question naming no country is about the job's ("…in the country where this role is based?").
     'job.authorized': {
       label: 'Authorized to work',
       path: 'job.authorized',
-      get: (p, ctx) => elsewhere(p, ctx, 'authorized') || workStatus(p, ctx) || sponsorAware(val(p.job.authorized), p),
+      get: (p, ctx) =>
+        elsewhere(p, ctx, 'authorized') || workStatus(p, ctx) || sponsorAware(val(p.job.authorized), p, 'authorized'),
     },
     'job.sponsorship': {
       label: 'Requires sponsorship',
       path: 'job.sponsorship',
       get: (p, ctx) =>
-        elsewhere(p, ctx, 'sponsorship') || workStatus(p, ctx) || sponsorAware(val(p.job.sponsorship), p),
+        elsewhere(p, ctx, 'sponsorship') ||
+        workStatus(p, ctx) ||
+        sponsorAware(val(p.job.sponsorship), p, 'sponsorship'),
     },
+    'job.visa': { label: 'Holds a visa (yes/no)', get: visaHeld },
+    // "Are you located in London?" / "Are you based in the UK?": from your address (Glasgow is in the UK, not London).
+    'location.in': {
+      label: 'Lives in the place asked about',
+      get(p, ctx) {
+        const here = livesIn(p, JTF.geo.placesNamed(ctx.question || ''));
+        return here == null ? null : val(here ? 'Yes' : 'No');
+      },
+    },
+    // "Are you able to commute into our London office?": yes from the same city or the towns around it.
+    'location.commute': {
+      label: 'Can commute to the office',
+      get(p, ctx) {
+        const near = livesIn(p, placesAsked(ctx), true);
+        return near == null ? null : val(near ? 'Yes' : 'No');
+      },
+    },
+    'job.workIn': { label: 'Willing to work in the place asked about', get: workThere },
     'job.onsite': simple('Happy to work in the office / on site', 'job.onsite'),
     'job.adjustments': simple('Adjustments needed in the recruitment process', 'job.adjustments'),
     'compliance.previouslyApplied': simple('Applied here before', 'compliance.previouslyApplied'),
@@ -1702,7 +1839,7 @@
     ),
     R(
       'job.authorized',
-      /\b(authori[sz]ed|eligible|entitled|permitted|allowed) to (lawfully |legally )?work|work (authori[sz]ation|permit|eligibility)|employment (authori[sz]ation|eligibility)|eligib(le|ility) (for|to) (employment|work)|authori[sz]ation to work|right to work|legal right to|legally (work|employed)/,
+      /\b(authori[sz]ed|eligible|entitled|permitted|allowed) to (lawfully |legally )?work|work (authori[sz]ation|permit|eligibility)|employment (authori[sz]ation|eligibility)|eligib(le|ility) (for|to) (employment|work)|authori[sz]ation to work|right to work|legal right to|legally (work|employed)|\bimmigration status\b/,
       // "Will you in the future require authorization to work in the US?" asks whether you need sponsoring.
       { not: /\b(require|need)\b.{0,30}\b(work )?authori[sz]ation\b/ },
     ),
@@ -1710,6 +1847,42 @@
     R('job.authorized', /\bable to (lawfully |legally )?work\b/, {
       not: /\bon ?site\b|in (the |our )?office|in person|days (a|per) week|\bcommute|\bhybrid\b|\bshifts?\b|weekends?|overtime|consecutive|full ?time for/,
     }),
+    // "Do you hold a valid UK visa?" (never "a visa that allows you to work…", which asks for your right to work).
+    R(
+      'job.visa',
+      /^(do|does) you (currently )?(hold|have|possess)( a| an| any)?( valid| current| active)? (\w+ ){0,2}visas?\b/,
+      {
+        kinds: CHOICE,
+        not: /\bsponsor|\bor\b.*\b(citizen|right to work|settled|indefinite|permanent|passport|residen)|\bif (yes|so)\b|\b(type|expir\w*|number)\b|\b(allows?|permits?|entitles?|lets) you to\b|\bwork (in|for)\b/,
+      },
+    ),
+    // "Are you able to commute into our London office?", "Do you live within commuting distance of our London office?"
+    R(
+      'location.commute',
+      /\b(able|willing|happy|prepared) to commute\b|\bcommut\w* distance\b|\bcommutable\b|\b(can|could) you commute\b|\bcommute (in ?to|to) (our|the)\b/,
+      { kinds: CHOICE.concat(['text']), not: /relocat/ },
+    ),
+    // "Are you located in London?", "Are you based in the UK?", "Are you currently living in the UK?"
+    R(
+      'location.in',
+      /^(are|is) you (currently |presently |now )?(located|based|living|residing|resident|situated) (in|within|near|around|close to) |^do you (currently |presently )?(live|reside) (in|within|near|close to) /,
+      {
+        kinds: CHOICE.concat(['text']),
+        not: /relocat|commut|willing/,
+        test: (desc, hit) => JTF.geo.placesNamed(hit).length > 0,
+      },
+    ),
+    // "Willing to work in London?", "Would you be willing to be based in our London office?", and "…onsite at our
+    // Chicago office 5 days a week?" (job.onsite leaves offices somewhere in particular to this).
+    R(
+      'job.workIn',
+      /\b(willing|happy|open|prepared) to (work|working|be based|be located|live|be)\b.*\b(in|at|from|out of|near)\b/,
+      {
+        kinds: CHOICE.concat(['text']),
+        not: /relocat|commut|\bremote(ly)?\b/,
+        test: (desc, hit) => JTF.geo.placesNamed(hit).length > 0,
+      },
+    ),
     R(
       'job.locations',
       /\blocations?\b.*\b(interested|prefer|willing|open to|relocat|consider|like to work|want to work)|\b(preferred|desired|target|ideal) (work |office |job |internship |role )?(locations?|offices?|cities)|\bwhich (other )?(offices?|locations?|cities)\b|\b(office|location|city) preferences?\b|where would you (like|prefer|want) to (work|be based)|\brelocat\w* (where|which (cities|locations|offices))\b|^where\b.*\brelocat/,
@@ -2135,6 +2308,15 @@
       kinds: ['select', 'radio', 'combo', 'combobox'],
       not: /\b(dual|other|another|any other|former|previous)\b/,
     }),
+    // "Do you hold British citizenship?", "Do you have a UK passport?" (never a list of sanctioned countries).
+    R(
+      'citizen',
+      /^(do|does) you (currently )?(hold|have|possess)( a| an)?( valid| current)? (\w+ ){0,2}(citizenship|nationality|passport)\b/,
+      {
+        kinds: ['select', 'radio', 'combo', 'combobox'],
+        not: /\b(dual|other|another|any other|former|previous|second)\b|\b(any|one) of the following\b|\bcuba\b|\biran\b|\bnorth korea\b|\bsyria\b|\bcrimea\b|\bsanction/,
+      },
+    ),
     R(
       'nationality',
       /nationality|citizenship|citizen of|country of (citizenship|nationality)|staatsangehorigkeit|nacionalidad|\bnationalite\b|\bnazionalita\b/,
@@ -2296,6 +2478,7 @@
     resolve,
     labelOf,
     workCountries,
+    countriesAsked,
     followUpAnswer,
     eduLevelOf,
     languagesNamed,
