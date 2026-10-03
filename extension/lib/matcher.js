@@ -553,7 +553,20 @@
 
     const types = results.filter((r) => r && r.type).map((r) => r.type);
     const passwordFields = descs.filter((d) => d.kind === 'password').length;
+    // "Are you legally authorized to work in the United States?" then "Will you require sponsorship for employment
+    // visa status?": a work question that names no country is about the one the form's other work questions name.
+    const asked = new Set();
+    results.forEach((r, i) => {
+      if (r && /^job\.(authorized|sponsorship|visa)$/.test(r.type))
+        F()
+          .countriesAsked(norm(questionText(descs[i])), descs[i].options)
+          .codes.forEach((c) => asked.add(c));
+    });
+    let formCountries = [...asked];
+    const members = formCountries.filter((c) => c !== 'EU');
+    if (members.length && members.every((c) => JTF.geo.workRights([c]).has('EU'))) formCountries = members;
     const context = {
+      formCountries: formCountries.length === 1 ? formCountries : [],
       jobContext: types.some((t) => F().JOB_TYPES.test(t)),
       hasCountryCodeField: types.includes('phone.countryCode'),
       passwordFields,
@@ -1135,7 +1148,10 @@
           !/\b(not|no|without|never|won t|don t|doesn t|dont)\b/.test(n)
         );
       };
-      const kept = opts.filter((o) => needs(o.n) === (v.sponsor === 'yes'));
+      // "Are you authorized to work in the United States? Yes, but I will need visa sponsorship in the future" is a
+      // Yes to being authorized: never the answer when you aren't.
+      const claims = (n) => v.about === 'authorized' && v.authorized === 'no' && /^(yes|y)\b/.test(n);
+      const kept = opts.filter((o) => needs(o.n) === (v.sponsor === 'yes') && !claims(o.n));
       if (kept.length === 1) return kept[0].i;
       if (kept.length) pool = kept;
     }
