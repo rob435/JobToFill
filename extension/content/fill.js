@@ -551,10 +551,22 @@
     return null;
   }
 
-  function closeMenu(el) {
-    if (!listboxFor(el)) return;
+  /**
+   * Wait while a menu the widget already calls closed (aria-expanded="false") is still on screen: an MUI Select's menu
+   * fades out for ~200 ms after a pick or Escape. Clicking the widget then would open it again, and the next dropdown
+   * would find it still open.
+   */
+  async function menuGone(el) {
+    for (let waited = 0; waited < 500 && el.getAttribute('aria-expanded') === 'false' && listboxFor(el); waited += 40)
+      await sleep(40);
+    return !listboxFor(el);
+  }
+
+  async function closeMenu(el) {
+    if (await menuGone(el)) return;
     key(el.localName === 'input' ? el : el.ownerDocument.activeElement || el, 'Escape');
-    if (el.localName !== 'input' && listboxFor(el)) pointerClick(el);
+    await sleep(40);
+    if (!(await menuGone(el)) && el.localName !== 'input') pointerClick(el);
   }
 
   /**
@@ -652,7 +664,7 @@
       return { status: 'nomatch' };
     }
 
-    closeMenu(el);
+    await closeMenu(el);
     if (isInput) el.blur();
     return chosen.length ? { status: 'filled', value: chosen.join(', ') } : { status: 'nomatch' };
   }
@@ -675,7 +687,7 @@
         .filter((t) => t && !M().isPlaceholder(JTF.util.normalize(t)) && !/^no (options|results)/i.test(t));
       return { options: [...new Set(options)], multi };
     } finally {
-      closeMenu(el);
+      await closeMenu(el);
       if (isInput) el.blur();
     }
   }
