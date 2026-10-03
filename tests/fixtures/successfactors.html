@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply – Analyst (SAP SuccessFactors-style application)</title>
+    <style>
+      body {
+        font: 14px/1.4 Arial, sans-serif;
+        margin: 32px auto;
+        max-width: 760px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 8px;
+      }
+      td {
+        padding: 6px 8px;
+        vertical-align: top;
+      }
+      td.rcmFieldLabel {
+        width: 45%;
+        text-align: right;
+      }
+      .required {
+        color: #b00;
+      }
+      .sfDateButton {
+        margin-left: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Modelled on a SAP SuccessFactors (RCM) application form, Moody's, October 2026: label and field cells in tables,
+         one block per profile section with an "+ Add" link under it. Each block starts with its dates ("From Date",
+         MM/DD/YYYY with a date-picker button), so the education block's "From Date" comes straight after the work
+         history's last field. -->
+    <form id="applyForm" action="#" onsubmit="return false">
+      <h2 class="sectionTitle">Personal Information</h2>
+      <table class="rcmFieldTable" role="presentation">
+        <tr>
+          <td class="rcmFieldLabel"><label for="firstName"><span class="required">*</span> First Name</label></td>
+          <td><input id="firstName" name="firstName" type="text" /></td>
+        </tr>
+        <tr>
+          <td class="rcmFieldLabel"><label for="lastName"><span class="required">*</span> Last Name</label></td>
+          <td><input id="lastName" name="lastName" type="text" /></td>
+        </tr>
+        <tr>
+          <td class="rcmFieldLabel"><label for="contactEmail"><span class="required">*</span> Email Address</label></td>
+          <td><input id="contactEmail" name="contactEmail" type="text" /></td>
+        </tr>
+      </table>
+
+      <h2 class="sectionTitle">Previous Employment</h2>
+      <table class="rcmFieldTable" role="presentation">
+        <tr>
+          <td class="rcmFieldLabel"><label for="outsideWorkExperience_startDate_0">From Date</label></td>
+          <td>
+            <input id="outsideWorkExperience_startDate_0" type="text" placeholder="MM/DD/YYYY" />
+            <button type="button" class="sfDateButton" aria-label="From Date: Choose a date">&#128197;</button>
+          </td>
+        </tr>
+        <tr>
+          <td class="rcmFieldLabel"><label for="outsideWorkExperience_endDate_0">End Date</label></td>
+          <td>
+            <input id="outsideWorkExperience_endDate_0" type="text" placeholder="MM/DD/YYYY" />
+            <button type="button" class="sfDateButton" aria-label="End Date: Choose a date">&#128197;</button>
+          </td>
+        </tr>
+        <tr>
+          <td class="rcmFieldLabel"><label for="outsideWorkExperience_employer_0">Employer</label></td>
+          <td><input id="outsideWorkExperience_employer_0" type="text" /></td>
+        </tr>
+        <tr>
+          <td class="rcmFieldLabel"><label for="outsideWorkExperience_title_0">Job Title</label></td>
+          <td><input id="outsideWorkExperience_title_0" type="text" /></td>
+        </tr>
+        <tr>
+          <td class="rcmFieldLabel"><label for="outsideWorkExperience_country_0">Country of Employer</label></td>
+          <td>
+            <select id="outsideWorkExperience_country_0">
+              <option value="">No Selection</option>
+              <option value="FR">France</option>
+              <option value="GB">United Kingdom</option>
+              <option value="US">United States</option>
+            </select>
+          </td>
+        </tr>
+      </table>
+      <a href="#" class="addRow">+ Add</a>
+
+      <h2 class="sectionTitle">Education</h2>
+      <table class="rcmFieldTable" role="presentation">
+        <tr>
+          <td class="rcmFieldLabel"><label for="education_startDate_0">From Date</label></td>
+          <td>
+            <input id="education_startDate_0" type="text" placeholder="MM/DD/YYYY" />
+            <button type="button" class="sfDateButton" aria-label="From Date: Choose a date">&#128197;</button>
+          </td>
+        </tr>
+        <tr>
+          <td class="rcmFieldLabel"><label for="education_endDate_0">Expected or Completed Graduation</label></td>
+          <td>
+            <input id="education_endDate_0" type="text" placeholder="MM/DD/YYYY" />
+            <button type="button" class="sfDateButton" aria-label="Expected or Completed Graduation: Choose a date">&#128197;</button>
+          </td>
+        </tr>
+        <tr>
+          <td class="rcmFieldLabel">
+            <label for="education_school_0">School (Please use the full name, for example, University of Connecticut)</label>
+          </td>
+          <td><input id="education_school_0" type="text" /></td>
+        </tr>
+        <tr>
+          <td class="rcmFieldLabel"><label for="education_country_0">Country of School</label></td>
+          <td>
+            <select id="education_country_0">
+              <option value="">No Selection</option>
+              <option value="FR">France</option>
+              <option value="GB">United Kingdom</option>
+              <option value="US">United States</option>
+            </select>
+          </td>
+        </tr>
+        <tr>
+          <td class="rcmFieldLabel"><label for="education_schoolCity_0">State/City/Region of School</label></td>
+          <td><input id="education_schoolCity_0" type="text" /></td>
+        </tr>
+        <tr>
+          <td class="rcmFieldLabel"><label for="education_major_0">Major</label></td>
+          <td><input id="education_major_0" type="text" /></td>
+        </tr>
+        <tr>
+          <td class="rcmFieldLabel"><label for="education_degree_0"><span class="required">*</span> Degree</label></td>
+          <td>
+            <select id="education_degree_0">
+              <option value="">No Selection</option>
+              <option>High School Diploma</option>
+              <option>Associate's Degree</option>
+              <option>Bachelor's Degree</option>
+              <option>Master's Degree</option>
+              <option>Doctorate</option>
+            </select>
+          </td>
+        </tr>
+        <tr>
+          <td class="rcmFieldLabel"><label for="education_level_0"><span class="required">*</span> Highest Level of Education</label></td>
+          <td>
+            <select id="education_level_0">
+              <option value="">No Selection</option>
+              <option>Secondary School</option>
+              <option>Bachelor's</option>
+              <option>Master's</option>
+              <option>Doctorate</option>
+            </select>
+          </td>
+        </tr>
+      </table>
+      <a href="#" class="addRow">+ Add</a>
+    </form>
+  </body>
+</html>

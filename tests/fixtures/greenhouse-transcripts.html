@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Product Management Intern (2026) – Greenhouse job board replica</title>
+    <style>
+      body {
+        font: 15px/1.4 system-ui, sans-serif;
+        margin: 32px auto;
+        max-width: 680px;
+      }
+      .field-wrapper {
+        margin: 18px 0;
+      }
+      .label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Modelled on job-boards.greenhouse.io/databricks/jobs/8133715002 (the boards API lists the same questions): two
+         transcript uploads, the undergraduate one required, the graduate one "If applicable". Each upload is a group
+         titled by its question, with an "Attach" button over a visually hidden file input labelled "Attach". -->
+    <form id="application-form" action="#" onsubmit="return false">
+      <div class="field-wrapper">
+        <label for="first_name" class="label">First Name<span class="required">*</span></label>
+        <input id="first_name" name="first_name" type="text" aria-required="true" />
+      </div>
+      <div class="field-wrapper">
+        <label for="email" class="label">Email<span class="required">*</span></label>
+        <input id="email" name="email" type="text" aria-required="true" />
+      </div>
+      <div class="field-wrapper">
+        <div role="group" aria-labelledby="upload-label-resume" aria-required="true" class="file-upload">
+          <div id="upload-label-resume" class="label upload-label">Resume/CV<span class="required">*</span></div>
+          <div class="button-container">
+            <button type="button" class="btn btn--pill">Attach</button>
+            <label class="visually-hidden" for="resume">Attach</label>
+            <input id="resume" class="visually-hidden" type="file" accept=".pdf,.doc,.docx,.txt,.rtf" />
+            <p class="file-upload__filetypes">Accepted file types: pdf, doc, docx, txt, rtf</p>
+          </div>
+        </div>
+      </div>
+      <div class="field-wrapper">
+        <div role="group" aria-labelledby="upload-label-question_32886064002" aria-required="true" class="file-upload">
+          <div id="upload-label-question_32886064002" class="label upload-label">
+            Please provide a recent transcript of your undergraduate studies.<span class="required">*</span>
+          </div>
+          <div class="button-container">
+            <button type="button" class="btn btn--pill">Attach</button>
+            <label class="visually-hidden" for="question_32886064002">Attach</label>
+            <input id="question_32886064002" class="visually-hidden" type="file" accept=".pdf,.doc,.docx,.txt,.rtf" />
+            <p class="file-upload__filetypes">Accepted file types: pdf, doc, docx, txt, rtf</p>
+          </div>
+        </div>
+      </div>
+      <div class="field-wrapper">
+        <div role="group" aria-labelledby="upload-label-question_32886065002" class="file-upload">
+          <div id="upload-label-question_32886065002" class="label upload-label">
+            If applicable, please provide a recent transcript of your graduate studies.
+          </div>
+          <div class="button-container">
+            <button type="button" class="btn btn--pill">Attach</button>
+            <label class="visually-hidden" for="question_32886065002">Attach</label>
+            <input id="question_32886065002" class="visually-hidden" type="file" accept=".pdf,.doc,.docx,.txt,.rtf" />
+            <p class="file-upload__filetypes">Accepted file types: pdf, doc, docx, txt, rtf</p>
+          </div>
+        </div>
+      </div>
+    </form>
+  </body>
+</html>

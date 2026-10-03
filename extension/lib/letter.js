@@ -131,7 +131,8 @@
       for (const e of edu)
         out.push(
           `- ${[e.degree, e.field].filter(Boolean).join(' in ')}${e.school ? ', ' + e.school : ''}` +
-            `${e.startDate || e.endDate ? ` (${range(e.startDate, e.endDate)})` : ''}${e.gpa ? `, grade ${e.gpa}` : ''}`,
+            `${e.startDate || e.endDate ? ` (${range(e.startDate, e.endDate)})` : ''}${e.gpa ? `, grade ${e.gpa}` : ''}` +
+            `${e.classification ? `, degree classification ${e.classification}` : ''}`,
         );
     }
     const exp = (profile.experience || []).filter((x) => x.company || x.title);

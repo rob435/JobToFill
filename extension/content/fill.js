@@ -104,7 +104,8 @@
 
   function comboText(el) {
     if (el.localName === 'input') return el.value.trim();
-    return dom().textOf(el) || '';
+    // What the button shows: the choice, not a placeholder kept for screen readers or hidden once chosen.
+    return dom().visibleText(el) || '';
   }
 
   const CHIP =
@@ -248,7 +249,7 @@
   }
 
   const OPTION_ROLES = '[role="option"]';
-  const MENUITEM_ROLES = '[role="menuitem"], [role="menuitemradio"], [role="treeitem"]';
+  const MENUITEM_ROLES = '[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="treeitem"]';
   const OPTION_CLASSES =
     '[class*="option" i], [class*="result" i], [class*="item" i], [class*="suggest" i], [class*="cx-select" i]';
   const NO_RESULTS =
@@ -579,6 +580,8 @@
   function isMulti(el) {
     const lb = listboxFor(el);
     if (lb && lb.getAttribute('aria-multiselectable') === 'true') return true;
+    // A menu of ticks ("How did you hear about us?" on Teamtailor) takes several.
+    if (lb && lb.querySelector('[role="menuitemcheckbox"]')) return true;
     if (el.getAttribute('aria-multiselectable') === 'true') return true;
     return !!el.closest('[class*="is-multi" i], [class*="isMulti" i], [class*="--multi" i]');
   }
