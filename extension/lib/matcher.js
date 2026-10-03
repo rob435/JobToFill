@@ -294,6 +294,8 @@
       if (opts.length >= 28 && share(/^(0?[1-9]|[12]\d|3[01])$/) >= 0.8) return 'day';
     }
     const s = desc.signals || {};
+    // A month picker's box ("Start month", its prompt "Select month") takes the month of a year, not just the month.
+    if (desc.kind === 'text' && MONTH_PROMPT.test(norm(desc.placeholderRaw || s.placeholder))) return null;
     // "A 3 month placement" or "2 years" is a duration, not a month or year box.
     const text = [s.label, s.aria, s.placeholder, s.name, s.id, s.attrs, s.nearby, s.title]
       .map((t) => norm(t).replace(/\b\d+ (months?|years?|days?)\b/g, ''))
@@ -422,6 +424,9 @@
     edu: /\b(education|academic|school|universit\w*|college|qualifications?|degrees?|studies)\b/,
     exp: /\b(work|employment|experience|career|jobs?|professional|employers?)\b/,
   };
+  // A section about the job applied for, not a history.
+  const ROLE_SECTION =
+    /\b(the|this|your) (role|position|job|vacancy|opportunity|internship|placement|programme|program)\b|\bavailability\b/;
 
   /**
    * A generic date that starts a block ("From Date / Expected or Completed Graduation / School…" after the work
@@ -554,6 +559,14 @@
           !run.some((k) => k.startsWith(into + '.start:'))
         )
           target = null;
+        // "Start month" in no education or job entry, under a heading about the job ("The role", "Availability"):
+        // when you could start.
+        if (!into && r.type === 'gen.start' && ROLE_SECTION.test(norm((descs[i].signals || {}).section))) {
+          r.type = 'job.startDate';
+          prev = null;
+          detached = null;
+          continue;
+        }
         if (!target) {
           r.dropped = r.type;
           r.type = null;
@@ -1493,6 +1506,9 @@
 
   // A format spelled out in the label: "Start date (MM/YYYY)", "Date of birth, dd-mm-yyyy".
   const DATE_PATTERN = /\b(dd|mm|yyyy|yy)(\s*[/.-]\s*(dd|mm|yyyy|yy)){1,2}\b/i;
+  // A date picker's own prompt in its box (Ant Design's "Select date" / "Select month", "Start date" / "End date").
+  const DAY_PROMPT = /^(select|choose|pick|enter)( a)? (date|day)\b|^(start|end) date$/;
+  const MONTH_PROMPT = /^(select|choose|pick|enter)( a)? month\b/;
 
   /**
    * How the page writes a date it doesn't describe: 'mdy' (US), 'ymd' (East Asia, Sweden), 'dmy.' (German and
@@ -1522,6 +1538,14 @@
     let hint = String(desc.placeholderRaw || s.placeholder || '').toLowerCase();
     const label = [s.label, s.question, s.aria, s.describedby].filter(Boolean).join(' ');
     if (!DATE_PATTERN.test(hint) && DATE_PATTERN.test(label)) hint = label.match(DATE_PATTERN)[0].toLowerCase();
+    const prompt = norm(desc.placeholderRaw || s.placeholder || '');
+    // A month picker ("Select month") takes the year and month, written as <input type="month"> takes them: Ant
+    // Design's and Element Plus's month pickers read "2027-06" and nothing else unless the site says otherwise.
+    if (v.kind === 'date' && d.month && type === 'text' && MONTH_PROMPT.test(prompt) && !DATE_PATTERN.test(hint))
+      return `${y}-${mm}`;
+    // A day picker ("Select date") wants a whole date: a month-only date ("June 2027") goes in as its 1st, never as
+    // "06/2027", which it turns down.
+    const day = d.day || (v.kind === 'date' && d.month && DAY_PROMPT.test(prompt) ? 1 : 0);
     // "What date are you available (Month and Year)?" wants "November 2026", not a day.
     if (
       v.kind === 'date' &&
@@ -1566,7 +1590,7 @@
     if (v.defaultFormat === 'MM/YY')
       return desc.maxLength && desc.maxLength >= 7 ? `${mm}/${y}` : `${mm}/${y.slice(2)}`;
     const order = dateOrder(desc);
-    if (d.day) {
+    if (day) {
       if (order === 'ymd') return [y, mm, dd].join('-');
       if (order === 'dmy.') return [dd, mm, y].join('.');
       return order === 'dmy' ? [dd, mm, y].join('/') : [mm, dd, y].join('/');

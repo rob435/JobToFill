@@ -592,6 +592,67 @@
   }
 
   /**
+   * A list that only has the rows in view in the page (Ant Design's virtual lists show ~10 of 60 countries): the
+   * element that scrolls it, when the rows it holds span much less than it scrolls through.
+   */
+  function virtualScroller(lb, opts) {
+    if (!lb || opts.length < 2) return null;
+    for (let n = opts[0].parentElement; n && n !== lb.parentElement; n = n.parentElement) {
+      if (n.scrollHeight <= n.clientHeight + 4) continue;
+      const span = opts[opts.length - 1].getBoundingClientRect().bottom - opts[0].getBoundingClientRect().top;
+      return span < n.scrollHeight * 0.7 ? n : null;
+    }
+    return null;
+  }
+
+  /** Scroll a virtual list down from the top a screenful at a time, until `visit(rows in view)` says stop. */
+  async function scrollThrough(el, box, visit) {
+    for (let i = 0, top = 0; i < 100; i++) {
+      const before = optionsKey(currentOptions(el));
+      const from = box.scrollTop;
+      box.scrollTop = top;
+      // The list draws the rows now in view once it hears the scroll.
+      for (let waited = 0; waited < 200 && box.scrollTop !== from; waited += 20) {
+        await sleep(20);
+        if (optionsKey(currentOptions(el)) !== before) break;
+      }
+      if (visit(currentOptions(el))) return true;
+      if (box.scrollTop + box.clientHeight >= box.scrollHeight - 2) return false;
+      top = box.scrollTop + Math.max(20, Math.floor(box.clientHeight * 0.8));
+    }
+    return false;
+  }
+
+  /** Every row of a virtual list, top to bottom, as describeOptions gives them. */
+  async function readVirtualList(el, box) {
+    const seen = [];
+    await scrollThrough(el, box, (rows) => {
+      for (const d of describeOptions(rows)) if (!seen.some((s) => s.text === d.text)) seen.push(d);
+      return false;
+    });
+    return seen;
+  }
+
+  /**
+   * In a virtual list nothing can be typed into, the row for `v`: every row is read by scrolling through the list,
+   * the best one judged among them all (never the best of the ten in view), then scrolled back into view.
+   * Returns { opts, idx } with idx -1 when none fits.
+   */
+  async function findInVirtualList(el, box, v, already) {
+    const pool = (await readVirtualList(el, box)).filter((s) => !already.includes(s.text));
+    const want = M().matchOption(pool, v);
+    let opts = [];
+    let idx = -1;
+    if (want >= 0)
+      await scrollThrough(el, box, (rows) => {
+        opts = rows;
+        idx = describeOptions(rows).findIndex((d) => d.text === pool[want].text);
+        return idx >= 0;
+      });
+    return { opts, idx };
+  }
+
+  /**
    * Pick one option for `v` in an open (or openable) dropdown, skipping options already chosen.
    * Returns { chosen: text | null, opts, multi } — `multi` is read while the menu is open.
    */
@@ -615,6 +676,8 @@
       return idx == null ? -1 : idx;
     };
     let idx = pick();
+    const virtual = idx < 0 && !searchable && !v.many ? virtualScroller(listboxFor(el), opts) : null;
+    if (virtual) ({ opts, idx } = await findInVirtualList(el, virtual, v, already));
     // Statements and slots are judged against the whole list as it opened: typing would only hide some.
     if (idx < 0 && searchable && !v.many) {
       const { full, narrow } = searchQueries(v);
@@ -704,7 +767,9 @@
     try {
       const opts = await openMenu(el, searchable);
       const multi = isMulti(el);
-      const options = describeOptions(opts)
+      // A virtual list has only the rows in view in the page: scroll through it for the rest.
+      const box = virtualScroller(listboxFor(el), opts);
+      const options = (box ? await readVirtualList(el, box) : describeOptions(opts))
         .map((o) => JTF.util.cleanLabel(o.text, 200))
         .filter((t) => t && !M().isPlaceholder(JTF.util.normalize(t)) && !/^no (options|results)/i.test(t));
       return { options: [...new Set(options)], multi };

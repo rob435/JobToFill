@@ -11,93 +11,132 @@ import { AutoComplete, Button, Checkbox, DatePicker, Form, Input, InputNumber, R
 import dayjs from 'dayjs';
 import schools from '../data/schools.json';
 
-const COUNTRIES = [
-  ['AR', 'Argentina'],
-  ['AU', 'Australia'],
-  ['AT', 'Austria'],
-  ['BD', 'Bangladesh'],
-  ['BE', 'Belgium'],
-  ['BR', 'Brazil'],
-  ['BG', 'Bulgaria'],
-  ['CA', 'Canada'],
-  ['CL', 'Chile'],
-  ['CN', 'China'],
-  ['CO', 'Colombia'],
-  ['HR', 'Croatia'],
-  ['CY', 'Cyprus'],
-  ['CZ', 'Czech Republic'],
-  ['DK', 'Denmark'],
-  ['EG', 'Egypt'],
-  ['EE', 'Estonia'],
-  ['FI', 'Finland'],
-  ['FR', 'France'],
-  ['DE', 'Germany'],
-  ['GH', 'Ghana'],
-  ['GR', 'Greece'],
-  ['HK', 'Hong Kong'],
-  ['HU', 'Hungary'],
-  ['IS', 'Iceland'],
-  ['IN', 'India'],
-  ['ID', 'Indonesia'],
-  ['IE', 'Ireland'],
-  ['IL', 'Israel'],
-  ['IT', 'Italy'],
-  ['JP', 'Japan'],
-  ['KE', 'Kenya'],
-  ['KR', 'Korea, Republic of'],
-  ['LV', 'Latvia'],
-  ['LT', 'Lithuania'],
-  ['LU', 'Luxembourg'],
-  ['MY', 'Malaysia'],
-  ['MT', 'Malta'],
-  ['MX', 'Mexico'],
-  ['NL', 'Netherlands'],
-  ['NZ', 'New Zealand'],
-  ['NG', 'Nigeria'],
-  ['NO', 'Norway'],
-  ['PK', 'Pakistan'],
-  ['PE', 'Peru'],
-  ['PH', 'Philippines'],
-  ['PL', 'Poland'],
-  ['PT', 'Portugal'],
-  ['QA', 'Qatar'],
-  ['RO', 'Romania'],
-  ['SA', 'Saudi Arabia'],
-  ['SG', 'Singapore'],
-  ['SK', 'Slovakia'],
-  ['SI', 'Slovenia'],
-  ['ZA', 'South Africa'],
-  ['ES', 'Spain'],
-  ['LK', 'Sri Lanka'],
-  ['SE', 'Sweden'],
-  ['CH', 'Switzerland'],
-  ['TW', 'Taiwan'],
-  ['TH', 'Thailand'],
-  ['TR', 'Turkey'],
-  ['UA', 'Ukraine'],
-  ['AE', 'United Arab Emirates'],
-  ['GB', 'United Kingdom'],
-  ['US', 'United States'],
-  ['VN', 'Vietnam'],
-].map(([value, label]) => ({ value, label }));
+const COUNTRY_ROWS = [
+  ['AR', 'Argentina', 54],
+  ['AU', 'Australia', 61],
+  ['AT', 'Austria', 43],
+  ['BD', 'Bangladesh', 880],
+  ['BE', 'Belgium', 32],
+  ['BR', 'Brazil', 55],
+  ['BG', 'Bulgaria', 359],
+  ['CA', 'Canada', 1],
+  ['CL', 'Chile', 56],
+  ['CN', 'China', 86],
+  ['CO', 'Colombia', 57],
+  ['HR', 'Croatia', 385],
+  ['CY', 'Cyprus', 357],
+  ['CZ', 'Czech Republic', 420],
+  ['DK', 'Denmark', 45],
+  ['EG', 'Egypt', 20],
+  ['EE', 'Estonia', 372],
+  ['FI', 'Finland', 358],
+  ['FR', 'France', 33],
+  ['DE', 'Germany', 49],
+  ['GH', 'Ghana', 233],
+  ['GR', 'Greece', 30],
+  ['HK', 'Hong Kong', 852],
+  ['HU', 'Hungary', 36],
+  ['IS', 'Iceland', 354],
+  ['IN', 'India', 91],
+  ['ID', 'Indonesia', 62],
+  ['IE', 'Ireland', 353],
+  ['IL', 'Israel', 972],
+  ['IT', 'Italy', 39],
+  ['JP', 'Japan', 81],
+  ['KE', 'Kenya', 254],
+  ['KR', 'Korea, Republic of', 82],
+  ['LV', 'Latvia', 371],
+  ['LT', 'Lithuania', 370],
+  ['LU', 'Luxembourg', 352],
+  ['MY', 'Malaysia', 60],
+  ['MT', 'Malta', 356],
+  ['MX', 'Mexico', 52],
+  ['NL', 'Netherlands', 31],
+  ['NZ', 'New Zealand', 64],
+  ['NG', 'Nigeria', 234],
+  ['NO', 'Norway', 47],
+  ['PK', 'Pakistan', 92],
+  ['PE', 'Peru', 51],
+  ['PH', 'Philippines', 63],
+  ['PL', 'Poland', 48],
+  ['PT', 'Portugal', 351],
+  ['QA', 'Qatar', 974],
+  ['RO', 'Romania', 40],
+  ['SA', 'Saudi Arabia', 966],
+  ['SG', 'Singapore', 65],
+  ['SK', 'Slovakia', 421],
+  ['SI', 'Slovenia', 386],
+  ['ZA', 'South Africa', 27],
+  ['ES', 'Spain', 34],
+  ['LK', 'Sri Lanka', 94],
+  ['SE', 'Sweden', 46],
+  ['CH', 'Switzerland', 41],
+  ['TW', 'Taiwan', 886],
+  ['TH', 'Thailand', 66],
+  ['TR', 'Turkey', 90],
+  ['UA', 'Ukraine', 380],
+  ['AE', 'United Arab Emirates', 971],
+  ['GB', 'United Kingdom', 44],
+  ['US', 'United States', 1],
+  ['VN', 'Vietnam', 84],
+];
+const COUNTRIES = COUNTRY_ROWS.map(([value, label]) => ({ value, label }));
+// Dial codes as many sites list them: by country, the code after the name (not searchable).
+const DIAL_CODES = COUNTRY_ROWS.map(([value, label, code]) => ({ value, label: `${label} (+${code})` }));
 
-const DIAL_CODES = [
-  '+1',
-  '+31',
-  '+33',
-  '+34',
-  '+39',
-  '+41',
-  '+44',
-  '+49',
-  '+61',
-  '+65',
-  '+81',
-  '+86',
-  '+91',
-  '+353',
-  '+852',
-].map((code) => ({ value: code, label: code }));
+const US_STATES = [
+  'Alabama',
+  'Alaska',
+  'Arizona',
+  'Arkansas',
+  'California',
+  'Colorado',
+  'Connecticut',
+  'Delaware',
+  'District of Columbia',
+  'Florida',
+  'Georgia',
+  'Hawaii',
+  'Idaho',
+  'Illinois',
+  'Indiana',
+  'Iowa',
+  'Kansas',
+  'Kentucky',
+  'Louisiana',
+  'Maine',
+  'Maryland',
+  'Massachusetts',
+  'Michigan',
+  'Minnesota',
+  'Mississippi',
+  'Missouri',
+  'Montana',
+  'Nebraska',
+  'Nevada',
+  'New Hampshire',
+  'New Jersey',
+  'New Mexico',
+  'New York',
+  'North Carolina',
+  'North Dakota',
+  'Ohio',
+  'Oklahoma',
+  'Oregon',
+  'Pennsylvania',
+  'Rhode Island',
+  'South Carolina',
+  'South Dakota',
+  'Tennessee',
+  'Texas',
+  'Utah',
+  'Vermont',
+  'Virginia',
+  'Washington',
+  'West Virginia',
+  'Wisconsin',
+  'Wyoming',
+].map((label) => ({ value: label, label }));
 
 const OFFICES = ['London', 'New York', 'Hong Kong', 'Singapore', 'Paris', 'Frankfurt', 'Tokyo', 'Sydney'];
 
@@ -192,6 +231,12 @@ function CityInput(props) {
   return <AutoComplete {...props} options={options} onSearch={onSearch} placeholder="e.g. London" />;
 }
 
+// ?range asks for the dates of study (a RangePicker) instead of the graduation date; ?lang=en makes the page plain
+// English (the site's own markup says en-GB).
+const params = new URLSearchParams(location.search);
+const RANGE = params.has('range');
+if (params.get('lang')) document.documentElement.lang = params.get('lang');
+
 const required = (message) => ({ required: true, message });
 
 // Dates as the form holds them (dayjs objects), written out so the state is readable.
@@ -200,6 +245,8 @@ const plain = (v) =>
 
 function App() {
   const [form] = Form.useForm();
+  // The State question only shows for the United States.
+  const country = Form.useWatch('country', form);
   const [, setTick] = useState(0);
   const update = () => setTick((n) => n + 1);
   // The first render runs before the form has its initial values.
@@ -221,7 +268,7 @@ function App() {
         name="apply"
         layout="vertical"
         style={{ maxWidth: 640 }}
-        initialValues={{ prefix: '+39', country: 'IT' }}
+        initialValues={{ prefix: 'IT', country: 'IT' }}
         onValuesChange={update}
         onFieldsChange={update}
         onFinish={update}
@@ -247,7 +294,7 @@ function App() {
         <Form.Item label="Phone number" required>
           <Space.Compact block>
             <Form.Item name="prefix" noStyle>
-              <Select style={{ width: 96 }} options={DIAL_CODES} />
+              <Select style={{ width: 220 }} options={DIAL_CODES} />
             </Form.Item>
             <Form.Item
               name="phone"
@@ -268,6 +315,11 @@ function App() {
         >
           <Select showSearch optionFilterProp="label" options={COUNTRIES} placeholder="Select a country" />
         </Form.Item>
+        {country === 'US' && (
+          <Form.Item name="state" label="State" rules={[required('Please select your state')]}>
+            <Select showSearch optionFilterProp="label" options={US_STATES} placeholder="Select a state" />
+          </Form.Item>
+        )}
         <Form.Item name="city" label="City" rules={[required('Please enter your city')]}>
           <CityInput />
         </Form.Item>
@@ -282,16 +334,19 @@ function App() {
         <Form.Item name="degree" label="Degree" rules={[required('Please select your degree')]}>
           <Select options={DEGREES} placeholder="Select" />
         </Form.Item>
-        <Form.Item
-          name="graduationDate"
-          label="Expected graduation date"
-          rules={[required('Please enter your expected graduation date')]}
-        >
-          <DatePicker format="DD/MM/YYYY" style={{ width: '100%' }} />
-        </Form.Item>
-        <Form.Item name="studyDates" label="Dates of study">
-          <DatePicker.RangePicker format="DD/MM/YYYY" style={{ width: '100%' }} />
-        </Form.Item>
+        {RANGE ? (
+          <Form.Item name="studyDates" label="Dates of study" rules={[required('Please enter your dates of study')]}>
+            <DatePicker.RangePicker format="DD/MM/YYYY" style={{ width: '100%' }} />
+          </Form.Item>
+        ) : (
+          <Form.Item
+            name="graduationDate"
+            label="Expected graduation date"
+            rules={[required('Please enter your expected graduation date')]}
+          >
+            <DatePicker format="DD/MM/YYYY" style={{ width: '100%' }} />
+          </Form.Item>
+        )}
 
         <h2>The role</h2>
         <Form.Item

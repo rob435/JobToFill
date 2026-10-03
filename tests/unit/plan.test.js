@@ -3140,3 +3140,35 @@ test('round-up from the survey: code samples, AI disclosures, ranked lists, relo
   Object.assign(p.address, { city: 'Austin', state: 'TX', country: 'United States' });
   assert.equal(choose(p, 'address.state', na, states), 'TX');
 });
+
+test('Ant Design forms: date pickers by their prompts, "Start month" under the role, the phone "prefix"', () => {
+  const p = student();
+  p.job.startDate = '2027-06-14';
+  const plan = (page) => types(matcher.plan(page, p));
+  const picker = (signals) =>
+    desc(signals, { placeholderRaw: signals.placeholder, lang: 'en-GB', host: 'careers.example.com' });
+  // A month-only graduation date in a "Select date" picker (format DD/MM/YYYY, page in en-GB): the 1st of the month.
+  const grad = ask(p, 'edu.end', 'Expected graduation date');
+  const gradBox = picker({ label: 'Expected graduation date', placeholder: 'Select date' });
+  assert.equal(matcher.formatForText(grad, gradBox), '01/06/2027');
+  assert.equal(matcher.formatForText(grad, picker({ placeholder: 'End date' })), '01/06/2027');
+  assert.equal(matcher.formatForText(grad, desc('Expected graduation date')), '06/2027', 'a plain box: no day made up');
+  // A month picker ("Select month") under "The role" is when you could start: the month of the year, as
+  // <input type="month"> takes it.
+  const month = picker({ label: 'Start month', placeholder: 'Select month', section: 'The role' });
+  assert.deepEqual(plan([desc({ label: 'Expected salary', section: 'The role' }), month]), [
+    'job.salary',
+    'job.startDate',
+  ]);
+  assert.equal(matcher.formatForText(ask(p, 'job.startDate', 'Start month'), month), '2027-06');
+  // Without the picker's prompt "Start month" is just the month; in a job's entry, that job's start.
+  assert.deepEqual(plan([desc({ label: 'Start month', section: 'The role' })]), ['job.startDate:month']);
+  assert.deepEqual(plan([desc('Job title'), desc('Company'), desc('Start month')])[2], 'exp.start#0:month');
+  // The docs' "prefix" Select beside the number under "Phone number" is the dial code, not "Mr / Ms".
+  const phone = [
+    desc({ id: 'register_prefix', group: 'Phone number' }, { kind: 'combobox' }),
+    desc({ id: 'register_phone', group: 'Phone number' }),
+  ];
+  assert.deepEqual(plan(phone), ['phone.countryCode', 'phone']);
+  assert.deepEqual(plan([desc('Prefix', { kind: 'select', options: opts('Mr', 'Ms', 'Dr') })]), ['name.prefix']);
+});
