@@ -374,7 +374,15 @@
   function isComboInput(el) {
     const role = el.getAttribute('role');
     const ac = (el.getAttribute('aria-autocomplete') || '').toLowerCase();
-    return role === 'combobox' || ac === 'list' || ac === 'both' || el.getAttribute('aria-haspopup') === 'listbox';
+    return (
+      role === 'combobox' ||
+      ac === 'list' ||
+      ac === 'both' ||
+      el.getAttribute('aria-haspopup') === 'listbox' ||
+      // Workday's search prompts ("School or University", "Country / Territory Phone Code"): a bare input whose
+      // text is wiped unless a suggestion is picked.
+      el.getAttribute('data-uxi-widget-type') === 'selectinput'
+    );
   }
 
   const isAriaChoice = (el) => el.localName !== 'input' && el.matches(ARIA_CHOICE);

@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <title>Shell Assessed Internship Programme 2027 – United Kingdom</title>
+  <!--
+    Workday's own widgets, as they behave on a live application (Shell, en-GB):
+    - Country / Territory comes preselected from the visitor's IP address (Italy here), and the address section
+      is rebuilt for the country chosen (Italy: City (Comune) search prompt + Province; United Kingdom: City +
+      County), after a round trip.
+    - Search prompts ("selectinput") are plain inputs: suggestions appear after a few letters (School) or only on
+      Enter (the others); a pick becomes a chip in a horizontal listbox of selected items, with a delete charm;
+      text left in the box without a pick is wiped when the box loses focus.
+    - Year boxes are spin buttons that only take digits typed as keys: a value set from script is put back.
+    - The upload takes several files.
+  -->
+  <style>
+    body { font: 14px system-ui; max-width: 760px; margin: 24px auto; }
+    [data-automation-id^="formField"] { margin: 10px 0; display: grid; gap: 4px; position: relative; }
+    button[aria-haspopup] { text-align: left; padding: 6px; }
+    ul[role="listbox"], [data-automation-id="activeListContainer"] { list-style: none; margin: 0; padding: 4px; background: #fff; border: 1px solid #888; }
+    [data-automation-id="activeListContainer"], ul.menu { position: absolute; z-index: 10; }
+    ul[data-automation-id="selectedItemList"] { display: flex; gap: 6px; border: 0; padding: 0; }
+    [role="option"] { padding: 4px 8px; cursor: pointer; }
+    [data-automation-id="selectedItem"] { display: inline-flex; gap: 4px; background: #eef; }
+    [data-automation-id="dateInputWrapper"] { display: flex; gap: 6px; }
+    [data-automation-id="dateInputWrapper"] input { width: 70px; }
+    [data-automation-id="file-upload-drop-zone"] { border: 2px dashed #99f; padding: 16px; text-align: center; }
+    [data-automation-id="file-upload-input-ref"] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  </style>
+</head>
+<body>
+  <h2>My Information</h2>
+  <div data-automation-id="applyFlowMyInfoPage">
+    <div data-automation-id="formField-country">
+      <label id="lbl-country" for="country--country">Country / Territory<abbr title="required">*</abbr></label>
+      <button type="button" id="country--country" aria-haspopup="listbox" aria-labelledby="lbl-country country--country"
+        data-options="Italy|United Kingdom|United States of America" value="Italy">Italy</button>
+    </div>
+    <div data-automation-id="formField-legalNameSection_firstName">
+      <label for="name--legalName--firstName">Given Name(s)<abbr>*</abbr></label>
+      <input type="text" id="name--legalName--firstName">
+    </div>
+    <div data-automation-id="formField-legalNameSection_lastName">
+      <label for="name--legalName--lastName">Family Name<abbr>*</abbr></label>
+      <input type="text" id="name--legalName--lastName">
+    </div>
+    <h3>Address</h3>
+    <div id="address"></div>
+
+    <h3>Phone</h3>
+    <div data-automation-id="formField-phoneType">
+      <label id="lbl-pdt">Phone Device Type<abbr>*</abbr></label>
+      <button type="button" id="phoneNumber--phoneType" aria-haspopup="listbox" aria-labelledby="lbl-pdt phoneNumber--phoneType"
+        data-options="Landline|Mobile">Select One</button>
+    </div>
+    <div data-automation-id="formField-countryPhoneCode" class="prompt" data-search="enter" data-chip="Italy (+39)"
+      data-options="Italy (+39)|Isle of Man (+44)|Jersey (+44)|United Kingdom (+44)|United States of America (+1)">
+      <label id="lbl-pcc" for="phoneNumber--countryPhoneCode">Country / Territory Phone Code<abbr>*</abbr></label>
+    </div>
+    <div data-automation-id="formField-phoneNumber">
+      <label for="phoneNumber--phoneNumber">Phone Number<abbr>*</abbr></label>
+      <input type="text" id="phoneNumber--phoneNumber">
+    </div>
+  </div>
+
+  <h2>My Experience</h2>
+  <div data-automation-id="educationSection">
+    <h3>Education</h3>
+    <p>Select your school/university and field of study using the drop-down menus. Type at least four characters to
+      see suggestions. If not listed, choose "Others" (names include only letters).</p>
+    <p>If your school/university uses a GPA system, enter your GPA on a 0- 4.0 scale. Otherwise, provide your overall
+      result in your school/university's grading system. If you haven't graduated, enter your predicted result.</p>
+    <div data-automation-id="education-1" role="group" aria-labelledby="edu1-title">
+      <h4 id="edu1-title">Education 1</h4>
+      <div data-automation-id="formField-schoolItem" class="prompt" data-search="type" data-min="4"
+        data-options="Glasgow Caledonian University|Glasgow School of Art|University of Glasgow|University of Strathclyde|Others">
+        <label id="lbl-school" for="education-1--schoolName">School or University<abbr>*</abbr></label>
+      </div>
+      <div data-automation-id="formField-degree">
+        <label id="lbl-degree">Degree<abbr>*</abbr></label>
+        <button type="button" id="education-1--degree" aria-haspopup="listbox" aria-labelledby="lbl-degree education-1--degree"
+          data-options="A-Levels|Associates|Bachelors|Masters|Doctorate">Select One</button>
+      </div>
+      <div data-automation-id="formField-fieldOfStudy" class="prompt" data-search="enter"
+        data-options="Computer Engineering|Computer Science|Economics|Mathematics|Others">
+        <label id="lbl-field" for="education-1--fieldOfStudy">Field of Study<abbr>*</abbr></label>
+      </div>
+      <div data-automation-id="formField-gradeAverage">
+        <label for="education-1--gradeAverage">Overall Result (GPA)<abbr>*</abbr></label>
+        <input type="text" id="education-1--gradeAverage">
+      </div>
+      <div data-automation-id="formField-firstYearAttended">
+        <label id="lbl-from">From<abbr>*</abbr></label>
+        <div data-automation-id="dateInputWrapper" role="group" aria-labelledby="lbl-from">
+          <input type="text" id="education-1--firstYearAttended-dateSectionYear-input" class="year" role="spinbutton"
+            aria-label="Year" aria-valuemin="1900" aria-valuemax="2100" aria-valuetext="YYYY" placeholder="YYYY"
+            inputmode="numeric" maxlength="4" data-automation-id="dateSectionYear-input">
+        </div>
+      </div>
+      <div data-automation-id="formField-lastYearAttended">
+        <label id="lbl-to">To (Actual or Expected)<abbr>*</abbr></label>
+        <div data-automation-id="dateInputWrapper" role="group" aria-labelledby="lbl-to">
+          <input type="text" id="education-1--lastYearAttended-dateSectionYear-input" class="year" role="spinbutton"
+            aria-label="Year" aria-valuemin="1900" aria-valuemax="2100" aria-valuetext="YYYY" placeholder="YYYY"
+            inputmode="numeric" maxlength="4" data-automation-id="dateSectionYear-input">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div data-automation-id="resumeSection">
+    <h3>Resume/CV/Transcripts</h3>
+    <p>(transcripts are required for all US applications)</p>
+    <div data-automation-id="formField-resumeUpload">
+      <label id="lbl-upload">Upload a file (5MB max)<abbr>*</abbr></label>
+      <div data-automation-id="file-upload-drop-zone">
+        <p>Drop files here</p>
+        <p>or <button type="button" data-automation-id="select-files">Select files</button></p>
+        <input type="file" multiple id="resume-upload" aria-labelledby="lbl-upload" data-automation-id="file-upload-input-ref">
+      </div>
+      <ul data-automation-id="file-upload-successful-list" id="uploaded"></ul>
+    </div>
+  </div>
+
+  <script>
+    const later = (ms) => new Promise((r) => setTimeout(r, ms));
+    let open = null;
+    function close() {
+      if (open) {
+        open.list.remove();
+        if (open.btn) open.btn.setAttribute('aria-expanded', 'false');
+        open = null;
+      }
+    }
+    document.addEventListener('click', (e) => { if (open && !open.list.contains(e.target) && e.target !== open.owner) close(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    function place(list, anchor) {
+      const r = anchor.getBoundingClientRect();
+      list.style.left = r.left + scrollX + 'px';
+      list.style.top = r.bottom + scrollY + 'px';
+      document.body.appendChild(list);
+    }
+
+    /* Listbox buttons ("Select One"). */
+    function wireButton(btn, onPick) {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (open && open.btn === btn) return close();
+        close();
+        const list = document.createElement('ul');
+        list.setAttribute('role', 'listbox');
+        list.className = 'menu';
+        list.id = btn.id + '-listbox';
+        for (const text of btn.dataset.options.split('|')) {
+          const li = document.createElement('li');
+          li.setAttribute('role', 'option');
+          li.setAttribute('aria-selected', String(btn.textContent === text));
+          li.innerHTML = '<div>' + text + '</div>';
+          li.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            btn.textContent = text;
+            btn.value = text;
+            close();
+            if (onPick) onPick(text);
+          });
+          list.appendChild(li);
+        }
+        place(list, btn);
+        btn.setAttribute('aria-expanded', 'true');
+        btn.setAttribute('aria-controls', list.id);
+        open = { btn, list, owner: btn };
+      });
+    }
+
+    /* Search prompts: an input, a horizontal listbox of chips, results in a listbox appended to <body>. */
+    let promptIds = 0;
+    function wirePrompt(field) {
+      const label = field.querySelector('label');
+      const id = label.getAttribute('for');
+      const options = field.dataset.options.split('|');
+      const min = +field.dataset.min || 1;
+      const container = document.createElement('div');
+      container.dataset.automationId = 'multiSelectContainer';
+      container.innerHTML =
+        '<input type="text" data-uxi-widget-type="selectinput" data-automation-id="searchBox" placeholder="Search" autocomplete="off" aria-required="true">' +
+        '<span data-automation-id="promptIcon" aria-hidden="true">≡</span>' +
+        '<ul role="listbox" data-automation-id="selectedItemList" aria-orientation="horizontal"></ul>';
+      field.appendChild(container);
+      const input = container.querySelector('input');
+      input.id = id;
+      input.setAttribute('aria-labelledby', label.id);
+      const chips = container.querySelector('ul');
+      chips.setAttribute('aria-labelledby', label.id);
+      const setChip = (text) => {
+        chips.replaceChildren();
+        if (!text) return;
+        const li = document.createElement('li');
+        li.setAttribute('role', 'presentation');
+        li.innerHTML =
+          '<div role="option" aria-selected="true" tabindex="0" data-automation-id="selectedItem"><div data-automation-id="DELETE_charm" aria-hidden="true">×</div><p data-automation-id="promptOption"></p></div>';
+        li.querySelector('p').textContent = text;
+        li.querySelector('p').dataset.automationLabel = text;
+        li.querySelector('[data-automation-id="selectedItem"]').title = text;
+        li.querySelector('[data-automation-id="DELETE_charm"]').addEventListener('click', () => {
+          setChip('');
+          field.dataset.value = '';
+        });
+        chips.appendChild(li);
+        field.dataset.value = text;
+      };
+      setChip(field.dataset.chip || '');
+      const results = async (query) => {
+        await later(200); // the search goes to the server
+        const q = query.trim().toLowerCase();
+        if (q.length < min || input.value.trim().toLowerCase() !== q) return;
+        const hits = options.filter((o) => q.split(/\s+/).every((w) => o.toLowerCase().includes(w)));
+        close();
+        const list = document.createElement('div');
+        list.setAttribute('role', 'listbox');
+        list.dataset.automationId = 'activeListContainer';
+        list.id = 'prompt-results-' + ++promptIds;
+        if (!hits.length) list.innerHTML = '<div data-automation-id="promptOption">No Items.</div>';
+        for (const text of hits) {
+          const row = document.createElement('div');
+          row.setAttribute('role', 'option');
+          row.setAttribute('aria-selected', 'false');
+          row.dataset.automationId = 'menuItem';
+          row.innerHTML = '<div data-automation-id="promptOption"></div>';
+          row.firstChild.textContent = text;
+          row.firstChild.dataset.automationLabel = text;
+          row.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            setChip(text);
+            input.value = '';
+            close();
+          });
+          list.appendChild(row);
+        }
+        place(list, input);
+        open = { list, owner: input };
+      };
+      if (field.dataset.search === 'type') input.addEventListener('input', () => results(input.value));
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          results(input.value);
+        }
+      });
+      // Text that wasn't picked doesn't stay.
+      input.addEventListener('blur', () => setTimeout(() => {
+        if (!open || open.owner !== input) input.value = '';
+      }, 150));
+    }
+
+    /* Year spin buttons: digits typed as keys go in; anything else is put back. */
+    function wireYear(input) {
+      let year = '';
+      const show = () => {
+        input.value = year;
+        input.setAttribute('aria-valuetext', year || 'YYYY');
+        if (year.length === 4) input.setAttribute('aria-valuenow', year);
+        else input.removeAttribute('aria-valuenow');
+      };
+      input.addEventListener('keydown', (e) => {
+        if (/^\d$/.test(e.key)) year = (year + e.key).slice(-4);
+        else if (e.key === 'Backspace') year = year.slice(0, -1);
+        else return;
+        e.preventDefault();
+        show();
+      });
+      input.addEventListener('input', () => show());
+      input.addEventListener('blur', () => {
+        if (year.length !== 4) year = '';
+        show();
+      });
+    }
+
+    /* The address section follows the country, once the server has answered. */
+    const ADDRESS = {
+      Italy: `
+        <div data-automation-id="formField-addressLine1"><label for="address--addressLine1">Address Line 1<abbr>*</abbr></label><input type="text" id="address--addressLine1"></div>
+        <div data-automation-id="formField-city" class="prompt" data-search="enter" data-options="Milano|Roma|Torino"><label id="lbl-comune" for="address--city">City (Comune)</label></div>
+        <div data-automation-id="formField-countryRegion"><label id="lbl-province">Province</label>
+          <button type="button" id="address--countryRegion" aria-haspopup="listbox" aria-labelledby="lbl-province address--countryRegion" data-options="Abruzzo|Agrigento|Alessandria|Ancona">Select One</button></div>
+        <div data-automation-id="formField-postalCode"><label for="address--postalCode">Postal Code</label><input type="text" id="address--postalCode"></div>`,
+      'United Kingdom': `
+        <div data-automation-id="formField-addressLine1"><label for="address--addressLine1">Address Line 1<abbr>*</abbr></label><input type="text" id="address--addressLine1"></div>
+        <div data-automation-id="formField-addressLine2"><label for="address--addressLine2">Address Line 2</label><input type="text" id="address--addressLine2"></div>
+        <div data-automation-id="formField-city"><label for="address--city">City<abbr>*</abbr></label><input type="text" id="address--city"></div>
+        <div data-automation-id="formField-regionSubdivision1"><label for="address--regionSubdivision1">County</label><input type="text" id="address--regionSubdivision1"></div>
+        <div data-automation-id="formField-postalCode"><label for="address--postalCode">Postal Code<abbr>*</abbr></label><input type="text" id="address--postalCode"></div>`,
+      'United States of America': `
+        <div data-automation-id="formField-addressLine1"><label for="address--addressLine1">Address Line 1<abbr>*</abbr></label><input type="text" id="address--addressLine1"></div>
+        <div data-automation-id="formField-city"><label for="address--city">City<abbr>*</abbr></label><input type="text" id="address--city"></div>
+        <div data-automation-id="formField-countryRegion"><label id="lbl-state">State</label>
+          <button type="button" id="address--countryRegion" aria-haspopup="listbox" aria-labelledby="lbl-state address--countryRegion" data-options="California|New York|Texas">Select One</button></div>
+        <div data-automation-id="formField-postalCode"><label for="address--postalCode">Postal Code<abbr>*</abbr></label><input type="text" id="address--postalCode"></div>`,
+    };
+    const address = document.getElementById('address');
+    function renderAddress(country) {
+      address.innerHTML = ADDRESS[country];
+      address.querySelectorAll('button[aria-haspopup]').forEach((b) => wireButton(b));
+      address.querySelectorAll('.prompt').forEach(wirePrompt);
+      address.dataset.country = country;
+    }
+    renderAddress('Italy');
+    wireButton(document.getElementById('country--country'), async (country) => {
+      address.innerHTML = '<p>Loading…</p>';
+      await later(300);
+      renderAddress(country);
+    });
+    document.querySelectorAll('[data-automation-id="applyFlowMyInfoPage"] > [data-automation-id^="formField"] > button[aria-haspopup]:not(#country--country), [data-automation-id="educationSection"] button[aria-haspopup]').forEach((b) => wireButton(b));
+    document.querySelectorAll('body > div .prompt').forEach((f) => { if (!f.closest('#address')) wirePrompt(f); });
+    document.querySelectorAll('input.year').forEach(wireYear);
+
+    document.getElementById('resume-upload').addEventListener('change', (e) => {
+      for (const f of e.target.files) {
+        const li = document.createElement('li');
+        li.dataset.automationId = 'file-upload-successful';
+        li.textContent = f.name;
+        document.getElementById('uploaded').appendChild(li);
+      }
+      e.target.value = '';
+    });
+  </script>
+</body>
+</html>

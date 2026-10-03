@@ -21,10 +21,17 @@
     el.dispatchEvent(new Event(type, { bubbles: true, composed: true }));
   }
 
+  const KEY_CODES = { Enter: 13, Escape: 27, ArrowDown: 40, ArrowUp: 38, Backspace: 8, Tab: 9 };
+
+  /** What a key press says about itself, legacy keyCode included (widgets that still read e.keyCode === 13). */
+  function keyInit(k) {
+    const code = KEY_CODES[k] ? k : /^\d$/.test(k) ? 'Digit' + k : /^[a-z]$/i.test(k) ? 'Key' + k.toUpperCase() : '';
+    const keyCode = KEY_CODES[k] || (/^[a-z\d]$/i.test(k) ? k.toUpperCase().charCodeAt(0) : 0);
+    return { key: k, code, keyCode, which: keyCode, bubbles: true, cancelable: true, composed: true };
+  }
+
   function key(el, k) {
-    for (const type of ['keydown', 'keyup']) {
-      el.dispatchEvent(new KeyboardEvent(type, { key: k, code: k, bubbles: true, cancelable: true, composed: true }));
-    }
+    for (const type of ['keydown', 'keyup']) el.dispatchEvent(new KeyboardEvent(type, keyInit(k)));
   }
 
   function pointerClick(el) {
@@ -68,6 +75,40 @@
     el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: value }));
     fire(el, 'change');
     el.dispatchEvent(new FocusEvent('blur'));
+    el.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true }));
+  }
+
+  /** A box that only takes keys: Workday's date spin buttons ("YYYY") put back a value set from script. */
+  const takesKeys = (el) =>
+    el.getAttribute('role') === 'spinbutton' || /^dateSection/.test(el.getAttribute('data-automation-id') || '');
+
+  /**
+   * Type `text` key by key: each key goes to the widget first, and only when it doesn't take the key itself is the
+   * character inserted the way the browser does. Falls back to typeValue when the box still disagrees.
+   */
+  function typeKeys(el, text) {
+    const doc = el.ownerDocument;
+    el.focus({ preventScroll: true });
+    el.dispatchEvent(new FocusEvent('focusin', { bubbles: true, composed: true }));
+    if (el.select) el.select();
+    for (const ch of text) {
+      const init = keyInit(ch);
+      const down = new KeyboardEvent('keydown', init);
+      el.dispatchEvent(down);
+      if (!down.defaultPrevented) {
+        el.dispatchEvent(new KeyboardEvent('keypress', Object.assign({}, init, { charCode: ch.charCodeAt(0) })));
+        if (!doc.execCommand('insertText', false, ch)) {
+          setNativeValue(el, el.value + ch);
+          el.dispatchEvent(
+            new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: ch }),
+          );
+        }
+      }
+      el.dispatchEvent(new KeyboardEvent('keyup', init));
+    }
+    if (el.value !== text) return typeValue(el, text);
+    fire(el, 'change');
+    el.blur();
     el.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true }));
   }
 
@@ -227,6 +268,13 @@
   const LISTBOX_LIKE =
     '[role="listbox"], ul[class*="listbox" i], ul[class*="result" i], ul[class*="option" i], ul[class*="dropdown" i], ul[class*="suggest" i], ul[class*="autocomplete" i], [class*="listbox-results" i], [class*="listbox-drop" i], [class*="dropdown-menu" i], [class*="select-menu" i], [class*="cx-select" i][class*="list" i], [class*="select__menu" i]';
 
+  /** The row of chips a Workday prompt shows for what was picked ("Italy (+39)"): a listbox, but nobody's menu. */
+  const isChipList = (lb) =>
+    lb.matches('[data-automation-id="selectedItemList"]') || !!lb.querySelector('[data-automation-id="selectedItem"]');
+
+  /** Workday's search prompts look up what was typed when Enter is pressed. */
+  const searchesOnEnter = (el) => el.getAttribute('data-uxi-widget-type') === 'selectinput';
+
   function listboxFor(el) {
     const rootNode = el.getRootNode();
     const doc = el.ownerDocument;
@@ -237,7 +285,7 @@
       .filter(Boolean);
     for (const id of ids) {
       const lb = (rootNode.getElementById && rootNode.getElementById(id)) || doc.getElementById(id);
-      if (lb && dom().isVisible(lb)) return lb;
+      if (lb && dom().isVisible(lb) && !isChipList(lb)) return lb;
     }
     const comboLike =
       el.getAttribute('role') === 'combobox' ||
@@ -251,7 +299,9 @@
     const all = Array.from(rootNode.querySelectorAll(selector));
     if (rootNode !== doc) all.push(...doc.querySelectorAll(selector));
     // Nested matches (ul inside div.oj-listbox-drop): keep the outermost.
-    const cands = all.filter((lb) => dom().isVisible(lb) && !lb.closest('[data-jtf-ui]') && !lb.contains(el));
+    const cands = all.filter(
+      (lb) => dom().isVisible(lb) && !lb.closest('[data-jtf-ui]') && !lb.contains(el) && !isChipList(lb),
+    );
     const visible = cands.filter((lb) => !cands.some((o) => o !== lb && o.contains(lb)));
     if (!visible.length) return null;
     for (let a = el.parentElement, i = 0; a && i < 6; a = a.parentElement, i++) {
@@ -322,15 +372,19 @@
       .join('|');
 
   /** Wait until the options stop changing (async searches return in stages), up to `timeout` ms. */
-  async function waitForOptions(el, timeout, previous) {
+  async function waitForOptions(el, timeout, previous, staleList) {
     const start = Date.now();
     let lastKey = null;
     let stable = 0;
+    let empty = 0;
     let opts = [];
     while (Date.now() - start < timeout) {
       opts = currentOptions(el);
-      // An empty menu that has stopped loading ("No options") won't fill up later.
+      // An empty menu that has stopped loading ("No options") won't fill up later. A Workday prompt's search
+      // answers with a list of its own ("No Items."): that one is final at once.
       if (!opts.length && Date.now() - start > 900 && !isLoading(el)) return opts;
+      const list = staleList !== undefined && !opts.length ? listboxFor(el) : null;
+      if (list && list !== staleList && !isLoading(el) && ++empty >= 2) return opts;
       const key = optionsKey(opts);
       const fresh = previous == null || key !== previous;
       if (opts.length && key === lastKey && fresh && !isLoading(el)) {
@@ -404,6 +458,8 @@
     if (v.kind === 'list') (v.items || []).slice(0, 3).forEach(add);
     add(v.search);
     add(v.text.length <= 60 ? v.text : '');
+    // "Computing Science" is listed as "Computer Science" more often than not.
+    if (v.kind === 'subject') (v.candidates || []).slice(1, 3).forEach(add);
     if (v.kind === 'country') {
       for (const c of v.candidates || [])
         if (c.length >= 2 && c.length <= 24 && !/[.,]/.test(c) && !/^[A-Z]{3}$/.test(c)) add(c);
@@ -506,7 +562,10 @@
    * Returns { chosen: text | null, opts, multi } — `multi` is read while the menu is open.
    */
   async function pickOne(el, v, searchable, already) {
-    let opts = await openMenu(el, searchable);
+    // A Workday prompt lists nothing worth reading before a search: go straight to typing (not for checklists).
+    const straight = searchable && searchesOnEnter(el) && !v.many;
+    if (straight) el.focus({ preventScroll: true });
+    let opts = straight ? [] : await openMenu(el, searchable);
     const multi = isMulti(el);
     const pick = () => {
       const listed = describeOptions(opts);
@@ -531,8 +590,10 @@
         // judged above, and a vaguer query would only invite the wrong pick.
         if (query === narrow && sawAny) break;
         const before = optionsKey(opts);
+        const shown = searchesOnEnter(el) ? listboxFor(el) : undefined;
         typeQuery(el, query);
-        opts = await waitForOptions(el, SEARCH_WAIT, before);
+        if (searchesOnEnter(el)) key(el, 'Enter');
+        opts = await waitForOptions(el, SEARCH_WAIT, before, shown);
         if (opts.length) sawAny = true;
         idx = pick();
         if (idx >= 0) break;
@@ -579,7 +640,8 @@
       if (!multi) break;
     }
 
-    if (!chosen.length && searchable && !sawOptions && !v.many) {
+    // A prompt only keeps a picked suggestion: typed text would be wiped as soon as the box loses focus.
+    if (!chosen.length && searchable && !sawOptions && !v.many && !searchesOnEnter(el)) {
       // A plain text box whose suggestions never appeared: type the full value and see if it sticks.
       const full = M().formatForText(v, field.desc) || v.text;
       typeQuery(el, full);
@@ -901,7 +963,8 @@
           if (!text) return { status: 'nomatch' };
           history.push({ el, kind, prev: el.value });
           const before = openPopups(el.ownerDocument);
-          typeValue(el, text);
+          if (takesKeys(el)) typeKeys(el, text);
+          else typeValue(el, text);
           await closePopups(el, before);
           return { status: 'filled' };
         }
