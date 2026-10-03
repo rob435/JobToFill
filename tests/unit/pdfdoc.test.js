@@ -308,33 +308,3 @@ test('pdfdoc: a CV contact item can carry its own link, and a long contact line 
     'wrapped onto more rows instead of running off the page',
   );
 });
-
-test('pdfdoc: a project’s tech line is set in smaller bold capitals under its name', async () => {
-  const fonts = await fontsReady;
-  const cv = structuredClone(TEMPLATE_CV);
-  const proj = cv.sections.find((s) => s.title === 'Projects');
-  proj.entries[0].tech = ['Python', 'eBay API', 'SQLite'];
-  const lay = P.layoutCv(cv, { fonts, paper: 'a4', fit: true });
-  const lines = lay.items.filter((i) => i.kind === 'line');
-  const boxes = (l) => l.line.items.filter((it) => it.type === 'box');
-  const heading = lines.findIndex((l) => boxes(l)[0].run.font === fonts.bold && boxes(l)[0].run.size === lay.size);
-  assert.ok(heading >= 0);
-  const projects = lines.filter((l) => l.y > lay.items.find((i) => i.text === 'PROJECTS').y);
-  const title = projects[0];
-  const tech = projects[1];
-  assert.ok(
-    boxes(title).every((b) => b.run.size === lay.size),
-    'the project’s name line is full size',
-  );
-  assert.ok(
-    boxes(tech).every((b) => b.run.font === fonts.bold),
-    'the tech line is bold',
-  );
-  const size = boxes(tech)[0].run.size;
-  assert.ok(Math.abs(size - lay.size * (9 / 10.95)) < 0.01, `smaller: ${size}`);
-  assert.ok(Math.abs(tech.y - title.y - (13.6 * 72) / 72.27) < 0.01, 'one \\baselineskip below the name');
-  const out = await P.cv(cv, { fonts, paper: 'a4', fit: true });
-  assert.equal(out.pages, 1);
-  assert.deepEqual(out.missing, []);
-  if (pdftotext) assert.match(pdftotext(out.bytes), /eBaySpy – eBay deal detector.*\nPYTHON · EBAY API · SQLITE\n/);
-});

@@ -623,24 +623,25 @@ test('letter: tailor() without a master still rebuilds the CV from the file text
   assert.match(calls[0].messages[1].content, /text extracted from their file/);
 });
 
-test('letter: a CV rebuilt from text gets a short tech line and label rows, whatever the model sent', () => {
+test('letter: a CV rebuilt from text has no tech list under a project’s name, and label rows, whatever the model sent', () => {
   const reply = {
     sections: [
       {
         title: 'Projects',
         entries: [
-          // The tech list as plain text under the name: it becomes the tech line.
+          // A tech list under the name: it goes (the technologies are in the bullets and Skills).
           {
             heading: 'eBaySpy',
             tagline: 'eBay deal detector',
             subheading: 'Python, eBay API, SQLite, Telegram',
             bullets: ['Built a bot that flags underpriced eBay listings.'],
           },
-          // Too many technologies: the first three are kept.
+          // …or beside it, or in a field of its own.
           {
             heading: 'Market Tape',
             tagline: 'crypto market-data recorder',
-            tech: 'Python, WebSockets, Linux, systemd',
+            right: 'Python, WebSockets, Linux, systemd',
+            tech: ['Python', 'WebSockets'],
             bullets: ['Records every trade for around 500 markets.'],
           },
         ],
@@ -669,13 +670,19 @@ test('letter: a CV rebuilt from text gets a short tech line and label rows, what
   };
   const cv = L.tidyCvLayout(L.cleanCv(reply, { name: 'Robin Li', contact: [] }));
   const [proj, edu, ach, skills] = cv.sections;
-  assert.deepEqual(proj.entries[0].tech, ['Python', 'eBay API', 'SQLite']);
-  assert.equal(proj.entries[0].subheading, undefined);
-  assert.deepEqual(proj.entries[1].tech, ['Python', 'WebSockets', 'Linux']);
+  assert.deepEqual(proj.entries[0], {
+    heading: 'eBaySpy',
+    tagline: 'eBay deal detector',
+    bullets: ['Built a bot that flags underpriced eBay listings.'],
+  });
+  assert.deepEqual(proj.entries[1], {
+    heading: 'Market Tape',
+    tagline: 'crypto market-data recorder',
+    bullets: ['Records every trade for around 500 markets.'],
+  });
   // A place or a date is never mistaken for a tech list.
   assert.equal(edu.entries[0].subright, 'Glasgow, Scotland');
   assert.equal(edu.entries[0].right, 'Sep 2025 – Jun 2028');
-  assert.equal(edu.entries[0].tech, undefined);
   // Achievements are rows with a bold label, not bold headings.
   assert.deepEqual(ach.entries, []);
   assert.deepEqual(ach.lines, [
@@ -687,14 +694,14 @@ test('letter: a CV rebuilt from text gets a short tech line and label rows, what
   assert.equal(L.looksLikeTech('Glasgow, Scotland'), false);
   assert.equal(L.looksLikeTech('Sep 2025 – Jun 2028'), false);
   assert.equal(L.looksLikeTech('Python, WebSockets'), true);
-  // It renders as LaTeX that reads back the same (the tech line in capitals, as it is printed).
+  // It renders as LaTeX that reads back the same.
   const back = cvtex.parse(cvtex.render(cv)).cv;
-  assert.deepEqual(back.sections[0].entries[0].tech, ['PYTHON', 'EBAY API', 'SQLITE']);
+  assert.deepEqual(back.sections[0].entries, proj.entries);
   assert.deepEqual(back.sections[2].lines, ach.lines);
   assert.deepEqual(back.sections[3].lines, skills.lines);
 });
 
-test('letter: tailor() without a master asks for the tech line and label rows, and tidies the reply', async () => {
+test('letter: tailor() without a master asks for no tech list and for label rows, and tidies the reply', async () => {
   const cvText = [
     'Robin Li',
     'Projects: eBaySpy, eBay deal detector. Python, eBay API, SQLite, Telegram.',
@@ -723,25 +730,10 @@ test('letter: tailor() without a master asks for the tech line and label rows, a
     },
   ]);
   const result = await L.tailor(chat, { profile, kit, cvText, analysis: { keywords: ['Python'], requirements: [] } });
-  assert.match(calls[0].messages[0].content, /"tech" lists at most 3 of its technologies/);
+  assert.match(calls[0].messages[0].content, /don’t list its technologies under or beside its name/);
+  assert.doesNotMatch(calls[0].messages[0].content, /"tech"/);
   assert.match(calls[0].messages[0].content, /rows in "lines"/);
-  assert.deepEqual(result.cv.sections[0].entries[0].tech, ['Python', 'eBay API', 'SQLite']);
+  assert.equal(result.cv.sections[0].entries[0].subheading, undefined);
+  assert.equal(result.cv.sections[0].entries[0].tagline, 'eBay deal detector');
   assert.deepEqual(result.cv.sections[1].lines, [{ label: 'Chess', text: 'University of Glasgow Chess Champion' }]);
-});
-
-test('letter: a master CV keeps its own layout; its tech line may only be reordered or cut down', () => {
-  const master = structuredClone(MASTER);
-  master.sections[2].entries[0].tech = ['Python', 'eBay API', 'SQLite', 'Telegram'];
-  const reply = structuredClone(master);
-  reply.sections[2].entries[0].tech = ['SQLite', 'python'];
-  reply.sections[2].entries[1].tech = ['Kafka']; // the master has none here: not added
-  let { cv } = L.enforceCv(master, reply);
-  const proj = cv.sections.find((s) => s.title === 'Projects');
-  assert.deepEqual(proj.entries[0].tech, ['SQLite', 'Python'], 'the master’s spelling');
-  assert.equal(proj.entries[1].tech, undefined);
-  assert.equal(proj.entries[0].right, 'Python, eBay API, SQLite, Telegram', 'its \\hfill tech list stays');
-  reply.sections[2].entries[0].tech = ['Python', 'Rust'];
-  ({ cv } = L.enforceCv(master, reply));
-  assert.deepEqual(cv.sections.find((s) => s.title === 'Projects').entries[0].tech, master.sections[2].entries[0].tech);
-  assert.deepEqual(L.frozenDiffs(master, cv), []);
 });

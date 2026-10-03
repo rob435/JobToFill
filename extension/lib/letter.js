@@ -914,12 +914,12 @@
     'Goal: a recruiter or applicant tracking system scanning for the posting’s keywords should find every one the candidate honestly has. Go through the MISSING KEYWORDS: for each, decide whether the CV’s facts truly support it, and if so work the posting’s exact term into the most relevant bullet, heading or skills line (e.g. a tool that records, checks and archives market data honestly is “a data pipeline” that protects “data integrity”). Skip a keyword only when no fact supports it.',
     'Also allowed: reorder sections, entries, bullets and skills so the most relevant come first; reword and tighten bullets (start with a strong verb); drop or merge the least relevant bullets so the CV fits on one page.',
     'Never: add or change employers, job titles, schools, degrees, grades, dates, locations, numbers, tools, skills, languages, awards or achievements that aren’t in the CV or the candidate material. Keep dates exactly as written. Keep the candidate’s section names unless a rename clearly helps.',
-    'Layout: every entry is one organisation, school or project, and its "heading" is only that name (it is set in bold). For a job or a degree: "right" the dates, "subheading" the role or degree, "subright" the place. For a project: "tagline" says what it is in a few words, and "tech" lists at most 3 of its technologies as short phrases (one to three words each), the ones this job cares about most and only ones the CV names; never put a tech list in "subheading", "right" or "subright".',
+    'Layout: every entry is one organisation, school or project, and its "heading" is only that name (it is set in bold). For a job or a degree: "right" the dates, "subheading" the role or degree, "subright" the place. For a project: "tagline" says what it is in a few words; don’t list its technologies under or beside its name (no tech list in "subheading", "right" or "subright"): they belong in its bullets and in Skills.',
     'Achievements, awards, certifications, skills, languages and interests are rows in "lines" ({"label": "a short label", "text": "the rest, as written"}), never entries.',
     'Reply with JSON only:',
     '{"name": "...", "contact": ["phone", "email", "link"],',
     ' "sections": [{"title": "Education", "entries": [{"heading": "organisation", "right": "dates", "subheading": "role or degree", "subright": "location", "bullets": ["..."]}]},',
-    '              {"title": "Projects", "entries": [{"heading": "project name", "tagline": "what it is", "tech": ["Python", "SQL"], "bullets": ["..."]}]},',
+    '              {"title": "Projects", "entries": [{"heading": "project name", "tagline": "what it is", "bullets": ["..."]}]},',
     '              {"title": "Achievements", "lines": [{"label": "Topic", "text": "the award or result"}]},',
     '              {"title": "Skills", "lines": [{"label": "Languages", "text": "Python, Rust"}]}],',
     ' "changes": ["one line per meaningful change: what and why (e.g. “Projects: ‘records every trade’ → ‘data pipeline that records every trade’ to match ‘data pipelining’”)"]}',
@@ -975,13 +975,12 @@
             right: str(e.right),
             subheading: str(e.subheading),
             subright: str(e.subright),
-            tech: techItems(e.tech),
             bullets: (Array.isArray(e.bullets) ? e.bullets : [])
               .map((b) => str(b).replace(/^[-•*]\s*/, ''))
               .filter(Boolean),
             text: str(e.text),
           }))
-          .filter((e) => e.heading || e.subheading || e.bullets.length || e.text || e.tech.length),
+          .filter((e) => e.heading || e.subheading || e.bullets.length || e.text),
         lines: (Array.isArray(s && s.lines) ? s.lines : [])
           .map((l) =>
             typeof l === 'string' ? { label: '', text: str(l) } : { label: str(l.label), text: str(l.text) },
@@ -1001,18 +1000,8 @@
     return cv;
   }
 
-  // A project's tech line: at most this many short phrases.
-  const TECH_MAX = 3;
   const TECH_WORDS =
     /\bapis?\b|websockets?|\bhtml\b|\bcss\b|\bregex|\bjs\b|\.js\b|\bsqlite\b|\bredis\b|\bgraphql\b|\brest\b|\bci\/cd\b|\bsystemd\b|\bbash\b/i;
-
-  /** A tech list's items (from a list or "A, B, C"), short phrases only, at most TECH_MAX. */
-  function techItems(value) {
-    const list = JTF.cvtex
-      ? JTF.cvtex.techList(value)
-      : (Array.isArray(value) ? value : String(value || '').split(/\s*[,;·•|]\s*/)).map((t) => tidy(t)).filter(Boolean);
-    return list.filter((t) => t.length <= 32 && t.split(/\s+/).length <= 4).slice(0, TECH_MAX);
-  }
 
   /** "Python, eBay API, SQLite, Telegram": a list of technologies, not a role, place or date. */
   function looksLikeTech(text) {
@@ -1031,9 +1020,9 @@
     /achiev|award|honou?r|certif|prize|scholarship|accomplish|competition|skill|language|interest|hobb|activit|extra.?curricular/i;
 
   /**
-   * The layout the CV writer asks for, whatever the model sent back: a project's tech list in "tech" (not
-   * under its name as plain text), achievements and the like as label rows (not bold headings). Only for a
-   * CV rebuilt from text; a CV from the person's own LaTeX keeps its layout.
+   * The layout the CV writer asks for, whatever the model sent back: no tech list under or beside a project's
+   * name (the technologies are in its bullets and Skills), achievements and the like as label rows (not bold
+   * headings). Only for a CV rebuilt from text; a CV from the person's own LaTeX keeps its layout.
    */
   function tidyCvLayout(cv) {
     for (const s of cv.sections || []) {
@@ -1041,15 +1030,9 @@
       const projects = /project|portfolio/i.test(s.title || '');
       const keep = [];
       for (const e of s.entries || []) {
-        if ((projects || e.tagline) && !(e.tech && e.tech.length)) {
-          const from = ['subheading', 'subright', 'right'].find((k) => e[k] && looksLikeTech(e[k]));
-          if (from) {
-            e.tech = techItems(e[from]);
-            delete e[from];
-          }
-        }
-        const alone =
-          !e.right && !e.subheading && !e.subright && !(e.bullets && e.bullets.length) && !(e.tech && e.tech.length);
+        if (projects || e.tagline)
+          for (const k of ['subheading', 'subright', 'right']) if (e[k] && looksLikeTech(e[k])) delete e[k];
+        const alone = !e.right && !e.subheading && !e.subright && !(e.bullets && e.bullets.length);
         const heading = e.heading || '';
         const rest = [e.tagline, e.text].filter(Boolean).join(' ');
         const labelled = /^([^:]{1,40}):\s*(\S.*)$/.exec(heading);
@@ -1076,16 +1059,7 @@
         [
           s.title,
           ...(s.entries || []).map((e) =>
-            [
-              e.heading,
-              e.tagline,
-              e.right,
-              e.subheading,
-              e.subright,
-              (e.tech || []).join(', '),
-              e.text,
-              ...(e.bullets || []),
-            ]
+            [e.heading, e.tagline, e.right, e.subheading, e.subright, e.text, ...(e.bullets || [])]
               .filter(Boolean)
               .join('\n'),
           ),
@@ -1134,7 +1108,7 @@
   const CV_MASTER_SYSTEM = [
     'You tailor a candidate’s CV to one job posting without changing any facts. The CV is given as JSON, parsed from their own LaTeX; you return the same JSON with only the allowed edits.',
     'Goal: a recruiter or applicant tracking system scanning for the posting’s keywords should find every one the candidate honestly has. Go through the MISSING KEYWORDS: for each, decide whether the CV’s facts truly support it, and if so work the posting’s exact term into the most relevant bullet or tagline (e.g. a tool that records, checks and archives market data honestly is “a data pipeline” that protects “data integrity”). Skip a keyword only when no fact supports it.',
-    'YOU MAY: reword and tighten bullets (start with a strong verb); reorder bullets inside an entry; reorder entries inside a section and reorder sections so the most relevant come first; rewrite an entry’s "tagline" (the few words after a project’s name); reorder the items of a project’s "right" (its tech list) and of the rows in a Skills section; reorder a project’s "tech" line and keep only the items most relevant to the job (at most 3); drop or merge the least relevant bullets so the CV stays on one A4 page (keep at least one bullet in every entry that has bullets).',
+    'YOU MAY: reword and tighten bullets (start with a strong verb); reorder bullets inside an entry; reorder entries inside a section and reorder sections so the most relevant come first; rewrite an entry’s "tagline" (the few words after a project’s name); reorder the items of a project’s "right" (its tech list) and of the rows in a Skills section; drop or merge the least relevant bullets so the CV stays on one A4 page (keep at least one bullet in every entry that has bullets).',
     'FROZEN, copied back from the original whatever you write: "name", "contact", every section "title", every "heading", every "right" (apart from the order of a tech list), "subheading", "subright" (organisations, role titles, places, dates, grades), every row "label", the text of Achievements, Languages and Interests rows, and which items a Skills row lists. Keep every entry and every section; keep every number exactly. Never add tools, skills, numbers, employers, awards or claims that are not in the CV or the candidate material.',
     'Reply with JSON only, the same shape as the CV you were given (no "name" or "contact" needed):',
     '{"sections": [{"title": "Projects", "entries": [{"heading": "...", "tagline": "...", "right": "Python, SQLite", "subheading": "...", "subright": "...", "bullets": ["..."]}], "lines": [{"label": "Skills", "text": "Python, SQL"}]}],',
@@ -1268,12 +1242,6 @@
         note(`${me.heading || 'Entry'} ${k}`, me[k], re[k]);
       }
     if (me.tagline) out.tagline = re.tagline || me.tagline;
-    // A tech line may be reordered or cut down to the most relevant, nothing added.
-    if (me.tech) {
-      const mine = (t) => me.tech.find((m) => U.normalize(m) === U.normalize(t));
-      const picked = (re.tech || []).map(mine).filter(Boolean);
-      out.tech = picked.length && picked.length === (re.tech || []).length ? [...new Set(picked)] : me.tech.slice();
-    }
     // A project's tech list may be reordered, nothing more.
     if (me.tagline && me.right && re.right && sameItems(re.right, me.right)) out.right = re.right;
     if (me.text) out.text = re.text || me.text;
