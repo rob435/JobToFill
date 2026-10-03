@@ -182,6 +182,34 @@
     );
   }
 
+  /**
+   * What a dropdown whose input stays empty has chosen: the options its own list (aria-controls) marks
+   * aria-selected and its box shows. Element Plus keeps that list in the page while closed, and shows the choice
+   * (or a tag per choice) beside the input. Both must agree: a list can mark a row it merely highlights.
+   */
+  function shownChoices(el) {
+    const ids = (el.getAttribute('aria-controls') || '').split(/\s+/).filter(Boolean);
+    const rootNode = el.getRootNode();
+    const out = [];
+    let box = null;
+    for (const id of ids) {
+      const lb = (rootNode.getElementById && rootNode.getElementById(id)) || el.ownerDocument.getElementById(id);
+      if (!lb || lb.contains(el)) continue;
+      for (const o of lb.querySelectorAll('[role="option"][aria-selected="true"]')) {
+        const t = dom().textOf(o);
+        if (box == null) box = boxText(el);
+        if (t && box.includes(JTF.util.normalize(t))) out.push(t);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * An input mask showing nothing but its empty slots and fixed characters: "__/__/____" (an IMask or Inputmask date
+   * that shows its shape before anything is typed), "(___) ___-____", "+44 ____ ______".
+   */
+  const isEmptyMask = (v) => v.includes('_') && /^[\s_()/.:-]*$/.test(v.replace(/^\+\d{1,4}/, ''));
+
   /** Does this control already hold something the user (or site) put there? */
   function hasValue(field) {
     const { el, kind, members } = field;
@@ -201,11 +229,12 @@
         return !!t && !M().isPlaceholder(JTF.util.normalize(t));
       }
       case 'combobox':
-        return !!el.value.trim() || chipsOf(el).length > 0;
+        return !!el.value.trim() || chipsOf(el).length > 0 || shownChoices(el).length > 0;
       default: {
-        // A bare scheme or a dial code the widget put there ("+33" in react-phone-number-input) is still empty.
+        // A bare scheme or a dial code the widget put there ("+33" in react-phone-number-input) is still empty, and
+        // so is a mask's row of empty slots.
         const v = (el.value || '').trim();
-        return !!v && !/^https?:\/\/$/.test(v) && !/^\+\d{1,4}$/.test(v);
+        return !!v && !/^https?:\/\/$/.test(v) && !/^\+\d{1,4}$/.test(v) && !isEmptyMask(v);
       }
     }
   }
@@ -218,8 +247,9 @@
     const { el, kind } = field;
     if (kind === 'select') return M().matchOption(field.desc.options, v) === el.selectedIndex;
     if (kind !== 'combo' && kind !== 'combobox') return true;
+    const chips = kind === 'combobox' && !el.value.trim() ? chipsOf(el).map((c) => dom().textOf(c)) : [];
     const shown =
-      kind === 'combo' ? [comboText(el)] : el.value.trim() ? [el.value] : chipsOf(el).map((c) => dom().textOf(c));
+      kind === 'combo' ? [comboText(el)] : el.value.trim() ? [el.value] : chips.length ? chips : shownChoices(el);
     return shown.some((text) => text && M().matchOption([{ text, value: '' }], v) === 0);
   }
 
@@ -253,10 +283,13 @@
           chipsOf(el)
             .map((c) => dom().textOf(c))
             .filter(Boolean)
-            .join(', ')
+            .join(', ') ||
+          shownChoices(el).join(', ')
         );
-      default:
-        return (el.value || '').trim();
+      default: {
+        const v = (el.value || '').trim();
+        return isEmptyMask(v) ? '' : v;
+      }
     }
   }
 
@@ -521,8 +554,28 @@
   /** A role="menuitemcheckbox" / "menuitemradio" that is ticked. */
   const isTicked = (option) => option.isConnected && option.getAttribute('aria-checked') === 'true';
 
+  /**
+   * The text a dropdown's own box shows (the tags of a multi-select, a chosen value), up to where other fields
+   * start. Its menu is not part of it, wherever it is.
+   */
+  function boxText(el) {
+    let box = el;
+    for (let a = el.parentElement, i = 0; a && i < 5; a = a.parentElement, i++) {
+      const others = a.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]');
+      if (Array.from(others).some((c) => c !== el && !c.contains(el) && c.getAttribute('aria-hidden') !== 'true'))
+        break;
+      box = a;
+    }
+    const menu = listboxFor(el);
+    return JTF.util.normalize(dom().textOf(box, (n) => n === menu));
+  }
+
+  // Dropdowns seen keeping their menu open after a pick registered: they take several.
+  const takesSeveral = new WeakSet();
+
   async function choose(el, option) {
     const text = dom().textOf(option);
+    const want = JTF.util.normalize(text);
     const typed = el.localName === 'input' ? el.value : '';
     if (option.scrollIntoView) option.scrollIntoView({ block: 'nearest' });
     for (const type of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove']) {
@@ -530,6 +583,7 @@
       option.dispatchEvent(new Ctor(type, { bubbles: true, composed: true }));
     }
     const before = currentOptions(el);
+    const shown = boxText(el);
     pointerClick(option);
     // Registered once the value shows, or the menu closes behind the click (slow re-renders included). A category
     // that opens its own options instead (Workday's "Social Media" > "LinkedIn") says so.
@@ -537,6 +591,13 @@
       await sleep(30);
       // A menu that stays open ticks the item itself (Teamtailor shows "a, b, c, +2" once there are more than three).
       if (selectionShows(el, text, typed) || !listboxFor(el) || isTicked(option)) return text;
+      // Or the box shows the pick (a tag) while the menu stays open: Element Plus's multiple el-select, whose menu
+      // doesn't say aria-multiselectable. A single choice's menu is closing by now; one still open takes several.
+      if (want && !shown.includes(want) && boxText(el).includes(want)) {
+        for (let w = 0; w < 300 && listboxFor(el); w += 30) await sleep(30);
+        if (listboxFor(el)) takesSeveral.add(el);
+        return text;
+      }
       const now = currentOptions(el);
       if (!option.isConnected && now.length && optionsKey(now) !== optionsKey(before)) return { drilled: true };
     }
@@ -608,7 +669,8 @@
       idx = pick();
       chosen = idx >= 0 ? await choose(el, opts[idx]) : null;
     }
-    return { chosen: chosen && chosen.drilled ? null : chosen, opts, multi };
+    // A pick can show the list takes several (its menu stayed open).
+    return { chosen: chosen && chosen.drilled ? null : chosen, opts, multi: multi || isMulti(el) };
   }
 
   async function fillCombo(field, v) {
@@ -681,6 +743,7 @@
   }
 
   function isMulti(el) {
+    if (takesSeveral.has(el)) return true;
     const lb = listboxFor(el);
     if (lb && lb.getAttribute('aria-multiselectable') === 'true') return true;
     // A menu of ticks ("How did you hear about us?" on Teamtailor) takes several.
