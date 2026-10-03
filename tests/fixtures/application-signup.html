@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply: Graduate Analyst - Careers</title>
+    <style>
+      body { font: 14px system-ui; max-width: 520px; margin: 24px auto; }
+      label { display: block; margin: 10px 0; }
+      input:not([type='checkbox']), textarea { display: block; width: 100%; }
+    </style>
+  </head>
+  <body>
+    <!-- An application that creates the candidate's account as part of it (password + confirm on the same page as
+         the job questions and the CV upload). Not a pure sign-up page: JobToFill fills it but clicks nothing,
+         neither "Create account and submit application" nor "Submit". -->
+    <h1>Graduate Analyst</h1>
+    <form id="apply">
+      <label>Email <input type="email" id="email" name="email" required /></label>
+      <label>Create password <input type="password" id="password" name="password" autocomplete="new-password" required /></label>
+      <label>Confirm password <input type="password" id="password2" name="password2" required /></label>
+      <label>First name <input type="text" id="first" name="first" required /></label>
+      <label>Resume <input type="file" id="resume" name="resume" /></label>
+      <label>Why do you want to join us? <textarea id="why" name="why"></textarea></label>
+      <button type="submit" id="submit">Create account and submit application</button>
+    </form>
+    <p><button type="button" id="register" onclick="sessionStorage.setItem('clicked', 'register')">Register</button></p>
+    <script>
+      document.getElementById('apply').addEventListener('submit', (e) => {
+        e.preventDefault();
+        sessionStorage.setItem('clicked', 'submit');
+      });
+    </script>
+  </body>
+</html>

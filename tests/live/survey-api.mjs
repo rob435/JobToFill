@@ -52,8 +52,10 @@ export function simulate(JTF, descs, profile, settings = {}) {
       kind: d.kind,
       answer: r.answer,
       question: q,
+      options: d.options,
       consents: !!settings.consents,
       today: settings.today,
+      jobLocation: settings.jobLocation,
     });
     if (v && r.type !== 'custom' && FOLLOW_UP.test(q) && !fields.followUpAnswer(v, d.kind))
       return { outcome: 'skipped', type: r.type };
@@ -66,8 +68,8 @@ export function simulate(JTF, descs, profile, settings = {}) {
         : { outcome: 'filled', type: r.type, answer: opts[idx].text };
     }
     if (d.kind === 'checkboxes') {
-      let picks = v.kind === 'list' ? matcher.matchAll(opts, v) : [];
-      if (!picks.length) {
+      let picks = v.kind === 'list' || v.many ? matcher.matchAll(opts, v) : [];
+      if (!picks.length && !v.many) {
         const idx = matcher.matchOption(opts, v);
         picks = idx >= 0 ? [idx] : matcher.matchAll(opts, v);
       }
@@ -76,7 +78,7 @@ export function simulate(JTF, descs, profile, settings = {}) {
         : { outcome: 'nomatch', type: r.type, value: v.text };
     }
     if (d.kind === 'checkbox') {
-      const tick = v.kind === 'list' ? matcher.matchAll(opts, v).length > 0 : v.canonical === 'yes';
+      const tick = v.kind === 'list' || v.many ? matcher.matchAll(opts, v).length > 0 : v.canonical === 'yes';
       return tick ? { outcome: 'filled', type: r.type, answer: 'ticked' } : { outcome: 'skipped', type: r.type };
     }
     const text = matcher.formatForText(v, d);
@@ -231,7 +233,7 @@ async function main() {
   const empty = new Map();
   for (const f of forms) {
     if (!f.questions) continue;
-    const sim = simulate(JTF, f.questions, profile, { today: new Date('2026-10-02') });
+    const sim = simulate(JTF, f.questions, profile, { today: new Date('2026-10-02'), jobLocation: f.location });
     f.results = sim;
     sim.forEach((s, i) => {
       tally[s.outcome] = (tally[s.outcome] || 0) + 1;

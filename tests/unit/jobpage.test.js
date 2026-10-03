@@ -2211,3 +2211,283 @@ test('trail: a law firm’s programme page before its graduate portal’s sign-i
   assert.deepEqual([found.verdict, found.source], ['likely', PROGRAMME]);
   assert.ok(found.reasons.includes('the job page you opened before this one in this tab'));
 });
+
+/* ------------------------------------------- SuccessFactors classic career sites (portalcareer) */
+
+// Moody's on career8.successfactors.com: the job as Trackr links to it (tracking tags and a session's _s.crb), the
+// application after Apply and signing in (the session token alone), the job page built from the form's requisition and
+// tenant, and Trackr's own link.
+const SF_CRB = '_s.crb=Ivkrj5Brox8p4iWEFY0bBxDJ%252bUPoD%252bRKBcR8mh%252bgkdE%253d';
+const SF_JOB = `https://career8.successfactors.com/portalcareer?jobId=14588&company=MoodysProd&utm_source=Trackr&utm_medium=tracker&utm_campaign=UK_Tech_2027&career_ns=job_listing&career_os=job_listing&navBarLevel=JOB_SEARCH&career_job_req_id=14588&${SF_CRB}`;
+const SF_APPLY = `https://career8.successfactors.com/portalcareer?${SF_CRB}`;
+const SF_PAGE =
+  'https://career8.successfactors.com/portalcareer?career_ns=job_listing&company=MoodysProd&career_job_req_id=14588';
+const SF_TRACKR =
+  'https://career8.successfactors.com/sfcareer/jobreqcareer?jobId=14588&company=MoodysProd&utm_source=Trackr&utm_medium=tracker&utm_campaign=UK_Tech_2027';
+const SF_TAB = 'Career Opportunities: Software Engineering Summer Intern (14588)';
+/** The Moody's job page as another job: another requisition, title or employer. */
+const sfJobAs = ({ id = '14588', title = 'Software Engineering Summer Intern', tenant = 'MoodysProd', name } = {}) => {
+  const page = html('successfactors-portalcareer-job.html')
+    .replace(/14588/g, id)
+    .replace(/Software Engineering Summer Intern/g, title)
+    .replace(/MoodysProd/g, tenant);
+  return name ? page.replace(/Moody['’]s/g, name) : page;
+};
+/** An application step at the session address: the sign-in page with some of its HTML replaced. */
+const sfStep = (...edits) =>
+  jp.applicationContext(
+    parseHTML(edits.reduce((s, [re, to]) => s.replace(re, to), html('successfactors-portalcareer-signin.html')))
+      .document,
+    SF_APPLY,
+  );
+const NO_FIELDS = [/<input type="hidden" id="(career_job_req_id|career_company|company)"[^>]*>/g, ''];
+
+test('SuccessFactors classic: job pages, sign-in steps and the session-only application address', () => {
+  const at = (url) => {
+    const a = jp.ats(url);
+    return [a.name, a.company, a.jobId, a.stage];
+  };
+  assert.deepEqual(at(SF_JOB), ['successfactors', 'MoodysProd', '14588', 'description']);
+  assert.deepEqual(at(SF_TRACKR), ['successfactors', 'MoodysProd', '14588', 'description']);
+  assert.deepEqual(at(SF_PAGE), ['successfactors', 'MoodysProd', '14588', 'description']);
+  assert.deepEqual(at('https://career41.sapsf.com/career?career_ns=job_listing&company=acmeP&career_job_req_id=4321'), [
+    'successfactors',
+    'acmeP',
+    '4321',
+    'description',
+  ]);
+  // After Apply: the session token alone (tracking tags or the tenant may come along) — an application whose job
+  // only the page names.
+  assert.deepEqual(at(SF_APPLY), ['successfactors', null, null, 'application']);
+  assert.deepEqual(at(`https://career8.successfactors.com/career?company=MoodysProd&${SF_CRB}&utm_source=Trackr`), [
+    'successfactors',
+    'MoodysProd',
+    null,
+    'application',
+  ]);
+  // Signing in for a job (the sign-in page's own links).
+  const register = `https://career8.successfactors.com/portalcareer?company=MoodysProd&site=&lang=en_US&requestParams=6xLh&login_ns=register&career_ns=job%5fsave&career_os=job%5flisting&career_job_req_id=14588&navBarLevel=JOB%5fSEARCH&${SF_CRB}`;
+  assert.deepEqual(at(register), ['successfactors', 'MoodysProd', '14588', 'application']);
+  // The site's search page (a requisition without career_ns shows it), job list and sign-in: no job.
+  const search = 'https://career8.successfactors.com/career?company=MoodysProd&career_job_req_id=14588';
+  assert.equal(jp.ats(search).stage, 'unknown');
+  assert.deepEqual(
+    at(
+      'https://career8.successfactors.com/career?company=MoodysProd&career_ns=job_listing_summary&navBarLevel=JOB_SEARCH',
+    ),
+    ['successfactors', 'MoodysProd', null, 'unknown'],
+  );
+  assert.equal(
+    jp.ats(
+      'https://career8.successfactors.com/career?career_company=MoodysProd&lang=en_US&company=MoodysProd&site=&loginFlowRequired=true',
+    ).stage,
+    'unknown',
+  );
+  assert.equal(
+    jp.ats(`https://career8.successfactors.com/portalcareer?company=MoodysProd&navBarLevel=JOB%5fSEARCH&${SF_CRB}`)
+      .stage,
+    'unknown',
+  );
+  // Tracking tags and the session token are no job IDs; the job page behind each step.
+  assert.deepEqual(jp.urlJobIds(SF_JOB), ['14588']);
+  assert.deepEqual(jp.urlJobIds(SF_APPLY), []);
+  const first = (url) => (jp.descriptionUrls(url)[0] || {}).url;
+  assert.equal(first(register), SF_PAGE);
+  assert.equal(
+    first(search),
+    'https://career8.successfactors.com/career?career_ns=job_listing&company=MoodysProd&career_job_req_id=14588',
+  );
+  assert.equal(first(SF_APPLY), undefined);
+  assert.equal(first(SF_JOB), undefined);
+});
+
+test('SuccessFactors classic: the job page’s description, title, company, place and requisition', () => {
+  const p = jp.fromHtml(html('successfactors-portalcareer-job.html'), SF_JOB);
+  assert.deepEqual(
+    [p.title, p.company, p.location, p.jobIds, p.datePosted, p.ats, p.source],
+    [
+      'Software Engineering Summer Intern',
+      "Moody's",
+      'Edinburgh - 7 Exchange Crescent',
+      ['14588'],
+      '2026-10-02',
+      'successfactors',
+      'page',
+    ],
+  );
+  assert.match(p.description, /^At Moody's, we unite/);
+  assert.match(p.description, /Responsibilities\n\nDevelop and enhance fund finance API solutions/);
+  assert.match(p.description, /• Currently pursuing a degree in Computer Science or related field/);
+  assert.ok(!/\bApply\b|Save Job|Requisition ID|Email this job|Loading|careerPageInfo/.test(p.description));
+  assert.ok(words(p.description) > 300, String(words(p.description)));
+  assert.equal(jp.fromHtml(html('successfactors-portalcareer-job.html'), SF_TRACKR).title, p.title);
+  const ctx = jp.applicationContext(doc('successfactors-portalcareer-job.html'), SF_JOB);
+  assert.deepEqual(
+    [ctx.title, ctx.company, ctx.location, ctx.jobIds],
+    ['Software Engineering Summer Intern', "Moody's", 'Edinburgh - 7 Exchange Crescent', ['14588']],
+  );
+  assert.equal(ctx.posting.description, p.description);
+
+  // ExxonMobil's heading keeps the default label; without the print button, the heading less its label is the title.
+  // HSBC's print button lists more fields: the place is the one in brackets.
+  const plain = html('successfactors-portalcareer-job.html')
+    .replace("<h1>Let's begin! ", '<h1>Career Opportunities: ')
+    .replace(/<div class="print_button_div[\s\S]*?<\/div>/, '');
+  assert.equal(jp.fromHtml(plain, SF_JOB).title, 'Software Engineering Summer Intern');
+  const hsbc = html('successfactors-portalcareer-job.html').replace(
+    /%28Edinburgh%20%2d%207%20Exchange%20Crescent%29/,
+    '%3cb%3eHang%20Seng%20Bank%20Limited%3c%2fb%3e%26nbsp%3b%2d%26nbsp%3b%3cb%3eOther%20ASP%20Hang%20Sang%20Index%20%28Retained%29%3c%2fb%3e%26nbsp%3b%2d%26nbsp%3b%28KLN,%20113%20Argyle%20Street%29%26nbsp%3b%2d%26nbsp%3b%3cb%3eAsset%20and%20Wealth%20Management%3c%2fb%3e',
+  );
+  assert.equal(jp.fromHtml(hsbc, SF_JOB).location, 'KLN, 113 Argyle Street');
+  // An employer named only by its tenant ID ("exxonmobilP") in the page's own spelling.
+  const exxon = sfJobAs({ id: '108225', title: 'Engineering Graduate', tenant: 'exxonmobilP', name: 'ExxonMobil' });
+  const EXXON =
+    'https://career4.successfactors.com/career?career_ns=job_listing&company=exxonmobilP&career_job_req_id=108225';
+  assert.deepEqual([jp.fromHtml(exxon, EXXON).company, jp.fromHtml(exxon, EXXON).jobIds], ['ExxonMobil', ['108225']]);
+
+  // A closed job (Pictet's tenant): "This job cannot be viewed at the moment…" is no posting, and the page is gone.
+  const PICTET =
+    'https://career012.successfactors.eu/career?career_ns=job_listing&company=banquepict&navBarLevel=JOB_SEARCH&rcm_site_locale=en_GB&career_job_req_id=123676&utm_source=Trackr&utm_medium=tracker&utm_campaign=UK_Finance_2027';
+  const closed =
+    '<html><head><title> </title></head><body class="careerSite"><form id="careerform" name="careerform" action="/career?_s.crb=UbQU5MCd" method="POST">' +
+    '<input type="hidden" id="career_company" name="career_company" value="banquepict"><input type="hidden" id="career_job_req_id" name="career_job_req_id" value="123676">' +
+    '<div id="page"><div id="page_content"><div id="jobAppPageTitle" tabindex="0" role="region" aria-label=""><h1 id="candidateProfileTitle"></h1><table><tr><td>' +
+    'This job cannot be viewed at the moment. It has either been deleted or is no longer available for application. For more job opportunities, please click ' +
+    '<a href="/portalcareer?company=banquepict&navBarLevel=JOB%5fSEARCH&_s.crb=UbQU5MCd" title="Job Search Page">here</a>.</td></tr></table></div></div></div>' +
+    '<input type="hidden" id="company" name="company" value="banquepict"></form></body></html>';
+  assert.equal(jp.fromHtml(closed, PICTET), null);
+  const gone = jp.applicationContext(parseHTML(closed).document, PICTET);
+  assert.deepEqual([gone.gone, gone.posting, gone.links], [true, null, []]);
+});
+
+test('SuccessFactors classic: the session-only application step names its job in the form, and that job is found', async () => {
+  const now = Date.parse('2026-10-03T18:00:00Z');
+  const ctx = jp.applicationContext(doc('successfactors-portalcareer-signin.html'), SF_APPLY);
+  assert.deepEqual(
+    [ctx.ats.name, ctx.ats.company, ctx.ats.jobId, ctx.ats.stage],
+    ['successfactors', 'MoodysProd', '14588', 'application'],
+  );
+  // "Let's begin! Sign in to apply at Moody's" is the step's heading, not the job's title; it does name the employer.
+  assert.deepEqual([ctx.title, ctx.company, ctx.jobIds, ctx.posting], ['', "Moody's", ['14588'], null]);
+  const list = jp.candidates(ctx, now);
+  assert.deepEqual([list[0].url, list[0].reason, list[0].structural], [SF_PAGE, 'the SuccessFactors job page', true]);
+  // ("Forgot your password?" and "Create your account" are sign-in steps for the same job, not its page.)
+  assert.ok(!list.some((c) => /login_ns/.test(c.url)), list.map((c) => c.url).join(' '));
+  const found = await jp.find(ctx, {
+    now,
+    fetch: mockFetch({ [SF_PAGE]: html('successfactors-portalcareer-job.html') }),
+  });
+  assert.deepEqual(
+    [found.verdict, found.source, found.posting.title, found.posting.company, found.posting.location],
+    ['same', SF_PAGE, 'Software Engineering Summer Intern', "Moody's", 'Edinburgh - 7 Exchange Crescent'],
+  );
+  assert.match(found.reasons[0], /same job ID 14588/);
+
+  // The application itself (after signing in or creating an account), at the same address: its heading names the job.
+  const form = sfStep(
+    [/<title>[^<]*<\/title>/, `<title>${SF_TAB}</title>`],
+    [/<h1>[^<]*<\/h1>/, "<h1>Let's begin! Software Engineering Summer Intern (14588)</h1>"],
+  );
+  assert.deepEqual(
+    [form.title, form.ats.jobId, form.jobIds],
+    ['Software Engineering Summer Intern', '14588', ['14588']],
+  );
+  assert.equal(jp.compare(form, found.posting).verdict, 'same');
+  // Another requisition is another job, even with the same title.
+  const other = jp.fromHtml(sfJobAs({ id: '15437' }), SF_PAGE.replace('14588', '15437'));
+  assert.equal(jp.compare(form, other).verdict, 'different');
+  assert.equal(jp.compare(ctx, other).verdict, 'different');
+  // Each employer numbers its own requisitions: the same number at another tenant is another employer's job.
+  const exxon = jp.fromHtml(
+    sfJobAs({ title: 'Engineering Graduate', tenant: 'exxonmobilP', name: 'ExxonMobil' }),
+    'https://career4.successfactors.com/career?career_ns=job_listing&company=exxonmobilP&career_job_req_id=14588',
+  );
+  const cmp = jp.compare(ctx, exxon);
+  assert.deepEqual(
+    [cmp.verdict, cmp.reasons[0]],
+    ['different', 'another employer’s requisition 14588 (exxonmobilP, not MoodysProd)'],
+  );
+});
+
+test('SuccessFactors classic: without the form’s fields, this tab’s job page (Trackr’s link) is the job; other jobs and employers never are', async () => {
+  const now = Date.parse('2026-10-03T18:00:00Z');
+  const job = html('successfactors-portalcareer-job.html');
+  const trail = [{ url: SF_JOB, title: SF_TAB, at: now - 3 * 6e4 }];
+  // The requisition in the tab's title, the job page in the trail: the same requisition.
+  const titled = sfStep(NO_FIELDS, [/<title>[^<]*<\/title>/, `<title>${SF_TAB}</title>`]);
+  assert.deepEqual(
+    [titled.ats.company, titled.ats.jobId, titled.title],
+    [null, '14588', 'Software Engineering Summer Intern'],
+  );
+  titled.trail = trail;
+  const viaTrail = await jp.find(titled, { now, fetch: mockFetch({ [SF_JOB]: job }) });
+  assert.deepEqual([viaTrail.verdict, viaTrail.source], ['same', SF_JOB]);
+  assert.ok(viaTrail.reasons.includes('you opened this page before this one in this tab'), viaTrail.reasons.join('; '));
+
+  // Nothing on the page but the employer: the job page this tab showed just before is likely the job.
+  const bare = sfStep(NO_FIELDS);
+  assert.deepEqual([bare.ats.jobId, bare.title, bare.company], [null, '', "Moody's"]);
+  const likely = await jp.find({ ...bare, trail }, { now, fetch: mockFetch({ [SF_JOB]: job }) });
+  assert.deepEqual([likely.verdict, likely.source], ['likely', SF_JOB]);
+  // …but not another employer's job on the same servers.
+  const EXXON = `https://career4.successfactors.com/portalcareer?jobId=108225&company=exxonmobilP&career_ns=job_listing&career_job_req_id=108225&${SF_CRB}`;
+  const exxon = sfJobAs({ id: '108225', title: 'Engineering Graduate', tenant: 'exxonmobilP', name: 'ExxonMobil' });
+  const elsewhere = await jp.find(
+    {
+      ...bare,
+      trail: [{ url: EXXON, title: 'Career Opportunities: Engineering Graduate (108225)', at: now - 2 * 6e4 }],
+    },
+    { now, fetch: mockFetch({ [EXXON]: exxon }) },
+  );
+  assert.ok(!['same', 'likely'].includes(elsewhere.verdict), elsewhere.verdict);
+
+  // The form names this job; the tab's last job page is another requisition, and this job's own page doesn't answer:
+  // nothing is accepted.
+  const OTHER = SF_JOB.replace(/14588/g, '15437');
+  const ctx = jp.applicationContext(doc('successfactors-portalcareer-signin.html'), SF_APPLY);
+  ctx.trail = [{ url: OTHER, title: 'Career Opportunities: AVP-Business Analysis (15437)', at: now - 2 * 6e4 }];
+  const wrong = await jp.find(ctx, {
+    now,
+    fetch: mockFetch({ [OTHER]: sfJobAs({ id: '15437', title: 'AVP-Business Analysis' }) }),
+  });
+  assert.deepEqual([wrong.posting, wrong.verdict], [null, 'different']);
+  assert.match(wrong.reasons[0], /different job ID \(14588 vs 15437\)/);
+});
+
+test('SuccessFactors classic: Trackr’s tags and the session token don’t hide the job, and Trackr’s list names it', () => {
+  const ctx = jp.applicationContext(doc('successfactors-portalcareer-signin.html'), SF_APPLY);
+  ctx.trail = [
+    { url: SF_JOB, title: SF_TAB, at: 1 },
+    { url: 'https://app.the-trackr.com/uk-tech/summer-internships', title: 'UK Tech - Trackr', at: 0 },
+  ];
+  const hint = jp.trackrHint(ctx);
+  assert.deepEqual([hint.region, hint.industry, hint.season, hint.type], ['UK', 'Tech', '2027', 'summer-internships']);
+  const programme = (url, name) => ({
+    url,
+    name,
+    company: { name: "Moody's", description: 'Credit ratings, research and risk analysis.' },
+    region: 'UK',
+    industry: 'Tech',
+    type: 'summer-internships',
+    season: '2027',
+    closingDate: '2026-10-16T00:00:00.000Z',
+    locations: ['Edinburgh'],
+  });
+  const list = {
+    programmes: [
+      programme(SF_TRACKR.replace('14588', '15000'), '2027 Ratings Technology Summer Intern'),
+      programme(SF_TRACKR, '2027 Software Engineering Summer Intern'),
+    ],
+  };
+  const found = jp.trackrProgramme(ctx, list, hint);
+  assert.deepEqual(
+    [found.company, found.programme, found.deadline, found.url],
+    ["Moody's", '2027 Software Engineering Summer Intern', '2026-10-16', SF_TRACKR],
+  );
+  // (The session address alone names no job on Trackr's list.)
+  assert.equal(jp.trackrProgramme({ url: SF_APPLY, trail: [] }, list, { ...hint, links: [] }), null);
+  // The user's address (tags, a session token, jobId= and career_job_req_id=) and the clean job page are one job.
+  const page = jp.fromHtml(html('successfactors-portalcareer-job.html'), SF_PAGE);
+  const onJob = jp.applicationContext(doc('successfactors-portalcareer-job.html'), SF_JOB);
+  assert.equal(jp.compare(onJob, page).verdict, 'same');
+});

@@ -115,7 +115,27 @@ test('store: profiles are upgraded to the current schema', async () => {
   assert.equal(profile.personal.lastName, '');
   assert.equal(profile.education[0].school, 'X');
   assert.equal(profile.education[0].degree, '');
+  assert.equal(profile.education[0].classification, '', 'entries saved before the classification box get one');
   assert.deepEqual(profile.customAnswers, []);
+});
+
+test('store: a degree classification survives save, export and import; a class kept as the GPA is left there', async () => {
+  installChrome();
+  await chrome.storage.local.set({
+    profiles: { old: { id: 'old', name: 'Old', education: [{ school: 'University of Glasgow', gpa: '2:1' }] } },
+    profileOrder: ['old'],
+  });
+  const { profile: p } = await store.getActive();
+  assert.equal(p.education[0].gpa, '2:1', 'user data is never moved about');
+  assert.equal(p.education[0].classification, '');
+  p.education[0].classification = 'First';
+  await store.saveProfile(p);
+  const exported = await store.exportData();
+  assert.equal(exported.profiles[p.id].education[0].classification, 'First');
+  delete exported.profiles[p.id].education[0].classification; // a backup from before the field existed
+  await store.importData(JSON.parse(JSON.stringify(exported)));
+  assert.equal((await store.getActive()).profile.education[0].classification, '');
+  assert.equal((await store.getActive()).profile.education[0].gpa, '2:1');
 });
 
 test('store: history merges refills of the same page', async () => {
@@ -486,4 +506,29 @@ test('store: extraDetails survives save, export and import', async () => {
   assert.equal(exported.profiles[p.id].extraDetails, 'No criminal convictions.');
   await store.importData(JSON.parse(JSON.stringify(exported)));
   assert.equal((await store.getActive()).profile.extraDetails, 'No criminal convictions.');
+});
+
+test('store: interview availability and contact preference get their defaults, and travel in backups', async () => {
+  await chrome.storage.local.set({
+    profiles: { old: { id: 'old', name: 'Old', job: { referralSource: '' }, contact: { email: 'ada@example.com' } } },
+    profileOrder: ['old'],
+  });
+  const { profile: p } = await store.getActive();
+  assert.deepEqual(p.availability, { days: 'Mon, Tue, Wed, Thu, Fri', from: '08:00', to: '20:00', unavailable: '' });
+  assert.equal(p.contact.preferredContact, 'Email');
+  assert.equal(p.job.referralSource, '', 'a blank answer stays blank (and is filled in as LinkedIn)');
+  Object.assign(p.availability, { days: 'Mon, Wed', from: '09:00', unavailable: '12–23 January 2027 (exams)' });
+  await store.saveProfile(p);
+  const exported = await store.exportData();
+  installChrome();
+  await store.importData(JSON.parse(JSON.stringify(exported)));
+  assert.deepEqual((await store.getActive()).profile.availability, {
+    days: 'Mon, Wed',
+    from: '09:00',
+    to: '20:00',
+    unavailable: '12–23 January 2027 (exams)',
+  });
+  // The defaults alone are not data worth backing up.
+  installChrome();
+  assert.equal(await store.hasData(), false);
 });

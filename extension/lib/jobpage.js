@@ -53,6 +53,7 @@
   const LOGIN_PAGE = /\/(login|log-in|signin|sign-in|sso|auth|oauth|register|signup|sign-up|account)(\/|$|\?)/i;
   const ACTION_LINK =
     /logout|log-out|signout|sign-out|unsubscribe|delete|remove|withdraw|cancel|confirm|verify|activate|reset|token=|password/i;
+  const SF_HOST = /(successfactors|sapsf)\.(com|eu|cn)$/i;
 
   /* ------------------------------------------------------------- helpers */
 
@@ -384,12 +385,30 @@
       return set('oracle', host.split('.')[0], id, stage, { site });
     }
 
-    // SAP SuccessFactors: career{n}.successfactors.com/career?career_job_req_id=…; RMK sites /job/{slug}/{id}/
-    if (/(successfactors|sapsf)\.(com|eu|cn)$/.test(host)) {
+    // SAP SuccessFactors' classic sites, career{n}.successfactors.com|eu and career{n}.sapsf.com|eu|cn: a job is
+    // /career, /careers or /portalcareer?career_ns=job_listing&company={tenant}&career_job_req_id={req} (Trackr's
+    // links add jobId=, utm_ and a session's _s.crb=) or /sfcareer/jobreqcareer?jobId={req}&company={tenant}; without
+    // career_ns the same address is the site's search page. Applying: career_ns=job_application, or signing in for a
+    // job (career_ns=job_save, login_ns=register). Apply posts the form to "/portalcareer?_s.crb=…" (a session token
+    // alone) and every later step stays there: an application whose job only the page names (sfClassic).
+    if (SF_HOST.test(host)) {
       const id = qp.get('career_job_req_id') || qp.get('jobId') || qp.get('jobReqId');
       const ns = (qp.get('career_ns') || '').toLowerCase();
-      const stage = /application|apply/.test(ns) ? 'application' : id ? 'description' : 'unknown';
-      return set('successfactors', qp.get('company'), id, stage);
+      const company = qp.get('company') || qp.get('career_company');
+      const session =
+        !id &&
+        !ns &&
+        qp.has('_s.crb') &&
+        parts.length === 1 &&
+        /^(career|careers|portalcareer)$/.test(lower[0]) &&
+        [...qp.keys()].every((k) => /^(_s\.crb|utm_\w+|lang|locale|site|company|career_company)$/i.test(k));
+      const stage =
+        /application|apply|job_save/.test(ns) || (id && qp.get('login_ns')) || session
+          ? 'application'
+          : id && (ns === 'job_listing' || has('jobreqcareer'))
+            ? 'description'
+            : 'unknown';
+      return set('successfactors', company, id, stage);
     }
     if (lower[0] === 'talentcommunity' && lower[1] === 'apply' && /^\d+$/.test(parts[2] || ''))
       return set('successfactors', companyFromHost(host), parts[2], 'application');
@@ -728,15 +747,13 @@
       case 'oracle':
         if (a.stage === 'application' && a.jobId) add(cut(/\/apply(\/.*)?$/i), 'the Oracle job page');
         break;
-      case 'successfactors':
-        if (a.stage === 'application') {
-          if (/career_ns=/.test(u.search)) {
-            const v = new URL(u.href);
-            v.searchParams.set('career_ns', 'job_listing');
-            add(v.href, 'the SuccessFactors job page');
-          } else if (a.jobId) add(`${u.origin}/job/${a.jobId}/`, 'the job page');
-        }
+      case 'successfactors': {
+        const page = a.stage !== 'description' ? sfJobPage(u.href, a.company, a.jobId) : '';
+        if (page) add(page, 'the SuccessFactors job page');
+        else if (a.stage === 'application' && a.jobId && !SF_HOST.test(u.hostname))
+          add(`${u.origin}/job/${a.jobId}/`, 'the job page');
         break;
+      }
       case 'taleo':
         if (a.stage === 'application' && a.jobId)
           add(u.href.replace(/jobapply\.ftl/i, 'jobdetail.ftl').replace(/#.*$/, ''), 'the Taleo job page');
@@ -1299,6 +1316,101 @@
     return null;
   }
 
+  /* ---------------------------------------------- SuccessFactors classic */
+
+  /** A SuccessFactors classic job page: "/career?career_ns=job_listing&company=MoodysProd&career_job_req_id=14588". */
+  function sfJobPage(url, company, id) {
+    const u = parseUrl(url);
+    if (!u || !SF_HOST.test(u.hostname) || !company || !/^\d+$/.test(String(id || ''))) return '';
+    const path = /^\/(career|careers|portalcareer)$/i.test(u.pathname) ? u.pathname : '/career';
+    return `${u.origin}${path}?career_ns=job_listing&company=${encodeURIComponent(company)}&career_job_req_id=${id}`;
+  }
+
+  /** A JavaScript string literal's text: "Moody\'s", "Moody\x27s" → "Moody's". */
+  function jsText(s) {
+    return String(s)
+      .replace(/\\x([\da-f]{2})|\\u([\da-f]{4})/gi, (m, x, u4) => String.fromCharCode(parseInt(x || u4, 16)))
+      .replace(/\\(.)/g, '$1');
+  }
+
+  /** The words two texts end with: "Let's begin! Analyst" and "Career Opportunities: Analyst" → "Analyst". */
+  function sharedTail(a, b) {
+    const x = a.split(/\s+/);
+    const y = b.split(/\s+/);
+    let n = 0;
+    while (n < x.length && n < y.length && x[x.length - 1 - n] === y[y.length - 1 - n]) n++;
+    return x.slice(x.length - n).join(' ');
+  }
+
+  /**
+   * What a SuccessFactors classic page says about its job: { jobId, company, title, named, form, location,
+   * datePosted }. Every step is one form, #careerform, whose hidden fields name the requisition and the tenant
+   * (career_job_req_id 14588, career_company MoodysProd), also where the address is only a session token (signing
+   * in and applying after Apply). A job's page heads it "{label} {title} ({req})" — the site picks the label:
+   * "Career Opportunities:", Moody's "Let's begin!" — and its print button repeats the title, and the location in
+   * brackets:
+   * openPrintDialogWithReqSubTitle(key, '14588', true, true, '…%28Edinburgh%20%2d%207%20Exchange%20Crescent%29',
+   * '', 'Software Engineering Summer Intern', true).
+   */
+  function sfClassic(doc) {
+    const hidden = (name) =>
+      qa(doc, `input[type="hidden"][name="${name}"]`)
+        .map((el) => clean(el.getAttribute('value'), 120))
+        .find(Boolean) || '';
+    const print = q(doc, 'a[onclick*="openPrintDialogWithReqSubTitle"]');
+    const args = print
+      ? Array.from((print.getAttribute('onclick') || '').matchAll(/'((?:\\.|[^'\\])*)'/g), (m) => jsText(m[1]))
+      : [];
+    const withReq = (t) => field(t, 300).match(/^(.*?\S)\s*\((\d{2,})\)$/);
+    const head = withReq(shortText(q(doc, '.pagetitle h1') || q(doc, 'h1'), 300));
+    const tab = withReq(String(doc.title || '').replace(/<!--[\s\S]*?-->/g, ''));
+    const jobId =
+      [hidden('career_job_req_id'), args[1], head && head[2], tab && tab[2]].find((x) => /^\d{2,}$/.test(x || '')) ||
+      '';
+    // Only a heading that ends with this job's requisition names it (not "Let's begin! Sign in to apply at Moody's").
+    const h = head && (!jobId || head[2] === jobId) ? head[1] : '';
+    const t = tab && (!jobId || tab[2] === jobId) ? tab[1] : '';
+    const ours = args.length >= 5 && args[1] === jobId;
+    const printed = ours ? field(args[args.length - 1], 200) : '';
+    // (The tab's title alone is left to titleParts: "{title} - Hang Seng Bank (HK) ({req})" names the company too.)
+    const title = printed || (h && t && h !== t && sharedTail(h, t)) || h.replace(/^career opportunities\s*:\s*/i, '');
+    const place = (ours ? safeDecode(args[2]) : '')
+      .split(/&nbsp;-&nbsp;/)
+      .map((p) => p.trim().match(/^\((.+)\)$/))
+      .find(Boolean);
+    const posted = Number(attr(doc, '#postedOnFastDate', 'value'));
+    return {
+      jobId,
+      company: hidden('career_company') || hidden('company'),
+      title,
+      named: !!(printed || h || t),
+      form: !!q(doc, 'form#careerform'),
+      location: place ? field(place[1], 150) : '',
+      datePosted: posted > 0 && posted < 1e14 ? new Date(posted).toISOString().slice(0, 10) : null,
+    };
+  }
+
+  /** A SuccessFactors classic job page's posting: the description sits in its form, in .joqReqDescription. */
+  function fromSfClassic(doc, url) {
+    const el = q(doc, '.joqReqDescription') || q(doc, '.externalPosting');
+    const description = el ? elText(el) : '';
+    if (words(description) < 40) return null;
+    const sf = sfClassic(doc);
+    const tenant = ats(url).company || sf.company;
+    return makePosting({
+      url,
+      title: sf.title,
+      company: tenant ? companyInText(tenant, [doc.title, description.slice(0, 3000)]) : '',
+      location: sf.location,
+      jobIds: [sf.jobId],
+      description,
+      source: 'page',
+      ats: 'successfactors',
+      datePosted: sf.datePosted,
+      confidence: 0.85,
+    });
+  }
+
   /* ------------------------------------------------------- embedded JSON */
 
   /** The JSON object literal that starts at text[start] ("{"), found by bracket matching. */
@@ -1601,9 +1713,13 @@
     return companyInText(slug, texts) || slugTitle(slug);
   }
 
+  // A tenant ID's environment suffix: SuccessFactors' "MoodysProd" and "exxonmobilP" are Moody's and ExxonMobil.
+  const bareTenant = (slug) => String(slug).replace(/([a-z]{2})(?:Prod|PROD|Production|P)$/, '$1');
+
   /** The page's own spelling of a company slug ("sargentlundy" → "Sargent & Lundy"), or ''. */
   function companyInText(slug, texts) {
-    const target = compact(String(slug).replace(/(careers?|jobs?|hr|recruiting|inc|llc|ltd)$/i, '')) || compact(slug);
+    const bare = bareTenant(slug);
+    const target = compact(bare.replace(/(careers?|jobs?|hr|recruiting|inc|llc|ltd)$/i, '')) || compact(bare);
     for (const text of texts || []) {
       const ws = String(text || '')
         .split(/\s+/)
@@ -1628,7 +1744,7 @@
   }
 
   function slugTitle(slug) {
-    const s = String(slug)
+    const s = bareTenant(slug)
       .replace(/[-_+.]+/g, ' ')
       .trim();
     return s.length <= 4 && !/\s/.test(s) ? s.toUpperCase() : s.replace(/(^|\s)\p{Ll}/gu, (c) => c.toUpperCase());
@@ -1725,9 +1841,10 @@
 
   /* ------------------------------------------------------- fromDocument */
 
-  // "The requested job could not be found", "This position is no longer available"…
+  // "The requested job could not be found", "This position is no longer available", "This job cannot be viewed at
+  // the moment. It has either been deleted or is no longer available for application" (SuccessFactors)…
   const GONE =
-    /\b(job|position|posting|vacancy|role|opportunity|page|requisition|advert)\b.{0,60}\b(could ?n[o']t be found|can ?n[o']t be found|not (be )?found|no longer (available|accepting|exists|active|open|online)|has (now )?(been )?(closed|expired|filled|removed|deleted)|is (closed|expired|not currently active|not available)|does not exist)|^\s*(404|page not found|job not found|not found)\b/i;
+    /\b(job|position|posting|vacancy|role|opportunity|page|requisition|advert)\b.{0,60}\b(could ?n[o']t be found|can ?n[o']t be found|not (be )?found|no longer (available|accepting|exists|active|open|online)|has (now )?(either )?(been )?(closed|expired|filled|removed|deleted)|is (closed|expired|not currently active|not available)|does not exist)|^\s*(404|page not found|job not found|not found)\b/i;
 
   /**
    * Does the page say the job is closed? The tab title always counts; headings and alerts only when they are
@@ -1737,7 +1854,7 @@
     if (GONE.test(clean(String(doc.title || '').replace(/<!--[\s\S]*?-->/g, ''), 300))) return true;
     if (structured) return false;
     const live = !!doc.defaultView && !!doc.body && typeof doc.body.getClientRects === 'function';
-    return qa(doc, 'h1, h2, h3, [role="alert"], .error, .alert')
+    return qa(doc, 'h1, h2, h3, [role="alert"], .error, .alert, #jobAppPageTitle')
       .filter((h) => !h.closest || !h.closest('[hidden], [aria-hidden="true"], template'))
       .filter((h) => !live || h.getClientRects().length > 0)
       .slice(0, 6)
@@ -1753,6 +1870,7 @@
     for (const step of [
       fromJsonLd,
       fromMicrodata,
+      (d, u) => (a.name === 'successfactors' ? fromSfClassic(d, u) : null),
       (d, u) => fromAtsDom(d, u, a.name),
       fromEmbeddedJson,
       genericPosting,
@@ -2157,7 +2275,10 @@
   function applicationContext(doc, url) {
     const pageUrl = url || (doc && doc.location && doc.location.href) || '';
     const u = parseUrl(pageUrl);
-    const a = ats(pageUrl);
+    let a = ats(pageUrl);
+    // SuccessFactors' classic steps name the job in the form, not always in the address ("/portalcareer?_s.crb=…").
+    const sf = doc && a.name === 'successfactors' ? sfClassic(doc) : null;
+    if (sf) a = { ...a, company: a.company || sf.company || null, jobId: a.jobId || sf.jobId || null };
     const context = {
       url: pageUrl,
       host: u ? u.hostname : '',
@@ -2221,9 +2342,9 @@
     }
     const heads = headingTexts(doc);
     const parts = titleParts(doc.title || '', heads);
-    let atsTitle = '';
+    let atsTitle = (sf && sf.title) || '';
     let atsCompany = '';
-    let atsLocation = '';
+    let atsLocation = (sf && sf.location) || '';
     for (const rule of DOM_RULES) {
       if (rule.ats && rule.ats !== a.name) continue;
       atsTitle = atsTitle || pickTitle(doc, rule.title);
@@ -2248,16 +2369,20 @@
       !urlJobIds(pageUrl).length &&
       (u.pathname.replace(/\/+$/, '') === '' || LIST_PAGE.test(u.pathname + u.search) || LOGIN_PAGE.test(u.pathname));
     const idp = /^(login|signin|sso|auth|passport|accounts?|id|identity)\./i.test(context.host);
+    // A SuccessFactors step's heading is the step's ("Let's begin! Sign in to apply at Moody's"), not the job's,
+    // unless it ends with the requisition ("… Summer Intern (14588)").
+    const unnamed = !!sf && (!!sf.jobId || sf.form) && !sf.named;
+    const req = sf && sf.jobId ? new RegExp(`\\s*\\(${sf.jobId}\\)$`) : null;
     context.title =
       (landing
         ? []
         : [
             atsTitle,
             posting && posting.source !== 'page-text' ? posting.title : '',
-            ...(idp ? [] : [parts.title, heads[0], ogTitle]),
+            ...(idp || unnamed ? [] : [parts.title, heads[0], ogTitle]),
           ]
       )
-        .map((t) => field(t, 200))
+        .map((t) => (req ? field(t, 200).replace(req, '') : field(t, 200)))
         .find(titleOk) || '';
     // A company slug reads better in the page's own spelling: "jumptrading" → "Jump Trading".
     const named = [posting && posting.source !== 'page-text' && posting.company, atsCompany, parts.company, og, logoAlt]
@@ -2381,6 +2506,13 @@
           add(r.url, 'the job board’s data for this job', base || 0.93, { request: r, structural: true });
       }
     }
+    // A SuccessFactors step whose address is a session token ("/portalcareer?_s.crb=…"): the job's page, from the
+    // requisition and the tenant that its form names.
+    const sfPage =
+      ctxAts.name === 'successfactors' && !ats(ctx.url || '').jobId
+        ? sfJobPage(ctx.url, ctxAts.company, ctxAts.jobId)
+        : '';
+    if (sfPage) add(sfPage, 'the SuccessFactors job page', 0.9, { structural: true });
     // A sign-in page that names where it will go next (?next=, ?returnUrl=, ?redirect_uri=…): the job's page.
     for (const page of uniq([ctx.url, ctx.canonical])) {
       const u = parseUrl(page);
@@ -2522,11 +2654,19 @@
       !!a.company &&
       !!ctxAts.company &&
       compact(a.company) === compact(ctxAts.company);
+    // Another employer on the same board's servers (career8.successfactors.com hosts Moody's and others) is no
+    // same site.
+    const otherTenant =
+      !!a.name &&
+      a.name === ctxAts.name &&
+      !!a.company &&
+      !sameAts &&
+      (!!ctxAts.company || (!!ctx.company && companyMatch(ctx.company, a.company) === false));
     return {
       idHit: (ctx.jobIds || []).some((id) => idKey(id).length >= 4 && idKey(hay).includes(idKey(id))),
       ts: titleSimilarity(ctx.title, title || '', ctx),
       sameAts,
-      sameSite: sameAts || (!!label && label.length >= 3 && siteLabel(url) === label),
+      sameSite: sameAts || (!otherTenant && !!label && label.length >= 3 && siteLabel(url) === label),
       companyHit: !!ctx.company && compact(ctx.company).length >= 3 && compact(hay).includes(compact(ctx.company)),
       jobPage: looksLikeJobPage(url),
     };
@@ -2985,6 +3125,12 @@
       reasons.unshift(`different job ID (${ctxAts.jobId} vs ${pAts.jobId})`);
       return { score: 0.05, verdict: 'different', reasons };
     }
+    // SuccessFactors numbers each employer's requisitions on its own: ExxonMobil's 14588 is not Moody's 14588.
+    const onSf = (x) => SF_HOST.test((parseUrl(x || '') || {}).hostname || '');
+    if (sharedId && ctxAts.company && pAts.company && !sameBoard && onSf(ctx.url) && onSf(posting.url)) {
+      reasons.unshift(`another employer’s requisition ${sharedId} (${pAts.company}, not ${ctxAts.company})`);
+      return { score: 0.05, verdict: 'different', reasons };
+    }
     // Both addresses (or the posting's own data) name a job ID of the same kind, and they differ.
     const strongCtx = uniq([
       ctxAts.jobId,
@@ -3377,11 +3523,12 @@
       // Reached from this very application page by the board's own URL scheme: likely the same job.
       if (r.cmp.verdict === 'unsure' && r.c.structural && r.cmp.score >= 0.45 && !clash) r.verdict = 'likely';
       // The job page this tab showed just before (on the same site), or Trackr's programme name matches:
-      // likely, when nothing on the application page says otherwise.
+      // likely, when nothing on the application page says otherwise (another employer's job, say).
       else if (
         r.cmp.verdict === 'unsure' &&
         !clash &&
-        (justBefore(r.c, r.posting) || (r.cmp.hinted && r.cmp.score >= 0.85))
+        ((justBefore(r.c, r.posting) && !r.cmp.reasons.includes('company differs')) ||
+          (r.cmp.hinted && r.cmp.score >= 0.85))
       )
         r.verdict = 'likely';
       else r.verdict = r.cmp.verdict;

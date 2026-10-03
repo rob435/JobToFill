@@ -104,11 +104,12 @@
 
   function comboText(el) {
     if (el.localName === 'input') return el.value.trim();
-    return dom().textOf(el) || '';
+    // What the button shows: the choice, not a placeholder kept for screen readers or hidden once chosen.
+    return dom().visibleText(el) || '';
   }
 
   const CHIP =
-    '[class*="singleValue"], [class*="single-value"], [class*="selected-value"], [class*="multiValue"], [class*="multi-value"], [class*="MuiChip-root"]';
+    '[class*="singleValue"], [class*="single-value"], [class*="selected-value"], [class*="multiValue"], [class*="multi-value"], [class*="MuiChip-root"], [data-automation-id="selectedItem"]';
 
   /**
    * The selected values ("chips") of a react-select style widget, looking only inside its own
@@ -248,7 +249,7 @@
   }
 
   const OPTION_ROLES = '[role="option"]';
-  const MENUITEM_ROLES = '[role="menuitem"], [role="menuitemradio"], [role="treeitem"]';
+  const MENUITEM_ROLES = '[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="treeitem"]';
   const OPTION_CLASSES =
     '[class*="option" i], [class*="result" i], [class*="item" i], [class*="suggest" i], [class*="cx-select" i]';
   const NO_RESULTS =
@@ -448,6 +449,9 @@
     await sleep(40);
   }
 
+  /** A role="menuitemcheckbox" / "menuitemradio" that is ticked. */
+  const isTicked = (option) => option.isConnected && option.getAttribute('aria-checked') === 'true';
+
   async function choose(el, option) {
     const text = dom().textOf(option);
     const typed = el.localName === 'input' ? el.value : '';
@@ -456,11 +460,16 @@
       const Ctor = type.startsWith('pointer') ? PointerEvent : MouseEvent;
       option.dispatchEvent(new Ctor(type, { bubbles: true, composed: true }));
     }
+    const before = currentOptions(el);
     pointerClick(option);
-    // Registered once the value shows, or the menu closes behind the click (slow re-renders included).
+    // Registered once the value shows, or the menu closes behind the click (slow re-renders included). A category
+    // that opens its own options instead (Workday's "Social Media" > "LinkedIn") says so.
     for (let waited = 0; waited < 300; waited += 30) {
       await sleep(30);
-      if (selectionShows(el, text, typed) || !listboxFor(el)) return text;
+      // A menu that stays open ticks the item itself (Teamtailor shows "a, b, c, +2" once there are more than three).
+      if (selectionShows(el, text, typed) || !listboxFor(el) || isTicked(option)) return text;
+      const now = currentOptions(el);
+      if (!option.isConnected && now.length && optionsKey(now) !== optionsKey(before)) return { drilled: true };
     }
     // Some widgets only take the keyboard: highlight the option, then press Enter.
     if (option.isConnected && el.localName === 'input') {
@@ -487,11 +496,21 @@
     let opts = await openMenu(el, searchable);
     const multi = isMulti(el);
     const pick = () => {
-      const idx = M().matchOption(describeOptions(opts), v);
-      return idx >= 0 && !already.includes(dom().textOf(opts[idx])) ? idx : -1;
+      const listed = describeOptions(opts);
+      // A multi-select takes every slot or statement that fits, one per call, judged with the ones it took already
+      // (react-select hides those): "None of these dates work" is never added to them. One ticked already stays.
+      const list =
+        v.many && multi
+          ? M().matchAll([...listed, ...already.map((t) => ({ text: t, value: '' }))], v)
+          : [M().matchOption(listed, v)];
+      const idx = list.find(
+        (i) => i >= 0 && i < opts.length && !already.includes(dom().textOf(opts[i])) && !(multi && isTicked(opts[i])),
+      );
+      return idx == null ? -1 : idx;
     };
     let idx = pick();
-    if (idx < 0 && searchable) {
+    // Statements and slots are judged against the whole list as it opened: typing would only hide some.
+    if (idx < 0 && searchable && !v.many) {
       const { full, narrow } = searchQueries(v);
       let sawAny = false;
       for (const query of narrow ? [...full, narrow] : full) {
@@ -508,7 +527,14 @@
       }
     }
     if (idx < 0) return { chosen: null, opts, multi };
-    return { chosen: await choose(el, opts[idx]), opts, multi };
+    let chosen = await choose(el, opts[idx]);
+    // A two-level list (Workday's "Social Media" > "LinkedIn"): the category opened its own options; pick from those.
+    for (let depth = 0; chosen && chosen.drilled && depth < 2; depth++) {
+      opts = currentOptions(el);
+      idx = pick();
+      chosen = idx >= 0 ? await choose(el, opts[idx]) : null;
+    }
+    return { chosen: chosen && chosen.drilled ? null : chosen, opts, multi };
   }
 
   async function fillCombo(field, v) {
@@ -534,10 +560,13 @@
         multi = true;
         queue.push(...items.filter((it) => !chosen.some((c) => M().matchOption([{ text: c }], it) === 0)));
       }
+      if (!multi && r.multi && v.many) multi = true;
+      // Every slot or statement that fits: ask again until none is left.
+      if (multi && v.many && r.chosen && chosen.length < 40) queue.push(v);
       if (!multi) break;
     }
 
-    if (!chosen.length && searchable && !sawOptions) {
+    if (!chosen.length && searchable && !sawOptions && !v.many) {
       // A plain text box whose suggestions never appeared: type the full value and see if it sticks.
       const full = M().formatForText(v, field.desc) || v.text;
       typeQuery(el, full);
@@ -579,6 +608,8 @@
   function isMulti(el) {
     const lb = listboxFor(el);
     if (lb && lb.getAttribute('aria-multiselectable') === 'true') return true;
+    // A menu of ticks ("How did you hear about us?" on Teamtailor) takes several.
+    if (lb && lb.querySelector('[role="menuitemcheckbox"]')) return true;
     if (el.getAttribute('aria-multiselectable') === 'true') return true;
     return !!el.closest('[class*="is-multi" i], [class*="isMulti" i], [class*="--multi" i]');
   }
@@ -634,6 +665,137 @@
     fire(el, 'change');
   }
 
+  /* ------------------------------------------------------ upload menus */
+
+  // Upload tiles whose file box only exists once you choose where the file comes from: SuccessFactors' "Upload a
+  // Resume" (its N:_attachIcon) opens "Upload from Device / Upload from Dropbox / Sign in with Google", and only
+  // the box that "Upload from Device" makes uploads anything (a file put straight into an earlier one stays
+  // "Uploading…" for ever). Phenom, iCIMS and others have the same kind of menu.
+  const UPLOAD_TRIGGER =
+    /^(upload|attach|add|choose|select|browse|import)( a| an| your| my| new)? (resume|cv|curriculum vitae|cover letter|letter|document|file|attachment|transcript)s?\b/;
+  const DEVICE_OPTION =
+    /^(upload|select|choose|browse|pick|attach|add)?( a)?( file)?( from)?( my| this| your| the| local)? ?(device|computer|desktop|pc|mac|local (drive|disk|files?)|files?|hard drive)$|^(choose|select|browse for) (a )?files?$|\bvon (meinem |diesem )?gerat\b|\bdepuis (l |mon |votre )?(appareil|ordinateur)\b|\bdesde (el |mi |su )?(dispositivo|equipo|ordenador)\b/;
+  // Never chosen: anything that signs in to or fetches from another service.
+  const CLOUD_OPTION =
+    /dropbox|google|drive|one ?drive|\bbox\b|icloud|linked ?in|indeed|seek|\burl\b|\blink\b|paste|sign ?in|log ?in|cloud|camera|photo|scan/;
+  const TRIGGERS = 'button, a, [role="button"], [role="link"], [id$=":_attachIcon"], [tabindex]:not([tabindex="-1"])';
+  const MENU_ITEMS = '[role="menuitem"], [role="option"], [role="button"], button, a, li, label';
+
+  const triggerText = (el) =>
+    JTF.util.normalize(dom().textOf(el) || el.getAttribute('aria-label') || el.getAttribute('title') || '');
+
+  /**
+   * The upload tiles on a page that have no file box yet: [{ el, box, desc }], `desc` being what to classify it
+   * by (its own wording and the label of its row: "* Resume", "Additional Documents (References…)").
+   */
+  function uploadTriggers(doc) {
+    const found = Array.from(doc.querySelectorAll(TRIGGERS)).filter((el) => {
+      if (!dom().isVisible(el) || el.closest('[data-jtf-ui]') || el.disabled) return false;
+      // Never a link that leaves the page or a button that submits its form.
+      if (el.localName === 'a' && !/^(#|javascript:|$)/i.test((el.getAttribute('href') || '').trim())) return false;
+      if (el.form && el.matches('button:not([type="button"]):not([type="reset"]), input[type="submit"]')) return false;
+      return /:_attachIcon$/.test(el.id) || UPLOAD_TRIGGER.test(triggerText(el));
+    });
+    // The innermost of nested candidates (a link inside a focusable tile).
+    const list = found.filter((el) => !found.some((o) => o !== el && el.contains(o)));
+    const out = [];
+    for (const el of list) {
+      let box = el;
+      for (let a = el.parentElement; a && a !== doc.body; a = a.parentElement) {
+        if (list.some((o) => o !== el && a.contains(o))) break;
+        if (a.querySelector('input:not([type="hidden"]):not([type="file"]), select, textarea')) break;
+        box = a;
+      }
+      // A box that already has its file input is filled like any other, unless it is SuccessFactors' own, which
+      // only uploads once "Upload from Device" has made it.
+      const input = box.querySelector('input[type="file"]');
+      if (input && !/:_file$/.test(input.id)) continue;
+      const own = JTF.util.cleanLabel(dom().textOf(el) || el.getAttribute('aria-label') || '', 120);
+      let row = JTF.util.cleanLabel(dom().textOf(box), 300);
+      if (own && row.startsWith(own)) row = row.slice(own.length).trim();
+      else if (own) row = row.replace(own, ' ').trim();
+      const desc = {
+        kind: 'file',
+        inputType: 'file',
+        autocomplete: '',
+        maxLength: 0,
+        placeholderRaw: '',
+        options: null,
+        signals: { label: own, question: row, id: el.id || '', title: el.getAttribute('title') || '' },
+      };
+      out.push({ el, box, desc });
+    }
+    return out;
+  }
+
+  /** The "Upload from Device" choice a tile's menu or dialog just showed (never Dropbox, Google…). */
+  function deviceOption(doc, trigger, before) {
+    return (
+      Array.from(doc.querySelectorAll(MENU_ITEMS)).find((el) => {
+        if (before.has(el) || trigger.contains(el) || el.closest('[data-jtf-ui]') || !dom().isVisible(el)) return false;
+        const t = triggerText(el);
+        return t.length <= 60 && DEVICE_OPTION.test(t) && !CLOUD_OPTION.test(t);
+      }) || null
+    );
+  }
+
+  /**
+   * Put `doc` into an upload tile: click the tile, choose "Upload from Device" if it asks where the file comes
+   * from, and give the file box that makes the file. The page's own click on that box (which would open the file
+   * picker) is caught and cancelled, so no dialog opens. Returns { status: 'filled', confirmed } once the file is
+   * in (confirmed: the tile shows its name), or { status: 'nomatch' } when no file box turned up.
+   */
+  async function attachVia(trigger, doc, opts) {
+    const page = trigger.el.ownerDocument;
+    const visibleItems = new Set(Array.from(page.querySelectorAll(MENU_ITEMS)).filter((el) => dom().isVisible(el)));
+    const earlier = new Set(page.querySelectorAll('input[type="file"]'));
+    let input = null;
+    const catchPicker = (e) => {
+      const t = e.composedPath ? e.composedPath()[0] : e.target;
+      if (t && t.localName === 'input' && t.type === 'file') {
+        input = t;
+        e.preventDefault(); // the file picker stays shut
+      }
+    };
+    page.addEventListener('click', catchPicker, true);
+    let chose = null;
+    try {
+      pointerClick(trigger.el);
+      for (let waited = 0; waited < 2500 && !input; waited += 50) {
+        await sleep(50);
+        if (chose) continue;
+        chose = deviceOption(page, trigger.el, visibleItems);
+        if (chose) pointerClick(chose);
+      }
+      // A file box made but never clicked.
+      if (!input && chose) {
+        const fresh = Array.from(page.querySelectorAll('input[type="file"]')).filter((el) => !earlier.has(el));
+        input = fresh[fresh.length - 1] || null;
+      }
+    } finally {
+      page.removeEventListener('click', catchPicker, true);
+    }
+    if (!input) {
+      // Close a menu that offered nothing usable.
+      if (Array.from(page.querySelectorAll(MENU_ITEMS)).some((el) => !visibleItems.has(el) && dom().isVisible(el)))
+        key(page.activeElement || page.body, 'Escape');
+      return { status: 'nomatch' };
+    }
+    opts.history.push({ el: input, kind: 'file', prev: input.files });
+    setFile(input, doc);
+    // The tile shows the file's name (or says it uploaded) once it has.
+    const name = JTF.util.normalize(doc.name.replace(/\.[a-z0-9]+$/i, ''));
+    const shows = () => {
+      const text = JTF.util.normalize(trigger.box.isConnected ? trigger.box.textContent : page.body.textContent);
+      return (
+        (!!name && text.includes(name)) ||
+        /\b(uploaded|upload (complete|successful)|erfolgreich hochgeladen)\b/.test(text)
+      );
+    };
+    for (let waited = 0; waited < 8000 && !shows(); waited += 200) await sleep(200);
+    return { status: 'filled', confirmed: shows(), target: trigger.box };
+  }
+
   /* ------------------------------------------------------------- apply */
 
   /**
@@ -665,10 +827,11 @@
         case 'checkboxes': {
           // A list ("London, New York") ticks every match; a single answer ticks its one option; an
           // acknowledgement ticks each statement you agree to ("…you consent to our privacy statement").
-          let picks = v.kind === 'list' ? M().matchAll(desc.options, v) : [];
+          // Sanctions statements and interview slots tick each one that is true of you (or "None of the above").
+          let picks = v.kind === 'list' || v.many ? M().matchAll(desc.options, v) : [];
           if (v.consent)
             picks = desc.options.map((o, i) => (JTF.fields.isAcknowledgement(o.text) ? i : -1)).filter((i) => i >= 0);
-          if (!picks.length) {
+          if (!picks.length && !v.many) {
             const idx = M().matchOption(desc.options, v);
             picks = idx >= 0 ? [idx] : M().matchAll(desc.options, v);
           }
@@ -679,7 +842,7 @@
         }
         case 'checkbox': {
           // One option of a checklist ("London" under "Which offices…?"), or a yes/no box.
-          const tick = v.kind === 'list' ? M().matchAll(desc.options, v).length > 0 : v.canonical === 'yes';
+          const tick = v.kind === 'list' || v.many ? M().matchAll(desc.options, v).length > 0 : v.canonical === 'yes';
           if (!tick) return { status: 'skipped', reason: 'not one of your answers' };
           history.push({ el, kind, prev: isChecked(el) });
           setChecked(el, true);
@@ -817,5 +980,16 @@
     while (highlighted.length) clearOne(highlighted[0].target);
   }
 
-  JTF.fill = { apply, undo, hasValue, currentValue, highlight, clearHighlights, typeValue, peekOptions };
+  JTF.fill = {
+    apply,
+    undo,
+    hasValue,
+    currentValue,
+    highlight,
+    clearHighlights,
+    typeValue,
+    peekOptions,
+    uploadTriggers,
+    attachVia,
+  };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

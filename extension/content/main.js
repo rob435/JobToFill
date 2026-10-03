@@ -35,6 +35,44 @@
     return { fields, results: planned.results, context: planned.context };
   }
 
+  // Where application pages show the job's location: Greenhouse (new and old boards), Lever, Workday.
+  const LOCATION_LINES = [
+    '.job__location',
+    '#header .location',
+    '.posting-categories .location',
+    '.posting-header .posting-categories > :first-child',
+    '[data-automation-id="locations"] dd',
+  ];
+
+  /**
+   * Where the job is, for "Are you authorized to work in the country where this role is based?": what the extension
+   * already knew about the job in this tab, else the location line on the application page itself.
+   */
+  function jobLocation(payload) {
+    if (payload && payload.jobLocation) return payload.jobLocation;
+    try {
+      for (const selector of LOCATION_LINES) {
+        const el = document.querySelector(selector);
+        if (el && el.textContent.trim()) return U.cleanLabel(el.textContent, 200);
+      }
+      // Ashby: "Location" over it in the side pane.
+      for (const h of document.querySelectorAll('.ashby-job-posting-left-pane h2'))
+        if (/^location$/i.test(h.textContent.trim()) && h.nextElementSibling)
+          return U.cleanLabel(h.nextElementSibling.textContent, 200);
+      // A JobPosting's jobLocation in the page's JSON-LD.
+      for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+        const block = (s.textContent.match(/"jobLocation"[\s\S]{0,600}/) || [''])[0];
+        const part = (key) =>
+          (block.match(new RegExp(`"${key}"\\s*:\\s*(?:\\{[^}]*?"name"\\s*:\\s*)?"([^"]+)"`)) || [])[1];
+        const where = ['addressLocality', 'addressRegion', 'addressCountry'].map(part).filter(Boolean).join(', ');
+        if (where) return where;
+      }
+    } catch (err) {
+      /* nothing to go by */
+    }
+    return '';
+  }
+
   // "If you said yes above, please tell us more": only worth filling when the answer was yes.
   const FOLLOW_UP = /^if (yes|so|you (said|answered|selected|chose|checked|ticked) yes)\b/;
 
@@ -111,6 +149,15 @@
     const box = make('div', STYLES.toast);
     box.setAttribute('role', 'status');
     box.append(make('span', STYLES.dot), make('span', STYLES.message, message));
+    // Buttons that ask the background to do something: "Unlock" (the vault), "Set up the vault".
+    for (const a of (opts && opts.actions) || []) {
+      const button = make('button', STYLES.button, a.label);
+      button.addEventListener('click', () => {
+        send({ type: 'jtf:toast-action', action: a.action });
+        box.remove();
+      });
+      box.append(button);
+    }
     if (opts && opts.undo && state.history.length) {
       const undo = make('button', STYLES.button, 'Undo');
       undo.addEventListener('click', () => {
@@ -167,9 +214,17 @@
 
   async function fill(payload) {
     const { profile, settings } = payload;
+    state.profile = profile;
+    // A CAPTCHA's own frame (reCAPTCHA's "I'm not a robot" box): nothing in it is ever touched.
+    if (JTF.accounts.isCaptchaFrame(location.href))
+      return { url: location.href, frame: 'captcha', filled: 0, detected: 0 };
     // A fill that changes nothing keeps the previous one undoable.
     const history = [];
     const { fields, results, context } = scan(profile);
+    context.jobLocation = jobLocation(payload);
+    // On a pure sign-up page in an account flow, the sign-up form's own terms box is part of creating the account.
+    const page = JTF.flow.analyze({ fields, results });
+    const accountTerms = !!payload.accountFlow && page.kind === 'signup' && page.pure;
 
     // A username box alone doesn't need the vault; password and card boxes do.
     const needs = {
@@ -178,20 +233,25 @@
     };
     const notes = [];
     let secrets = null;
+    let vaultNeeded = null;
     if (needs.password || needs.card) {
       if (payload.vault === 'unlocked') {
         secrets = await send({
           type: 'jtf:secrets',
           password: needs.password ? (context.signup ? 'signup' : 'login') : null,
           card: needs.card,
+          // What the sign-up page says its password must be, so a new one fits it.
+          rules: needs.password && context.signup ? passwordRules(fields, results) : null,
+          portal: JTF.flow.portal(),
         });
         if (secrets && secrets.error) notes.push(secrets.error);
         if (secrets && secrets.notes) notes.push(...secrets.notes);
       } else {
+        vaultNeeded = payload.vault;
         notes.push(
           payload.vault === 'none'
             ? 'Passwords and cards need the vault: set it up in JobToFill settings.'
-            : 'The vault is locked, so passwords and cards were skipped.',
+            : 'The vault is locked, so passwords and cards were skipped. Unlock it and JobToFill fills them in.',
         );
       }
     }
@@ -216,6 +276,8 @@
       held: 0,
       docs: {},
       wantsLetter: false,
+      vaultNeeded,
+      passwordSource: (secrets && secrets.credential && secrets.credential.source) || null,
     };
     // Attaching a cover letter fills just those fields, replacing whatever is in them.
     const only = payload.only ? new Set(payload.only) : null;
@@ -236,7 +298,10 @@
           secrets,
           answer: r.answer,
           question,
-          consents: !!settings.consents,
+          options: field.desc.options,
+          consents: !!settings.consents || accountTerms,
+          // How the page writes "03/11" (interview slots).
+          dateOrder: JTF.matcher.dateOrder(field.desc),
         }),
       );
     };
@@ -245,6 +310,39 @@
     const order = fields.map((f, i) => i).sort((a, b) => (fields[b].kind === 'file') - (fields[a].kind === 'file'));
     let uploaded = false;
     let settled = false;
+
+    // Upload tiles that make their file box only once "Upload from Device" is chosen (SuccessFactors): first too.
+    for (const tile of JTF.fill.uploadTriggers(document)) {
+      const r = JTF.matcher.classify(tile.desc);
+      const def = r && JTF.fields.DEFS[r.type];
+      if (!def || !def.file) continue;
+      if (r.type === 'file.coverLetter') report.wantsLetter = true;
+      if (only && !only.has(r.type)) continue;
+      if (hold && hold.has(r.type)) {
+        report.held++;
+        continue;
+      }
+      report.detected++;
+      const label = JTF.fields.labelOf(r.type);
+      const v = await documentValue(r.type, payload, docCache);
+      if (!v) {
+        report.missing.push(label);
+        report.missingTypes.push(r.type);
+        continue;
+      }
+      const res = await JTF.fill.attachVia(tile, v.document, { history });
+      report.docs[r.type] = res.status === 'filled' ? 'filled' : report.docs[r.type] || res.status;
+      if (res.status === 'filled') {
+        report.filled++;
+        uploaded = true;
+        if (settings.highlight !== false) JTF.fill.highlight(res.target);
+        if (!res.confirmed) notes.push(`Check that your ${label.toLowerCase()} finished uploading.`);
+      } else {
+        report.failed++;
+        report.unmatched.push(label);
+        notes.push(`Couldn’t put your ${label.toLowerCase()} into its upload box: attach it by hand.`);
+      }
+    }
     // Exactly which fields were filled (a follow-up box can share its type with the question it follows), and
     // which already had an answer (an earlier fill's): a CV parse that clears either gets them put back.
     const filledKeys = new Set();
@@ -266,10 +364,15 @@
       const def = JTF.fields.DEFS[r.type];
       const label = labelFor(field, r);
       const question = U.normalize(JTF.matcher.questionText(field.desc));
-      if (def && def.consent && !settings.consents) {
+      // "If applicable, please provide a recent transcript of your graduate studies.": not for a level you haven't
+      // studied at, and nothing missing from your profile either.
+      if (def && def.file && !JTF.fields.uploadApplies(r.type, profile, question)) return null;
+      if (def && def.consent && !settings.consents && !accountTerms) {
         if (!JTF.fill.hasValue(field)) report.consents++;
         return null;
       }
+      // "I'm not a robot" is only ticked when no CAPTCHA stands behind it.
+      if (r.type === 'human' && JTF.flow.captcha(document)) return null;
       if (uploaded && !settled && field.kind !== 'file') {
         await settle();
         settled = true;
@@ -362,15 +465,63 @@
     report.undoable = state.history.length > 0;
     // Only a job application's leftovers go to the AI (never a checkout's gift message or a sign-up page).
     if (!only && context.jobContext) report.pending = await pendingQuestions(profile, context, { peek: !!payload.ai });
+    // What kind of page this is now (sign-in, sign-up, emailed code…), for signing in and creating accounts.
+    report.account = JTF.flow.analyze(scan(profile));
     return report;
+  }
+
+  /**
+   * What a sign-up page says about passwords: the help text the box points to, the text of its row, any
+   * requirements list in its form, and its minlength / maxlength / pattern.
+   */
+  function passwordRules(fields, results) {
+    const i = results.findIndex((r) => r && r.type === 'account.password');
+    if (i < 0) return null;
+    const el = fields[i].el;
+    const parts = [];
+    const text = (n) => (n && (n.innerText || n.textContent)) || '';
+    const rootNode = el.getRootNode();
+    for (const id of (el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean))
+      parts.push(text((rootNode.getElementById && rootNode.getElementById(id)) || document.getElementById(id)));
+    // The box's own row, up to where other kinds of field start.
+    let box = el.parentElement;
+    for (let a = el.parentElement, n = 0; a && a !== document.body && n < 6; a = a.parentElement, n++) {
+      const others = a.querySelectorAll(
+        'input:not([type="hidden"]):not([type="button"]):not([type="submit"]), select, textarea',
+      );
+      if (Array.from(others).some((o) => o.type !== 'password')) break;
+      box = a;
+    }
+    parts.push(text(box));
+    // Requirement lists and "Password must…" sentences anywhere in the form.
+    const scope = el.form || document;
+    const RULE_TEXT =
+      /\bpasswords? (must|should|needs?|requirements?|rules?|criteria|policy|has to|have to)\b|\b(must|should) (be|contain|include|have) at least\b|\bat least \d+ characters\b|\bminimum (of )?\d+ characters\b/i;
+    const seen = [];
+    for (const n of scope.querySelectorAll('p, li, ul, ol, div, span, small, section')) {
+      if (n.querySelector('input, select, textarea') || n.querySelectorAll('*').length > 30) continue;
+      if (seen.some((s) => s.contains(n))) continue;
+      const t = text(n);
+      if (t.length < 600 && RULE_TEXT.test(t)) {
+        seen.push(n);
+        parts.push(t);
+      }
+    }
+    return {
+      text: [...new Set(parts.map((t) => t.trim()).filter(Boolean))].join('\n').slice(0, 4000),
+      minLength: el.minLength > 0 ? el.minLength : 0,
+      maxLength: el.maxLength > 0 ? el.maxLength : 0,
+      pattern: el.getAttribute('pattern') || '',
+    };
   }
 
   /* ----------------------------------------------------------- AI answers */
 
   // Never for the AI: what only the profile knows or the person decides (contact details, diversity answers,
   // declarations), secrets, uploads, and a cover letter (the letter writer does those).
+  // Sanctions declarations and interview slots too: left for you when your profile can't tell.
   const NOT_FOR_AI =
-    /^(name\.|email$|phone|address\.|links\.|dob$|age$|pronouns$|account\.|cc\.|file\.|consent$|eeo\.|coverLetter$|job\.salary$)/;
+    /^(name\.|email$|phone|address\.|links\.|dob$|age$|pronouns$|account\.|otp$|human$|cc\.|file\.|consent$|eeo\.|coverLetter$|job\.salary$|compliance\.sanctions$|job\.availability$)/;
   const FOLLOW_ON = /^(if|please (specify|explain|state|give|provide)|other\b|specify)\b/;
   const MAX_PENDING = 40;
 
@@ -402,6 +553,7 @@
           part: r.part,
           kind: field.kind,
           question: q,
+          options: field.desc.options,
         });
         // A follow-up after a "No" ("If yes, give details") or a box the profile said no to stays empty.
         if (v && (field.kind === 'checkbox' || (FOLLOW_UP.test(q) && !JTF.fields.followUpAnswer(v, field.kind))))
@@ -579,7 +731,7 @@
       if (def) {
         if (def.secret || JTF.fields.DATE_TYPES.has(r.type) || r.part) return;
         let path = def.path;
-        if (!path && def.list && (profile[def.list] || [])[r.index || 0] && def.key !== 'current')
+        if (!path && def.list && (profile[def.list] || [])[r.index || 0] && def.key !== 'current' && !def.derived)
           path = `${def.list}.${r.index || 0}.${def.key}`;
         if (!path || !U.isBlank(U.getPath(profile, path))) return;
         if (seen.has(path)) return;
@@ -607,6 +759,7 @@
     }
     const { profile } = payload;
     const { fields, results, context } = scan(profile);
+    context.jobLocation = jobLocation(payload);
     const { layer } = ui();
     state.overlay = [];
     let detected = 0;
@@ -618,7 +771,12 @@
       if (def) {
         detected++;
         text = labelFor(field, r) + (r.index ? ` #${r.index + 1}` : '') + (r.part ? ` (${r.part})` : '');
-        if (def.file) status = payload.docs && payload.docs[def.file] ? 'ok' : 'empty';
+        const question = U.normalize(JTF.matcher.questionText(field.desc));
+        if (def.file)
+          status =
+            payload.docs && payload.docs[def.file] && JTF.fields.uploadApplies(r.type, profile, question)
+              ? 'ok'
+              : 'empty';
         else if (def.secret) status = 'vault';
         else if (def.consent) status = payload.settings && payload.settings.consents ? 'ok' : 'unknown';
         else {
@@ -627,7 +785,8 @@
             part: r.part,
             kind: field.kind,
             answer: r.answer,
-            question: U.normalize(JTF.matcher.questionText(field.desc)),
+            question,
+            options: field.desc.options,
           });
           status = JTF.fields.resolve(r.type, profile, ctx) ? 'ok' : 'empty';
         }
@@ -703,12 +862,27 @@
     }
   }
 
+  /* ------------------------------------------------- sign-in and sign-up */
+
+  // The background drives signing in and creating accounts (and checks every step); these read the page and
+  // click its own controls. Clicks only happen through JTF.flow.click(), which re-checks everything.
+  const accountScan = (payload) => scan((payload && payload.profile) || state.profile || null);
+
   const api = {
     version: 1,
     fill,
     applyAnswers,
+    accountState: (payload) => JTF.flow.analyze(accountScan(payload)),
+    accountClick(which, payload) {
+      const res = JTF.flow.click(which, accountScan(payload));
+      return Object.assign({}, res, { state: res.state ? { kind: res.state.kind, ready: res.state.ready } : null });
+    },
+    accountWait: (token, payload) =>
+      JTF.flow.wait(token, () => accountScan(payload), (payload && payload.timeout) || 5 * 60e3),
+    accountStop: () => JTF.flow.stopWait(),
     async pending(payload) {
       const { context } = scan(payload.profile);
+      context.jobLocation = jobLocation(payload);
       return { items: await pendingQuestions(payload.profile, context, { peek: !!payload.ai }) };
     },
     hold,

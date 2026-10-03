@@ -194,10 +194,21 @@ async function firefoxDriver() {
 
 /* ---------------------------------------------------------------- harness */
 
+/** The service worker is announced before its scripts have run: wait until background.js has (its last line). */
+async function backgroundReady(driver) {
+  const ready = () => !!(globalThis.JTF && globalThis.JTF.store && globalThis.JTFBackground);
+  for (let i = 0; i < 100; i++) {
+    if (await driver.bg(ready).catch(() => false)) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error('The extension’s background never finished starting.');
+}
+
 export async function launch() {
   const server = await serve(0);
   const port = server.address().port;
   const driver = isFirefox ? await firefoxDriver() : await chromiumDriver();
+  await backgroundReady(driver);
   await driver.bg(() => globalThis.JTF.store.loadAll());
   // Tests that want the automatic backup file switch it on themselves.
   await driver.bg(() => globalThis.JTF.store.saveSettings({ autoBackup: false }));

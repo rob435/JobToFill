@@ -3,7 +3,7 @@ import { $, $$, api, el, hasSiteAccess, requestSiteAccess } from '../ui/common.j
 import { renderBackup, renderHistory, renderSettings } from './app.js';
 import { renderEmail } from './email.js';
 import { renderLetters } from './letters.js';
-import { DEGREES, PROFILE_SECTIONS } from './profile.js';
+import { CLASSIFICATIONS, DEGREES, PROFILE_SECTIONS } from './profile.js';
 import { renderVault } from './vault.js';
 
 const { store, geo } = globalThis.JTF;
@@ -175,6 +175,7 @@ function onStorageChanged(changes, area) {
 async function init() {
   $('#countries').append(...geo.COUNTRIES.map((c) => el('option', { value: c[2] })));
   $('#degrees').append(...DEGREES.map((d) => el('option', { value: d })));
+  $('#classifications').append(...CLASSIFICATIONS.map(([value, label]) => el('option', { value, label })));
 
   window.addEventListener('hashchange', () => show(location.hash.slice(1)).then(() => window.scrollTo(0, 0)));
   document.addEventListener('visibilitychange', () => saveTimer && saveNow());

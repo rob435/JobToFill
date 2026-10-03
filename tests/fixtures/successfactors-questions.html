@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8" />
+    <title>Analyst Intern – SAP SuccessFactors application replica</title>
+    <style>
+      body { font: 15px/1.4 system-ui, sans-serif; margin: 32px auto; max-width: 720px; }
+      .sfField { margin: 14px 0; display: grid; gap: 4px; }
+      label { font-weight: 600; }
+      .required { color: #b00; }
+    </style>
+  </head>
+  <body>
+    <!-- Modelled on a SuccessFactors career-site application (Moody's): "Job-Specific Information" / "APPLICATION
+         QUESTIONS", every dropdown starting on "No Selection", a "*" before each required question. -->
+    <form id="career-application">
+      <h2>Job-Specific Information</h2>
+      <h3>APPLICATION QUESTIONS</h3>
+      <div class="sfField">
+        <label for="q_comm"><span class="required">*</span> What is your communication preference?</label>
+        <select id="q_comm" name="communicationPreference">
+          <option value="">No Selection</option>
+          <option value="1">Phone</option>
+          <option value="2">Email</option>
+          <option value="3">Text Message</option>
+        </select>
+      </div>
+      <div class="sfField">
+        <label for="q_rel"><span class="required">*</span> Do you have a Personal Relationship with a current employee of Moody's or one of its affiliates or subsidiaries? Individuals in a Personal Relationship are defined as follows: relatives (through marriage, domestic partnership, or adoption); domestic partners; individuals cohabitating and sharing responsibilities; and/or individuals in a romantic and/or sexual relationship.</label>
+        <select id="q_rel" name="personalRelationship">
+          <option value="">No Selection</option>
+          <option value="Y">Yes</option>
+          <option value="N">No</option>
+        </select>
+      </div>
+      <div class="sfField">
+        <label for="q_rel_name"><span class="required">*</span> If you selected 'Yes' to the previous question, what is the name of the employee with whom you have a Personal Relationship? Otherwise, enter N/A.</label>
+        <input id="q_rel_name" name="personalRelationshipName" type="text" maxlength="255" />
+      </div>
+      <div class="sfField">
+        <label for="q_source"><span class="required">*</span> How did you hear about us? If not applicable, select not applicable</label>
+        <select id="q_source" name="source">
+          <option value="">No Selection</option>
+          <option value="na">Not Applicable</option>
+          <option value="career">Moody's Careers Website</option>
+          <option value="fair">Career Fair / University Event</option>
+          <option value="li">LinkedIn</option>
+          <option value="indeed">Indeed</option>
+          <option value="ref">Employee Referral</option>
+        </select>
+      </div>
+      <div class="sfField">
+        <label for="q_sanctions"><span class="required">*</span> Are you a citizen or resident of Cuba, Iran, North Korea, Syria, or the Crimea region of Ukraine?</label>
+        <select id="q_sanctions" name="sanctionedCountry">
+          <option value="">No Selection</option>
+          <option value="Y">Yes</option>
+          <option value="N">No</option>
+        </select>
+      </div>
+      <div class="sfField">
+        <label for="q_avail">Please describe your availability for interviews</label>
+        <textarea id="q_avail" name="interviewAvailability" rows="2"></textarea>
+      </div>
+    </form>
+  </body>
+</html>

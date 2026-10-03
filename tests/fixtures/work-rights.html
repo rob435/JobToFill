@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Trading Intern at Acme - Greenhouse-style application</title>
+  <style>
+    body { font: 14px system-ui; max-width: 720px; margin: 24px auto; }
+    .field { margin: 10px 0; display: grid; gap: 4px; }
+  </style>
+</head>
+<body>
+  <div class="job__title"><h1>Trading Intern</h1></div>
+  <div class="job__location"><div>New York, NY</div></div>
+  <form id="application_form">
+    <div class="field"><label for="first_name">First Name</label>
+      <input type="text" id="first_name" name="job_application[first_name]"></div>
+    <div class="field"><label for="q_based">Are you legally authorized to work in the country where this role is based?</label>
+      <select id="q_based"><option value="">--</option><option>Yes</option><option>No</option></select></div>
+    <div class="field"><label for="q_sponsor">Will you now or in the future require sponsorship for employment visa status?</label>
+      <select id="q_sponsor"><option value="">--</option><option>Yes</option><option>No</option></select></div>
+    <div class="field"><label for="q_context">Is there any other context you’d like to share about your immigration sponsorship needs?</label>
+      <textarea id="q_context"></textarea></div>
+    <fieldset>
+      <legend>Are you authorized to work in the United States?</legend>
+      <label><input type="radio" name="q_us" id="us-later" value="1"> Yes, but I will need visa sponsorship in the future</label>
+      <label><input type="radio" name="q_us" id="us-yes" value="2"> Yes</label>
+      <label><input type="radio" name="q_us" id="us-no" value="3"> No, I can't legally work in the US yet</label>
+    </fieldset>
+    <div class="field"><label for="q_london">Are you located in London?</label>
+      <select id="q_london"><option value="">--</option><option>Yes</option><option>No</option></select></div>
+  </form>
+</body>
+</html>

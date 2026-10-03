@@ -140,6 +140,9 @@
     const j = profile.job || {};
     const c = profile.compliance || {};
     const p = profile.personal || {};
+    // As forms get them: a blank "How did you hear" is LinkedIn; interview slots in words ("Weekdays, 8am–8pm").
+    const source = JTF.fields.resolve('job.referralSource', profile, {});
+    const slots = JTF.fields.resolve('job.availability', profile, { kind: 'text' });
     const rights = JTF.fields
       .workCountries(profile)
       .map((code) => (JTF.geo.COUNTRIES.find((r) => r[0] === code) || [code, '', code])[2])
@@ -156,7 +159,8 @@
       j.startDate && `Available to start from: ${j.startDate}`,
       j.noticePeriod && `Notice period: ${j.noticePeriod}`,
       j.otherOffers && `Other offers or deadlines: ${j.otherOffers}`,
-      j.referralSource && `Where they found this job: ${j.referralSource}`,
+      source && `Where they found this job: ${source.text}`,
+      slots && `Available for interviews: ${slots.text}`,
       j.clearance && `Security clearance held: ${j.clearance}`,
       j.clearanceEligible && `Could obtain security clearance: ${j.clearanceEligible}`,
       j.adjustments && `Needs adjustments in the recruitment process: ${j.adjustments}`,

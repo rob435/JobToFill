@@ -331,14 +331,15 @@ test('student and graduate-scheme questions', () => {
   assert.equal(ask('When does your course finish?'), 'edu.end');
   assert.equal(ask('When are you graduating?'), 'edu.end');
   assert.equal(ask('Did you graduate?', 'radio', ['Yes', 'No']), null);
-  assert.equal(ask('High school graduation year'), null, 'school leaving year is not your degree');
-  assert.equal(ask('A level completion year'), null);
+  // A school-leaving year is a date too, answered from a school entry (eduLevelOf), never the degree's.
+  assert.equal(ask('High school graduation year'), 'edu.end');
+  assert.equal(ask('A level completion year'), 'edu.end');
   assert.equal(ask('What year of study are you in?', 'select', years), 'edu.year');
   assert.equal(ask('Current year of study', 'select', years), 'edu.year');
   assert.equal(ask('Class standing', 'select', ['Freshman', 'Sophomore', 'Junior', 'Senior']), 'edu.year');
   assert.equal(ask('Year of university entry', 'select'), null, 'the year you started is not your year of study');
-  assert.equal(ask('Degree classification', 'select', ['First', '2:1', '2:2']), 'edu.gpa');
-  assert.equal(ask('Predicted degree class', 'select', ['First', '2:1', '2:2']), 'edu.gpa');
+  assert.equal(ask('Degree classification', 'select', ['First', '2:1', '2:2']), 'edu.classification');
+  assert.equal(ask('Predicted degree class', 'select', ['First', '2:1', '2:2']), 'edu.classification');
   // Social-mobility questions mention "school" but ask about your background, not your university.
   assert.equal(ask('Did you receive free school meals?', 'select', ['Yes', 'No']), 'eeo.freeSchoolMeals');
   assert.equal(
@@ -443,7 +444,7 @@ test('real screening questions from graduate application forms', () => {
     'not a school',
   );
   assert.equal(ask('Have you attended a university?'), null);
-  assert.equal(ask('Please specify the grading scale used by your current school.'), null);
+  assert.equal(ask('Please specify the grading scale used by your current school.'), 'edu.gpaScale', 'not the school');
   // Not a sponsorship, relocation or salary question just because a word appears.
   assert.equal(
     ask(
@@ -530,10 +531,14 @@ test('education questions from graduate application forms', () => {
     ask('What is your graduation year (class of 2030 and 2031 undergraduate degrees will not be considered)?'),
     'edu.end:year',
   );
-  assert.equal(ask('Are you an undergraduate student?', 'select', ['Yes', 'No']), null);
+  assert.equal(ask('Are you an undergraduate student?', 'select', ['Yes', 'No']), 'edu.enrolled', 'at that level');
   assert.equal(ask('What year do you plan on finishing your university studies?'), 'edu.end:year');
   assert.equal(ask('In which year will you/ did you leave academia?'), 'edu.end:year');
-  assert.equal(ask('Please indicate the maximum possible score/GPA at your institution, if applicable.', 'text'), null);
+  assert.equal(
+    ask('Please indicate the maximum possible score/GPA at your institution, if applicable.', 'text'),
+    'edu.gpaScale',
+    'what a GPA is out of, never the GPA',
+  );
   assert.equal(
     ask('What are you on track to receive/ did you receive in your Undergraduate degree?', 'select', [
       'First Class',
@@ -541,7 +546,7 @@ test('education questions from graduate application forms', () => {
       'Lower-Second Class',
       'Third Class',
     ]),
-    'edu.gpa',
+    'edu.classification',
   );
   assert.equal(ask('What is the approximate date that you could start?', 'text'), 'job.startDate');
   assert.equal(
@@ -607,6 +612,61 @@ test('help text and wrapper ids do not make a phone field', () => {
     typeOf(desc({ label: 'Country code' }, { kind: 'select', options: opts('+1', '+44') })),
     'phone.countryCode',
   );
+});
+
+test('live survey (Glasgow undergraduate): a box for the whole number, code included, is the phone, not its code', () => {
+  const type = (label, kind = 'text') => typeOf(desc(label, { kind, inputType: kind }));
+  for (const label of [
+    'Mobile number (inc. country code)',
+    'Mobile number (inc country code)',
+    'Telephone number (with international dialling code)',
+    'Mobile phone number including international dialling code',
+    'Phone number, including country and area code',
+    'Mobile phone number (country code + number)',
+    'Mobile Number (+CountryCode)',
+    'Mobile (incl. dialling code)',
+    'Mobile Number (incl. international code)',
+    'Mobile number including area code',
+    'Phone number (country code first)',
+    'Phone (+44…)',
+    'Phone (mobile or landline)',
+    'WhatsApp number',
+    'Home telephone number',
+  ])
+    assert.equal(type(label), 'phone', label);
+  assert.equal(type('Mobile number (inc. country code)', 'tel'), 'phone');
+  assert.equal(type('Mobile (incl. dialling code)', 'number'), 'phone');
+  // A box of its own for the code still is one; an area code or a texted code is no phone number.
+  for (const label of [
+    'Country code',
+    'Phone country code',
+    'Dialling code',
+    'International dialling code',
+    'Phone number country code',
+    'Mobile Phone Country Code',
+  ])
+    assert.equal(type(label), 'phone.countryCode', label);
+  assert.equal(
+    typeOf(desc('Country/Region Code:*', { kind: 'select', options: opts('- Select -', 'UNITED KINGDOM (+44)') })),
+    'phone.countryCode',
+  );
+  assert.equal(type('Phone area code'), null);
+  assert.equal(type('Area code'), null);
+  assert.equal(type('Mobile verification code'), 'otp');
+  // Another number than your mobile is left empty, in a tel box too.
+  for (const label of [
+    'Alternative phone number',
+    'Secondary phone',
+    'Other phone',
+    'Mobile number (if different from above)',
+    'Landline',
+    'Home phone (landline)',
+  ])
+    assert.equal(type(label), null, label);
+  assert.equal(type('Alternative phone number', 'tel'), null);
+  // Names are still names.
+  assert.equal(type('First name (as on passport)'), 'name.first');
+  assert.equal(type('First'), 'name.first');
 });
 
 test('salary currency and pay period boxes are not the salary; a green card is not a payment card', () => {
@@ -751,7 +811,10 @@ test('round 2 (US tech / EU finance Greenhouse forms): what each question really
     null,
   );
   assert.equal(ask('Do you have a portfolio? Please share the link', 'text'), 'links.portfolio');
-  assert.equal(ask("Could you please provide your Bachelor's degree classification?", 'combobox'), 'edu.gpa');
+  assert.equal(
+    ask("Could you please provide your Bachelor's degree classification?", 'combobox'),
+    'edu.classification',
+  );
   assert.equal(ask('Could you relocate to London?', 'combobox', yn), 'job.relocate');
   // Examples don't say what the question asks for.
   assert.equal(
@@ -1105,4 +1168,352 @@ test('a privacy notice to "acknowledge/confirm" is an acknowledgement however th
   const v = fields.resolve('consent', {}, { consents: true });
   assert.equal(matcher.matchOption(opts('Please select', 'Acknowledge/Confirm'), v), 1);
   assert.equal(matcher.matchOption(opts('Yes', 'No'), v), 0);
+});
+
+test('SuccessFactors account pages: "Country/Region Code", "Country/Region of Residence" and their kin', () => {
+  const sel = (label) => typeOf(desc(label, { kind: 'select', options: opts('- Select -', 'FRANCE', 'GERMANY') }));
+  // Real SuccessFactors labels (Moody's "Create an Account").
+  assert.equal(sel('Country/Region Code:*'), 'phone.countryCode');
+  assert.equal(sel('Country/Region of Residence:*'), 'address.country', 'a country, not a state or region');
+  assert.equal(typeOf(desc({ aria: 'Country/Region of Residence' }, { kind: 'select' })), 'address.country');
+  for (const label of ['Country/Region', 'Country or Region', 'Country / Territory', 'Country and Region'])
+    assert.equal(sel(label), 'address.country', label);
+  for (const label of ['Mobile Phone Country Code', 'Phone Country/Region Code', 'Country / Region Dialing Code'])
+    assert.equal(sel(label), 'phone.countryCode', label);
+  // A state is still a state, and Workday's "countryRegion" id is its state box.
+  for (const label of ['State / Province / Region', 'Region', 'State/Territory'])
+    assert.equal(sel(label), 'address.state', label);
+  assert.equal(typeOf(desc({ attrs: 'addressSection_countryRegion' }, { kind: 'combo' })), 'address.state');
+});
+
+test('account pages: retyped emails, chosen and retyped passwords, passcodes, "I’m not a robot"', () => {
+  const pw = (label) => typeOf(desc(label, { kind: 'password', inputType: 'password' }));
+  for (const label of ['Retype Email Address:*', 'Confirm Email', 'Re-enter email', 'Verify email address'])
+    assert.equal(typeOf(desc(label)), 'email', label);
+  for (const label of ['Choose Password:*', 'Create Password', 'New Password', 'Password'])
+    assert.equal(pw(label), 'account.password', label);
+  for (const label of [
+    'Retype Password:*',
+    'Re-enter password',
+    'Verify New Password',
+    'Confirm New Password',
+    'Repeat password',
+  ])
+    assert.equal(pw(label), 'account.passwordConfirm', label);
+  // SuccessFactors' emailed passcode box is type="password": the code, never your password.
+  assert.equal(pw('*Passcode:'), 'otp');
+  assert.equal(pw('One-Time Password'), 'otp');
+  assert.equal(typeOf(desc('Verification code')), 'otp');
+  assert.equal(typeOf(desc('Enter the 6-digit code')), 'otp');
+  assert.equal(typeOf(desc('Security code')), 'cc.cvc', 'a card’s security code is not an emailed code');
+  assert.equal(typeOf(desc('Promo code')), null);
+  // A plain checkbox, never a CAPTCHA widget's ARIA box.
+  const box = (label, inputType) => typeOf(desc(label, { kind: 'checkbox', inputType }));
+  assert.equal(box("I'm not a robot", 'checkbox'), 'human');
+  assert.equal(box('Confirm you are human', 'checkbox'), 'human');
+  assert.equal(box("I'm not a robot", 'div'), null);
+});
+
+test('UK education questions: courses are what you study, never the university (Teamtailor: Alloyed)', () => {
+  const ask = (label, kind, options) =>
+    typeOf(desc({ label }, { kind: kind || 'text', options: options ? opts(...options) : null }));
+  // Teamtailor labels end in a screen-reader "Required"; the dropdown is a menu button.
+  assert.equal(ask('University: Required', 'combo'), 'edu.school');
+  for (const label of [
+    'University Course',
+    'University Course Required',
+    'Course',
+    'Course title',
+    'Course studied',
+    'Name of course',
+    'Programme name',
+    'Course / subject',
+    'Which course are you studying?',
+    'Which university course are you studying?',
+  ])
+    assert.equal(ask(label), 'edu.field', label);
+  assert.equal(ask('Degree course'), 'edu.degree', 'a text box gets "BSc in Computer Science"');
+  assert.equal(ask('When does your course finish?'), 'edu.end');
+  assert.equal(ask('Relevant courses'), null, 'a list of courses is not your degree subject');
+  assert.equal(ask('Course code'), null);
+  // "Other" boxes after a school list are for a school the list didn't have.
+  for (const label of [
+    'University (if other, please specify)',
+    'University (Other)',
+    'Other university',
+    'School name (if not listed)',
+  ])
+    assert.equal(ask(label), null, label);
+});
+
+test('degree classification is its own question; A-levels, UCAS points and a role classification are not', () => {
+  const ask = (label, kind, options) =>
+    typeOf(desc({ label }, { kind: kind || 'text', options: options ? opts(...options) : null }));
+  for (const label of [
+    'Expected/Achieved Degree Classification',
+    'Predicted degree classification',
+    'Expected/achieved grade',
+    'Degree result',
+    'Final degree grade (or predicted)',
+    'What degree classification do you expect to achieve?',
+    'Degree class',
+    'Honours',
+    'Expected honours',
+  ])
+    assert.equal(ask(label), 'edu.classification', label);
+  assert.equal(
+    ask('Expected/Achieved Degree Classification', 'combo'),
+    'edu.classification',
+    '"degree" in the label never makes it the degree',
+  );
+  assert.equal(
+    ask('What did you receive in your degree?', 'select', ['First Class Honours (1st)', '2:1', '2:2', 'Third']),
+    'edu.classification',
+  );
+  assert.equal(ask('Grade', 'select', ['1st', '2:1', '2:2', 'Pass']), 'edu.classification');
+  assert.equal(ask('A-level grades'), 'edu.gpa', 'answered from a school entry, never the degree class');
+  assert.equal(ask('Predicted A-level grades'), 'edu.gpa');
+  assert.equal(ask('UCAS points'), null);
+  assert.equal(ask('GPA'), 'edu.gpa');
+  assert.equal(ask('Overall Result (GPA)'), 'edu.gpa', 'Workday asks for the GPA');
+  assert.equal(
+    ask(
+      'Graduate Engineer / Summer Internship Please select which role classification you would like to progress with.',
+      'radio',
+      ['Graduate Engineer', 'Summer Internship'],
+    ),
+    null,
+  );
+  assert.equal(ask('Year of study', 'select', ['1st year', '2nd year', 'Final year']), 'edu.year');
+  assert.equal(ask('Year of graduation'), 'edu.end:year');
+});
+
+test('UK degree classes however a list spells them', () => {
+  const cases = {
+    'First Class Honours (1st)': 'first',
+    '1st': 'first',
+    'First / 1st': 'first',
+    '70%+ - First class honours': 'first',
+    'Upper Second Class Honours (2:1)': 'upper',
+    '2:1': 'upper',
+    2.1: 'upper',
+    '2(i)': 'upper',
+    '2i': 'upper',
+    'Upper Second (2:1) – predicted': 'upper',
+    'Upper-Second Class': 'upper',
+    '60-69% - Second class honours: Grade 1': 'upper',
+    'Second Class Honours (Upper Division)': 'upper',
+    'Lower Second Class Honours (2:2)': 'lower',
+    '2(ii)': 'lower',
+    '2ii': 'lower',
+    2.2: 'lower',
+    'Third Class Honours': 'third',
+    '3rd': 'third',
+    'Ordinary/Pass': 'pass',
+    Pass: 'pass',
+    Distinction: 'distinction',
+    Merit: 'merit',
+    Other: null,
+    'N/A – not yet known': null,
+    '3.00 - 3.49': null,
+    '2.1 - 2.5': null,
+    'First name': null,
+    'Third party': null,
+  };
+  for (const [text, want] of Object.entries(cases)) assert.equal(fields.degreeClassOf(text), want, text);
+});
+
+test('where a school or employer is: country and city questions inside an entry (SuccessFactors)', () => {
+  const ask = (label, kind, options) =>
+    typeOf(desc({ label }, { kind: kind || 'text', options: options ? opts(...options) : null }));
+  const countries = ['No Selection', 'France', 'United Kingdom'];
+  assert.equal(ask('Country of School', 'select', countries), 'edu.country');
+  assert.equal(ask('School Country', 'select', countries), 'edu.country');
+  assert.equal(ask('Institution country', 'select', countries), 'edu.country');
+  assert.equal(ask('Country where you obtained your degree', 'select', countries), 'edu.country');
+  assert.equal(ask('Country of Employer', 'select', countries), 'exp.country');
+  assert.equal(ask('In which country do you want to work?', 'select', countries), 'address.country');
+  for (const label of ['State/City/Region of School', 'City of School', 'School Location', 'School City/State'])
+    assert.equal(ask(label), 'edu.location', label);
+  assert.equal(ask('From Date'), 'gen.start');
+  assert.equal(ask('Expected or Completed Graduation'), 'edu.end');
+  assert.equal(ask('School (Please use the full name, for example, University of Connecticut)'), 'edu.school');
+});
+
+test('live survey (British student in Glasgow): residence, commuting, UK visa and citizenship questions', () => {
+  const yn = ['Yes', 'No'];
+  const ask = (q, kind = 'select', o = yn) => typeOf(desc(q, { kind, options: o ? opts(...o) : null }));
+  // Where you live: "located / based / living in" a place.
+  assert.equal(ask('Are you located in London?'), 'location.in');
+  assert.equal(ask('Are you based in the UK?'), 'location.in');
+  assert.equal(ask('Are you currently living in the UK?'), 'location.in');
+  assert.equal(ask('Do you currently reside in the United Kingdom?'), 'location.in');
+  assert.equal(ask('Are you based in the UK?', 'text', null), 'location.in', 'a yes/no question, not your location');
+  assert.equal(ask('Where are you currently based?', 'text', null), 'location');
+  assert.equal(ask('Have you been continually resident in the UK for the last 5 years?'), null);
+  // Commuting, and willingness to work somewhere in particular.
+  assert.equal(ask('Are you able to commute into our London office?'), 'location.commute');
+  assert.equal(ask('Do you live within commuting distance of our London office?'), 'location.commute');
+  assert.equal(ask('Are you able to commute into our Rowayton, CT and/or New York, NY offices?'), 'location.commute');
+  assert.equal(
+    ask(
+      'Confirm that you will be able to commute to and from our HQ in the South Bay Area of Los Angeles through your full internship duration.',
+    ),
+    'location.commute',
+  );
+  assert.equal(ask('Willing to work in London?'), 'job.workIn');
+  assert.equal(ask('Are you willing to work in London?'), 'job.workIn');
+  assert.equal(ask('Would you be willing to be based in our London office?'), 'job.workIn');
+  assert.equal(ask('Are you willing to work onsite at our Chicago office 5 days a week?'), 'job.workIn');
+  // Unchanged: the office in general, relocation, and permission.
+  assert.equal(ask('Are you willing to work in the office 5 days a week?'), 'job.onsite');
+  assert.equal(ask('Are you willing to work in-person for 12 weeks during the internship?'), 'job.onsite');
+  assert.equal(
+    ask('Are you currently based in the Los Angeles area or willing to relocate to the Los Angeles area?'),
+    'job.relocate',
+  );
+  assert.equal(
+    ask(
+      'This role is based onsite at our Cheltenham office. Please confirm you are happy to relocate or commute to this location?',
+      'radio',
+    ),
+    'job.relocate',
+  );
+  assert.equal(ask('Are you able to work in London?'), 'job.authorized');
+  // UK visas and citizenship.
+  assert.equal(ask('Do you hold a valid UK visa?'), 'job.visa');
+  assert.equal(
+    ask('Do you currently hold a UK visa?', 'select', ['Yes', 'No', 'Not applicable – British/Irish citizen']),
+    'job.visa',
+  );
+  assert.equal(ask('Do you hold a visa that allows you to work in the UK?'), null, 'that asks for your right to work');
+  assert.equal(ask('Visa type (if applicable)', 'text', null), null);
+  assert.equal(
+    ask('What is your immigration status in the UK?', 'select', [
+      'British citizen',
+      'Settled status',
+      'Skilled Worker visa',
+    ]),
+    'job.authorized',
+  );
+  assert.equal(ask('Do you hold British citizenship?'), 'citizen');
+  assert.equal(ask('Do you have a British passport?'), 'citizen');
+  assert.equal(ask('Do you hold any other citizenships?'), null);
+  // The sanctions questions are not citizenship yes/no questions: they are sanctions declarations.
+  assert.equal(
+    ask(
+      'Do you hold citizenship or permanent residency in any of the following countries: Cuba, Iran, North Korea, Syria?',
+    ),
+    'compliance.sanctions',
+  );
+  assert.equal(
+    ask('Citizen or permanent resident of Cuba, Iran, North Korea, Syria, or the Crimea region', 'checkboxes', yn),
+    'compliance.sanctions',
+  );
+  // "Is there any other context…?" about sponsorship is still a sponsorship question.
+  assert.equal(
+    ask(
+      'Is there any other context you’d like to share about your U.S. Immigration sponsorship needs?',
+      'textarea',
+      null,
+    ),
+    'job.sponsorship',
+  );
+});
+
+test('live survey (Glasgow undergraduate): what each education and background question asks', () => {
+  const ask = (label, kind, options) =>
+    typeOf(desc({ label }, { kind: kind || 'text', options: options ? opts(...options) : null }));
+  const yn = ['Yes', 'No'];
+  const cases = [
+    // A box for what the list didn't have (IMC), never another answer.
+    ['If your year of graduation is not listed, please specify.', null],
+    ['If latest field of study is not listed, please specify.', null],
+    ['If current year of studies is not listed, please specify.', null],
+    ['If residing in another country, please specify.', null],
+    // School-level questions (answered from a school entry).
+    ['What grades did you achieve in your secondary education?', 'edu.gpa'],
+    ['What A Level grades (or International Equivalent) did you achieve?', 'edu.gpa'],
+    ['Highers / Advanced Highers results', 'edu.gpa'],
+    ['Name of secondary school', 'edu.school'],
+    ['What year did you graduate from high school?', 'edu.end:year'],
+    ['Year of completion of A-levels', 'edu.end:year'],
+    ['UCAS points', null],
+    // Workday's education dates.
+    ['From (Actual)', 'gen.start'],
+    ['To (Actual or Expected)', 'gen.end'],
+    ['End Date (or expected)', 'gen.end'],
+    ['GPA Scale', 'edu.gpaScale'],
+    ["If you are in your first year of studies and yet to receive your results, please type 'N/A'", null],
+    ['Current city', 'location'],
+    ['Which city are you based in?', 'location'],
+    [
+      'Please disclose below whether AI tools were used to generate all or a significant portion of the submitted code sample.',
+      null,
+    ],
+  ];
+  for (const [label, want] of cases) assert.equal(ask(label), want, label);
+  const choices = [
+    ['Are you currently an undergraduate student?', yn, 'edu.enrolled'],
+    ['Are you a final year student?', yn, 'edu.year'],
+    ['Are you a penultimate year student?', yn, 'edu.year'],
+    ['Do you have a 2:1 or above (or equivalent)?', yn, 'edu.classAtLeast'],
+    ['Are you predicted at least a 2:1?', yn, 'edu.classAtLeast'],
+    ['Have you achieved or are you on track for a First or 2:1?', yn, 'edu.classAtLeast'],
+    ['Minimum 2:1 required — do you meet this?', yn, 'edu.classAtLeast'],
+    ['Do you expect to graduate with honours?', yn, 'edu.classAtLeast'],
+    ['When did you graduate from High School?', ['2021', '2022', '2023'], 'edu.end:year'],
+    [
+      'Please specify the grading scale used by your current school.',
+      ['4.0 Scale', 'UK Grading System'],
+      'edu.gpaScale',
+    ],
+    [
+      'Which socio-economic background do you identify with?',
+      ['Professional', 'Intermediate', 'Working class'],
+      'eeo.socioEconomic',
+    ],
+    ['State (If N/A, Select Other)', ['AL', 'AK', 'AZ', 'Other'], 'address.state'],
+    [
+      'This role requires that you are willing to relocate to one of the following locations New York, NY, USA or San Francisco, CA, USA. Please confirm that you are willing to relocate for this role?',
+      yn,
+      'job.relocate',
+    ],
+    [
+      'Are you in your penultimate year of your master’s or bachelor’s degree, and graduating in 2028?',
+      yn,
+      'edu.end:year',
+    ],
+  ];
+  for (const [label, options, want] of choices) assert.equal(ask(label, 'select', options), want, label);
+  assert.equal(
+    ask(
+      'If you would like to share a file of your code sample, please upload here. You can upload your sample as a .zip file.',
+      'file',
+    ),
+    null,
+  );
+});
+
+test('ordinal lists that are not degree classes: dates, rankings, years of study', () => {
+  const ask = (label, options) => typeOf(desc(label, { kind: 'select', options: opts(...options) }));
+  // "1st" and "First" open these options too, but they rank or date something else.
+  assert.notEqual(
+    ask('Which intake would you like?', ['1st June 2027', '1st July 2027', '1st September 2027']),
+    'edu.classification',
+  );
+  assert.notEqual(ask('Rank this office', ['First choice', 'Second choice', 'Third choice']), 'edu.classification');
+  assert.notEqual(ask('Preference', ['1st preference', '2nd preference', '3rd preference']), 'edu.classification');
+  assert.notEqual(ask('Status', ['First year', 'Second year', 'Third year', 'Final year']), 'edu.classification');
+  // Real class lists still are, with or without a label.
+  assert.equal(ask('Expected degree', ['First', '2:1', '2:2']), 'edu.classification');
+  assert.equal(
+    ask('Result', [
+      'First Class Honours (1st)',
+      'Upper Second Class Honours (2:1)',
+      'Lower Second Class Honours (2:2)',
+      'Third Class Honours',
+    ]),
+    'edu.classification',
+  );
 });

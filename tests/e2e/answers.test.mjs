@@ -190,7 +190,8 @@ test('the popup shows the AI step as it runs, then what it answered and what it 
   assert.match(text, /AI answered 4 questions/);
   assert.match(text, /Do you have practical Python experience\?/);
   assert.match(text, /Rates and inflation/);
-  assert.match(text, /2 questions left for you/);
+  // The socio-economic question is a profile answer now (from the household earner's job), left blank here.
+  assert.match(text, /1 question left for you/);
   assert.match(text, /convicted/);
   assert.equal(await selectedText(page, '#python'), 'Yes');
   await popup.close();

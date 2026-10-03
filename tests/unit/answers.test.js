@@ -180,6 +180,7 @@ test('candidate text carries the application facts the letters don’t need', ()
   const p = profile();
   const text = A.candidateText({ profile: p, kit: {}, cvText: '' });
   assert.match(text, /Where they found this job: Trackr/);
+  assert.match(text, /Available for interviews: Weekdays, 8am–8pm/);
   assert.match(text, /Needs visa sponsorship: No/);
   assert.match(text, /Summer Analyst Intern at Finch & Partners/);
 });

@@ -133,9 +133,81 @@
     'BD:Bangladeshi;LK:Sri Lankan;NP:Nepalese,Nepali;CN:Chinese;HK:Hongkonger;TW:Taiwanese;JP:Japanese;' +
     'KR:South Korean,Korean;SG:Singaporean;MY:Malaysian;ID:Indonesian;TH:Thai;VN:Vietnamese;PH:Filipino;' +
     'AU:Australian;NZ:New Zealander;CA:Canadian;MX:Mexican;BR:Brazilian;AR:Argentine,Argentinian;CL:Chilean;' +
-    'CO:Colombian;PE:Peruvian;IR:Iranian;GE:Georgian;AM:Armenian;JM:Jamaican';
+    'CO:Colombian;PE:Peruvian;IR:Iranian;GE:Georgian;AM:Armenian;JM:Jamaican;CU:Cuban;SY:Syrian;KP:North Korean;' +
+    'BY:Belarusian;VE:Venezuelan;IQ:Iraqi;AF:Afghan;SD:Sudanese;MM:Burmese;YE:Yemeni;LY:Libyan';
+
+  // International dialling codes (ITU), so a "Country/Region Code" list gets the right "United Kingdom (+44)".
+  // prettier-ignore
+  const DIAL =
+    'AF93 AX358 AL355 DZ213 AS1 AD376 AO244 AI1 AQ672 AG1 AR54 AM374 AW297 AU61 AT43 AZ994 BS1 BH973 BD880 BB1 BY375 ' +
+    'BE32 BZ501 BJ229 BM1 BT975 BO591 BQ599 BA387 BW267 BV47 BR55 IO246 BN673 BG359 BF226 BI257 CV238 KH855 CM237 CA1 ' +
+    'KY1 CF236 TD235 CL56 CN86 CX61 CC61 CO57 KM269 CG242 CD243 CK682 CR506 CI225 HR385 CU53 CW599 CY357 CZ420 DK45 ' +
+    'DJ253 DM1 DO1 EC593 EG20 SV503 GQ240 ER291 EE372 SZ268 ET251 FK500 FO298 FJ679 FI358 FR33 GF594 PF689 TF262 GA241 ' +
+    'GM220 GE995 DE49 GH233 GI350 GR30 GL299 GD1 GP590 GU1 GT502 GG44 GN224 GW245 GY592 HT509 HM672 VA39 HN504 HK852 ' +
+    'HU36 IS354 IN91 ID62 IR98 IQ964 IE353 IM44 IL972 IT39 JM1 JP81 JE44 JO962 KZ7 KE254 KI686 KP850 KR82 KW965 KG996 ' +
+    'LA856 LV371 LB961 LS266 LR231 LY218 LI423 LT370 LU352 MO853 MG261 MW265 MY60 MV960 ML223 MT356 MH692 MQ596 MR222 ' +
+    'MU230 YT262 MX52 FM691 MD373 MC377 MN976 ME382 MS1 MA212 MZ258 MM95 NA264 NR674 NP977 NL31 NC687 NZ64 NI505 NE227 ' +
+    'NG234 NU683 NF672 MK389 MP1 NO47 OM968 PK92 PW680 PS970 PA507 PG675 PY595 PE51 PH63 PN64 PL48 PT351 PR1 QA974 ' +
+    'RE262 RO40 RU7 RW250 BL590 SH290 KN1 LC1 MF590 PM508 VC1 WS685 SM378 ST239 SA966 SN221 RS381 SC248 SL232 SG65 SX1 ' +
+    'SK421 SI386 SB677 SO252 ZA27 GS500 SS211 ES34 LK94 SD249 SR597 SJ47 SE46 CH41 SY963 TW886 TJ992 TZ255 TH66 TL670 ' +
+    'TG228 TK690 TO676 TT1 TN216 TR90 TM993 TC1 TV688 UG256 UA380 AE971 GB44 US1 UM1 UY598 UZ998 VU678 VE58 VN84 VG1 ' +
+    'VI1 WF681 EH212 YE967 ZM260 ZW263 XK383';
+  // The country a shared code stands for when nothing else says: +1 is the US, not Canada; +44 the UK, not Jersey.
+  const DIAL_HOME = 'US RU GB NO AU IT FI RE GP CW MA NF FK NZ'.split(' ');
 
   const norm = (s) => JTF.util.normalize(s);
+
+  let dialIndex = null;
+  function dials() {
+    if (dialIndex) return dialIndex;
+    dialIndex = { byCountry: new Map(), byCode: new Map() };
+    for (const entry of DIAL.split(' ')) {
+      const iso2 = entry.slice(0, 2);
+      const code = entry.slice(2);
+      dialIndex.byCountry.set(iso2, code);
+      if (!dialIndex.byCode.has(code)) dialIndex.byCode.set(code, []);
+      dialIndex.byCode.get(code).push(iso2);
+    }
+    return dialIndex;
+  }
+
+  /** The dialling code of a country (name, alias or code), without the "+": "United Kingdom" -> "44". */
+  function dialCode(country) {
+    const row = findCountry(country);
+    return (row && dials().byCountry.get(row[0])) || '';
+  }
+
+  /** The country (ISO alpha-2) a dialling code stands for on its own: "1" -> "US", "44" -> "GB". */
+  function countryOfDial(code) {
+    const list = dials().byCode.get(String(code || '').replace(/\D/g, '')) || [];
+    return list.find((c) => DIAL_HOME.includes(c)) || list[0] || '';
+  }
+
+  /** "+44 7700 900123" or "0044 7700…" -> { code: "44", national: "7700 900123" }; null for a national number. */
+  function splitPhone(number) {
+    const m = String(number || '')
+      .trim()
+      .match(/^(?:\+|00)\s*(\d[\d\s().-]*)$/);
+    if (!m) return null;
+    const digits = m[1].replace(/\D/g, '');
+    for (let n = 3; n >= 1; n--) {
+      const code = digits.slice(0, n);
+      if (!dials().byCode.has(code)) continue;
+      // Drop the code (and what separates it) from the number as written.
+      let seen = 0;
+      let i = 0;
+      const rest = m[1];
+      while (i < rest.length && seen < n) if (/\d/.test(rest[i++])) seen++;
+      // "+44 (0)7700 900123": the trunk zero in brackets is not dialled from abroad.
+      const national = rest
+        .slice(i)
+        .replace(/^[\s.-]*\(0\)/, '')
+        .replace(/^[\s().-]+/, '')
+        .trim();
+      return { code, national };
+    }
+    return null;
+  }
 
   let countryIndex = null;
   function index() {
@@ -186,6 +258,27 @@
     return null;
   }
 
+  // Codes two countries use: "WA" is Washington, but Western Australia after Perth; "NT" the Northern Territory after
+  // Darwin.
+  const AU_TOWNS = {
+    wa: /^(perth|fremantle|joondalup|mandurah|rockingham|bunbury|geraldton|kalgoorlie|broome|albany)$/,
+    nt: /^(darwin|alice springs|palmerston|katherine)$/,
+  };
+  const australianRegion = (value, town) => !!AU_TOWNS[norm(value)] && AU_TOWNS[norm(value)].test(norm(town));
+
+  /**
+   * The country (ISO alpha-2) whose state or province this is: "MA" or "Massachusetts" -> "US", "Ontario" -> "CA";
+   * "WA" -> "US", except after an Australian town (`town`: "Perth, WA").
+   */
+  function regionCountry(value, town) {
+    const key = norm(value);
+    if (!key) return null;
+    if (australianRegion(value, town)) return 'AU';
+    for (const [code, table] of Object.entries(REGIONS))
+      if (table.some((region) => region.some((r) => norm(r) === key))) return code;
+    return null;
+  }
+
   function regionCandidates(value, country) {
     const region = findRegion(value, country);
     if (!region) return value ? [String(value)] : [];
@@ -198,13 +291,50 @@
     'AT BE BG HR CY CZ DK EE FI FR DE GR HU IE IT LV LT LU MT NL PL PT RO SK SI ES SE IS LI NO CH'.split(' '),
   );
 
-  /** The words a list of citizenship options may use for a nationality: names, demonyms, "EU". */
+  /**
+   * Every nationality of a dual national ("British, Irish", "British and Iranian", "British / Iranian") as country
+   * rows; one row when the whole text is a country ("Trinidad and Tobago").
+   */
+  function nationalities(value) {
+    const rows = [];
+    for (const part of String(value || '').split(/\s*[,;/&+]\s*/)) {
+      const whole = findCountry(part.trim());
+      if (whole) rows.push(whole);
+      else for (const w of part.split(/\s+(?:and|or)\s+/i)) rows.push(findCountry(w.trim()));
+    }
+    return [...new Map(rows.filter(Boolean).map((row) => [row[0], row])).values()];
+  }
+
+  /** The words a list of citizenship options may use for a nationality (or two): names, demonyms, "EU". */
   function citizenWords(value) {
-    const row = findCountry(value);
-    if (!row) return [];
-    const words = [...countryCandidates(value), ...demonyms(row[0])];
-    if (EUROPEAN.has(row[0])) words.push('EU', 'EEA', 'European', 'European Union');
+    const rows = nationalities(value);
+    const words = rows.length === 1 ? countryCandidates(value) : [];
+    for (const row of rows) {
+      words.push(...row.slice(2), row[0], row[1], ...demonyms(row[0]));
+      if (EUROPEAN.has(row[0])) words.push('EU', 'EEA', 'European', 'European Union');
+    }
     return [...new Set(words.map(norm).filter(Boolean))];
+  }
+
+  // Under comprehensive US sanctions (OFAC; export-control country groups E:1 and E:2), as forms list them, and the
+  // occupied regions of Ukraine they add ("…or the Crimea, Donetsk, Luhansk, Zaporizhzhia, or Kherson regions").
+  const SANCTIONED = ['CU', 'IR', 'KP', 'SY'];
+  // prettier-ignore
+  const OCCUPIED = [
+    ['Crimea', /\bcrim(ea|ean|ia)\b|\bkrym\b|\bsevastopol\b|\bsimferopol\b/],
+    ['Donetsk', /\bdonet[sz]k\b|\bdnr\b/],
+    ['Luhansk', /\blu[hg]ansk\b|\blnr\b/],
+    ['Zaporizhzhia', /\bzapor[io]z?h/],
+    ['Kherson', /\bkherson\b/],
+  ];
+  // What sanctions questions ask about beyond those (Russia and Belarus, Venezuela, other OFAC programmes): living in
+  // one, or holding its nationality, leaves "none of the above" and its follow-up for you.
+  const SANCTIONS_WATCH = new Set([...SANCTIONED, ...'RU BY VE MM SD SS IQ LY SO YE ZW NI LB ML CF CD'.split(' ')]);
+
+  /** The occupied regions of Ukraine a (normalised) text names: ["Crimea", "Donetsk"]. */
+  function occupiedRegions(text) {
+    const t = norm(text);
+    return OCCUPIED.filter(([, re]) => re.test(t)).map(([name]) => name);
   }
 
   let nameIndex = null;
@@ -263,6 +393,179 @@
     return out;
   }
 
+  /** The countries a sentence names by name or nationality: "Are you a British citizen?", "Do you hold US citizenship?" */
+  function nationalitiesNamed(text) {
+    const t = ' ' + norm(text) + ' ';
+    const out = new Set(countriesNamed(text));
+    for (const entry of DEMONYMS.split(';')) {
+      const [code, names] = entry.split(':');
+      if (names.split(',').some((n) => t.includes(' ' + norm(n) + ' '))) out.add(code);
+    }
+    return [...out];
+  }
+
+  // Visas and immigration words that name their country ("H-1B", "Skilled Worker visa", "Blue Card"); "TN" alone
+  // only as a whole option.
+  const VISA_WORDS = [
+    [
+      'US',
+      /\bh ?1 ?b\d?\b|\bh ?4\b|\b(stem )?opt\b(?! (in|out)\b)|\bcpt\b|\b[fjlo] ?1\b|\be ?3\b|\btn (visa|status)\b|^tn$|\bgreen card\b|\buscis\b|\bead\b|\bi ?9\b|\be ?verify\b|\blawful permanent resident\b/,
+    ],
+    [
+      'GB',
+      /\bskilled worker\b|\btier ?[245]\b|\bgraduate (route|visa)\b|\bhigh potential individual\b|\bbrp\b|\bbiometric residence permit\b|\bshare code\b|\b(pre )?settled status\b|\bindefinite leave to remain\b|\bilt?r\b|\beu settlement scheme\b|\bukvi\b|\bcertificate of sponsorship\b|\bglobal talent visa\b|\byouth mobility\b/,
+    ],
+    ['EU', /\bblue card\b/],
+    ['IE', /\bstamp (1g|4)\b|\bcritical skills (employment )?permit\b/],
+    ['CA', /\bpgwp\b|\blmia\b/],
+    ['AU', /\bsubclass \d{3}\b|\btss visa\b/],
+    ['SG', /\bemployment pass\b|\bs pass\b|\bentrepass\b/],
+  ];
+
+  /** The countries a sentence's visa words imply: "(e.g. H-1B, OPT)" is about the US, "Tier 4" about the UK. */
+  function visaCountries(text) {
+    const t = norm(text);
+    return VISA_WORDS.filter(([, re]) => re.test(t)).map(([code]) => code);
+  }
+
+  // Cities employers name ("our London office", "New York, NY"), each with the places around it within a daily
+  // commute: [ISO country, region (UK nation, US state…), city, ...the rest of its metro area].
+  // prettier-ignore
+  const METROS = [
+    ['GB', 'England', 'London', 'Greater London', 'City of London', 'Canary Wharf', 'Westminster', 'Croydon', 'Camden',
+      'Islington', 'Hackney', 'Southwark', 'Lambeth', 'Wandsworth', 'Stratford', 'Wimbledon', 'Ealing', 'Harrow', 'Barnet',
+      'Bromley', 'Hammersmith', 'Kensington', 'Shoreditch', 'Richmond upon Thames', 'Kingston upon Thames'],
+    ['GB', 'England', 'Manchester', 'Greater Manchester', 'Salford', 'Stockport', 'Trafford', 'Oldham', 'Bolton'],
+    ['GB', 'England', 'Birmingham', 'Solihull', 'Wolverhampton'], ['GB', 'England', 'Leeds', 'Bradford', 'Wakefield'],
+    ['GB', 'England', 'Bristol', 'Bath'], ['GB', 'England', 'Newcastle', 'Newcastle upon Tyne', 'Gateshead'],
+    ['GB', 'England', 'Liverpool'], ['GB', 'England', 'Sheffield'], ['GB', 'England', 'Nottingham'],
+    ['GB', 'England', 'Leicester'], ['GB', 'England', 'Coventry'], ['GB', 'England', 'Cambridge'],
+    ['GB', 'England', 'Oxford'], ['GB', 'England', 'Reading'], ['GB', 'England', 'Cheltenham', 'Gloucester'],
+    ['GB', 'England', 'Southampton'], ['GB', 'England', 'Brighton'], ['GB', 'England', 'Milton Keynes'],
+    ['GB', 'England', 'York'], ['GB', 'Scotland', 'Glasgow', 'Paisley', 'East Kilbride', 'Clydebank'],
+    ['GB', 'Scotland', 'Edinburgh', 'Leith'], ['GB', 'Scotland', 'Aberdeen'], ['GB', 'Scotland', 'Dundee'],
+    ['GB', 'Wales', 'Cardiff'], ['GB', 'Wales', 'Swansea'], ['GB', 'Northern Ireland', 'Belfast'],
+    ['US', 'NY', 'New York', 'New York City', 'NYC', 'Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island',
+      'Jersey City', 'Hoboken', 'Newark', 'Stamford', 'Greenwich', 'Rowayton', 'Norwalk', 'White Plains', 'Westchester',
+      'Long Island'],
+    ['US', 'IL', 'Chicago', 'Evanston'],
+    ['US', 'CA', 'San Francisco', 'SF', 'the Bay Area', 'SF Bay Area', 'San Francisco Bay Area', 'Silicon Valley', 'Oakland',
+      'Berkeley', 'San Jose', 'Palo Alto', 'Mountain View', 'Menlo Park', 'Sunnyvale', 'Redwood City', 'San Mateo',
+      'Cupertino', 'Santa Clara'],
+    ['US', 'CA', 'Los Angeles', 'LA', 'Santa Monica', 'Pasadena', 'Culver City', 'El Segundo', 'Torrance', 'Hawthorne',
+      'Long Beach', 'Burbank', 'Playa Vista'],
+    ['US', 'MA', 'Boston', 'Cambridge', 'Somerville', 'Waltham'], ['US', 'WA', 'Seattle', 'Bellevue', 'Redmond', 'Kirkland'],
+    ['US', 'TX', 'Austin'], ['US', 'TX', 'Houston'], ['US', 'TX', 'Dallas', 'Fort Worth', 'Plano', 'Irving'],
+    ['US', 'FL', 'Miami', 'Miami Beach', 'Fort Lauderdale'], ['US', 'FL', 'Jupiter', 'West Palm Beach', 'Palm Beach'],
+    ['US', 'DC', 'Washington DC', 'Washington D.C.', 'Arlington', 'Alexandria', 'Bethesda', 'McLean', 'Reston'],
+    ['US', 'PA', 'Philadelphia'], ['US', 'PA', 'Pittsburgh'], ['US', 'GA', 'Atlanta'], ['US', 'CO', 'Denver', 'Boulder'],
+    ['US', 'UT', 'Salt Lake City'], ['US', 'MN', 'Minneapolis', 'Saint Paul', 'St Paul'], ['US', 'NC', 'Charlotte'],
+    ['US', 'NC', 'Raleigh', 'Durham', 'Chapel Hill'], ['US', 'AZ', 'Phoenix', 'Scottsdale', 'Tempe'],
+    ['US', 'CA', 'San Diego'], ['US', 'NJ', 'Princeton'], ['US', 'MI', 'Detroit'], ['US', 'MD', 'Baltimore'],
+    ['US', 'TN', 'Nashville'], ['US', 'OH', 'Columbus'], ['US', 'MO', 'St Louis', 'Saint Louis'],
+    ['IE', '', 'Dublin'], ['IE', '', 'Cork'], ['FR', '', 'Paris', 'La Défense'], ['NL', '', 'Amsterdam'],
+    ['DE', '', 'Berlin'], ['DE', '', 'Frankfurt', 'Frankfurt am Main'], ['DE', '', 'Munich', 'München'],
+    ['DE', '', 'Hamburg'], ['CH', '', 'Zurich', 'Zürich'], ['CH', '', 'Geneva', 'Genève'], ['ES', '', 'Madrid'],
+    ['ES', '', 'Barcelona'], ['IT', '', 'Milan', 'Milano'], ['IT', '', 'Rome'], ['SE', '', 'Stockholm'],
+    ['DK', '', 'Copenhagen'], ['BE', '', 'Brussels'], ['PL', '', 'Warsaw'], ['AT', '', 'Vienna'], ['PT', '', 'Lisbon'],
+    ['NO', '', 'Oslo'], ['FI', '', 'Helsinki'], ['CZ', '', 'Prague'], ['JP', '', 'Tokyo'], ['KR', '', 'Seoul'],
+    ['CN', '', 'Shanghai'], ['CN', '', 'Beijing'], ['CN', '', 'Shenzhen'], ['AU', 'NSW', 'Sydney'],
+    ['AU', 'VIC', 'Melbourne'], ['CA', 'ON', 'Toronto'], ['CA', 'QC', 'Montreal', 'Montréal'], ['CA', 'BC', 'Vancouver'],
+    ['IN', '', 'Bangalore', 'Bengaluru'], ['IN', '', 'Mumbai'], ['IN', '', 'Hyderabad'], ['IN', '', 'Gurgaon', 'Gurugram'],
+    ['IN', '', 'New Delhi', 'Delhi'], ['AE', '', 'Dubai'], ['AE', '', 'Abu Dhabi'], ['IL', '', 'Tel Aviv'],
+    ['BR', '', 'São Paulo'],
+  ];
+  const UK_NATIONS = ['England', 'Scotland', 'Wales', 'Northern Ireland'];
+
+  let placeIndex = null;
+  /** [name, [place…]] for every city, metro area and region a sentence can name, longest name first. */
+  function places() {
+    if (placeIndex) return placeIndex;
+    const byName = new Map();
+    const add = (name, place) => byName.set(norm(name), [...(byName.get(norm(name)) || []), place]);
+    for (const [country, region, ...names] of METROS)
+      for (const n of names) add(n, { type: 'metro', country, region, metro: norm(names[0]) });
+    for (const n of UK_NATIONS) add(n, { type: 'region', country: 'GB', region: n });
+    for (const [country, table] of Object.entries(REGIONS))
+      for (const [code, name] of table)
+        if (!/^Armed Forces/.test(name)) add(name, { type: 'region', country, region: code });
+    placeIndex = [...byName].sort((a, b) => b[0].length - a[0].length);
+    return placeIndex;
+  }
+
+  /**
+   * The places a sentence names, as { type: metro | region | country, country, region, metro }: "our London office"
+   * (London's metro area), "based in Scotland" (a UK nation), "anywhere in the UK"; "Cambridge" both Cambridges. A
+   * longer name wins: "New York" is never York, nor "Northern Ireland" Ireland.
+   */
+  function placesNamed(text) {
+    let t = ' ' + norm(text) + ' ';
+    const out = [];
+    for (const [key, list] of places()) {
+      if (!t.includes(' ' + key + ' ')) continue;
+      out.push(...list);
+      // Every time it's named: "New York, New York" is never York.
+      for (let at = t.indexOf(' ' + key + ' '); at >= 0; at = t.indexOf(' ' + key + ' '))
+        t = t.slice(0, at + 1) + ' '.repeat(key.length) + t.slice(at + 1 + key.length);
+    }
+    for (const country of countriesNamed(t)) out.push({ type: 'country', country });
+    return out;
+  }
+
+  /** The countries a job's location names: "New York, NY" and "Remote - US" the US, "London" the UK. */
+  function countriesIn(location) {
+    const named = placesNamed(location);
+    const out = new Set(named.map((p) => p.country));
+    const parts = String(location || '')
+      .split(/[,;/|()\n]|\s[-–—]\s/)
+      .map((part) => part.trim());
+    for (const [k, s] of parts.entries()) {
+      // "Perth, WA" is Western Australia; "Seattle, WA" Washington.
+      if (k > 0 && australianRegion(s, parts[k - 1])) {
+        out.add('AU');
+        continue;
+      }
+      const state = /^[A-Z]{2}$/.test(s) && REGIONS.US.some((r) => r[0] === s && !/^Armed Forces/.test(r[1]));
+      const row = /^[A-Z]{2,3}$/.test(s) ? findCountry(s) : null;
+      // "Chicago, IL" and "Indianapolis, IN" are US states; "Berlin, DE" and "Mumbai, IN" are countries.
+      if (state && (out.has('US') || !row || !named.length)) out.add('US');
+      else if (row) out.add(row[0]);
+    }
+    return [...out];
+  }
+
+  /** Where a profile's address is: { country, region, metro } (ISO code, UK nation or state code, metro area). */
+  function whereIs(address) {
+    const a = address || {};
+    const row = findCountry(a.country);
+    let country = row ? row[0] : '';
+    const city = norm(a.city);
+    // "Croydon" is in London's metro area; "Greenwich" in the UK is not the one in Connecticut.
+    const fits = (p) => p.type === 'metro' && (!country || p.country === country);
+    const named = city ? places().find(([key]) => key === city) : null;
+    const metro = (named && named[1].find(fits)) || (city && placesNamed(a.city).find(fits)) || null;
+    if (!country && metro) country = metro.country;
+    const state = findRegion(a.state, a.country);
+    const nation = UK_NATIONS.find((n) => norm(n) === norm(a.state));
+    let region = metro ? metro.region : '';
+    if (country === 'GB' && nation) region = nation;
+    else if (state && REGIONS[country] && REGIONS[country].includes(state)) region = state[0];
+    return { country, region, metro: metro ? metro.metro : '' };
+  }
+
+  /**
+   * Is someone at `home` (whereIs) in `place` (placesNamed)? true, false, or null when it can't be told (a town that
+   * isn't listed might still be in London's metro area; a UK address without a nation might be in Scotland).
+   */
+  function within(place, home) {
+    if (!home || !home.country) return null;
+    if (place.country === 'EU') return EUROPEAN.has(home.country);
+    if (place.country !== home.country) return false;
+    if (place.type === 'country') return true;
+    if (place.type === 'region') return home.region ? home.region === place.region : null;
+    return home.metro ? home.metro === place.metro : null;
+  }
+
   /**
    * Where someone with the right to work in `countries` (ISO codes) may work: the EU / EEA and Switzerland's free
    * movement, and the UK and Ireland's Common Travel Area.
@@ -284,14 +587,29 @@
   const geo = {
     COUNTRIES,
     countriesNamed,
+    nationalitiesNamed,
+    visaCountries,
+    placesNamed,
+    countriesIn,
+    whereIs,
+    within,
     workRights,
     REGIONS,
     findCountry,
     countryCandidates,
     demonyms,
+    nationalities,
     citizenWords,
+    SANCTIONED,
+    OCCUPIED,
+    SANCTIONS_WATCH,
+    occupiedRegions,
     findRegion,
+    regionCountry,
     regionCandidates,
+    dialCode,
+    countryOfDial,
+    splitPhone,
   };
   JTF.geo = geo;
   if (typeof module === 'object' && module.exports) module.exports = geo;
