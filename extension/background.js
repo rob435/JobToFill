@@ -1729,6 +1729,10 @@ async function flowDecide(tabId, flow, page) {
   }
   const doing = page.kind === 'signup' ? 'creates the account' : 'signs you in';
   const typed = page.blockers.filter((b) => !b.wait);
+  // A CAPTCHA that doesn't say when it's solved (Arkose): yours to finish, then Fill again.
+  if (typed.some((b) => b.kind === 'captcha'))
+    return stop(`Complete the “I’m not a robot” check, then press Fill again: JobToFill then ${doing}.`);
+  if (typed.some((b) => b.kind === 'mismatch')) return stop('The two passwords differ: fix them and press Fill again.');
   if (typed.length)
     return stop(`Fill in ${joinList(typed.map((b) => `“${b.label}”`))} and press Fill again: JobToFill then ${doing}.`);
   const waits = page.blockers.filter((b) => b.wait);
