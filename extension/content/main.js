@@ -674,7 +674,7 @@
       // "If other, please specify" after a diversity or password question belongs to it.
       if (prevType && /^(eeo\.|account\.|cc\.)/.test(prevType) && FOLLOW_ON.test(q)) continue;
       let options = null;
-      let multiple = field.kind === 'checkboxes';
+      let multiple = field.kind === 'checkboxes' || !!field.desc.multiple;
       if (field.desc.options && field.kind !== 'checkbox')
         options = field.desc.options
           .filter((o) => !o.disabled)

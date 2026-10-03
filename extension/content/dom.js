@@ -89,7 +89,43 @@
     const style = win.getComputedStyle(el);
     if (style.visibility === 'hidden' || style.display === 'none') return false;
     if (checkOpacity && parseFloat(style.opacity) === 0) return false;
+    // Clipped down to nothing: the "visually hidden" 1px <select> a dropdown widget keeps for the form (Tom Select).
+    if (style.clip === 'rect(0px, 0px, 0px, 0px)' || /^inset\((50|100)%/.test(style.clipPath)) return false;
     return true;
+  }
+
+  /**
+   * The native <select> a custom dropdown keeps for the form while showing itself in its place (select2, chosen,
+   * Choices, Tom Select): hidden, right before the widget or inside it. It holds what the widget's value really is.
+   */
+  function isStandIn(c) {
+    if (c.localName !== 'select' || (c.getAttribute('aria-hidden') !== 'true' && isVisible(c))) return false;
+    const next = c.nextElementSibling;
+    return (
+      !!(c.parentElement && c.parentElement.closest('[role="combobox"]')) ||
+      (!!next && !next.matches(CONTROL_SELECTOR) && !!next.querySelector(CONTROL_SELECTOR))
+    );
+  }
+
+  /** The hidden native <select> the widget `el` belongs to stands in for (see isStandIn), if any. */
+  function standsFor(el) {
+    if (!el || el.localName === 'select') return null;
+    const body = el.ownerDocument.body;
+    for (let node = el, depth = 0; node && node !== body && depth < 6; node = node.parentElement, depth++) {
+      // Climbed out of the widget: its container holds other fields.
+      if (depth > 0) {
+        const others = Array.from(node.querySelectorAll(COUNTED_SELECTOR)).some(
+          (c) => c !== el && !el.contains(c) && !c.contains(el) && !isStandIn(c) && isVisible(c),
+        );
+        if (others) return null;
+      }
+      const inner = Array.from(node.querySelectorAll('select')).find(isStandIn);
+      if (inner) return inner;
+      // The widget comes right after the <select> it replaces (a bare box after one is just the next field).
+      const prev = node.previousElementSibling;
+      if (prev && (depth > 0 || el.getAttribute('role') === 'combobox') && isStandIn(prev)) return prev;
+    }
+    return null;
   }
 
   function labelsOf(el) {
@@ -152,11 +188,12 @@
     return (rootNode.getElementById && rootNode.getElementById(id)) || el.ownerDocument.getElementById(id);
   }
 
-  function explicitLabel(el) {
+  /** `outside`: only what lies outside the control: select2's combobox is "labelled" by its own selection ("Italy"). */
+  function explicitLabel(el, outside) {
     const parts = [];
     for (const id of (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)) {
       const ref = byId(el, id);
-      if (ref && ref !== el) parts.push(textOf(ref));
+      if (ref && ref !== el && !(outside && el.contains(ref))) parts.push(textOf(ref));
     }
     if (!parts.length) for (const l of labelsOf(el)) parts.push(textOf(l));
     return U.cleanLabel(parts.filter(Boolean).join(' '));
@@ -192,6 +229,8 @@
 
   /** Hidden helper inputs (react-select's required shim, the checkbox behind ARIA buttons) aren't fields. */
   function isShim(c) {
+    // The hidden <select> behind a dropdown widget is the widget's, not a field beside it.
+    if (c.localName === 'select') return isStandIn(c);
     if (c.localName !== 'input') return false;
     if (c.getAttribute('aria-hidden') === 'true') return true;
     return c.tabIndex < 0 && !!c.parentElement && !!c.parentElement.querySelector(ARIA_CHOICE);
@@ -440,13 +479,19 @@
     if (tag === 'textarea') return 'textarea';
     if (tag === 'input') {
       const type = (el.getAttribute('type') || 'text').toLowerCase();
+      // A search box inside a combobox (ARIA 1.1's pattern: select2's and Choices' multi-selects) is the box that
+      // dropdown is typed into, not a site search.
+      if (type === 'search' && el.parentElement && el.parentElement.closest('[role="combobox"]')) return 'combobox';
       if (SKIP_INPUT_TYPES.has(type)) return null;
       if (PASS_THROUGH_TYPES.has(type)) return type;
-      return isComboInput(el) ? 'combobox' : 'text';
+      // chosen's box, which only searches the options of the <select> it stands in for, is a dropdown too.
+      return isComboInput(el) || standsFor(el) ? 'combobox' : 'text';
     }
     if (el.isContentEditable) return null;
-    // A custom dropdown (button / div). Wrappers around a real input are handled via the input.
-    if (el.querySelector('input:not([type="hidden"]), select, textarea')) return null;
+    // A custom dropdown (button / div). Wrappers around a real input are handled via the input; not the hidden
+    // <select> a widget keeps for the form, nor the search box of its closed menu (Choices).
+    const inner = el.querySelectorAll('input:not([type="hidden"]), select, textarea');
+    if (Array.from(inner).some((c) => !isStandIn(c) && isVisible(c, { ignoreOpacity: true }))) return null;
     return 'combo';
   }
 
@@ -566,7 +611,10 @@
       s.name = el.getAttribute('name') || '';
       desc.options = members.map((m) => ({ text: U.cleanLabel(optionLabel(m), 200), value: optionValue(m) }));
     } else {
-      s.label = explicitLabel(el);
+      const combo = kind === 'combo' || kind === 'combobox';
+      const native = combo ? standsFor(el) : null;
+      // A dropdown widget is labelled by the <label> of the <select> it stands in for (select2, chosen, Choices).
+      s.label = explicitLabel(el, combo) || (native ? explicitLabel(native) : '');
       s.aria = el.getAttribute('aria-label') || '';
       s.placeholder = el.getAttribute('placeholder') || '';
       s.name = el.getAttribute('name') || '';
@@ -584,8 +632,12 @@
         if (!s.label && isAriaChoice(el)) s.label = U.cleanLabel(textOf(el));
         desc.options = [{ text: s.label || s.aria || '', value: optionValue(el) }];
       }
-      if (kind === 'select')
-        desc.options = Array.from(el.options).map((o) => ({
+      // A dropdown widget offers the options of the <select> it stands in for (read without opening it), and takes
+      // several when that one does.
+      const list = kind === 'select' ? el : native && native.options.length ? native : null;
+      if (kind === 'select' || native) desc.multiple = !!(native || el).multiple;
+      if (list)
+        desc.options = Array.from(list.options).map((o) => ({
           text: o.text,
           value: o.value,
           disabled: o.disabled,
@@ -636,5 +688,5 @@
     return a;
   }
 
-  JTF.dom = { collect, describe, kindOf, isVisible, textOf, visibleText, deepActiveElement };
+  JTF.dom = { collect, describe, kindOf, isVisible, textOf, visibleText, deepActiveElement, standsFor };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

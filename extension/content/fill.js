@@ -76,6 +76,22 @@
     fire(el, 'change');
     el.dispatchEvent(new FocusEvent('blur'));
     el.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true }));
+    fitMask(el, value);
+  }
+
+  /**
+   * A box with a fixed pattern (an input mask such as "(999) 999-9999") that kept only the first digits of an
+   * international number ("(141) 555-5010" from "+1 415 555 0100") has room for the national number alone: it gets
+   * the number's last digits, as many as it holds.
+   */
+  function fitMask(el, value) {
+    if (el.localName !== 'input' || !/^\+\d[\d\s().-]*$/.test(value)) return;
+    const typed = value.replace(/\D/g, '');
+    const kept = String(el.value || '').replace(/\D/g, '');
+    if (!kept || kept.length >= typed.length || !typed.startsWith(kept)) return;
+    // Emptied first: a mask reads a new value as an edit of the one it shows.
+    typeValue(el, '');
+    typeValue(el, typed.slice(-kept.length));
   }
 
   /** A box that only takes keys: Workday's date spin buttons ("YYYY") put back a value set from script. */
@@ -182,9 +198,21 @@
     );
   }
 
+  /**
+   * What the hidden <select> behind a dropdown widget holds (see dom.standsFor), as option texts: the widget's true
+   * value. Its placeholder ("Select an Option", shown in chosen's box as the box's own value) is no value.
+   */
+  function nativePicks(native) {
+    return Array.from(native.selectedOptions)
+      .filter((o) => o.value !== '' && !M().isPlaceholder(JTF.util.normalize(o.text)))
+      .map((o) => o.text);
+  }
+
   /** Does this control already hold something the user (or site) put there? */
   function hasValue(field) {
     const { el, kind, members } = field;
+    const native = (kind === 'combo' || kind === 'combobox') && dom().standsFor(el);
+    if (native) return nativePicks(native).length > 0;
     switch (kind) {
       case 'select':
         return !isUntouchedSelect(el);
@@ -218,14 +246,22 @@
     const { el, kind } = field;
     if (kind === 'select') return M().matchOption(field.desc.options, v) === el.selectedIndex;
     if (kind !== 'combo' && kind !== 'combobox') return true;
-    const shown =
-      kind === 'combo' ? [comboText(el)] : el.value.trim() ? [el.value] : chipsOf(el).map((c) => dom().textOf(c));
+    const native = dom().standsFor(el);
+    const shown = native
+      ? nativePicks(native)
+      : kind === 'combo'
+        ? [comboText(el)]
+        : el.value.trim()
+          ? [el.value]
+          : chipsOf(el).map((c) => dom().textOf(c));
     return shown.some((text) => text && M().matchOption([{ text, value: '' }], v) === 0);
   }
 
   /** Current value as text (for "learn from this page"). */
   function currentValue(field) {
     const { el, kind, members } = field;
+    const native = (kind === 'combo' || kind === 'combobox') && dom().standsFor(el);
+    if (native) return nativePicks(native).join(', ');
     switch (kind) {
       case 'select':
         return isUntouchedSelect(el) ? '' : (el.options[el.selectedIndex] || {}).text || '';
@@ -268,9 +304,28 @@
   const LISTBOX_LIKE =
     '[role="listbox"], ul[class*="listbox" i], ul[class*="result" i], ul[class*="option" i], ul[class*="dropdown" i], ul[class*="suggest" i], ul[class*="autocomplete" i], [class*="listbox-results" i], [class*="listbox-drop" i], [class*="dropdown-menu" i], [class*="select-menu" i], [class*="cx-select" i][class*="list" i], [class*="select__menu" i]';
 
-  /** The row of chips a Workday prompt shows for what was picked ("Italy (+39)"): a listbox, but nobody's menu. */
-  const isChipList = (lb) =>
-    lb.matches('[data-automation-id="selectedItemList"]') || !!lb.querySelector('[data-automation-id="selectedItem"]');
+  /**
+   * The row of chips a Workday prompt shows for what was picked ("Italy (+39)"), or any list of nothing but picked
+   * rows (Choices shows its value as a listbox holding one selected option): a listbox, but nobody's menu.
+   */
+  function isChipList(lb) {
+    if (
+      lb.matches('[data-automation-id="selectedItemList"]') ||
+      lb.querySelector('[data-automation-id="selectedItem"]')
+    )
+      return true;
+    const rows = lb.querySelectorAll('[role="option"]');
+    return rows.length > 0 && Array.from(rows).every((o) => o.getAttribute('aria-selected') === 'true');
+  }
+
+  /** A closed menu kept in place but clipped to nothing (chosen's "chosen-drop": clip-path inset(100%)). */
+  function clippedAway(lb) {
+    for (let a = lb.parentElement, i = 0; a && i < 4; a = a.parentElement, i++) {
+      const style = a.ownerDocument.defaultView.getComputedStyle(a);
+      if (style.clip === 'rect(0px, 0px, 0px, 0px)' || /^inset\((50|100)%/.test(style.clipPath)) return true;
+    }
+    return false;
+  }
 
   /** Workday's search prompts look up what was typed when Enter is pressed. */
   const searchesOnEnter = (el) => el.getAttribute('data-uxi-widget-type') === 'selectinput';
@@ -294,14 +349,26 @@
       el.getAttribute('aria-expanded') === 'true' ||
       !!el.closest(
         '[role="combobox"], [class*="select" i], [class*="combobox" i], [class*="dropdown" i], [class*="listbox" i]',
-      );
+      ) ||
+      !!dom().standsFor(el);
     const selector = comboLike ? LISTBOX_LIKE : '[role="listbox"]';
     const all = Array.from(rootNode.querySelectorAll(selector));
     if (rootNode !== doc) all.push(...doc.querySelectorAll(selector));
-    // Nested matches (ul inside div.oj-listbox-drop): keep the outermost.
+    // A list inside another combobox is that one's (Choices keeps its value and its menu inside its own).
+    const theirs = (lb) => {
+      const owner = lb.closest('[role="combobox"]');
+      return !!owner && !owner.contains(el) && !el.contains(owner);
+    };
     const cands = all.filter(
-      (lb) => dom().isVisible(lb) && !lb.closest('[data-jtf-ui]') && !lb.contains(el) && !isChipList(lb),
+      (lb) =>
+        dom().isVisible(lb) &&
+        !lb.closest('[data-jtf-ui]') &&
+        !lb.contains(el) &&
+        !isChipList(lb) &&
+        !clippedAway(lb) &&
+        !theirs(lb),
     );
+    // Nested matches (ul inside div.oj-listbox-drop): keep the outermost.
     const visible = cands.filter((lb) => !cands.some((o) => o !== lb && o.contains(lb)));
     if (!visible.length) return null;
     for (let a = el.parentElement, i = 0; a && i < 6; a = a.parentElement, i++) {
@@ -320,10 +387,11 @@
 
   /** The rows of a list, however the widget marks them up (ARIA roles first, then <li>, then class names). */
   function optionsIn(lb) {
+    // A row announced to screen readers is a message ("Please enter 2 or more characters" in select2), not a choice.
     const usable = (nodes) =>
       nodes.filter((o) => {
         const t = (dom().textOf(o) || o.getAttribute('aria-label') || '').trim();
-        return t && !NO_RESULTS.test(t);
+        return t && !NO_RESULTS.test(t) && !o.matches('[role="alert"], [role="status"], [aria-live]');
       });
     for (const sel of [OPTION_ROLES, MENUITEM_ROLES]) {
       const found = Array.from(lb.querySelectorAll(sel));
@@ -521,6 +589,17 @@
   /** A role="menuitemcheckbox" / "menuitemradio" that is ticked. */
   const isTicked = (option) => option.isConnected && option.getAttribute('aria-checked') === 'true';
 
+  /**
+   * Did the <select> behind a widget take the row `text`: that option, or, for a row that makes a new one ("Add
+   * Machine Learning…" in Tom Select), a new option it names? `before`: what it held before the click.
+   */
+  function nativeTook(native, text, before) {
+    const want = JTF.util.normalize(text);
+    return nativePicks(native)
+      .map((t) => JTF.util.normalize(t))
+      .some((t) => t === want || (!!t && !before.includes(t) && want.includes(t)));
+  }
+
   async function choose(el, option) {
     const text = dom().textOf(option);
     const typed = el.localName === 'input' ? el.value : '';
@@ -530,11 +609,16 @@
       option.dispatchEvent(new Ctor(type, { bubbles: true, composed: true }));
     }
     const before = currentOptions(el);
+    const native = dom().standsFor(el);
+    const held = native ? nativePicks(native).map((t) => JTF.util.normalize(t)) : [];
     pointerClick(option);
     // Registered once the value shows, or the menu closes behind the click (slow re-renders included). A category
     // that opens its own options instead (Workday's "Social Media" > "LinkedIn") says so.
     for (let waited = 0; waited < 300; waited += 30) {
       await sleep(30);
+      // The <select> a widget stands in for has the option: registered, whatever the widget shows (chosen's menu
+      // stays in place, clipped, once closed).
+      if (native && nativeTook(native, text, held)) return text;
       // A menu that stays open ticks the item itself (Teamtailor shows "a, b, c, +2" once there are more than three).
       if (selectionShows(el, text, typed) || !listboxFor(el) || isTicked(option)) return text;
       const now = currentOptions(el);
@@ -544,10 +628,28 @@
     if (option.isConnected && el.localName === 'input') {
       await chooseByKeyboard(el, option);
       for (let waited = 0; waited < 150; waited += 30) {
-        if (selectionShows(el, text, typed) || !listboxFor(el)) return text;
+        if ((native && nativeTook(native, text, held)) || selectionShows(el, text, typed) || !listboxFor(el))
+          return text;
         await sleep(30);
       }
     }
+    return null;
+  }
+
+  /**
+   * The search box an open dropdown's menu has (select2's, Choices'): where opening it put the cursor, inside the
+   * widget or in the menu beside its list (select2's is appended to <body> with it).
+   */
+  function menuSearchBox(el) {
+    const box = dom().deepActiveElement(el.ownerDocument);
+    if (!box || box === el || box.localName !== 'input' || !/^(text|search)$/.test(box.type)) return null;
+    if (box.readOnly || !dom().isVisible(box)) return null;
+    if (el.contains(box)) return box;
+    const lb = listboxFor(el);
+    if (!lb) return null;
+    if (lb.id && (box.getAttribute('aria-controls') || '').split(/\s+/).includes(lb.id)) return box;
+    for (let a = lb.parentElement, i = 0; a && i < 4; a = a.parentElement, i++)
+      if (a.contains(box)) return a.contains(el) ? null : box;
     return null;
   }
 
@@ -567,6 +669,8 @@
     if (straight) el.focus({ preventScroll: true });
     let opts = straight ? [] : await openMenu(el, searchable);
     const multi = isMulti(el);
+    // A dropdown button whose menu has a search box of its own (select2, Choices): typing goes there.
+    const box = searchable ? el : menuSearchBox(el);
     const pick = () => {
       const listed = describeOptions(opts);
       // A multi-select takes every slot or statement that fits, one per call, judged with the ones it took already
@@ -582,7 +686,7 @@
     };
     let idx = pick();
     // Statements and slots are judged against the whole list as it opened: typing would only hide some.
-    if (idx < 0 && searchable && !v.many) {
+    if (idx < 0 && box && !v.many) {
       const { full, narrow } = searchQueries(v);
       let sawAny = false;
       for (const query of narrow ? [...full, narrow] : full) {
@@ -591,7 +695,7 @@
         if (query === narrow && sawAny) break;
         const before = optionsKey(opts);
         const shown = searchesOnEnter(el) ? listboxFor(el) : undefined;
-        typeQuery(el, query);
+        typeQuery(box, query);
         if (searchesOnEnter(el)) key(el, 'Enter');
         opts = await waitForOptions(el, SEARCH_WAIT, before, shown);
         if (opts.length) sawAny = true;
@@ -681,6 +785,9 @@
   }
 
   function isMulti(el) {
+    // The <select> a widget stands in for says so itself (chosen's and Tom Select's lists don't).
+    const native = dom().standsFor(el);
+    if (native) return native.multiple;
     const lb = listboxFor(el);
     if (lb && lb.getAttribute('aria-multiselectable') === 'true') return true;
     // A menu of ticks ("How did you hear about us?" on Teamtailor) takes several.
