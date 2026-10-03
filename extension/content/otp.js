@@ -20,6 +20,7 @@
     /(^|[^a-z])(otp|mfa|2fa|totp|passcode|one_?time|verification_?code|verify_?code|confirmation_?code|security_?code|auth_?code|email_?code|login_?code|pin_?code|token)([^a-z]|$)|verificationcode|otpcode/i;
   const NOT_CODE =
     /promo|coupon|discount|voucher|gift|postal|zip|post ?code|referral|invite|invitation|country|area code|dial|phone|cvc|cvv|card|sort ?code|swift|bic|iban|tax|vat|product|captcha|tracking|campus|course|class|offer|reference/i;
+  const CARD = /card ?number|credit|debit|expir|cvv|cvc|billing|payment|mm ?\/ ?yy/i;
   const EMAIL_HINT = /e-?mail|inbox|mailbox|we (have |'ve |’ve )?sent|sent (you |to )|check your/i;
   const OTHER_CHANNEL =
     /authenticator|authentication app|google auth|text message|\bsms\b|texted|phone number ending|backup code|recovery code/i;
@@ -96,9 +97,13 @@
     }
     for (const [box, list] of groups) {
       if (list.length < 4 || list.length > 8 || list.some((x) => x.value)) continue;
-      const around = `${labelText(list[0])} ${contextText(box)}`;
-      if (NOT_CODE.test(labelText(list[0]))) continue;
+      const label = `${labelText(list[0])} ${box.getAttribute('aria-label') || ''}`;
+      const around = `${label} ${contextText(box)}`;
+      if (NOT_CODE.test(label) || CARD.test(around)) continue;
       if (OTHER_CHANNEL.test(around) && !EMAIL_HINT.test(around)) continue;
+      // A row of boxes is only a code when something says so (word games and ID inputs look the same).
+      const oneTime = list.some((x) => /one-time-code/i.test(x.getAttribute('autocomplete') || ''));
+      if (!oneTime && !CODE_WORDS.test(around) && !(EMAIL_HINT.test(around) && /\bcode\b/i.test(around))) continue;
       return { inputs: list, length: list.length, numeric: list.every(numericBox) };
     }
 
@@ -107,10 +112,12 @@
     for (const el of inputs) {
       if (el.value || (el.maxLength > 0 && (el.maxLength < 4 || el.maxLength > 12))) continue;
       const ac = (el.getAttribute('autocomplete') || '').toLowerCase();
+      if (/^cc-|\scc-/.test(ac)) continue; // card fields: "Security code" is the CVC
       const name = `${el.name} ${el.id}`;
       const label = labelText(el);
       if (NOT_CODE.test(label) || NOT_CODE.test(name)) continue;
       const around = contextText(el);
+      if (!/one-time-code/.test(ac) && CARD.test(`${label} ${around}`)) continue;
       let score = 0;
       if (/one-time-code/.test(ac)) score += 5;
       if (CODE_WORDS.test(label)) score += 4;
@@ -270,6 +277,7 @@
           return res;
         }
         if (res.suggest) {
+          for (const el of target.inputs) state.done.add(el);
           toast(
             `A code just arrived from ${res.from} (“${res.subject}”), but it doesn’t look like it’s from this site.`,
             {
@@ -283,6 +291,8 @@
           return res;
         }
       }
+      // Nothing came: don't start waiting again for the same boxes.
+      for (const el of target.inputs) state.done.add(el);
       return null;
     })().finally(() => {
       state.polling = null;
@@ -312,19 +322,25 @@
   /* --------------------------------------------------------------- watch */
 
   let scheduled = false;
+  let lastTextCheck = 0;
   function check(options) {
     if (state.ended) return false;
-    const target = findTarget();
+    const target = document.querySelector('input') && findTarget();
     if (target) {
       pollForCode(target);
       return true;
     }
-    if (root === root.top && options && options.links !== false) {
+    // Reading the page's text is the costly part: at most every few seconds, and not once a link is awaited.
+    if (root === root.top && options && options.links !== false && !state.link && Date.now() - lastTextCheck > 4000) {
+      lastTextCheck = Date.now();
       const text = (document.body && document.body.innerText) || '';
       if (VERIFY_PAGE.test(text.slice(0, 6000))) pollForLink();
     }
     return false;
   }
+
+  const hasInput = (node) =>
+    node.nodeType === 1 && (node.localName === 'input' || (node.firstElementChild && !!node.querySelector('input')));
 
   function watch(options) {
     state.options = options || {};
@@ -332,13 +348,18 @@
     if (!state.polling) state.since = Date.now();
     check(state.options);
     if (state.observer) return;
-    state.observer = new MutationObserver(() => {
-      if (scheduled) return;
+    // New boxes are checked soon; a style or class change (a hidden step being shown) less often.
+    state.observer = new MutationObserver((records) => {
+      if (scheduled || state.polling) return;
+      const added = records.some((r) => r.type === 'childList' && [...r.addedNodes].some(hasInput));
       scheduled = true;
-      setTimeout(() => {
-        scheduled = false;
-        if (!state.polling) check(state.options);
-      }, 600);
+      setTimeout(
+        () => {
+          scheduled = false;
+          if (!state.polling) check(state.options);
+        },
+        added ? 500 : 2000,
+      );
     });
     state.observer.observe(document.documentElement, {
       subtree: true,

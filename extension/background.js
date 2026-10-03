@@ -151,7 +151,8 @@ async function fillTab(tabId, options) {
   }
 
   // A sign-in step that asks for an emailed code: look out for it even when automatic watching is off.
-  if (!opts.only && (await otpReady())) watchOtp(tabId).catch(() => {});
+  const tab = await api.tabs.get(tabId).catch(() => null);
+  if (!opts.only && tab && !tab.incognito && (await otpReady())) watchOtp(tabId).catch(() => {});
 
   const summary = mergeReports(frames);
   summary.letter = letter ? { id: letter.id, company: letter.posting && letter.posting.company } : null;
@@ -636,6 +637,11 @@ async function recentMail(config, since) {
   return list;
 }
 
+const sameSite = (a, b) => {
+  const [x, y] = [otp.site(a), otp.site(b)];
+  return x === y || (!!otp.familyOf(x) && otp.familyOf(x) === otp.familyOf(y));
+};
+
 const hostOf = (url) => {
   try {
     return new URL(url).hostname;
@@ -661,7 +667,11 @@ async function otpFor(msg, sender) {
   if (!isSecureUrl(url)) return { stop: true };
   const settings = store.otpSettings(await store.getSettings());
   if (msg.kind === 'link' && (settings.links === false || sender.frameId !== 0)) return { stop: true };
-  const hosts = [url.hostname, hostOf(sender.tab && sender.tab.url)].filter(Boolean);
+  // A framed form shares the top page's trust only when it is the same site (or the same tracking
+  // system): an ad or widget frame on careers.acme.com doesn't get Acme's code.
+  const top = hostOf(sender.tab && sender.tab.url);
+  const hosts = [url.hostname];
+  if (top && top !== url.hostname && sameSite(url.hostname, top)) hosts.push(top);
   const since = Math.max(Number(msg.since) || 0, Date.now() - 30 * 60e3);
   let list;
   try {
@@ -693,13 +703,20 @@ async function otpFor(msg, sender) {
     });
     return { opened: true, from };
   }
-  await markUsed(found.id);
-  if (found.relevance === 'strong') return { code: found.code, from, subject: found.subject };
+  if (found.relevance === 'strong') {
+    await markUsed(found.id);
+    return { code: found.code, from, subject: found.subject };
+  }
   // Not obviously from this site: offer it, and keep the code here until the person says yes.
   const token = util.uid();
   const claims = (await sessionGet('otpClaims', {})) || {};
   for (const [k, c] of Object.entries(claims)) if (c.expires < Date.now()) delete claims[k];
-  claims[token] = { code: found.code, tabId: sender.tab && sender.tab.id, expires: Date.now() + 5 * 60e3 };
+  claims[token] = {
+    code: found.code,
+    id: found.id,
+    tabId: sender.tab && sender.tab.id,
+    expires: Date.now() + 5 * 60e3,
+  };
   await sessionArea().set({ otpClaims: claims });
   return { suggest: token, from, subject: found.subject };
 }
@@ -711,6 +728,7 @@ async function otpClaim(msg, sender) {
     return { error: 'That code has expired.' };
   delete claims[msg.token];
   await sessionArea().set({ otpClaims: claims });
+  await markUsed(claim.id);
   return { code: claim.code };
 }
 
@@ -721,7 +739,17 @@ async function insertOtp(tab, info, frameIds) {
     await showToast(tab.id, 'Connect your inbox first: JobToFill settings › Email codes.', {}, frameIds);
     return;
   }
-  const hosts = [hostOf(info.frameUrl), hostOf(tab.url)].filter(Boolean);
+  let url = null;
+  try {
+    url = new URL(info.frameUrl || tab.url);
+  } catch (err) {
+    /* not a web page */
+  }
+  if (!url || !isSecureUrl(url) || tab.incognito) {
+    await showToast(tab.id, 'Verification codes are only filled on secure (https) pages.', {}, frameIds);
+    return;
+  }
+  const hosts = [url.hostname, hostOf(tab.url)].filter(Boolean);
   const since = Date.now() - OTP_EXPLICIT_LOOKBACK;
   let found;
   try {

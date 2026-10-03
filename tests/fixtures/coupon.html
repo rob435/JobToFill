@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Checkout – Shop</title>
+  <style>body { font: 15px/1.4 system-ui; max-width: 420px; margin: 24px auto; } label { display: block; margin: 10px 0 4px; } input { display: block; width: 100%; }</style>
+</head>
+<body>
+  <h1>Your basket</h1>
+  <!-- Looks like a code box to a careless detector: an emailed code, but it's a discount, not a login. -->
+  <form id="checkout">
+    <p>We emailed you a discount code when you signed up. Enter the code below to save 10%.</p>
+    <label for="promo">Coupon code</label>
+    <input type="text" id="promo" name="coupon" inputmode="numeric" maxlength="6">
+    <div class="gift" aria-label="Gift card PIN">
+      <input type="text" name="gift-pin-1" maxlength="1" aria-label="Gift card PIN digit 1">
+      <input type="text" name="gift-pin-2" maxlength="1" aria-label="Gift card PIN digit 2">
+      <input type="text" name="gift-pin-3" maxlength="1" aria-label="Gift card PIN digit 3">
+      <input type="text" name="gift-pin-4" maxlength="1" aria-label="Gift card PIN digit 4">
+    </div>
+    <button type="submit">Apply</button>
+  </form>
+</body>
+</html>

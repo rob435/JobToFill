@@ -176,3 +176,56 @@ test('store: Nylas connection is saved, backed up and restored', async () => {
   await store.setNylas(null);
   assert.equal(await store.getNylas(), null);
 });
+
+test('otp: pages anyone can publish never get another account’s code', () => {
+  const from = (email, extra) =>
+    msg('Your verification code', 'Your verification code: 123456', { from: [{ name: 'X', email }], ...extra });
+  // A free tracking-system subdomain named after a company is not that company.
+  assert.notEqual(otp.relevance(from('service@paypal.com'), ['paypal.recruitee.com']), 'strong');
+  // Google Forms and Microsoft Forms live on Google's and Microsoft's own domains.
+  assert.notEqual(otp.relevance(from('no-reply@accounts.google.com'), ['docs.google.com']), 'strong');
+  assert.notEqual(otp.relevance(from('no-reply@google.com'), ['docs.google.com']), 'strong');
+  assert.notEqual(otp.relevance(from('account@microsoft.com'), ['forms.office.com']), 'strong');
+  // A link to a help centre doesn't vouch for someone else's page on the same help desk.
+  const help = from('alerts@bank.com', { body: 'Code: 123456 <a href="https://bank.zendesk.com/hc">Help</a>' });
+  assert.notEqual(otp.relevance(help, ['evil.zendesk.com']), 'strong');
+  assert.equal(otp.relevance(help, ['bank.zendesk.com']), 'strong', 'the exact host still counts');
+  // Files on Oracle's storage aren't Oracle's sign-in page.
+  assert.notEqual(otp.relevance(from('no-reply@oracle.com'), ['objectstorage.us-ashburn-1.oraclecloud.com']), 'strong');
+  assert.equal(otp.relevance(from('no-reply@oracle.com'), ['jpmc.fa.us2.oraclecloud.com']), 'strong');
+});
+
+test('otp: short brands on country domains', () => {
+  assert.equal(otp.site('jobs.bmw.de'), 'bmw.de');
+  assert.equal(otp.site('www.ing.nl'), 'ing.nl');
+  assert.equal(otp.site('careers.acme.com.au'), 'acme.com.au');
+  const m = msg('Code', 'Your verification code is 123456', { from: [{ email: 'noreply@bmw.de' }] });
+  assert.equal(otp.relevance(m, ['jobs.bmw.de']), 'strong');
+});
+
+test('otp: more code formats and hidden text', () => {
+  assert.equal(
+    code(
+      'Security code for your application',
+      'Copy and paste this code into the security code field on your application: Ab3dEf9h',
+    ),
+    'Ab3dEf9h',
+  );
+  assert.equal(code('Verify', 'Your verification code:123456'), '123456');
+  assert.equal(code('Sign in', '<h1 style="display:none">Code 111111</h1><p>Your code is 222222</p>'), '222222');
+  // An unclosed hidden paragraph doesn't swallow the one with the code.
+  assert.equal(
+    code('Verify', '<p style="display:none">preview<p>Your verification code is <b>654321</b></p>'),
+    '654321',
+  );
+});
+
+test('otp: sign-in approval links are never opened', () => {
+  const alert = msg(
+    'New sign-in to your account',
+    '<p>Was this you?</p><a href="https://acme.com/confirm?t=1">Yes, confirm it was me</a>',
+  );
+  assert.equal(otp.findLink(alert, 'acme.com'), null);
+  const approve = msg('Verify', '<a href="https://acme.com/login/approve?t=1">Verify and sign in</a>');
+  assert.equal(otp.findLink(approve, 'acme.com'), null);
+});
