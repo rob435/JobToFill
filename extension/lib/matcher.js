@@ -1530,6 +1530,10 @@
     )
       return `${U.monthName(d.month).replace(/^./, (c) => c.toUpperCase())} ${y}`;
 
+    // A date picker's box (it opens a calendar: Element Plus's "Pick a date") takes a whole date, in the page's
+    // order: a month goes in as its first day ("01/06/2027"); "06/2027" is thrown away.
+    const calendar = v.kind === 'date' && desc.popup === 'dialog';
+
     // A question in a plain text box with no format hint ("Earliest availability to start at CRA (not binding)")
     // reads best spelled out: "28 June 2027", which nobody takes for 6 February. Date pickers have a placeholder.
     const question = U.cleanLabel(s.label || s.question || s.aria || '');
@@ -1537,6 +1541,7 @@
       v.kind === 'date' &&
       d.month &&
       (type === 'text' || type === 'textarea') &&
+      !calendar &&
       !hint &&
       !DATE_PATTERN.test(label) &&
       question.split(/\s+/).length >= 4
@@ -1564,7 +1569,7 @@
     if (v.defaultFormat === 'MM/YY')
       return desc.maxLength && desc.maxLength >= 7 ? `${mm}/${y}` : `${mm}/${y.slice(2)}`;
     const order = dateOrder(desc);
-    if (d.day) {
+    if (d.day || (calendar && d.month)) {
       if (order === 'ymd') return [y, mm, dd].join('-');
       if (order === 'dmy.') return [dd, mm, y].join('.');
       return order === 'dmy' ? [dd, mm, y].join('/') : [mm, dd, y].join('/');

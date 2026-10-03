@@ -2033,7 +2033,8 @@
         const num = String(p.contact.phone || '').trim();
         if (!num) return null;
         const cc = phoneCode(p);
-        const international = cc && !num.startsWith('+') ? `${cc} ${num}` : num;
+        // "07386 526574" with +44 is "+44 7386 526574": the trunk 0 is not dialled after the code.
+        const international = cc && !num.startsWith('+') ? `${cc} ${JTF.geo.afterCode(num, cc)}` : num;
         // "Country/Region Code" in a box of its own: the number goes in without it.
         const national = nationalNumber(num, cc);
         const full = ctx.hasCountryCodeField ? national : international;
