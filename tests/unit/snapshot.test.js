@@ -158,6 +158,7 @@ const PAGE = `<!doctype html><html lang="en"><head>
   <noscript><img src="https://tracker.example/p.gif"></noscript>
   <!-- candidate: ada@example.com -->
   <div id="review" title="Signed in as ADA@EXAMPLE.COM" data-user="Ada Lovelace">Welcome back, Ada! Call (415) 555-0100.</div>
+  <div id="app" data-props='{"candidate":{"id":"c-77","city":"Leeds","token":"s3ss10n"},"step":2}' data-step="2"></div>
   <a id="li" href="https://www.linkedin.com/in/ada-lovelace?trk=abc#top" onclick="x()">LinkedIn</a>
   <a id="js" href=" java&#9;script:alert(1)">bad</a>
   <a id="frag" href="#section">jump</a>
@@ -185,8 +186,8 @@ const PAGE = `<!doctype html><html lang="en"><head>
     <div class="field"><label for="gender">Gender</label>
       <select id="gender"><option value="">Please select</option><option>Male</option><option>Female</option></select></div>
     <fieldset id="pronouns"><legend>Pronouns</legend>
-      <input type="radio" name="pro" id="p1" value="she"><label for="p1">She/her</label>
-      <input type="radio" name="pro" id="p2" value="he"><label for="p2">He/him</label></fieldset>
+      <label class="opt css-9xq1 opt--checked"><input type="radio" name="pro" id="p1" value="she"><span class="dot" style="transform: scale(1)"><svg viewBox="0 0 2 2"><circle r="1"></circle></svg></span>She/her</label>
+      <label class="opt css-2bc7"><input type="radio" name="pro" id="p2" value="he"><span class="dot" style="transform: scale(0)"></span>He/him</label></fieldset>
     <div class="field"><label id="eth-label">Ethnicity</label>
       <div class="rs"><div class="rs__control"><div class="rs__single-value">White British</div>
         <div class="rs__input"><input id="eth" role="combobox" aria-labelledby="eth-label" aria-controls="eth-menu" class="rs__input-is-active"></div></div></div>
@@ -314,6 +315,9 @@ test('personal details are redacted in text and in every attribute', () => {
   assert.equal(doc.getElementById('review').textContent, 'Welcome back, [first name]! Call [phone].');
   assert.equal(doc.getElementById('review').getAttribute('title'), 'Signed in as [email]');
   assert.equal(doc.getElementById('review').getAttribute('data-user'), '[first name] [last name]');
+  // State a server rendered into the page goes whole (it holds what no profile lists: ids, tokens).
+  assert.equal(doc.getElementById('app').hasAttribute('data-props'), false);
+  assert.equal(doc.getElementById('app').getAttribute('data-step'), '2');
   assert.equal(doc.getElementById('first').getAttribute('placeholder'), 'e.g. [first name]');
   assert.doesNotMatch(html, /\bada\b|lovelace|example\.com|555/i);
 });
@@ -352,23 +356,36 @@ test('equal-opportunity answers: which option is picked is left out, the options
     ['Please select', 'Male', 'Female'],
   );
   assert.equal(doc.querySelectorAll('#pronouns input[checked]').length, 0);
-  assert.equal(doc.querySelector('label[for=p1]').textContent, 'She/her');
-  // A custom dropdown's shown answer goes, and the open menu no longer marks it.
-  assert.equal(doc.querySelector('.rs__single-value').textContent, '');
+  // Nothing tells the picked radio apart: no classes, styles or indicator; the options' text stays.
+  assert.equal(
+    doc.getElementById('pronouns').innerHTML.replace(/\s+/g, ' '),
+    '<legend>Pronouns</legend> <label><input type="radio" name="pro" id="p1" value="she">She/her</label> <label><input type="radio" name="pro" id="p2" value="he">He/him</label>',
+  );
+  // A custom dropdown's shown answer goes (once in the menu, no longer beside the input), and the open menu no
+  // longer marks it.
+  const eth = doc.querySelector('#eth-label').parentElement;
+  assert.equal(eth.textContent.match(/White British/g).length, 1);
   assert.equal(doc.querySelector('#eth-label').textContent, 'Ethnicity');
   const picked = doc.querySelector('#eth-menu [role=option]');
   assert.equal(picked.getAttribute('aria-selected'), 'false');
   assert.equal(picked.hasAttribute('data-state'), false);
-  assert.equal(picked.getAttribute('class'), 'rs__option');
-  assert.equal(doc.getElementById('eth').getAttribute('class'), '', 'state classes go');
+  assert.equal(picked.hasAttribute('class'), false);
+  assert.equal(doc.getElementById('eth').hasAttribute('class'), false, 'classes go');
+  assert.equal(doc.getElementById('eth').getAttribute('role'), 'combobox', 'roles stay');
   assert.equal(
     doc.querySelector('#eth-menu [role=option]').textContent,
     'White British',
     'the options themselves stay',
   );
   // select2-style: the rendered choice beside the hidden <select>.
-  assert.equal(doc.querySelector('.select2-selection__rendered').textContent, '');
-  assert.equal(doc.querySelector('.select2-selection__rendered').hasAttribute('title'), false);
+  const dis = doc.querySelector('label[for=dis]').parentElement;
+  assert.deepEqual(
+    [...dis.querySelectorAll('span')].map((x) => [x.textContent, x.hasAttribute('title')]),
+    [
+      ['', false],
+      ['', false],
+    ],
+  );
   assert.equal(doc.querySelectorAll('#dis option[selected]').length, 0);
   assert.deepEqual(
     [...doc.querySelectorAll('#dis option')].map((o) => o.textContent),

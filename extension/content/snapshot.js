@@ -115,9 +115,11 @@
   // Equal-opportunity answers (gender, ethnicity, disability…), pronouns, title, date of birth, age and adjustments
   // are personal even as a picked option: which one is picked is left out.
   const PRIVATE_CHOICE = /^(eeo\.|pronouns$|name\.prefix$|dob$|age$|job\.adjustments$)/;
-  // Inside such a question: the attributes and classes widgets mark the picked option with.
+  // Inside such a question only text, controls and their roles stay: ARIA states read "false", and the classes,
+  // inline styles, data-* markers and textless ornaments widgets show the picked option with go (a hashed CSS-in-JS
+  // class that differs on the checked radio, Radix's indicator rendered only inside it, MUI's scaled dot).
   const STATE_ARIA = new Set(['aria-checked', 'aria-pressed', 'aria-selected']);
-  const STATE_CLASS = /checked|selected|active|chosen|pressed|current/i;
+  const CONTROLISH = 'input, select, textarea, button, option, label, [role]';
   const KEEP_DATA = new Set([
     'data-automation-id',
     'data-testid',
@@ -243,14 +245,15 @@
       // Browsers skip spaces and control characters in a URL's scheme ("java&#9;script:").
       const squashed = value.replace(/[\s\p{Cc}]+/gu, '').toLowerCase();
       if (/(?:java|vb)script:/.test(squashed) || /^(?:data|blob|filesystem):/.test(squashed)) continue;
+      // App state a server rendered into the page (data-props='{"candidate":…}'): it can hold a whole application.
+      if (lower.startsWith('data-') && value.length > 40 && /^\s*[{[]/.test(value)) continue;
       if (ctx.hide) {
         if (STATE_ARIA.has(lower)) value = 'false';
-        else if (lower === 'aria-current' || (lower.startsWith('data-') && !KEEP_DATA.has(lower))) continue;
-        else if (lower === 'class')
-          value = value
-            .split(/\s+/)
-            .filter((c) => c && !STATE_CLASS.test(c))
-            .join(' ');
+        else if (
+          ['class', 'style', 'aria-current'].includes(lower) ||
+          (lower.startsWith('data-') && !KEEP_DATA.has(lower))
+        )
+          continue;
       }
       if (ctx.blank && SHOWN_VALUE_ATTRS.has(lower) && !el.closest(OPTION_TEXT)) continue;
       if (URL_ATTRS.has(lower)) {
@@ -290,6 +293,9 @@
     const html = isHtml(el);
     if (html && name === 'meta' && !/^viewport$/i.test(el.getAttribute('name') || '')) return;
     if (html && name === 'link' && !isStylesheet(el)) return;
+    const root = ctx.withheld.state.has(el) || ctx.withheld.blank.has(el);
+    if (ctx.hide && !root && !el.matches(CONTROLISH) && !el.querySelector(CONTROLISH) && !/\S/.test(el.textContent))
+      return;
     const saved = [ctx.hide, ctx.blank];
     if (ctx.withheld.state.has(el)) ctx.hide = true;
     if (ctx.withheld.blank.has(el)) ctx.hide = ctx.blank = true;
