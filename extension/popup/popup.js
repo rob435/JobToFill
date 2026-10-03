@@ -479,6 +479,10 @@ async function unlock(e) {
     await vault.unlock(input.value);
     input.value = '';
     await renderVault();
+    // A fill that skipped passwords for the locked vault carries on now.
+    await api.runtime.sendMessage({ type: 'jtf:vault-unlocked' }).catch(() => {});
+    // Opened from the page's "Unlock" button as a small window: done.
+    if (new URLSearchParams(location.search).get('unlock')) window.close();
   } catch (err) {
     $('#vault-error').textContent = err.message;
     $('#vault-error').hidden = false;
@@ -553,6 +557,7 @@ async function init() {
   }
 
   await Promise.all([renderProfiles(), renderVault(), renderAccess(), renderQuick(), renderWatchNews()]);
+  if (new URLSearchParams(location.search).get('unlock')) $('#vault-password').focus();
 }
 
 init();

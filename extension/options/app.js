@@ -90,6 +90,11 @@ const TOGGLES = [
     'Privacy-notice and “I confirm” checkboxes. Marketing and talent-pool opt-ins are never ticked. Off: they are left for you.',
   ],
   ['logApplications', 'Keep an application log', 'Remember each job application page you filled.'],
+  [
+    'accountFlow',
+    'Sign in and create job-portal accounts for me',
+    'On a sign-in or sign-up page you fill, JobToFill clicks the page’s own “Sign in” or “Create account” (ticking the sign-up form’s terms box), waits for you to solve any “I’m not a robot” check, and fills the code emailed to you. It never submits a job application.',
+  ],
 ];
 
 // prettier-ignore

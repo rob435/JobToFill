@@ -133,9 +133,81 @@
     'BD:Bangladeshi;LK:Sri Lankan;NP:Nepalese,Nepali;CN:Chinese;HK:Hongkonger;TW:Taiwanese;JP:Japanese;' +
     'KR:South Korean,Korean;SG:Singaporean;MY:Malaysian;ID:Indonesian;TH:Thai;VN:Vietnamese;PH:Filipino;' +
     'AU:Australian;NZ:New Zealander;CA:Canadian;MX:Mexican;BR:Brazilian;AR:Argentine,Argentinian;CL:Chilean;' +
-    'CO:Colombian;PE:Peruvian;IR:Iranian;GE:Georgian;AM:Armenian;JM:Jamaican';
+    'CO:Colombian;PE:Peruvian;IR:Iranian;GE:Georgian;AM:Armenian;JM:Jamaican;CU:Cuban;SY:Syrian;KP:North Korean;' +
+    'BY:Belarusian;VE:Venezuelan;IQ:Iraqi;AF:Afghan;SD:Sudanese;MM:Burmese;YE:Yemeni;LY:Libyan';
+
+  // International dialling codes (ITU), so a "Country/Region Code" list gets the right "United Kingdom (+44)".
+  // prettier-ignore
+  const DIAL =
+    'AF93 AX358 AL355 DZ213 AS1 AD376 AO244 AI1 AQ672 AG1 AR54 AM374 AW297 AU61 AT43 AZ994 BS1 BH973 BD880 BB1 BY375 ' +
+    'BE32 BZ501 BJ229 BM1 BT975 BO591 BQ599 BA387 BW267 BV47 BR55 IO246 BN673 BG359 BF226 BI257 CV238 KH855 CM237 CA1 ' +
+    'KY1 CF236 TD235 CL56 CN86 CX61 CC61 CO57 KM269 CG242 CD243 CK682 CR506 CI225 HR385 CU53 CW599 CY357 CZ420 DK45 ' +
+    'DJ253 DM1 DO1 EC593 EG20 SV503 GQ240 ER291 EE372 SZ268 ET251 FK500 FO298 FJ679 FI358 FR33 GF594 PF689 TF262 GA241 ' +
+    'GM220 GE995 DE49 GH233 GI350 GR30 GL299 GD1 GP590 GU1 GT502 GG44 GN224 GW245 GY592 HT509 HM672 VA39 HN504 HK852 ' +
+    'HU36 IS354 IN91 ID62 IR98 IQ964 IE353 IM44 IL972 IT39 JM1 JP81 JE44 JO962 KZ7 KE254 KI686 KP850 KR82 KW965 KG996 ' +
+    'LA856 LV371 LB961 LS266 LR231 LY218 LI423 LT370 LU352 MO853 MG261 MW265 MY60 MV960 ML223 MT356 MH692 MQ596 MR222 ' +
+    'MU230 YT262 MX52 FM691 MD373 MC377 MN976 ME382 MS1 MA212 MZ258 MM95 NA264 NR674 NP977 NL31 NC687 NZ64 NI505 NE227 ' +
+    'NG234 NU683 NF672 MK389 MP1 NO47 OM968 PK92 PW680 PS970 PA507 PG675 PY595 PE51 PH63 PN64 PL48 PT351 PR1 QA974 ' +
+    'RE262 RO40 RU7 RW250 BL590 SH290 KN1 LC1 MF590 PM508 VC1 WS685 SM378 ST239 SA966 SN221 RS381 SC248 SL232 SG65 SX1 ' +
+    'SK421 SI386 SB677 SO252 ZA27 GS500 SS211 ES34 LK94 SD249 SR597 SJ47 SE46 CH41 SY963 TW886 TJ992 TZ255 TH66 TL670 ' +
+    'TG228 TK690 TO676 TT1 TN216 TR90 TM993 TC1 TV688 UG256 UA380 AE971 GB44 US1 UM1 UY598 UZ998 VU678 VE58 VN84 VG1 ' +
+    'VI1 WF681 EH212 YE967 ZM260 ZW263 XK383';
+  // The country a shared code stands for when nothing else says: +1 is the US, not Canada; +44 the UK, not Jersey.
+  const DIAL_HOME = 'US RU GB NO AU IT FI RE GP CW MA NF FK NZ'.split(' ');
 
   const norm = (s) => JTF.util.normalize(s);
+
+  let dialIndex = null;
+  function dials() {
+    if (dialIndex) return dialIndex;
+    dialIndex = { byCountry: new Map(), byCode: new Map() };
+    for (const entry of DIAL.split(' ')) {
+      const iso2 = entry.slice(0, 2);
+      const code = entry.slice(2);
+      dialIndex.byCountry.set(iso2, code);
+      if (!dialIndex.byCode.has(code)) dialIndex.byCode.set(code, []);
+      dialIndex.byCode.get(code).push(iso2);
+    }
+    return dialIndex;
+  }
+
+  /** The dialling code of a country (name, alias or code), without the "+": "United Kingdom" -> "44". */
+  function dialCode(country) {
+    const row = findCountry(country);
+    return (row && dials().byCountry.get(row[0])) || '';
+  }
+
+  /** The country (ISO alpha-2) a dialling code stands for on its own: "1" -> "US", "44" -> "GB". */
+  function countryOfDial(code) {
+    const list = dials().byCode.get(String(code || '').replace(/\D/g, '')) || [];
+    return list.find((c) => DIAL_HOME.includes(c)) || list[0] || '';
+  }
+
+  /** "+44 7700 900123" or "0044 7700…" -> { code: "44", national: "7700 900123" }; null for a national number. */
+  function splitPhone(number) {
+    const m = String(number || '')
+      .trim()
+      .match(/^(?:\+|00)\s*(\d[\d\s().-]*)$/);
+    if (!m) return null;
+    const digits = m[1].replace(/\D/g, '');
+    for (let n = 3; n >= 1; n--) {
+      const code = digits.slice(0, n);
+      if (!dials().byCode.has(code)) continue;
+      // Drop the code (and what separates it) from the number as written.
+      let seen = 0;
+      let i = 0;
+      const rest = m[1];
+      while (i < rest.length && seen < n) if (/\d/.test(rest[i++])) seen++;
+      // "+44 (0)7700 900123": the trunk zero in brackets is not dialled from abroad.
+      const national = rest
+        .slice(i)
+        .replace(/^[\s.-]*\(0\)/, '')
+        .replace(/^[\s().-]+/, '')
+        .trim();
+      return { code, national };
+    }
+    return null;
+  }
 
   let countryIndex = null;
   function index() {
@@ -219,13 +291,50 @@
     'AT BE BG HR CY CZ DK EE FI FR DE GR HU IE IT LV LT LU MT NL PL PT RO SK SI ES SE IS LI NO CH'.split(' '),
   );
 
-  /** The words a list of citizenship options may use for a nationality: names, demonyms, "EU". */
+  /**
+   * Every nationality of a dual national ("British, Irish", "British and Iranian", "British / Iranian") as country
+   * rows; one row when the whole text is a country ("Trinidad and Tobago").
+   */
+  function nationalities(value) {
+    const rows = [];
+    for (const part of String(value || '').split(/\s*[,;/&+]\s*/)) {
+      const whole = findCountry(part.trim());
+      if (whole) rows.push(whole);
+      else for (const w of part.split(/\s+(?:and|or)\s+/i)) rows.push(findCountry(w.trim()));
+    }
+    return [...new Map(rows.filter(Boolean).map((row) => [row[0], row])).values()];
+  }
+
+  /** The words a list of citizenship options may use for a nationality (or two): names, demonyms, "EU". */
   function citizenWords(value) {
-    const row = findCountry(value);
-    if (!row) return [];
-    const words = [...countryCandidates(value), ...demonyms(row[0])];
-    if (EUROPEAN.has(row[0])) words.push('EU', 'EEA', 'European', 'European Union');
+    const rows = nationalities(value);
+    const words = rows.length === 1 ? countryCandidates(value) : [];
+    for (const row of rows) {
+      words.push(...row.slice(2), row[0], row[1], ...demonyms(row[0]));
+      if (EUROPEAN.has(row[0])) words.push('EU', 'EEA', 'European', 'European Union');
+    }
     return [...new Set(words.map(norm).filter(Boolean))];
+  }
+
+  // Under comprehensive US sanctions (OFAC; export-control country groups E:1 and E:2), as forms list them, and the
+  // occupied regions of Ukraine they add ("…or the Crimea, Donetsk, Luhansk, Zaporizhzhia, or Kherson regions").
+  const SANCTIONED = ['CU', 'IR', 'KP', 'SY'];
+  // prettier-ignore
+  const OCCUPIED = [
+    ['Crimea', /\bcrim(ea|ean|ia)\b|\bkrym\b|\bsevastopol\b|\bsimferopol\b/],
+    ['Donetsk', /\bdonet[sz]k\b|\bdnr\b/],
+    ['Luhansk', /\blu[hg]ansk\b|\blnr\b/],
+    ['Zaporizhzhia', /\bzapor[io]z?h/],
+    ['Kherson', /\bkherson\b/],
+  ];
+  // What sanctions questions ask about beyond those (Russia and Belarus, Venezuela, other OFAC programmes): living in
+  // one, or holding its nationality, leaves "none of the above" and its follow-up for you.
+  const SANCTIONS_WATCH = new Set([...SANCTIONED, ...'RU BY VE MM SD SS IQ LY SO YE ZW NI LB ML CF CD'.split(' ')]);
+
+  /** The occupied regions of Ukraine a (normalised) text names: ["Crimea", "Donetsk"]. */
+  function occupiedRegions(text) {
+    const t = norm(text);
+    return OCCUPIED.filter(([, re]) => re.test(t)).map(([name]) => name);
   }
 
   let nameIndex = null;
@@ -489,10 +598,18 @@
     findCountry,
     countryCandidates,
     demonyms,
+    nationalities,
     citizenWords,
+    SANCTIONED,
+    OCCUPIED,
+    SANCTIONS_WATCH,
+    occupiedRegions,
     findRegion,
     regionCountry,
     regionCandidates,
+    dialCode,
+    countryOfDial,
+    splitPhone,
   };
   JTF.geo = geo;
   if (typeof module === 'object' && module.exports) module.exports = geo;

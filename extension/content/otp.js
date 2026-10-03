@@ -15,7 +15,7 @@
   const LOOKBACK = 10 * 60e3; // a code requested a little before the box appeared still counts
 
   const CODE_WORDS =
-    /\b(verification|verify|confirm(ation)?|security|one[- ]?time|access|auth(entication)?|log ?in|sign[- ]?in|e-?mail(ed)?|2fa|mfa|two[- ]?(factor|step))\s*(code|pin|passcode)\b|\botp\b|\bpass ?code\b|\bone[- ]?time\b|\b\d[- ]digit\b|\benter (the |your )?code\b|\bcode (we |that we )?(sent|e-?mailed)\b|bestätigungscode|sicherheitscode|code de (vérification|confirmation|sécurité)|código de (verificación|verificação|confirmación|seguridad)|codice di verifica|verificatiecode/i;
+    /\b(verification|verify|confirm(ation)?|security|one[- ]?time|access|auth(entication)?|log ?in|sign[- ]?in|e-?mail(ed)?|2fa|mfa|two[- ]?(factor|step))\s*(code|pin|passcode)\b|\botp\b|\bpass ?code\b|\bone[- ]?time\b|\b\d[- ]digit\b|\benter (the |your )?(code|pin)\b|\bpin (code )?(we |that we )?(sent|e-?mailed)\b|\bcode (we |that we )?(sent|e-?mailed)\b|bestätigungscode|sicherheitscode|code de (vérification|confirmation|sécurité)|código de (verificación|verificação|confirmación|seguridad)|codice di verifica|verificatiecode/i;
   const CODE_NAME =
     /(^|[^a-z])(otp|mfa|2fa|totp|passcode|one_?time|verification_?code|verify_?code|confirmation_?code|security_?code|auth_?code|email_?code|login_?code|pin_?code|token)([^a-z]|$)|verificationcode|otpcode/i;
   const NOT_CODE =
@@ -269,6 +269,8 @@
         }
         if (res.code) {
           const ok = await fillCode(target, res.code);
+          // Signing up for you: the background may now confirm the code step.
+          if (ok) send({ type: 'jtf:otp-filled' });
           toast(
             ok
               ? `Filled the verification code from ${res.from}.`

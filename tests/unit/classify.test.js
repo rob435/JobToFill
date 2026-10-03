@@ -1115,6 +1115,50 @@ test('a privacy notice to "acknowledge/confirm" is an acknowledgement however th
   assert.equal(matcher.matchOption(opts('Yes', 'No'), v), 0);
 });
 
+test('SuccessFactors account pages: "Country/Region Code", "Country/Region of Residence" and their kin', () => {
+  const sel = (label) => typeOf(desc(label, { kind: 'select', options: opts('- Select -', 'FRANCE', 'GERMANY') }));
+  // Real SuccessFactors labels (Moody's "Create an Account").
+  assert.equal(sel('Country/Region Code:*'), 'phone.countryCode');
+  assert.equal(sel('Country/Region of Residence:*'), 'address.country', 'a country, not a state or region');
+  assert.equal(typeOf(desc({ aria: 'Country/Region of Residence' }, { kind: 'select' })), 'address.country');
+  for (const label of ['Country/Region', 'Country or Region', 'Country / Territory', 'Country and Region'])
+    assert.equal(sel(label), 'address.country', label);
+  for (const label of ['Mobile Phone Country Code', 'Phone Country/Region Code', 'Country / Region Dialing Code'])
+    assert.equal(sel(label), 'phone.countryCode', label);
+  // A state is still a state, and Workday's "countryRegion" id is its state box.
+  for (const label of ['State / Province / Region', 'Region', 'State/Territory'])
+    assert.equal(sel(label), 'address.state', label);
+  assert.equal(typeOf(desc({ attrs: 'addressSection_countryRegion' }, { kind: 'combo' })), 'address.state');
+});
+
+test('account pages: retyped emails, chosen and retyped passwords, passcodes, "I’m not a robot"', () => {
+  const pw = (label) => typeOf(desc(label, { kind: 'password', inputType: 'password' }));
+  for (const label of ['Retype Email Address:*', 'Confirm Email', 'Re-enter email', 'Verify email address'])
+    assert.equal(typeOf(desc(label)), 'email', label);
+  for (const label of ['Choose Password:*', 'Create Password', 'New Password', 'Password'])
+    assert.equal(pw(label), 'account.password', label);
+  for (const label of [
+    'Retype Password:*',
+    'Re-enter password',
+    'Verify New Password',
+    'Confirm New Password',
+    'Repeat password',
+  ])
+    assert.equal(pw(label), 'account.passwordConfirm', label);
+  // SuccessFactors' emailed passcode box is type="password": the code, never your password.
+  assert.equal(pw('*Passcode:'), 'otp');
+  assert.equal(pw('One-Time Password'), 'otp');
+  assert.equal(typeOf(desc('Verification code')), 'otp');
+  assert.equal(typeOf(desc('Enter the 6-digit code')), 'otp');
+  assert.equal(typeOf(desc('Security code')), 'cc.cvc', 'a card’s security code is not an emailed code');
+  assert.equal(typeOf(desc('Promo code')), null);
+  // A plain checkbox, never a CAPTCHA widget's ARIA box.
+  const box = (label, inputType) => typeOf(desc(label, { kind: 'checkbox', inputType }));
+  assert.equal(box("I'm not a robot", 'checkbox'), 'human');
+  assert.equal(box('Confirm you are human', 'checkbox'), 'human');
+  assert.equal(box("I'm not a robot", 'div'), null);
+});
+
 test('UK education questions: courses are what you study, never the university (Teamtailor: Alloyed)', () => {
   const ask = (label, kind, options) =>
     typeOf(desc({ label }, { kind: kind || 'text', options: options ? opts(...options) : null }));
@@ -1300,16 +1344,16 @@ test('live survey (British student in Glasgow): residence, commuting, UK visa an
   assert.equal(ask('Do you hold British citizenship?'), 'citizen');
   assert.equal(ask('Do you have a British passport?'), 'citizen');
   assert.equal(ask('Do you hold any other citizenships?'), null);
-  // The sanctions questions are not citizenship yes/no questions.
+  // The sanctions questions are not citizenship yes/no questions: they are sanctions declarations.
   assert.equal(
     ask(
       'Do you hold citizenship or permanent residency in any of the following countries: Cuba, Iran, North Korea, Syria?',
     ),
-    null,
+    'compliance.sanctions',
   );
   assert.equal(
     ask('Citizen or permanent resident of Cuba, Iran, North Korea, Syria, or the Crimea region', 'checkboxes', yn),
-    null,
+    'compliance.sanctions',
   );
   // "Is there any other context…?" about sponsorship is still a sponsorship question.
   assert.equal(

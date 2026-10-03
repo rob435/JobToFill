@@ -157,9 +157,14 @@
         'University of Warwick', 'University of York', 'UWE Bristol (University of the West of England)', 'Other',
         'University of St Andrews', 'University of Aberdeen',
       ];
-      const SLOTS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-        .flatMap((day, i) => [`${day} ${9 + i} November - AM`, `${day} ${9 + i} November - PM`])
-        .concat(['Monday 16 November - AM', 'Monday 16 November - PM', 'Tuesday 17 November - AM', 'Tuesday 17 November - PM']);
+      // Interview slots as Alloyed writes them ("Monday 9 November - AM"), from the Monday at least a week away.
+      const slotDay = (offset) => {
+        const d = new Date();
+        d.setHours(12, 0, 0, 0);
+        d.setDate(d.getDate() + 7 + ((8 - d.getDay()) % 7) + offset);
+        return `${d.toLocaleDateString('en-GB', { weekday: 'long' })} ${d.getDate()} ${d.toLocaleDateString('en-GB', { month: 'long' })}`;
+      };
+      const SLOTS = [0, 1, 2, 3, 4, 7, 8].flatMap((k) => [`${slotDay(k)} - AM`, `${slotDay(k)} - PM`]);
 
       // [kind, label, options, help]; kinds: text, textarea, date, boolean, radios, dropdown, multi.
       const QUESTIONS = [

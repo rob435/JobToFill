@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Create your candidate account - Careers</title>
+    <style>
+      body { font: 14px system-ui; max-width: 460px; margin: 24px auto; }
+      label { display: block; margin: 10px 0; }
+      input:not([type='checkbox']) { display: block; width: 100%; }
+      .error { color: #b00; }
+    </style>
+  </head>
+  <body>
+    <!-- A sign-up form with a plain "I'm not a robot" checkbox (no CAPTCHA behind it, as some small portals have),
+         its terms box, a "New Password" with its rules in a list, and the form's own "Create Account". Clicking
+         anything else ("Sign up with LinkedIn", "Cancel") is recorded so the tests can check it never happens. -->
+    <h1>Create your candidate account</h1>
+    <p>Already have an account? <a href="login.html">Sign in</a></p>
+    <button type="button" onclick="sessionStorage.setItem('other', 'linkedin')">Sign up with LinkedIn</button>
+    <form id="signup">
+      <label>Email Address <input type="email" name="email" id="email" required /></label>
+      <label>Confirm Email <input type="email" name="email2" id="email2" required /></label>
+      <label>New Password <input type="password" name="password" id="password" autocomplete="new-password" required minlength="10" maxlength="16" /></label>
+      <div class="password-requirements">
+        <p>Your password must have:</p>
+        <ul>
+          <li>10 to 16 characters</li>
+          <li>One uppercase letter</li>
+          <li>One number</li>
+          <li>One special character (! @ # $ %)</li>
+        </ul>
+      </div>
+      <label>Re-enter password <input type="password" name="password2" id="password2" required /></label>
+      <label><input type="checkbox" id="robot" name="robot" required /> I'm not a robot</label>
+      <label><input type="checkbox" id="terms" name="terms" required /> I have read and agree to the Terms of Use and Privacy Policy</label>
+      <label><input type="checkbox" id="news" name="news" /> Send me job alerts and marketing emails</label>
+      <p class="error" id="problem" hidden></p>
+      <button type="button" onclick="sessionStorage.setItem('other', 'cancel')">Cancel</button>
+      <button type="submit" id="create">Create Account</button>
+    </form>
+    <p id="done" hidden>Account created. Check your email to verify your address.</p>
+    <script>
+      document.getElementById('signup').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const $ = (id) => document.getElementById(id);
+        const pw = $('password').value;
+        const ok =
+          $('email').value === $('email2').value &&
+          pw === $('password2').value &&
+          pw.length >= 10 && pw.length <= 16 && /[A-Z]/.test(pw) && /\d/.test(pw) && /^[A-Za-z0-9!@#$%]+$/.test(pw) && /[!@#$%]/.test(pw) &&
+          $('robot').checked && $('terms').checked;
+        if (!ok) {
+          $('problem').hidden = false;
+          $('problem').textContent = 'Please check the form.';
+          return;
+        }
+        sessionStorage.setItem('created', JSON.stringify({ email: $('email').value, password: pw, news: $('news').checked }));
+        $('signup').hidden = true;
+        $('done').hidden = false;
+      });
+    </script>
+  </body>
+</html>
