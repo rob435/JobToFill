@@ -4,58 +4,132 @@ const assert = require('node:assert/strict');
 const { load, installChrome } = require('./helpers');
 
 const JTF = load();
-const { vault, store, geo, util } = JTF;
+const { passwords, store, geo, util } = JTF;
 
 test.beforeEach(() => installChrome());
 
-test('vault: encrypt / decrypt round trip, wrong key fails', async () => {
-  const salt = new Uint8Array(16);
-  const key = await vault.deriveKey('correct horse', salt, 1000);
-  const blob = await vault.encryptJson(key, { hello: 'world' });
-  assert.deepEqual(await vault.decryptJson(key, blob), { hello: 'world' });
-  const wrong = await vault.deriveKey('wrong horse', salt, 1000);
-  await assert.rejects(vault.decryptJson(wrong, blob));
-  assert.ok(!JSON.stringify(blob).includes('world'));
-});
-
-test('vault: setup, lock, unlock, update, change password, reset', async () => {
-  assert.equal(await vault.status(), 'none');
-  await assert.rejects(vault.setup('short'), /at least 8/);
-  await vault.setup('master password 1', { iterations: 1000 });
-  assert.equal(await vault.status(), 'unlocked');
-  await vault.update((d) => {
+test('passwords: plain JSON in storage, read with defaults, updated in place', async () => {
+  assert.deepEqual(await passwords.read(), {
+    version: 1,
+    defaultPassword: '',
+    credentials: [],
+    cards: [],
+    defaultCardId: null,
+  });
+  await passwords.update((d) => {
     d.credentials.push({ id: 'c1', host: 'acme.myworkdayjobs.com', username: 'ada', password: 'pw1' });
   });
-  const stored = JSON.stringify(await chrome.storage.local.get('vault'));
-  assert.ok(!stored.includes('pw1'), 'secrets are not stored in plain text');
-
-  await vault.lock();
-  assert.equal(await vault.status(), 'locked');
-  await assert.rejects(vault.read(), /locked/);
-  await assert.rejects(vault.unlock('nope'), /Wrong master password/);
-  await vault.unlock('master password 1');
-  assert.equal((await vault.read()).credentials[0].password, 'pw1');
-
-  await vault.changePassword('master password 2');
-  await vault.lock();
-  await assert.rejects(vault.unlock('master password 1'));
-  await vault.unlock('master password 2');
-  assert.equal((await vault.read()).credentials.length, 1);
-
-  await vault.reset();
-  assert.equal(await vault.status(), 'none');
+  // Two saves at once both land.
+  await Promise.all([
+    passwords.update((d) => (d.defaultPassword = 'Default-1')),
+    passwords.update((d) => d.cards.push({ id: 'k1', number: '4242424242424242' })),
+  ]);
+  const { passwords: stored } = await chrome.storage.local.get('passwords');
+  assert.equal(stored.credentials[0].password, 'pw1', 'kept as it is, like the API keys');
+  assert.equal(stored.defaultPassword, 'Default-1');
+  assert.equal(stored.cards.length, 1);
+  assert.equal(await passwords.legacy(), false);
 });
 
-test('vault: auto-lock after inactivity', async () => {
-  await vault.setup('master password 1', { iterations: 1000 });
-  assert.equal(await vault.autoLock(30), false);
-  await chrome.storage.session.set({ vaultLastUsed: Date.now() - 31 * 60000 });
-  assert.equal(await vault.autoLock(0), false, '0 means never');
-  assert.equal(await vault.autoLock(30), true);
-  assert.equal(await vault.status(), 'locked');
+// The encrypted vault older versions wrote: PBKDF2-SHA256 from the master password, AES-256-GCM.
+async function oldVault(master, data) {
+  const { subtle } = globalThis.crypto;
+  const b64 = (bytes) => Buffer.from(bytes).toString('base64');
+  const salt = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
+  const iterations = 1000;
+  const base = await subtle.importKey('raw', new TextEncoder().encode(master), 'PBKDF2', false, ['deriveKey']);
+  const key = await subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
+    base,
+    { name: 'AES-GCM', length: 256 },
+    true,
+    ['encrypt', 'decrypt'],
+  );
+  const ct = await subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(data)));
+  return {
+    blob: {
+      version: 1,
+      kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations, salt: b64(salt) },
+      data: { iv: b64(iv), ct: b64(new Uint8Array(ct)) },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    rawKey: b64(new Uint8Array(await subtle.exportKey('raw', key))),
+  };
+}
+
+const OLD = {
+  version: 1,
+  defaultPassword: 'Old-Default-1',
+  credentials: [
+    { id: 'o1', host: 'acme.wd5.myworkdayjobs.com', username: 'ada@example.com', password: 'Acme-Pass-1' },
+    { id: 'o2', host: 'career8.successfactors.com', portal: 'company:moodysprod', username: 'ada', password: 'M-1' },
+  ],
+  cards: [{ id: 'k1', label: 'Visa', name: 'Ada Lovelace', number: '4242424242424242', expMonth: 4, expYear: 2029 }],
+  defaultCardId: 'k1',
+};
+
+test('passwords: the old encrypted vault moves over once with its master password, without duplicates', async () => {
+  const { blob } = await oldVault('my long master password', OLD);
+  await chrome.storage.local.set({ vault: blob });
+  // Saved since the update: one of the old logins again, and a new one.
+  await passwords.update((d) => {
+    d.defaultPassword = 'New-Default-2';
+    d.credentials.push(
+      { id: 'n1', host: 'acme.wd5.myworkdayjobs.com', username: 'ada@example.com', password: 'Acme-Pass-1' },
+      { id: 'n2', host: 'globex.icims.com', username: 'ada@example.com', password: 'Globex-1' },
+    );
+  });
+  assert.equal(await passwords.legacy(), true);
+
+  await assert.rejects(passwords.importLegacy('wrong password'), /Wrong master password/);
+  assert.equal(await passwords.legacy(), true, 'a wrong password changes nothing');
+  assert.equal((await passwords.read()).credentials.length, 2);
+
+  assert.deepEqual(await passwords.importLegacy('my long master password'), { credentials: 1, cards: 1 });
+  const data = await passwords.read();
+  assert.deepEqual(
+    data.credentials.map((c) => [c.id, c.host, c.portal, c.password]),
+    [
+      ['n1', 'acme.wd5.myworkdayjobs.com', undefined, 'Acme-Pass-1'],
+      ['n2', 'globex.icims.com', undefined, 'Globex-1'],
+      ['o2', 'career8.successfactors.com', 'company:moodysprod', 'M-1'],
+    ],
+  );
+  assert.equal(data.defaultPassword, 'New-Default-2', 'the default password set since is kept');
+  assert.equal(passwords.defaultCard(data).number, '4242424242424242');
+  assert.equal(data.defaultCardId, 'k1');
+  assert.equal(await passwords.legacy(), false, 'the old vault is gone');
+  assert.ok(!('vault' in chrome.storage.local._dump()));
+  await assert.rejects(passwords.importLegacy('my long master password'), /no old vault/);
+
+  // A backup from before brings it back: moving it over again adds nothing twice.
+  await chrome.storage.local.set({ vault: blob });
+  assert.deepEqual(await passwords.importLegacy('my long master password'), { credentials: 0, cards: 0 });
+  assert.equal((await passwords.read()).credentials.length, 3);
 });
 
-test('vault: credential lookup prefers the most specific host', () => {
+test('passwords: an old vault still unlocked in memory moves over by itself; or it is discarded', async () => {
+  const { blob, rawKey } = await oldVault('my long master password', OLD);
+  await chrome.storage.local.set({ vault: blob });
+  assert.equal(await passwords.importLegacySession(), null, 'no key in memory: it waits for the master password');
+  assert.equal(await passwords.legacy(), true);
+  await chrome.storage.session.set({ vaultKey: rawKey, vaultLastUsed: Date.now() });
+  assert.deepEqual(await passwords.importLegacySession(), { credentials: 2, cards: 1 });
+  const data = await passwords.read();
+  assert.equal(data.defaultPassword, 'Old-Default-1');
+  assert.equal(passwords.findCredential(data, 'acme.wd5.myworkdayjobs.com').password, 'Acme-Pass-1');
+  assert.equal(await passwords.legacy(), false);
+  assert.deepEqual(chrome.storage.session._dump(), {}, 'the old key is forgotten');
+
+  await chrome.storage.local.set({ vault: blob });
+  await passwords.discardLegacy();
+  assert.equal(await passwords.legacy(), false);
+  assert.equal((await passwords.read()).credentials.length, 2, 'discarding leaves the passwords alone');
+});
+
+test('passwords: credential lookup prefers the most specific host', () => {
   const data = {
     credentials: [
       { host: 'example.com', password: 'a' },
@@ -63,16 +137,16 @@ test('vault: credential lookup prefers the most specific host', () => {
       { host: 'other.com', password: 'c' },
     ],
   };
-  assert.equal(vault.findCredential(data, 'careers.example.com').password, 'b');
-  assert.equal(vault.findCredential(data, 'jobs.example.com').password, 'a');
-  assert.equal(vault.findCredential(data, 'www.other.com').password, 'c');
-  assert.equal(vault.findCredential(data, 'notexample.com'), null);
+  assert.equal(passwords.findCredential(data, 'careers.example.com').password, 'b');
+  assert.equal(passwords.findCredential(data, 'jobs.example.com').password, 'a');
+  assert.equal(passwords.findCredential(data, 'www.other.com').password, 'c');
+  assert.equal(passwords.findCredential(data, 'notexample.com'), null);
 });
 
 test('password generator', () => {
   const seen = new Set();
   for (let i = 0; i < 200; i++) {
-    const pw = vault.generatePassword();
+    const pw = passwords.generatePassword();
     assert.equal(pw.length, 20);
     assert.match(pw, /[a-z]/);
     assert.match(pw, /[A-Z]/);
@@ -81,7 +155,7 @@ test('password generator', () => {
     seen.add(pw);
   }
   assert.equal(seen.size, 200);
-  assert.doesNotMatch(vault.generatePassword({ length: 32, symbols: false }), /[^A-Za-z0-9]/);
+  assert.doesNotMatch(passwords.generatePassword({ length: 32, symbols: false }), /[^A-Za-z0-9]/);
 });
 
 test('store: first profile is created once even with concurrent readers', async () => {
@@ -89,6 +163,16 @@ test('store: first profile is created once even with concurrent readers', async 
   const { order, settings } = await store.loadAll();
   assert.equal(order.length, 1);
   assert.equal(settings.activeProfileId, order[0]);
+});
+
+test('store: acknowledgement boxes are ticked by default; older settings are switched on once, then left as set', async () => {
+  assert.equal((await store.getSettings()).consents, true, 'a fresh install');
+  await chrome.storage.local.set({ settings: { consents: false, overwrite: false } });
+  const upgraded = await store.getSettings();
+  assert.equal(upgraded.consents, true, 'settings saved before revision 2 had them off by default');
+  assert.equal((await chrome.storage.local.get('settings')).settings.revision, 2);
+  await store.saveSettings({ consents: false });
+  assert.equal((await store.getSettings()).consents, false, 'switched off afterwards, it stays off');
 });
 
 test('store: concurrent saves do not drop each other', async () => {
@@ -167,8 +251,13 @@ test('store: hasData tells a fresh install from a filled-in one', async () => {
   await store.setDoc(blank.id, 'resume', { name: 'cv.pdf', type: 'application/pdf', size: 3, dataUrl: 'data:,x' });
   assert.equal(await store.hasData(), true, 'a resume file');
   installChrome();
+  await passwords.update(() => {});
+  assert.equal(await store.hasData(), false, 'no passwords saved');
+  await passwords.update((d) => d.credentials.push({ id: 'c', host: 'acme.com', password: 'x' }));
+  assert.equal(await store.hasData(), true, 'a saved login');
+  installChrome();
   await chrome.storage.local.set({ vault: { version: 1 } });
-  assert.equal(await store.hasData(), true, 'a vault');
+  assert.equal(await store.hasData(), true, 'an old encrypted vault');
   installChrome();
   await store.setAiKey('sk-only-a-key');
   assert.equal(await store.hasData(), true, 'an AI key alone');
@@ -183,6 +272,7 @@ test('store: every part of the backup file rewrites it when it changes; temporar
   await store.setDoc(profile.id, 'resume', { name: 'cv.pdf', type: 'application/pdf', size: 3, dataUrl: 'data:,x' });
   await store.setAiKey('sk-1');
   await store.setNylas({ apiKey: 'nyk_1', grantId: 'g1' });
+  await passwords.update((d) => (d.defaultPassword = 'Default-1'));
   await chrome.storage.local.set({
     vault: { version: 1 },
     answers: [{ id: 'a' }],
@@ -194,8 +284,18 @@ test('store: every part of the backup file rewrites it when it changes; temporar
   for (const key of stored.filter((k) => k !== 'history'))
     if (JSON.stringify(backup).includes(`"${key}"`) || /^(doc|kit):/.test(key))
       assert.equal(store.backsUp(key), true, key);
-  for (const key of ['profiles', 'profileOrder', 'settings', 'vault', 'aiKeys', 'nylas', 'answers', 'watchlist'])
-    assert.equal(store.backsUp(key), true, key);
+  const kept = [
+    'profiles',
+    'profileOrder',
+    'settings',
+    'passwords',
+    'vault',
+    'aiKeys',
+    'nylas',
+    'answers',
+    'watchlist',
+  ];
+  for (const key of kept) assert.equal(store.backsUp(key), true, key);
   // …and nothing temporary does.
   for (const key of ['letters', 'quickApply', 'quickStatus', 'discoverCache', 'backupInfo', 'history', 'watch:w'])
     assert.equal(store.backsUp(key), false, key);
@@ -233,6 +333,31 @@ test('store: export / import round trip with documents', async () => {
   const { profile: restored } = await store.getActive();
   assert.equal(restored.personal.firstName, 'Grace');
   assert.equal((await store.getDoc(restored.id, 'resume')).name, 'cv.pdf');
+});
+
+test('store: passwords and cards go in the backup as they are, and come back from it', async () => {
+  await passwords.update((d) => {
+    d.defaultPassword = 'Default-1';
+    d.credentials.push({ id: 'c1', host: 'acme.myworkdayjobs.com', username: 'ada', password: 'Acme-Pass-1' });
+    d.cards.push({ id: 'k1', number: '4242424242424242', expMonth: 4, expYear: 2029 });
+  });
+  const backup = JSON.parse(JSON.stringify(await store.exportData()));
+  assert.equal(backup.passwords.credentials[0].password, 'Acme-Pass-1');
+  assert.equal(backup.vault, undefined);
+  assert.equal((await store.exportData({ passwords: false })).passwords, undefined, 'unless left out');
+
+  installChrome();
+  await store.importData(backup);
+  const data = await passwords.read();
+  assert.equal(data.defaultPassword, 'Default-1');
+  assert.equal(passwords.findCredential(data, 'acme.myworkdayjobs.com').password, 'Acme-Pass-1');
+  assert.equal(passwords.defaultCard(data).number, '4242424242424242');
+
+  // A backup from an older version holds an encrypted vault: it waits to be moved over, and the passwords stay.
+  const old = { ...backup, passwords: undefined, vault: { kdf: { iterations: 1000, salt: 'AA==' }, data: {} } };
+  await store.importData(JSON.parse(JSON.stringify(old)));
+  assert.equal(await passwords.legacy(), true);
+  assert.equal((await passwords.read()).credentials.length, 1);
 });
 
 test('store: cover letter material is per profile, exported, and the API key is not', async () => {

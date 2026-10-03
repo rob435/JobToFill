@@ -5,7 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { load } = require('./helpers');
 
-const { accounts, vault, geo } = load();
+const { accounts, passwords, geo } = load();
 
 test('the click allow-list: sign in, create account, the links between them, a code step', () => {
   const cases = {
@@ -134,7 +134,7 @@ const SF_POLICY =
 
 test('password rules read from sign-up pages', () => {
   const pick = (r) => Object.fromEntries(Object.entries(r).filter(([, v]) => v && v !== 'any'));
-  assert.deepEqual(pick(vault.parseRules({ text: SF_POLICY, maxLength: 99 })), {
+  assert.deepEqual(pick(passwords.parseRules({ text: SF_POLICY, maxLength: 99 })), {
     minLength: 8,
     maxLength: 18,
     upper: true,
@@ -146,13 +146,13 @@ test('password rules read from sign-up pages', () => {
   // Workday-style requirement list.
   assert.deepEqual(
     pick(
-      vault.parseRules({
+      passwords.parseRules({
         text: 'Password Requirements:\n• A minimum of 8 characters\n• One uppercase alphabetic character\n• One lowercase alphabetic character\n• One numeric character\n• One special character',
       }),
     ),
     { minLength: 8, upper: true, lower: true, digit: true, symbol: true },
   );
-  const r = (text, extra) => vault.parseRules(Object.assign({ text }, extra));
+  const r = (text, extra) => passwords.parseRules(Object.assign({ text }, extra));
   assert.deepEqual(
     [r('Your password must be 8-20 characters long.').minLength, r('8-20 characters').maxLength],
     [8, 20],
@@ -181,27 +181,27 @@ test('password rules read from sign-up pages', () => {
 
 test('passwords made to fit, and passwords checked against, a page’s rules', () => {
   const pages = [
-    vault.parseRules({ text: SF_POLICY, maxLength: 99 }),
-    vault.parseRules({ minLength: 10, maxLength: 12, pattern: '[A-Za-z0-9]+' }),
-    vault.parseRules({ text: 'One special character (! @ # $ %). 10 to 16 characters. One uppercase letter.' }),
-    vault.parseRules({ text: 'Password cannot contain the following characters: ! @ # $ % ^ & * - _ = + ?' }),
-    vault.parseRules({ text: 'No repeated characters. Must start with a letter.', maxLength: 10 }),
+    passwords.parseRules({ text: SF_POLICY, maxLength: 99 }),
+    passwords.parseRules({ minLength: 10, maxLength: 12, pattern: '[A-Za-z0-9]+' }),
+    passwords.parseRules({ text: 'One special character (! @ # $ %). 10 to 16 characters. One uppercase letter.' }),
+    passwords.parseRules({ text: 'Password cannot contain the following characters: ! @ # $ % ^ & * - _ = + ?' }),
+    passwords.parseRules({ text: 'No repeated characters. Must start with a letter.', maxLength: 10 }),
   ];
   for (const rules of pages)
     for (let i = 0; i < 150; i++) {
-      const pw = vault.generatePassword({ rules });
-      assert.deepEqual(vault.checkPassword(pw, rules), [], `${pw} for ${JSON.stringify(rules)}`);
+      const pw = passwords.generatePassword({ rules });
+      assert.deepEqual(passwords.checkPassword(pw, rules), [], `${pw} for ${JSON.stringify(rules)}`);
     }
-  assert.equal(vault.generatePassword({ rules: pages[0] }).length, 18, 'as long as the page allows, up to 20');
-  assert.equal(vault.generatePassword().length, 20, 'no rules: as before');
+  assert.equal(passwords.generatePassword({ rules: pages[0] }).length, 18, 'as long as the page allows, up to 20');
+  assert.equal(passwords.generatePassword().length, 20, 'no rules: as before');
   const sf = pages[0];
-  assert.deepEqual(vault.checkPassword('Default-Password-Far-Too-Long', sf), ['longer than 18 characters']);
-  assert.deepEqual(vault.checkPassword('Pass word1', sf), ['contains a space']);
-  assert.deepEqual(vault.checkPassword('alllowercase1', sf), ['no capital letter']);
-  assert.deepEqual(vault.checkPassword('NoDigitsHere', sf), ['no number or special character']);
-  assert.deepEqual(vault.checkPassword('Moodys-Pass-24', sf), []);
-  const personal = vault.parseRules({ text: 'Must not contain your name or email address' });
-  assert.deepEqual(vault.checkPassword('Ada-Rocks-2024', personal, { email: 'ada@example.com', names: ['Ada'] }), [
+  assert.deepEqual(passwords.checkPassword('Default-Password-Far-Too-Long', sf), ['longer than 18 characters']);
+  assert.deepEqual(passwords.checkPassword('Pass word1', sf), ['contains a space']);
+  assert.deepEqual(passwords.checkPassword('alllowercase1', sf), ['no capital letter']);
+  assert.deepEqual(passwords.checkPassword('NoDigitsHere', sf), ['no number or special character']);
+  assert.deepEqual(passwords.checkPassword('Moodys-Pass-24', sf), []);
+  const personal = passwords.parseRules({ text: 'Must not contain your name or email address' });
+  assert.deepEqual(passwords.checkPassword('Ada-Rocks-2024', personal, { email: 'ada@example.com', names: ['Ada'] }), [
     'contains your name or email',
   ]);
 });
@@ -215,11 +215,11 @@ test('logins on shared portal hosts: one employer’s is not another’s', () =>
     ],
   };
   const host = 'career8.successfactors.com';
-  assert.equal(vault.findCredential(data, host, 'company:moodysprod').password, 'moodys');
-  assert.equal(vault.findCredential(data, host, 'company:other').password, 'legacy', 'filled as a guess');
-  assert.equal(vault.findCredential(data, host, 'company:other', true), null, 'but no account is known there');
-  assert.equal(vault.findCredential(data, host, 'company:moodysprod', true).password, 'moodys');
-  assert.equal(vault.findCredential(data, 'acme.wd5.myworkdayjobs.com', '', true).password, 'acme');
+  assert.equal(passwords.findCredential(data, host, 'company:moodysprod').password, 'moodys');
+  assert.equal(passwords.findCredential(data, host, 'company:other').password, 'legacy', 'filled as a guess');
+  assert.equal(passwords.findCredential(data, host, 'company:other', true), null, 'but no account is known there');
+  assert.equal(passwords.findCredential(data, host, 'company:moodysprod', true).password, 'moodys');
+  assert.equal(passwords.findCredential(data, 'acme.wd5.myworkdayjobs.com', '', true).password, 'acme');
 });
 
 test('dialling codes', () => {

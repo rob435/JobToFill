@@ -1,7 +1,7 @@
 // End-to-end: job-portal accounts on SuccessFactors-style pages (reduced from the real Moody's career site):
 // classification and dropdowns on the sign-up page, default and rule-fitting passwords, the "I'm not a robot"
 // box and CAPTCHAs, signing in and creating accounts for you (with the emailed code from a mocked Nylas), the
-// deny-list, the vault-locked prompt and SuccessFactors' document tiles. Chromium: the Nylas mock routes the
+// deny-list, saved logins going straight in and SuccessFactors' document tiles. Chromium: the Nylas mock routes the
 // service worker's requests, which only Playwright/Chromium can do.
 import { after, before, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,7 +11,6 @@ import { PROFILE, RESUME_PDF, checked, isFirefox, launch, selectedText, value } 
 process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS = '1';
 
 const NYLAS = { apiKey: 'nyk_test_key', region: 'us', grantId: 'grant-123', email: 'ada@example.com' };
-const MASTER = 'correct horse battery';
 const DEFAULT_PASSWORD = 'Moodys-Pass-24';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const skip = isFirefox && 'needs Chromium service-worker routing';
@@ -30,7 +29,7 @@ async function eventually(fn, timeout = 15000, what = String(fn)) {
 }
 
 const stored = (page, key) => page.evaluate((k) => sessionStorage.getItem(k), key).catch(() => null);
-const credentials = () => h.bg(async () => (await globalThis.JTF.vault.read()).credentials);
+const credentials = () => h.bg(async () => (await globalThis.JTF.passwords.read()).credentials);
 const flowFill = async (page) =>
   h.bg((id) => globalThis.JTFBackground.fillTab(id, { toast: true, flow: true }), await h.tabId(page));
 const flowOf = (tabId) => h.bg((id) => globalThis.JTFBackground.getFlow(id), tabId);
@@ -60,12 +59,14 @@ before(async () => {
   );
   const id = await h.setProfile(PROFILE);
   await h.bg(
-    async ([pid, dataUrl, master]) => {
-      const { store, vault } = globalThis.JTF;
-      await store.setDoc(pid, 'resume', { name: 'Ada_Lovelace_CV.pdf', type: 'application/pdf', size: 60, dataUrl });
-      await vault.setup(master, { iterations: 2000 });
-    },
-    [id, RESUME_PDF, MASTER],
+    ([pid, dataUrl]) =>
+      globalThis.JTF.store.setDoc(pid, 'resume', {
+        name: 'Ada_Lovelace_CV.pdf',
+        type: 'application/pdf',
+        size: 60,
+        dataUrl,
+      }),
+    [id, RESUME_PDF],
   );
 });
 
@@ -74,17 +75,16 @@ after(() => h && h.close());
 beforeEach(async () => {
   if (isFirefox) return;
   mailbox = [];
-  // Each test starts with an unlocked vault without logins, the "generate" strategy and no Nylas.
-  await h.bg(async (master) => {
-    const { vault, store } = globalThis.JTF;
-    if ((await vault.status()) !== 'unlocked') await vault.unlock(master);
-    await vault.update((d) => {
+  // Each test starts without saved logins or a default password, the "generate" strategy and no Nylas.
+  await h.bg(async () => {
+    const { passwords, store } = globalThis.JTF;
+    await passwords.update((d) => {
       d.credentials = [];
       d.defaultPassword = '';
     });
     await store.saveSettings({ passwordStrategy: 'generate', accountFlow: true, otp: { auto: true, links: true } });
     await store.setNylas(null);
-  }, MASTER);
+  });
 });
 
 test(
@@ -139,7 +139,7 @@ test(
 
 test('the default password goes into a SuccessFactors sign-in page with no saved login', { skip }, async () => {
   await h.setSettings({ passwordStrategy: 'default' });
-  await h.bg((pw) => globalThis.JTF.vault.update((d) => (d.defaultPassword = pw)), DEFAULT_PASSWORD);
+  await h.bg((pw) => globalThis.JTF.passwords.update((d) => (d.defaultPassword = pw)), DEFAULT_PASSWORD);
   const page = await h.open('successfactors-login.html?company=MoodysProd');
   const r = await h.fill(page);
   assert.equal(await value(page, '#username'), 'ada@example.com');
@@ -155,7 +155,9 @@ test(
   { skip },
   async () => {
     await h.setSettings({ passwordStrategy: 'default' });
-    await h.bg(() => globalThis.JTF.vault.update((d) => (d.defaultPassword = 'Default-Password-Far-Too-Long-2024')));
+    await h.bg(() =>
+      globalThis.JTF.passwords.update((d) => (d.defaultPassword = 'Default-Password-Far-Too-Long-2024')),
+    );
     const page = await h.open('successfactors-signup.html?company=MoodysProd&dpcs=0');
     await sleep(100);
     const r = await h.fill(page);
@@ -174,7 +176,7 @@ test(
 
     // A default password that fits goes in as it is.
     await h.bg(
-      (pw) => globalThis.JTF.vault.update((d) => ((d.defaultPassword = pw), (d.credentials = []))),
+      (pw) => globalThis.JTF.passwords.update((d) => ((d.defaultPassword = pw), (d.credentials = []))),
       DEFAULT_PASSWORD,
     );
     await page.reload();
@@ -210,7 +212,7 @@ test(
 
 test('a CAPTCHA on the sign-in page is left to you; signing in follows once it is solved', { skip }, async () => {
   await h.bg(() =>
-    globalThis.JTF.vault.update((d) =>
+    globalThis.JTF.passwords.update((d) =>
       d.credentials.push({
         id: 'sf',
         host: 'localhost',
@@ -252,7 +254,7 @@ test('a CAPTCHA on the sign-in page is left to you; signing in follows once it i
 
 test('no account yet: create it, type the emailed code, and land on the application', { skip }, async () => {
   await h.setSettings({ passwordStrategy: 'default' });
-  await h.bg((pw) => globalThis.JTF.vault.update((d) => (d.defaultPassword = pw)), DEFAULT_PASSWORD);
+  await h.bg((pw) => globalThis.JTF.passwords.update((d) => (d.defaultPassword = pw)), DEFAULT_PASSWORD);
   await h.bg((config) => globalThis.JTF.store.setNylas(config), NYLAS);
   mailbox = [codeMail('482913')];
   const page = await h.open('successfactors-login.html?company=MoodysProd');
@@ -298,7 +300,7 @@ test('no account yet: create it, type the emailed code, and land on the applicat
 
 test('an account that already exists: back to sign in, with the default password', { skip }, async () => {
   await h.setSettings({ passwordStrategy: 'default' });
-  await h.bg((pw) => globalThis.JTF.vault.update((d) => (d.defaultPassword = pw)), DEFAULT_PASSWORD);
+  await h.bg((pw) => globalThis.JTF.passwords.update((d) => (d.defaultPassword = pw)), DEFAULT_PASSWORD);
   const page = await h.open('successfactors-signup.html?company=MoodysProd&dpcs=0&exists=1');
   await sleep(100);
   await flowFill(page);
@@ -336,23 +338,22 @@ test('a job application is never submitted, even with a password box on it', { s
   await off.close();
 });
 
-test('vault locked: the fill says so and offers to unlock; the passwords go in once it is', { skip }, async () => {
+test('a saved login goes straight in on the first fill, with nothing to unlock', { skip }, async () => {
   await h.bg(() =>
-    globalThis.JTF.vault.update((d) =>
+    globalThis.JTF.passwords.update((d) =>
       d.credentials.push({ id: 'l', host: 'localhost', username: 'ada@example.com', password: 'Login-Pass-1' }),
     ),
   );
-  await h.bg(() => globalThis.JTF.vault.lock());
   const page = await h.open('login.html');
-  const r = await h.bg((id) => globalThis.JTFBackground.fillTab(id, { toast: true }), await h.tabId(page));
-  assert.equal(r.vaultNeeded, 'locked');
-  assert.equal(await value(page, '#pw'), '');
-  assert.ok(
-    r.notes.some((n) => /vault is locked.*Unlock it/.test(n)),
-    JSON.stringify(r.notes),
+  // As Quick apply fills: acknowledgements ticked, the toast on the page.
+  const r = await h.bg(
+    (id) => globalThis.JTFBackground.fillTab(id, { toast: true, consents: true, quick: true }),
+    await h.tabId(page),
   );
-  await h.bg((master) => globalThis.JTF.vault.unlock(master), MASTER);
-  await eventually(async () => (await value(page, '#pw')) === 'Login-Pass-1', 10000, 'the password after unlocking');
+  assert.equal(await value(page, '#user'), 'ada@example.com');
+  assert.equal(await value(page, '#pw'), 'Login-Pass-1');
+  assert.equal(r.passwordSource, 'saved');
+  assert.ok(!r.notes.some((n) => /password|card/i.test(n)), JSON.stringify(r.notes));
   await page.close();
 });
 

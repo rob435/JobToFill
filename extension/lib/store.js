@@ -7,7 +7,8 @@
  *   settings      see DEFAULT_SETTINGS
  *   doc:<id>:<which>  { name, type, size, dataUrl, updatedAt }   (resume / coverLetter files)
  *   history       [{ date, url, host, title, filled }]  newest first
- *   vault         encrypted blob, managed by vault.js
+ *   passwords     saved logins, your default password and payment cards, plain JSON (passwords.js); in backups
+ *   vault         the encrypted vault of older versions, until it is moved into passwords or discarded (passwords.js)
  *   backupInfo    { at, path, error, paused, previous, dismissed }  the automatic backup file (background.js)
  *   kit:<id>      cover letter material per profile: { notes, samples: [{ id, name, text }], contact, closing,
  *                 spelling, paper, cv: { updatedAt, text } (text read from the resume file),
@@ -35,10 +36,12 @@
     highlight: true,
     toast: true,
     comboboxes: true,
-    consents: false,
+    // Acknowledgement and terms boxes ("I agree with the terms and conditions") are ticked; marketing never is.
+    consents: true,
+    // Settings saved before revision 2 had consents off by default: they are switched on once (see loadAll).
+    revision: 2,
     autoBackup: true,
     passwordStrategy: 'generate',
-    autoLockMinutes: 30,
     logApplications: true,
     // models: the model chosen for each provider; fallback: use another provider you have a key for when
     // this one is out of credit or down; backupKeys: keep the API keys in the backup file.
@@ -92,6 +95,11 @@
     let order = (data.profileOrder || Object.keys(profiles)).filter((id) => profiles[id]);
     const settings = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
     let dirty = false;
+    if (data.settings && !(data.settings.revision >= 2)) {
+      settings.consents = true;
+      settings.revision = 2;
+      dirty = true;
+    }
     if (!order.length) {
       // Fixed id: several contexts (worker, popup, settings tab) may create the first profile at once.
       const p = JTF.fields.createProfile('My profile');
@@ -589,12 +597,13 @@
 
   // What the backup file holds (see exportData): a change to any of these rewrites it. Generated letters,
   // the last Quick apply, the application log and caches are left out (the log rides along with the rest).
-  const BACKED_UP = /^(profiles|profileOrder|settings|vault|aiKeys|nylas|answers|watchlist|doc:.+|kit:.+)$/;
+  // "vault": the encrypted vault of older versions, until its passwords are moved over (passwords.js).
+  const BACKED_UP = /^(profiles|profileOrder|settings|passwords|vault|aiKeys|nylas|answers|watchlist|doc:.+|kit:.+)$/;
   const backsUp = (key) => BACKED_UP.test(key);
 
   /**
    * Has anything been entered that is worth backing up? A fresh install has one blank profile,
-   * and its backup must never replace a real one. API keys and the Nylas connection count.
+   * and its backup must never replace a real one. Passwords, API keys and the Nylas connection count.
    */
   async function hasData() {
     const { profiles, order } = await loadAll();
@@ -602,7 +611,10 @@
     if (order.length > 1) return true;
     if (order.some((id) => filledIn({ ...profiles[id], id: undefined, name: undefined }, template))) return true;
     const all = await area().get(null);
-    if (all.vault || Object.keys(all).some((k) => k.startsWith('doc:') || k.startsWith('kit:'))) return true;
+    if (Object.keys(all).some((k) => k.startsWith('doc:') || k.startsWith('kit:'))) return true;
+    const saved = all.passwords || {};
+    if (saved.defaultPassword || (saved.credentials || []).length || (saved.cards || []).length || all.vault)
+      return true;
     if (all.nylas || Object.values(all.aiKeys || {}).some((k) => String(k || '').trim())) return true;
     return (
       (Array.isArray(all.answers) && all.answers.length > 0) ||
@@ -692,7 +704,7 @@
   /* ---------------------------------------------------------- import/export */
 
   async function exportData(options) {
-    const opts = Object.assign({ documents: true, vault: true, history: true }, options || {});
+    const opts = Object.assign({ documents: true, passwords: true, history: true }, options || {});
     const all = await loadAll();
     const out = {
       app: 'JobToFill',
@@ -717,7 +729,12 @@
       const kit = (await area().get(key))[key];
       if (kit) out.kits[key] = kit;
     }
-    if (opts.vault) out.vault = (await area().get('vault')).vault || null;
+    if (opts.passwords) {
+      // As they are, like the API keys: the backup file is yours. An old encrypted vault not yet moved over too.
+      const { passwords, vault } = await area().get(['passwords', 'vault']);
+      if (passwords) out.passwords = passwords;
+      if (vault) out.vault = vault;
+    }
     if (opts.history) out.history = await getHistory();
     const answers = await getAnswers();
     if (answers.length) out.answers = answers;
@@ -743,7 +760,9 @@
     if (data.history) set.history = data.history;
     if (Array.isArray(data.answers)) set.answers = data.answers;
     if (Array.isArray(data.watchlist)) set.watchlist = data.watchlist.filter((w) => w && w.id && w.firm);
-    if (data.vault) set.vault = data.vault;
+    if (data.passwords && typeof data.passwords === 'object') set.passwords = data.passwords;
+    // A backup from before passwords were kept as they are: its encrypted vault waits to be moved over (passwords.js).
+    if (data.vault && typeof data.vault === 'object') set.vault = data.vault;
     for (const [key, doc] of Object.entries(data.documents || {})) {
       if (/^doc:[^:]+:(resume|coverLetter|transcript)$/.test(key)) set[key] = doc;
     }
@@ -769,7 +788,6 @@
         email: String(data.nylas.email || ''),
       };
     await area().set(set);
-    if (data.vault && JTF.vault) await JTF.vault.lock();
   });
 
   const store = {

@@ -3,15 +3,15 @@ import { $, $$, api, el, hasSiteAccess, requestSiteAccess } from '../ui/common.j
 import { renderBackup, renderHistory, renderSettings } from './app.js';
 import { renderEmail } from './email.js';
 import { renderLetters } from './letters.js';
+import { renderPasswords } from './passwords.js';
 import { CLASSIFICATIONS, DEGREES, PROFILE_SECTIONS } from './profile.js';
-import { renderVault } from './vault.js';
 
 const { store, geo } = globalThis.JTF;
 
 const SECTIONS = {
   ...PROFILE_SECTIONS,
   letters: renderLetters,
-  vault: renderVault,
+  passwords: renderPasswords,
   email: renderEmail,
   history: renderHistory,
   settings: renderSettings,
@@ -47,7 +47,14 @@ async function saveNow() {
 
 const ctx = { state, scheduleSave, saveNow, refresh: () => show(state.section), reload: load };
 
+// Links from older versions: "#vault" was the passwords section.
+const RENAMED = { vault: 'passwords' };
+
 async function show(section) {
+  if (RENAMED[section]) {
+    section = RENAMED[section];
+    history.replaceState(null, '', '#' + section);
+  }
   if (!SECTIONS[section]) section = 'personal';
   state.section = section;
   for (const link of $$('#nav a')) {

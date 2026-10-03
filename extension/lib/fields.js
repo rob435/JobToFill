@@ -706,19 +706,30 @@
 
   // "GPA (out of 4.0)", "Cumulative GPA", "Grade point average": a number, never "2:1".
   const NUMERIC_GPA = /\b(4 0|4 point|5 0|10 0|out of|scale|grade point|cumulative|cgpa|numeric|decimal)\b/;
+  // "If your school/university uses a GPA system, enter your GPA on a 0- 4.0 scale. Otherwise, provide your overall
+  // result in your school/university's grading system" (Shell's Workday): a result in your own grading system is
+  // welcome too, whatever scale the GPA is on.
+  const OWN_SYSTEM =
+    /\botherwise\b.{0,80}\b(results?|grades?|marks?|class(es|ification)?)\b|\b(own|local|national|home|equivalent|(school|university|college|institution|country)( s)?) (grading|marking|grade|assessment) (system|scale)\b|\b(does not|doesn t|do not|don t) use (a |the )?(gpa|grade point)\b/;
 
   /**
    * A GPA question: your GPA (a class written there too, unless the question wants a number). With no GPA, a "Grade"
-   * or "GPA / grade" box takes your degree classification; one that only asks for a GPA doesn't.
+   * or "GPA / grade" box takes your degree classification; one that only asks for a GPA, or for one on a scale, doesn't
+   * (a class is never turned into a number). A box whose page also takes a result in your own grading system
+   * ("Overall Result (GPA)" on Workday: "…Otherwise, provide your overall result in your school/university's grading
+   * system") takes the class as written ("2:1"). `ctx.help`: what the page says about the box, normalised.
    */
   function gpaFor(e, ctx) {
     const q = ctx.question || '';
-    const numeric = ctx.kind === 'number' || NUMERIC_GPA.test(q);
+    const help = ctx.help || '';
+    const ownSystem = OWN_SYSTEM.test(q) || OWN_SYSTEM.test(help);
+    const scaled = NUMERIC_GPA.test(q) || (/\b(gpa|grade point)\b/.test(help) && NUMERIC_GPA.test(help));
+    const numeric = ctx.kind === 'number' || (scaled && !ownSystem);
     if (!U.isBlank(e.gpa)) {
       const v = gpaVal(e.gpa);
       return numeric && v && v.kind === 'class' ? null : v;
     }
-    const gpaOnly = /\bgpa\b/.test(q) && !/\b(grades?|class|classification|results?)\b/.test(q);
+    const gpaOnly = /\bgpa\b/.test(q) && !/\b(grades?|class|classification|results?)\b/.test(q) && !ownSystem;
     return numeric || gpaOnly ? null : classFor(e, ctx);
   }
 
@@ -1785,6 +1796,12 @@
     return level ? [level] : [];
   }
 
+  // The documents an upload names: your CV, a cover letter, a transcript.
+  const CV_NAMED = /\b(resumes?|cvs?|curriculum|lebenslauf)\b/;
+  const LETTER_NAMED = /cover ?letter|motivation(al)? letter|letter of motivation|anschreiben|lettre de motivation/;
+  const TRANSCRIPT_NAMED =
+    /transcript|academic record|grade (report|sheet)|mark ?sheet|record of (marks|grades)|notenspiegel|releve de notes/;
+
   // Uploads that belong to one level of study: the transcript of your graduate studies is not your undergraduate one.
   const LEVEL_UPLOADS = new Set(['file.transcript']);
 
@@ -1802,6 +1819,21 @@
     const levels = entries.map(entryLevels);
     if (!levels.length || levels.some((l) => !l.length)) return true;
     return asked.some((level) => levels.some((l) => l.includes(level)));
+  }
+
+  /**
+   * The other documents your CV's upload takes with it, in this order after the CV, when its box takes several files
+   * (`multiple`): your cover letter when the form has no upload of its own for one (`separate`: the upload types the
+   * form has), and your transcript when the upload or its heading names transcripts ("Resume/CV/Transcripts") and it
+   * applies to your studies (uploadApplies). `text`: the upload's label, question and heading, normalised. A box that
+   * takes one file takes just the CV.
+   */
+  function uploadAlso(text, { multiple, profile, separate }) {
+    if (!multiple) return [];
+    const out = [];
+    if (!(separate && separate.has('file.coverLetter'))) out.push('file.coverLetter');
+    if (TRANSCRIPT_NAMED.test(text) && uploadApplies('file.transcript', profile, text)) out.push('file.transcript');
+    return out;
   }
 
   /**
@@ -1841,6 +1873,30 @@
     return null;
   }
 
+  /** The entry a question is about: the one at the level of study it names ("Undergraduate GPA"), else entry `index`. */
+  function entryAt(p, list, ctx) {
+    const level = list === 'education' ? eduLevelOf(ctx.question) : null;
+    const e = level
+      ? (p.education || []).find((x) => JTF.matcher.degreeGroup(U.normalize(x.degree)) === level)
+      : (p[list] || [])[ctx.index || 0];
+    return { e: e || null, level };
+  }
+
+  // Questions about your grades: answered from your profile, or left for you.
+  const GRADE_TYPES = new Set(['edu.gpa', 'edu.classification', 'edu.gpaScale', 'edu.classAtLeast']);
+
+  /**
+   * Does your profile hold the grade a grade question is about (a GPA or class for that entry; for school grades, of
+   * the qualification asked)? Then the rules answer it or leave it empty on purpose (a GPA box that wants a number,
+   * for a UK class), and the AI never converts one grade into another.
+   */
+  function gradeHeld(type, p, ctx) {
+    if (!GRADE_TYPES.has(type) || !p) return false;
+    const { e, level } = entryAt(p, 'education', ctx || {});
+    if (!e || (U.isBlank(e.gpa) && U.isBlank(e.classification))) return false;
+    return level !== 'highschool' || sameQualification((ctx && ctx.question) || '', e.degree);
+  }
+
   function entry(label, list, key, kind) {
     return {
       label,
@@ -1853,10 +1909,7 @@
           // A "Company" box on a checkout form is not your employer.
           return key === 'company' && i === 0 ? val(p.address.organization) : null;
         }
-        const level = list === 'education' ? eduLevelOf(ctx.question) : null;
-        const e = level
-          ? (p.education || []).find((x) => JTF.matcher.degreeGroup(U.normalize(x.degree)) === level)
-          : (p[list] || [])[i];
+        const { e, level } = entryAt(p, list, ctx);
         if (!e) return null;
         if (
           level === 'highschool' &&
@@ -2713,30 +2766,27 @@
   // mention other keywords, like "authorized to work in the country…") first.
   const RULES = [
     // Documents
-    // "Please attach your cover letter and resume in a single combined document" takes the CV.
-    R(
-      'file.coverLetter',
-      /cover ?letter|motivation(al)? letter|letter of motivation|anschreiben|lettre de motivation/,
-      { kinds: ['file'], not: /\b(resume|cv|curriculum|lebenslauf)\b/ },
-    ),
-    R(
-      'file.transcript',
-      /transcript|academic record|grade (report|sheet)|mark ?sheet|record of (marks|grades)|notenspiegel|releve de notes/,
-      {
-        kinds: ['file'],
-        not: /\b(resume|cv)\b.*\b(and|&|or)\b.*\btranscript|\bcover ?letter\b/,
-      },
-    ),
+    // "Please attach your cover letter and resume in a single combined document" takes the CV, and so does an upload
+    // that names the CV with other documents ("Resume/CV/Transcripts", "CV and cover letter"): see uploadAlso.
+    R('file.coverLetter', LETTER_NAMED, { kinds: ['file'], not: CV_NAMED }),
+    R('file.transcript', TRANSCRIPT_NAMED, {
+      kinds: ['file'],
+      not: /\bcover ?letter\b/,
+      // "Resume/CV/Transcripts" over Workday's "(transcripts are required for all US applications)" is the CV's.
+      notAny: CV_NAMED,
+    }),
     R('file.resume', /resume|\bcv\b|curriculum|lebenslauf|attach|upload|document|\bfile\b/, {
       kinds: ['file'],
       // "Autofill from resume" / "Apply with resume" read the file and rewrite the form: not the resume upload.
-      not: /photo|picture|image|avatar|headshot|transcript|^(?!.*\b(resume|cv)\b).*\b(portfolio|cover)\b|certificat|passport|\bid\b|writing sample|\b(other|additional|supporting|further) (documents?|files?|attachments?|materials?)\b|auto ?fill|automatically fill|apply with (your )?(resume|cv)|pre ?fill|parse/,
+      not: /photo|picture|image|avatar|headshot|^(?!.*\b(resume|cv)\b).*(\b(portfolio|cover)\b|transcript)|certificat|passport|\bid\b|writing sample|\b(other|additional|supporting|further) (documents?|files?|attachments?|materials?)\b|auto ?fill|automatically fill|apply with (your )?(resume|cv)|pre ?fill|parse/,
       // An "Attach" button whose id or group says "cover letter" is not the resume upload.
       // So is a "Portfolio" upload, unless it also asks for the CV ("Resume / portfolio").
       // So is a code sample or a programming exercise ("If you would like to share a file of your code sample…",
       // "Write a program in C++ … Attach the file").
       notAny:
-        /^(?!.*\b(resume|cv|curriculum)\b).*(cover ?letter|motivation(al)? letter|letter of motivation|anschreiben|lettre de motivation|\b(portfolio|work samples?)\b|\b(other|additional|supporting|further) (documents?|files?|attachments?|materials?)\b|\bcode samples?\b|\bsamples? of (your )?code\b|\bwrite a (program|function|script)\b|\b(coding|programming) (exercise|task|assignment|challenge|test|question)\b|\bsource code\b)|transcript|writing sample|headshot|photo|passport/,
+        /^(?!.*\b(resume|cv|curriculum)\b).*(cover ?letter|motivation(al)? letter|letter of motivation|anschreiben|lettre de motivation|\b(portfolio|work samples?)\b|\b(other|additional|supporting|further) (documents?|files?|attachments?|materials?)\b|\bcode samples?\b|\bsamples? of (your )?code\b|\bwrite a (program|function|script)\b|\b(coding|programming) (exercise|task|assignment|challenge|test|question)\b|\bsource code\b|transcript)|writing sample|headshot|photo|passport/,
+      // …unless what it says names the CV too: "Resume/CV/Transcripts" above a "(transcripts are required…)" note.
+      unlessAny: CV_NAMED,
     }),
 
     // Passwords. "Passcode" and "One-time password" are the emailed code, not your password.
@@ -3596,6 +3646,8 @@
     eduLevelOf,
     degreeClassOf,
     uploadApplies,
+    uploadAlso,
+    gradeHeld,
     placeCountry,
     languagesNamed,
     isAcknowledgement,

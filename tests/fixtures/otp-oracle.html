@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Campus - Internship Programme - Undergraduate - AI Engineer - 2027 (UK - London)</title>
+    <!--
+      Oracle Recruiting Cloud's pin code (careers.americanexpress.com/en/sites/CX_1/…/apply/email): six text boxes
+      without a maxlength. Typing keeps the first digit of what was entered and moves on to the next box; a paste of
+      six digits fills them all (the handlers below do what its Knockout component does).
+    -->
+    <style>
+      body { font: 15px/1.4 system-ui, sans-serif; margin: 32px auto; max-width: 620px; text-align: center; }
+      .pin-code-input { display: flex; gap: 12px; justify-content: center; }
+      .pin-code-input__input { width: 44px; height: 44px; border-radius: 50%; border: 1px solid #99a; text-align: center; font-size: 18px; }
+    </style>
+  </head>
+  <body>
+    <h1>Confirm Your Identity</h1>
+    <p>
+      The verification code was sent to this email address: ada@example.com. When you get the code, type the code into
+      the field to confirm your identity and complete your job application. Note that it may take some time before you
+      receive the code.
+    </p>
+    <div class="input-row input-row--pin-code">
+      <fieldset class="pin-code-fieldset">
+        <legend aria-labelledby="pin-code-a11y-label"></legend>
+        <span id="pin-code-a11y-label" class="oj-helper-hidden-accessible" hidden>Verification Code</span>
+        <div class="pin-code-input"></div>
+      </fieldset>
+    </div>
+    <button type="button" id="verify">VERIFY</button>
+    <p><a href="#">Send New Code</a></p>
+    <p id="state"></p>
+    <script>
+      const holder = document.querySelector('.pin-code-input');
+      const segments = [];
+      const show = () => {
+        const pin = segments.map((s) => s.value).join('');
+        document.getElementById('state').textContent = pin.length === 6 ? pin : '';
+      };
+      const focusOn = (i) => segments[i] && segments[i].focus();
+      for (let i = 0; i < 6; i++) {
+        const seg = document.createElement('div');
+        seg.className = 'pin-code-input__segment';
+        const input = document.createElement('input');
+        Object.assign(input, { type: 'text', className: 'input-row__control pin-code-input__input', id: 'pin-code-' + (i + 1) });
+        input.setAttribute('inputmode', 'numeric');
+        input.setAttribute('autocomplete', 'off');
+        input.setAttribute('pattern', '[0-9]*');
+        input.setAttribute('aria-required', 'true');
+        input.setAttribute('aria-label', 'Verification code digit ' + (i + 1));
+        input.addEventListener('focus', (e) => e.target.select());
+        input.addEventListener('input', () => {
+          const first = input.value.charAt(0);
+          input.value = /[0-9]/.test(first) ? first : '';
+          show();
+          if (input.value && i < 5) focusOn(i + 1);
+        });
+        input.addEventListener('keydown', (e) => {
+          if (e.keyCode === 8 || e.keyCode === 46) {
+            e.preventDefault();
+            const empty = !input.value;
+            input.value = '';
+            show();
+            if (empty) focusOn(i - 1);
+          }
+        });
+        input.addEventListener('paste', (e) => {
+          const text = (e.clipboardData && e.clipboardData.getData('text').trim()) || '';
+          const digits = text.split('');
+          if (digits.length === 6) digits.forEach((d, k) => (segments[k].value = d));
+          show();
+        });
+        seg.appendChild(input);
+        holder.appendChild(seg);
+        segments.push(input);
+      }
+      setTimeout(() => focusOn(0), 200);
+    </script>
+  </body>
+</html>

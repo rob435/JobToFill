@@ -1,5 +1,5 @@
 // Loads the extension's classic-script libraries into this Node process and
-// provides an in-memory chrome.storage so store.js / vault.js can run.
+// provides an in-memory chrome.storage so store.js / passwords.js can run.
 'use strict';
 const path = require('node:path');
 
@@ -38,7 +38,8 @@ function installChrome() {
 
 function load() {
   if (!globalThis.chrome) installChrome();
-  for (const f of ['util', 'geo', 'fields', 'matcher', 'account', 'vault', 'store']) require(path.join(LIB, f + '.js'));
+  for (const f of ['util', 'geo', 'fields', 'matcher', 'account', 'passwords', 'store'])
+    require(path.join(LIB, f + '.js'));
   return globalThis.JTF;
 }
 

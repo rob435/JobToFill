@@ -1,65 +1,17 @@
 /*
- * JobToFill — encrypted vault for passwords and payment cards.
+ * JobToFill — passwords and payment cards, the password generator and the rules sign-up pages state.
  *
- * The vault is a JSON document encrypted with AES-256-GCM. The key is derived
- * from your master password with PBKDF2-SHA256 and is never written to disk:
- * while unlocked it lives only in storage.session (memory, extension
- * pages and the service worker only; content scripts cannot read it).
+ * Kept as plain JSON in storage.local "passwords" (like the AI keys, and in the backup file with them):
+ *   { version: 1, defaultPassword, defaultCardId,
+ *     credentials: [{ id, host, portal?, username, password, note, createdAt, updatedAt, previousPassword? }],
+ *     cards: [{ id, label, name, number, expMonth, expYear, cvc }] }
+ * Only the background hands them to a page: during a fill you started, on HTTPS, into visible fields.
  */
 (function (root) {
   'use strict';
   const JTF = (root.JTF = root.JTF || {});
 
-  const LOCAL_KEY = 'vault';
-  const SESSION_KEY = 'vaultKey';
-  const USED_KEY = 'vaultLastUsed';
-  const DEFAULT_ITERATIONS = 600000;
-
-  const subtle = () => root.crypto.subtle;
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-
-  function b64(bytes) {
-    const arr = new Uint8Array(bytes);
-    let s = '';
-    for (let i = 0; i < arr.length; i += 0x8000) s += String.fromCharCode.apply(null, arr.subarray(i, i + 0x8000));
-    return btoa(s);
-  }
-
-  function unb64(str) {
-    const bin = atob(str);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
-  }
-
-  function randomBytes(n) {
-    const out = new Uint8Array(n);
-    root.crypto.getRandomValues(out);
-    return out;
-  }
-
-  async function deriveKey(password, salt, iterations) {
-    const base = await subtle().importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveKey']);
-    return subtle().deriveKey(
-      { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
-      base,
-      { name: 'AES-GCM', length: 256 },
-      true,
-      ['encrypt', 'decrypt'],
-    );
-  }
-
-  async function encryptJson(key, obj) {
-    const iv = randomBytes(12);
-    const ct = await subtle().encrypt({ name: 'AES-GCM', iv }, key, encoder.encode(JSON.stringify(obj)));
-    return { iv: b64(iv), ct: b64(ct) };
-  }
-
-  async function decryptJson(key, blob) {
-    const pt = await subtle().decrypt({ name: 'AES-GCM', iv: unb64(blob.iv) }, key, unb64(blob.ct));
-    return JSON.parse(decoder.decode(pt));
-  }
+  const KEY = 'passwords';
 
   function emptyData() {
     return { version: 1, defaultPassword: '', credentials: [], cards: [], defaultCardId: null };
@@ -362,126 +314,32 @@
     return pw;
   }
 
-  /* ---------------------------------------------------------- storage-backed */
+  /* ------------------------------------------------------------------ storage */
 
   const local = () => JTF.api.storage.local;
-  const session = () => JTF.api.storage.session;
-
-  async function getBlob() {
-    const got = await local().get(LOCAL_KEY);
-    return got[LOCAL_KEY] || null;
-  }
-
-  async function sessionKey() {
-    const got = await session().get(SESSION_KEY);
-    if (!got[SESSION_KEY]) return null;
-    return subtle().importKey('raw', unb64(got[SESSION_KEY]), 'AES-GCM', true, ['encrypt', 'decrypt']);
-  }
-
-  async function rememberKey(key) {
-    const raw = await subtle().exportKey('raw', key);
-    await session().set({ [SESSION_KEY]: b64(raw), [USED_KEY]: Date.now() });
-  }
-
-  /** 'none' (never set up), 'locked' or 'unlocked'. */
-  async function status() {
-    if (!(await getBlob())) return 'none';
-    const got = await session().get(SESSION_KEY);
-    return got[SESSION_KEY] ? 'unlocked' : 'locked';
-  }
-
-  async function setup(password, options) {
-    if (!password || password.length < 8) throw new Error('Use a master password of at least 8 characters.');
-    const iterations = (options && options.iterations) || DEFAULT_ITERATIONS;
-    const salt = randomBytes(16);
-    const key = await deriveKey(password, salt, iterations);
-    const blob = {
-      version: 1,
-      kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations, salt: b64(salt) },
-      data: await encryptJson(key, emptyData()),
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-    await local().set({ [LOCAL_KEY]: blob });
-    await rememberKey(key);
-  }
-
-  async function unlock(password) {
-    const blob = await getBlob();
-    if (!blob) throw new Error('No vault has been set up yet.');
-    const key = await deriveKey(password, unb64(blob.kdf.salt), blob.kdf.iterations);
-    try {
-      await decryptJson(key, blob.data);
-    } catch (err) {
-      throw new Error('Wrong master password.', { cause: err });
-    }
-    await rememberKey(key);
-  }
-
-  async function lock() {
-    await session().remove([SESSION_KEY, USED_KEY]);
-  }
-
-  async function touch() {
-    await session().set({ [USED_KEY]: Date.now() });
-  }
 
   async function read() {
-    const key = await sessionKey();
-    if (!key) throw new Error('The vault is locked.');
-    const blob = await getBlob();
-    if (!blob) throw new Error('No vault has been set up yet.');
-    const data = await decryptJson(key, blob.data);
-    return JTF.util.mergeDefaults(data, emptyData());
+    const got = await local().get(KEY);
+    return JTF.util.mergeDefaults(got[KEY], emptyData());
   }
 
   async function write(data) {
-    const key = await sessionKey();
-    if (!key) throw new Error('The vault is locked.');
-    const blob = await getBlob();
-    blob.data = await encryptJson(key, data);
-    blob.updatedAt = Date.now();
-    await local().set({ [LOCAL_KEY]: blob });
-    await touch();
+    await local().set({ [KEY]: data });
   }
 
-  /** Read, let `fn` mutate the decrypted data in place, write it back. */
-  async function update(fn) {
-    const data = await read();
-    await fn(data);
-    await write(data);
-    return data;
-  }
+  // Read-modify-write runs one at a time within a context, so two saves don't drop each other's changes.
+  let queue = Promise.resolve();
 
-  async function changePassword(newPassword) {
-    if (!newPassword || newPassword.length < 8) throw new Error('Use a master password of at least 8 characters.');
-    const data = await read();
-    const blob = await getBlob();
-    const salt = randomBytes(16);
-    const iterations = Math.max(blob.kdf.iterations, DEFAULT_ITERATIONS);
-    const key = await deriveKey(newPassword, salt, iterations);
-    blob.kdf = { name: 'PBKDF2', hash: 'SHA-256', iterations, salt: b64(salt) };
-    blob.data = await encryptJson(key, data);
-    blob.updatedAt = Date.now();
-    await local().set({ [LOCAL_KEY]: blob });
-    await rememberKey(key);
-  }
-
-  async function reset() {
-    await local().remove(LOCAL_KEY);
-    await lock();
-  }
-
-  /** Lock if the vault has been idle longer than `minutes` (0 = only when the browser closes). */
-  async function autoLock(minutes) {
-    if (!minutes || minutes <= 0) return false;
-    const got = await session().get([SESSION_KEY, USED_KEY]);
-    if (!got[SESSION_KEY]) return false;
-    if (Date.now() - (got[USED_KEY] || 0) > minutes * 60000) {
-      await lock();
-      return true;
-    }
-    return false;
+  /** Read, let `fn` change the data in place, write it back. */
+  function update(fn) {
+    const run = queue.then(async () => {
+      const data = await read();
+      await fn(data);
+      await write(data);
+      return data;
+    });
+    queue = run.catch(() => {});
+    return run;
   }
 
   /**
@@ -504,27 +362,120 @@
     return cards.find((c) => c.id === data.defaultCardId) || cards[0] || null;
   }
 
-  const vault = {
-    deriveKey,
-    encryptJson,
-    decryptJson,
+  /* -------------------------------------------------- the old encrypted vault */
+
+  // Older versions kept all this in an encrypted vault: storage.local "vault" ({ kdf: { iterations, salt },
+  // data: { iv, ct } }), AES-256-GCM with a key derived from a master password by PBKDF2-SHA256, and the raw key
+  // in storage.session "vaultKey" while it was unlocked. What it holds is moved over once, then it is removed.
+  const LEGACY_KEY = 'vault';
+  const LEGACY_SESSION = ['vaultKey', 'vaultLastUsed'];
+  const session = () => JTF.api.storage.session;
+
+  function unb64(str) {
+    const bin = atob(str);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  async function legacyBlob() {
+    return (await local().get(LEGACY_KEY))[LEGACY_KEY] || null;
+  }
+
+  /** Is there an old vault still to move over (or discard)? */
+  async function legacy() {
+    return !!(await legacyBlob());
+  }
+
+  /** Merge what the old vault held into the passwords, without duplicating any: { credentials, cards } added. */
+  function mergeLegacy(old) {
+    const added = { credentials: 0, cards: 0 };
+    const same = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
+    return update((data) => {
+      if (!data.defaultPassword && old.defaultPassword) data.defaultPassword = old.defaultPassword;
+      for (const c of old.credentials || []) {
+        // A login saved since (or moved over before) stays as it is, and comes first.
+        const known = (x) =>
+          x.id === c.id ||
+          (same(x.host, c.host) &&
+            same(x.portal, c.portal) &&
+            same(x.username, c.username) &&
+            x.password === c.password);
+        if (!c || !c.host || data.credentials.some(known)) continue;
+        data.credentials.push(c);
+        added.credentials++;
+      }
+      for (const c of old.cards || []) {
+        if (!c || data.cards.some((x) => x.id === c.id || x.number === c.number)) continue;
+        data.cards.push(c);
+        added.cards++;
+      }
+      if (!data.cards.some((c) => c.id === data.defaultCardId))
+        data.defaultCardId = data.cards.some((c) => c.id === old.defaultCardId) ? old.defaultCardId : null;
+    }).then(() => added);
+  }
+
+  /** Decrypt the old vault with `key`, move what it holds over and remove it. */
+  async function moveLegacy(blob, key) {
+    let old;
+    try {
+      const { iv, ct } = blob.data;
+      const plain = await root.crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv) }, key, unb64(ct));
+      old = JSON.parse(new TextDecoder().decode(plain));
+    } catch (err) {
+      throw new Error('Wrong master password.', { cause: err });
+    }
+    const added = await mergeLegacy(old || {});
+    await discardLegacy();
+    return added;
+  }
+
+  /** Move the old vault's logins, cards and default password over, with its master password: { credentials, cards }. */
+  async function importLegacy(masterPassword) {
+    const blob = await legacyBlob();
+    if (!blob || !blob.kdf || !blob.data) throw new Error('There is no old vault to move over.');
+    const subtle = root.crypto.subtle;
+    const secret = new TextEncoder().encode(String(masterPassword || ''));
+    const base = await subtle.importKey('raw', secret, 'PBKDF2', false, ['deriveKey']);
+    const key = await subtle.deriveKey(
+      { name: 'PBKDF2', salt: unb64(blob.kdf.salt), iterations: blob.kdf.iterations, hash: 'SHA-256' },
+      base,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['decrypt'],
+    );
+    return moveLegacy(blob, key);
+  }
+
+  /** The old vault while its key is still in memory (it was unlocked when JobToFill updated): moved over silently. */
+  async function importLegacySession() {
+    const got = session() ? await session().get('vaultKey') : {};
+    const blob = got.vaultKey ? await legacyBlob() : null;
+    if (!blob || !blob.data) return null;
+    const key = await root.crypto.subtle.importKey('raw', unb64(got.vaultKey), 'AES-GCM', false, ['decrypt']);
+    return moveLegacy(blob, key);
+  }
+
+  /** Delete the old vault, and its key if that is still in memory. */
+  async function discardLegacy() {
+    await local().remove(LEGACY_KEY);
+    if (session()) await session().remove(LEGACY_SESSION);
+  }
+
+  const passwords = {
     generatePassword,
     parseRules,
     checkPassword,
-    status,
-    setup,
-    unlock,
-    lock,
-    touch,
     read,
     write,
     update,
-    changePassword,
-    reset,
-    autoLock,
     findCredential,
     defaultCard,
+    legacy,
+    importLegacy,
+    importLegacySession,
+    discardLegacy,
   };
-  JTF.vault = vault;
-  if (typeof module === 'object' && module.exports) module.exports = vault;
+  JTF.passwords = passwords;
+  if (typeof module === 'object' && module.exports) module.exports = passwords;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -63,22 +63,53 @@ test('month/year pickers save YYYY-MM', async () => {
   await settings.close();
 });
 
-test('the vault can be created and locked from the settings page', async () => {
-  const settings = await h.extPage('options/options.html#vault');
-  await until(settings.call, () => document.querySelector('input[name="master2"]'));
-  await settings.call(() => {
-    document.querySelector('input[name="master"]').value = 'my long master password';
-    document.querySelector('input[name="master2"]').value = 'my long master password';
-    document.querySelector('#sections form').requestSubmit();
-  });
-  await until(settings.call, () => document.querySelector('#sections').textContent.includes('Saved logins (0)'));
-  assert.equal(await h.bg(() => globalThis.JTF.vault.status()), 'unlocked');
+test('passwords left in an old encrypted vault move over once from the settings page', async () => {
+  // What an older version left behind: its vault, AES-256-GCM with a PBKDF2-SHA256 key from the master password.
+  await h.bg(async (master) => {
+    const { subtle } = globalThis.crypto;
+    const b64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)));
+    const salt = globalThis.crypto.getRandomValues(new Uint8Array(16));
+    const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
+    const base = await subtle.importKey('raw', new TextEncoder().encode(master), 'PBKDF2', false, ['deriveKey']);
+    const key = await subtle.deriveKey(
+      { name: 'PBKDF2', salt, iterations: 2000, hash: 'SHA-256' },
+      base,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt'],
+    );
+    const login = { id: 'o1', host: 'acme.wd5.myworkdayjobs.com', username: 'ada@example.com', password: 'Acme-1' };
+    const plain = { version: 1, defaultPassword: '', credentials: [login], cards: [], defaultCardId: null };
+    const ct = await subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(plain)));
+    const kdf = { name: 'PBKDF2', hash: 'SHA-256', iterations: 2000, salt: b64(salt) };
+    await globalThis.JTF.api.storage.local.set({ vault: { version: 1, kdf, data: { iv: b64(iv), ct: b64(ct) } } });
+  }, 'my long master password');
 
-  await settings.call(() =>
-    [...document.querySelectorAll('#sections button')].find((b) => b.textContent === 'Lock now').click(),
+  // Old links to "#vault" land on Passwords & cards.
+  const settings = await h.extPage('options/options.html#vault');
+  await until(settings.call, () => location.hash === '#passwords' && !!document.querySelector('[name="legacyMaster"]'));
+  const submit = (master) => {
+    const input = document.querySelector('[name="legacyMaster"]');
+    input.value = master;
+    input.form.requestSubmit();
+  };
+  await settings.call(submit, 'wrong password');
+  await until(settings.call, () =>
+    [...document.querySelectorAll('#sections .error')].some((e) => e.textContent === 'Wrong master password.'),
   );
-  await until(settings.call, () => document.querySelector('#sections').textContent.includes('Vault locked'));
-  assert.equal(await h.bg(() => globalThis.JTF.vault.status()), 'locked');
+  await settings.call(submit, 'my long master password');
+  await until(
+    settings.call,
+    () =>
+      document.querySelector('#sections').textContent.includes('Saved logins (1)') &&
+      !document.querySelector('[name="legacyMaster"]'),
+  );
+  const moved = await h.bg(async () => {
+    const { passwords } = globalThis.JTF;
+    return [await passwords.legacy(), (await passwords.read()).credentials.map((c) => c.password)];
+  });
+  assert.deepEqual(moved, [false, ['Acme-1']]);
+  await h.bg(() => globalThis.JTF.passwords.update((d) => (d.credentials = [])));
   await settings.close();
 });
 
