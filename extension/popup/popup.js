@@ -109,12 +109,18 @@ function renderResult(r) {
     r.missing.length ? resultLine('Missing from your profile:', r.missing) : null,
     r.unmatched.length ? resultLine('No matching option:', r.unmatched) : null,
     r.consents ? consentLine(r.consents) : null,
+    r.ticked
+      ? el('p', {
+          className: 'result-list',
+          textContent: `Ticked ${r.ticked === 1 ? 'an acknowledgement box' : `${r.ticked} acknowledgement boxes`}: untick any you don’t agree to.`,
+        })
+      : null,
     r.letter
       ? el('p', {
           className: 'result-list',
           textContent: `Used the cover letter you wrote for ${r.letter.company || 'this job'}.`,
         })
-      : r.wantsLetter
+      : r.wantsLetter && !r.quickHeld
         ? el(
             'p',
             { className: 'result-list' },

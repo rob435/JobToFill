@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply: Operations Analyst – Acme Capital</title>
+  </head>
+  <body>
+    <!-- A fuller application step for Quick apply: details, uploads, a privacy acknowledgement and an opt-in. -->
+    <header>
+      <span class="company">Acme Capital</span>
+      <h1>Operations Analyst</h1>
+      <p>Job ID R-1234 · London</p>
+      <a href="posting.html?id=R-1234">View job description</a>
+    </header>
+    <form>
+      <div><label for="first">First name</label><input id="first" name="first_name" /></div>
+      <div><label for="last">Last name</label><input id="last" name="last_name" /></div>
+      <div><label for="email">Email</label><input id="email" type="email" name="email" /></div>
+      <div><label for="phone">Phone</label><input id="phone" type="tel" name="phone" /></div>
+      <div><label for="resume">Resume/CV</label><input id="resume" type="file" name="resume" /></div>
+      <div><label for="cover">Cover letter</label><input id="cover" type="file" name="cover_letter" /></div>
+      <div>
+        <label for="cover-text">Cover letter (or paste it here)</label><textarea id="cover-text" name="cover_letter_text"></textarea>
+      </div>
+      <!-- A privacy notice to acknowledge, Greenhouse style: one box to tick under the question. -->
+      <fieldset id="question_9[]">
+        <legend>Please review Acme Capital’s Privacy Notice for Job Applicants below and acknowledge/confirm.*</legend>
+        <div>
+          <input type="checkbox" id="privacy" name="question_9[]" value="1" />
+          <label for="privacy">Acknowledge/Confirm</label>
+        </div>
+      </fieldset>
+      <div>
+        <input type="checkbox" id="alerts" name="job_alerts" />
+        <label for="alerts">Email me about future roles at Acme Capital</label>
+      </div>
+    </form>
+    <script>
+      // Like Lever and Breezy: an uploaded CV is "parsed" and the form re-rendered, which clears the phone box.
+      document.querySelector('#resume').addEventListener('change', () => {
+        setTimeout(() => {
+          document.querySelector('#phone').value = '';
+        }, 150);
+      });
+    </script>
+  </body>
+</html>

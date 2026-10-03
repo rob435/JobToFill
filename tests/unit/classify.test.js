@@ -1091,3 +1091,18 @@ test('public function / public trust questions are the government-official answe
   ])
     assert.equal(typeOf(desc(q, { kind: 'radio' })), 'compliance.government', q);
 });
+
+test('a privacy notice to "acknowledge/confirm" is an acknowledgement however the form asks it', () => {
+  const q = 'Please review Graham’s Privacy Notice for Job Applicants below and acknowledge/confirm.*';
+  const ask = (signals, kind, options) => typeOf(desc(signals, { kind, options: options ? opts(...options) : null }));
+  assert.equal(ask({ label: 'Acknowledge/Confirm', question: q }, 'checkbox'), 'consent');
+  assert.equal(ask({ label: q }, 'checkbox'), 'consent');
+  assert.equal(ask({ label: q }, 'checkboxes', ['Acknowledge/Confirm']), 'consent');
+  assert.equal(ask({ label: q }, 'select', ['Please select', 'Acknowledge/Confirm']), 'consent');
+  assert.equal(ask({ label: q }, 'combobox', ['Acknowledge/Confirm']), 'consent');
+  assert.equal(ask({ label: q }, 'radio', ['Yes', 'No']), 'consent');
+  // The answer each of those gets once acknowledgements are ticked.
+  const v = fields.resolve('consent', {}, { consents: true });
+  assert.equal(matcher.matchOption(opts('Please select', 'Acknowledge/Confirm'), v), 1);
+  assert.equal(matcher.matchOption(opts('Yes', 'No'), v), 0);
+});
