@@ -584,9 +584,14 @@
     return value != null && value !== def;
   }
 
+  // What the backup file holds (see exportData): a change to any of these rewrites it. Generated letters,
+  // the last Quick apply, the application log and caches are left out (the log rides along with the rest).
+  const BACKED_UP = /^(profiles|profileOrder|settings|vault|aiKeys|nylas|answers|watchlist|doc:.+|kit:.+)$/;
+  const backsUp = (key) => BACKED_UP.test(key);
+
   /**
    * Has anything been entered that is worth backing up? A fresh install has one blank profile,
-   * and its backup must never replace a real one.
+   * and its backup must never replace a real one. API keys and the Nylas connection count.
    */
   async function hasData() {
     const { profiles, order } = await loadAll();
@@ -594,7 +599,12 @@
     if (order.length > 1) return true;
     if (order.some((id) => filledIn({ ...profiles[id], id: undefined, name: undefined }, template))) return true;
     const all = await area().get(null);
-    return !!all.vault || Object.keys(all).some((k) => k.startsWith('doc:') || k.startsWith('kit:'));
+    if (all.vault || Object.keys(all).some((k) => k.startsWith('doc:') || k.startsWith('kit:'))) return true;
+    if (all.nylas || Object.values(all.aiKeys || {}).some((k) => String(k || '').trim())) return true;
+    return (
+      (Array.isArray(all.answers) && all.answers.length > 0) ||
+      (Array.isArray(all.watchlist) && all.watchlist.length > 0)
+    );
   }
 
   /**
@@ -783,6 +793,7 @@
     aiConfig,
     getNylas,
     setNylas,
+    backsUp,
     otpSettings,
     getLetters,
     saveLetter,
