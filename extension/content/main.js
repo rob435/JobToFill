@@ -75,6 +75,8 @@
 
   // "If you said yes above, please tell us more": only worth filling when the answer was yes.
   const FOLLOW_UP = /^if (yes|so|you (said|answered|selected|chose|checked|ticked) yes)\b/;
+  // Sites choose these for you (Workday, from where your connection seems to be): one that isn't yours is put right.
+  const CORRECTED = new Set(['address.country', 'phone.countryCode']);
 
   function labelFor(field, r) {
     if (r && r.type === 'custom') return U.cleanLabel(JTF.matcher.questionText(field.desc), 60);
@@ -389,6 +391,7 @@
       }
       const res = await JTF.fill.apply(field, v, {
         overwrite: settings.overwrite || !!payload.force || !!(replace && replace.has(r.type)),
+        correct: CORRECTED.has(r.type),
         comboboxes: settings.comboboxes !== false,
         history,
       });
@@ -409,7 +412,23 @@
       }
       return res.status;
     };
-    for (const i of order) await fillOne(fields[i], results[i]);
+    // The country goes in first, and the page is read again once it has: the address fields below it follow the
+    // country (Workday shows "Province" and "City (Comune)" for Italy, "County" and "City" for the United Kingdom).
+    let todo = order.map((i) => [fields[i], results[i]]);
+    const countries = todo.filter(([, r]) => r && r.type === 'address.country');
+    const done = new Set(countries.map(([field]) => field.el));
+    let moved = false;
+    for (const [field, r] of countries) if ((await fillOne(field, r)) === 'filled') moved = true;
+    if (moved) {
+      await settle(2500, 400);
+      const again = scan(profile);
+      const known = new Set(fields.map((f) => f.el));
+      fields.push(...again.fields.filter((field) => !known.has(field.el)));
+      todo = again.fields
+        .map((field, i) => [field, again.results[i]])
+        .sort(([a], [b]) => (b.kind === 'file') - (a.kind === 'file'));
+    }
+    for (const [field, r] of todo) if (!done.has(field.el)) await fillOne(field, r);
 
     // A late CV parse can still clear or re-render fields after they were filled (by this fill or an earlier
     // one, as Quick apply's details go in before its CV): fill those again.

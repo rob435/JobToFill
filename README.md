@@ -117,7 +117,7 @@ Save your details once: name, contact info, address, links, education, work hist
 - Works inside cross-origin iframes (embedded Greenhouse boards) and open shadow DOM (web components).
 - **Show detected fields** labels every field with what JobToFill thinks it is: green means ready, amber means your profile lacks it, grey means unknown.
 - **Undo** puts back whatever was on the page before the fill.
-- Only empty fields are filled unless you turn on _Overwrite_, and filled fields are outlined.
+- Only empty fields are filled unless you turn on _Overwrite_, and filled fields are outlined. One exception: a country the site chose for you is put right. Workday picks the _Country / Territory_ and the phone code's country from where your connection seems to be (Italy on a VPS there); when that isn't your country it becomes yours, the chip "Italy (+39)" becomes "United Kingdom (+44)", and the address fields are filled once the page has switched to that country's (_County_ and _City_ instead of _Province_ and _City (Comune)_).
 - Light and dark mode, an automatic backup file, and import/export.
 
 ## Install

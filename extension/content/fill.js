@@ -169,6 +169,19 @@
     }
   }
 
+  /**
+   * Does what the control already shows say the same as `v`? A country the site picked from where your connection
+   * seems to be ("Italy" on Workday, a chip "Italy (+39)") doesn't, for a profile in the United Kingdom.
+   */
+  function agrees(field, v) {
+    const { el, kind } = field;
+    if (kind === 'select') return M().matchOption(field.desc.options, v) === el.selectedIndex;
+    if (kind !== 'combo' && kind !== 'combobox') return true;
+    const shown =
+      kind === 'combo' ? [comboText(el)] : el.value.trim() ? [el.value] : chipsOf(el).map((c) => dom().textOf(c));
+    return shown.some((text) => text && M().matchOption([{ text, value: '' }], v) === 0);
+  }
+
   /** Current value as text (for "learn from this page"). */
   function currentValue(field) {
     const { el, kind, members } = field;
@@ -805,7 +818,10 @@
   async function apply(field, v, opts) {
     const { el, kind, members, desc } = field;
     const history = opts.history;
-    if (!opts.overwrite && hasValue(field)) return { status: 'skipped', reason: 'has value' };
+    // `correct`: what the site chose for you is replaced when it isn't yours (a country taken from your IP address).
+    const had = hasValue(field);
+    const correcting = had && !opts.overwrite && !!opts.correct && !agrees(field, v);
+    if (had && !opts.overwrite && !correcting) return { status: 'skipped', reason: 'has value' };
     try {
       switch (kind) {
         case 'select': {
@@ -858,6 +874,12 @@
         case 'combobox': {
           if (opts.comboboxes) {
             const prev = el.value;
+            // The site's chip ("Italy (+39)") goes first, or the right one would only join it.
+            if (correcting && kind === 'combobox' && chipsOf(el).length) {
+              if (!clearPicked(el)) return { status: 'skipped', reason: 'has value' };
+              await sleep(150);
+              key(el, 'Escape'); // clearing can pop the menu open again
+            }
             const res = await fillCombo(field, v);
             // A picked option is undone with the widget's clear button; typed text by typing back.
             if (res.status === 'filled' && kind === 'combobox')
@@ -904,7 +926,7 @@
         return true;
       }
       const removes = a.querySelectorAll(
-        '[class*="multi-value__remove"], [class*="multiValueRemove"], [aria-label^="Remove" i]',
+        '[class*="multi-value__remove"], [class*="multiValueRemove"], [aria-label^="Remove" i], [data-automation-id="DELETE_charm"]',
       );
       if (removes.length && chipsOf(el).length) {
         Array.from(removes).forEach((r) => pointerClick(r));
