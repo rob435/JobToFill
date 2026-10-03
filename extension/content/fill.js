@@ -78,15 +78,103 @@
     el.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true }));
   }
 
-  /** A box that only takes keys: Workday's date spin buttons ("YYYY") put back a value set from script. */
+  /**
+   * A box that only takes keys: Workday's date spin buttons ("YYYY") put back a value set from script, and a date in
+   * parts that aren't inputs (MUI X's and React Aria's "MM/DD/YYYY" spans) has no value to set at all.
+   */
   const takesKeys = (el) =>
-    el.getAttribute('role') === 'spinbutton' || /^dateSection/.test(el.getAttribute('data-automation-id') || '');
+    el.getAttribute('role') === 'spinbutton' ||
+    /^dateSection/.test(el.getAttribute('data-automation-id') || '') ||
+    !!datePartsOf(el);
+
+  const datePartsOf = (el) => (el.localName === 'input' || el.localName === 'textarea' ? null : dom().dateSegments(el));
+
+  // A date being typed into its parts, by field: closePopups waits for it (typeKeys can't be awaited by its callers).
+  const typing = new WeakMap();
+
+  /** One key into a contenteditable part: the widget takes it itself (React Aria, on beforeinput), else it is typed in. */
+  function typeChar(target, ch) {
+    const doc = target.ownerDocument;
+    const init = keyInit(ch);
+    const down = new KeyboardEvent('keydown', init);
+    target.dispatchEvent(down);
+    if (!down.defaultPrevented) {
+      target.dispatchEvent(new KeyboardEvent('keypress', Object.assign({}, init, { charCode: ch.charCodeAt(0) })));
+      const before = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        inputType: 'insertText',
+        data: ch,
+      });
+      if (target.dispatchEvent(before)) {
+        // Over what the part shows ("MM"), which the widget selects when the part gets focus.
+        const range = doc.createRange();
+        range.selectNodeContents(target);
+        doc.getSelection().removeAllRanges();
+        doc.getSelection().addRange(range);
+        if (!doc.execCommand('insertText', false, ch)) {
+          target.textContent = ch;
+          target.dispatchEvent(
+            new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: ch }),
+          );
+        }
+      }
+    }
+    target.dispatchEvent(new KeyboardEvent('keyup', init));
+  }
+
+  /**
+   * Type a date into its parts like a person: focus each part ("MM", "DD", "YYYY") and type its digits, giving the
+   * widget time to re-render between keys: an MUI X field keeps which part is being typed, and the keys typed so far,
+   * in React state, so keys sent back to back would all be read against the state before the first. `text` is the
+   * date written in the parts' order ("06/14/2027", dom.js gives the field that format). Resolves to whether every part
+   * shows what was typed.
+   */
+  async function typeParts({ box, parts }, text) {
+    const runs = String(text)
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter(Boolean);
+    if (runs.length !== parts.length) return false;
+    const doc = box.ownerDocument;
+    for (let i = 0; i < parts.length; i++) {
+      parts[i].focus({ preventScroll: true });
+      await sleep(20);
+      for (const ch of runs[i]) {
+        // Keys go where the focus is: a widget that moves on to the next part by itself has it there.
+        const active = dom().deepActiveElement(doc);
+        typeChar(active && parts.includes(active) ? active : parts[i], ch);
+        await sleep(20);
+      }
+    }
+    const active = dom().deepActiveElement(doc);
+    if (active && box.contains(active)) active.blur();
+    await sleep(20);
+    return parts.every((p, i) => p.textContent.trim() === runs[i]);
+  }
+
+  /** What a date in parts shows ("06/14/2027"), '' while each part shows its placeholder ("MM"), null for other boxes. */
+  function partsValue(el) {
+    const found = datePartsOf(el);
+    if (!found) return null;
+    const filled = (p) =>
+      /\d/.test(p.textContent) ||
+      (p.hasAttribute('aria-valuenow') && !/^empty$/i.test(p.getAttribute('aria-valuetext') || ''));
+    return found.parts.some(filled) ? found.parts.map((p) => p.textContent.trim()).join('/') : '';
+  }
 
   /**
    * Type `text` key by key: each key goes to the widget first, and only when it doesn't take the key itself is the
-   * character inserted the way the browser does. Falls back to typeValue when the box still disagrees.
+   * character inserted the way the browser does. Falls back to typeValue when the box still disagrees. A date in parts
+   * is typed part by part (typeParts), which takes a while: that returns a promise.
    */
   function typeKeys(el, text) {
+    const found = datePartsOf(el);
+    if (found) {
+      const done = typeParts(found, text);
+      typing.set(el, done);
+      return done;
+    }
     const doc = el.ownerDocument;
     el.focus({ preventScroll: true });
     el.dispatchEvent(new FocusEvent('focusin', { bubbles: true, composed: true }));
@@ -203,6 +291,8 @@
       case 'combobox':
         return !!el.value.trim() || chipsOf(el).length > 0;
       default: {
+        const shown = partsValue(el);
+        if (shown != null) return !!shown;
         // A bare scheme or a dial code the widget put there ("+33" in react-phone-number-input) is still empty.
         const v = (el.value || '').trim();
         return !!v && !/^https?:\/\/$/.test(v) && !/^\+\d{1,4}$/.test(v);
@@ -255,8 +345,10 @@
             .filter(Boolean)
             .join(', ')
         );
-      default:
-        return (el.value || '').trim();
+      default: {
+        const shown = partsValue(el);
+        return shown != null ? shown : (el.value || '').trim();
+      }
     }
   }
 
@@ -715,6 +807,12 @@
    * Escape, then a click outside. Popups that were open before (an application in a modal) are left alone.
    */
   async function closePopups(el, before) {
+    // A date still being typed in parts (typeKeys) is finished first.
+    const pending = typing.get(el);
+    if (pending) {
+      typing.delete(el);
+      await pending;
+    }
     const doc = el.ownerDocument;
     const fresh = () => openPopups(doc).filter((p) => !before.includes(p) && !p.contains(el));
     // Widgets open on focus synchronously: nothing new now means nothing to close (and no time lost per box).

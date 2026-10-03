@@ -11,8 +11,11 @@
   // Choices built from ARIA widgets instead of <input>s: Radix/Headless UI radios, toggle-button
   // groups like Ashby's Yes/No, custom checkboxes and switches.
   const ARIA_CHOICE = '[role="radio"], [role="checkbox"], [role="switch"], button[aria-pressed]';
-  const CONTROL_SELECTOR = `input, select, textarea, [role="combobox"], [aria-haspopup="listbox"], ${ARIA_CHOICE}`;
-  const COUNTED_SELECTOR = `input:not([type="hidden"]), select, textarea, [role="combobox"], [aria-haspopup="listbox"], ${ARIA_CHOICE}`;
+  // A date typed in parts that aren't inputs: MUI X's and React Aria's date fields show "MM" "DD" "YYYY" as
+  // role="spinbutton" spans (contenteditable) in a role="group" that carries the question.
+  const SEGMENT = '[role="spinbutton"]:not(input)';
+  const CONTROL_SELECTOR = `input, select, textarea, [role="combobox"], [aria-haspopup="listbox"], ${ARIA_CHOICE}, ${SEGMENT}`;
+  const COUNTED_SELECTOR = `input:not([type="hidden"]), select, textarea, [role="combobox"], [aria-haspopup="listbox"], ${ARIA_CHOICE}, ${SEGMENT}`;
   const SKIP_INPUT_TYPES = new Set([
     'hidden',
     'submit',
@@ -419,6 +422,58 @@
 
   const isAriaChoice = (el) => el.localName !== 'input' && el.matches(ARIA_CHOICE);
 
+  // A date part's accessible name: "Month" (MUI X), "month" (React Aria), and a few languages' words for them.
+  const PART_NAMES = [
+    ['day', /\b(day|jour|tag|dia|giorno|dag|dzien)\b/],
+    ['month', /\b(month|mois|monat|mes|mese|maand|miesiac)\b/],
+    ['year', /\b(year|annee|jahr|ano|anno|jaar|rok)\b/],
+  ];
+  const NOT_A_DATE_PART = /\b(hours?|minutes?|seconds?|meridiem|am pm|week ?day|weekday)\b/;
+
+  /** Which part of a date a role="spinbutton" holds: what it is called ("Month"), else its range (1–31, 1–12, 0–9999). */
+  function dateUnit(el) {
+    const name = U.normalize(el.getAttribute('aria-label') || '');
+    const named = PART_NAMES.find(([, re]) => re.test(name));
+    if (named) return named[0];
+    if (NOT_A_DATE_PART.test(name)) return null;
+    const max = parseInt(el.getAttribute('aria-valuemax'), 10);
+    if (max >= 28 && max <= 31) return 'day';
+    if (max === 12) return 'month';
+    return max >= 1000 || max === 99 ? 'year' : null;
+  }
+
+  /** How a date in parts is written, in the order the parts come: "dd/mm/yyyy" for a DD/MM/YYYY field. */
+  function partsFormat({ parts, units }) {
+    const two = (el) => parseInt(el.getAttribute('aria-valuemax'), 10) === 99;
+    return units.map((u, i) => (u === 'year' ? (two(parts[i]) ? 'yy' : 'yyyy') : u === 'day' ? 'dd' : 'mm')).join('/');
+  }
+
+  /**
+   * A date typed in parts that aren't inputs (see SEGMENT): { box, parts, units } for one of its parts or the element
+   * around them, `box` being its role="group" (which the question labels) or else the smallest element holding the
+   * parts. Null for a time, a counter, or a range of two dates.
+   */
+  function dateSegments(el) {
+    const first = el.matches(SEGMENT) ? el : el.querySelector(SEGMENT);
+    if (!first) return null;
+    let box = first.parentElement;
+    for (let i = 0; box && i < 4 && box.querySelectorAll(SEGMENT).length < 2; i++) box = box.parentElement;
+    if (!box) return null;
+    const parts = Array.from(box.querySelectorAll(SEGMENT));
+    const units = parts.map(dateUnit);
+    if (parts.length < 2 || parts.length > 3 || units.some((u) => !u) || new Set(units).size < units.length)
+      return null;
+    // The group around just this date (its "Choose date" button and hidden value input aside) is what is labelled.
+    const group = box.closest('[role="group"]');
+    if (
+      group &&
+      group.querySelectorAll(SEGMENT).length === parts.length &&
+      foreignControls(group, new Set(parts)) === 0
+    )
+      box = group;
+    return { box, parts, units };
+  }
+
   /** Toggle buttons only count as a choice when they come in a group: "Yes" "No". */
   function pressedGroup(el) {
     const parent = el.parentElement;
@@ -430,6 +485,8 @@
 
   function kindOf(el) {
     const tag = el.localName;
+    // One date in parts: the scan makes one field of all its parts (collect).
+    if (el.matches(SEGMENT)) return dateSegments(el) ? 'date' : null;
     if (isAriaChoice(el)) {
       // A wrapper around a real input is handled through the input.
       if (el.querySelector('input[type="radio"], input[type="checkbox"]')) return null;
@@ -465,6 +522,8 @@
       );
     }
     if (kind === 'combobox') return isVisible(el, { ignoreOpacity: true }) || isVisible(el.parentElement);
+    // An empty MUI X date keeps its "MM/DD/YYYY" see-through under the label until the field has focus.
+    if (el.matches(SEGMENT)) return !el.closest('[aria-hidden="true"]') && isVisible(el, { ignoreOpacity: true });
     if (el.readOnly) return false;
     if (el.closest('[aria-hidden="true"]')) return false;
     return isVisible(el);
@@ -561,6 +620,9 @@
       options: null,
       signals: s,
     };
+    // A date in parts takes them in its own order, whatever the page's language: its format stands in for a placeholder.
+    const parts = kind === 'date' && el.localName !== 'input' ? dateSegments(el) : null;
+    if (parts) desc.placeholderRaw = partsFormat(parts);
     if (kind === 'radio' || kind === 'checkboxes') {
       s.question = groupQuestion(members);
       s.name = el.getAttribute('name') || '';
@@ -613,6 +675,14 @@
       if (seen.has(el)) continue;
       const kind = kindOf(el);
       if (!kind || !isUsable(el, kind)) continue;
+      if (el.matches(SEGMENT)) {
+        // A date in parts is one field: the element around them, labelled by the question ("Graduation date").
+        const { box, parts } = dateSegments(el);
+        parts.forEach((m) => seen.add(m));
+        if (parts.every((m) => m.getAttribute('aria-readonly') !== 'true'))
+          fields.push({ el: box, kind, members: parts, desc: describe(box, kind, parts) });
+        continue;
+      }
       if ((kind === 'radio' || kind === 'checkbox') && (el.name || isAriaChoice(el) || kind === 'radio')) {
         const members = groupMembers(el);
         members.forEach((m) => seen.add(m));
@@ -636,5 +706,5 @@
     return a;
   }
 
-  JTF.dom = { collect, describe, kindOf, isVisible, textOf, visibleText, deepActiveElement };
+  JTF.dom = { collect, describe, kindOf, isVisible, textOf, visibleText, deepActiveElement, dateSegments };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
