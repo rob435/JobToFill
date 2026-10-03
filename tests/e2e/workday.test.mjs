@@ -80,6 +80,9 @@ test('Workday: a country picked from the IP address is put right, then the addre
   assert.equal(await text(page, '#education-1--degree'), 'Bachelors');
   assert.equal(await value(page, '#education-1--firstYearAttended-dateSectionYear-input'), '2023');
   assert.equal(await value(page, '#education-1--lastYearAttended-dateSectionYear-input'), '2027');
+  assert.equal(await value(page, '#education-1--gradeAverage'), '2:1', 'the class, never a GPA made up from it');
+  // "Resume/CV/Transcripts" takes several files: the CV goes in (no transcript or letter saved here).
+  assert.deepEqual(await page.$$eval('#uploaded li', (list) => list.map((li) => li.textContent)), ['Robin_Li_CV.pdf']);
   assert.equal(await page.$$eval('[data-automation-id="activeListContainer"], ul.menu', (l) => l.length), 0);
   assert.ok(took < 20000, `the fill took ${took} ms`);
   await page.close();
