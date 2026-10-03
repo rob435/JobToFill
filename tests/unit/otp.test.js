@@ -163,7 +163,11 @@ test('nylas: explains errors and retries without select', async () => {
 test('store: Nylas connection is saved, backed up and restored', async () => {
   installChrome();
   assert.equal(await store.getNylas(), null);
+  assert.equal(await store.hasData(), false);
   await store.setNylas({ apiKey: ' nyk_1 ', grantId: 'g1', email: 'ada@example.com' });
+  // Connecting the inbox alone is worth a backup file, and rewrites it.
+  assert.equal(await store.hasData(), true, 'a Nylas key alone is backed up');
+  assert.equal(store.backsUp('nylas'), true);
   assert.deepEqual(await store.getNylas(), { region: 'us', apiKey: 'nyk_1', grantId: 'g1', email: 'ada@example.com' });
   assert.deepEqual(store.otpSettings(await store.getSettings()), { auto: true, links: true });
   const backup = await store.exportData();
