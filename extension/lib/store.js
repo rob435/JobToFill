@@ -13,6 +13,8 @@
  *                 spelling, paper, cv: { updatedAt, text } (text read from the resume file) }
  *   aiKeys        the AI providers' API keys ({ openrouter, deepseek, custom }); in backups unless switched off
  *   letters       generated letters, newest first (see saveLetter)
+ *   nylas         the Nylas connection for verification codes: { apiKey, region, grantId, email }; in backups
+ *                 with the AI keys
  */
 (function (root) {
   'use strict';
@@ -33,6 +35,9 @@
     // this one is out of credit or down; backupKeys: keep the API keys in the backup file.
     ai: { provider: 'openrouter', model: '', baseUrl: '', models: {}, fallback: true, backupKeys: true },
     searchHistory: false,
+    // Verification codes from email (Nylas): auto: watch pages for code boxes and fill them by themselves;
+    // links: open the "verify your email" link when a page says one was sent.
+    otp: { auto: true, links: true },
   };
 
   const DEFAULT_KIT = { notes: '', samples: [], contact: '', closing: '', spelling: 'auto', paper: 'a4', cv: null };
@@ -241,6 +246,23 @@
     return config;
   }
 
+  /* ------------------------------------------------------ verification codes */
+
+  /** The Nylas connection: { apiKey, region, grantId, email }, or null when not set up. */
+  async function getNylas() {
+    const n = (await area().get('nylas')).nylas;
+    return n && n.apiKey ? n : null;
+  }
+
+  const setNylas = exclusive(async function setNylas(patch) {
+    const next = patch ? Object.assign({ region: 'us' }, (await area().get('nylas')).nylas || {}, patch) : null;
+    if (!next || !String(next.apiKey || '').trim()) await area().remove('nylas');
+    else await area().set({ nylas: { ...next, apiKey: String(next.apiKey).trim() } });
+    return next;
+  });
+
+  const otpSettings = (settings) => Object.assign({}, DEFAULT_SETTINGS.otp, (settings && settings.otp) || {});
+
   async function getLetters() {
     return (await area().get('letters')).letters || [];
   }
@@ -419,6 +441,8 @@
     if (keys) {
       const aiKeys = await getAiKeys();
       if (Object.keys(aiKeys).length) out.aiKeys = aiKeys;
+      const nylas = await getNylas();
+      if (nylas) out.nylas = nylas;
     }
     return out;
   }
@@ -443,6 +467,18 @@
         if (PROVIDER_IDS.includes(id) && typeof key === 'string' && key.trim()) keys[id] = key.trim();
       set.aiKeys = keys;
     }
+    if (
+      data.nylas &&
+      typeof data.nylas === 'object' &&
+      typeof data.nylas.apiKey === 'string' &&
+      data.nylas.apiKey.trim()
+    )
+      set.nylas = {
+        apiKey: data.nylas.apiKey.trim(),
+        region: data.nylas.region === 'eu' ? 'eu' : 'us',
+        grantId: String(data.nylas.grantId || ''),
+        email: String(data.nylas.email || ''),
+      };
     await area().set(set);
     if (data.vault && JTF.vault) await JTF.vault.lock();
   });
@@ -469,6 +505,9 @@
     setAiKey,
     saveAiSettings,
     aiConfig,
+    getNylas,
+    setNylas,
+    otpSettings,
     getLetters,
     saveLetter,
     removeLetter,

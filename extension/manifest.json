@@ -32,6 +32,8 @@
       "lib/matcher.js",
       "lib/vault.js",
       "lib/store.js",
+      "lib/otp.js",
+      "lib/nylas.js",
       "background.js"
     ]
   },

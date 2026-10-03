@@ -54,7 +54,14 @@ Save your details once: name, contact info, address, links, education, work hist
   - Sign-up pages: a unique strong password is generated for "Create password" + "Confirm password" and saved for that site, so a Workday account for every employer is no longer painful. Choosing a single default password instead is also an option.
   - Login pages: the saved password for that site is filled.
   - Checkout pages: the selected card is filled, including inside payment-provider iframes such as Stripe.
-- **Right-click menu.** _Fill this page_, _Insert from profile → Email / LinkedIn / …_ into any box, and _Generate strong password_.
+- **Right-click menu.** _Fill this page_, _Insert from profile → Email / LinkedIn / …_ into any box, _Generate strong password_ and _Insert verification code from email_.
+
+**Verification codes from email**
+
+- **Codes fill themselves.** Job portals want an account, then "the 6-digit code we just emailed you", again and again. Connect your inbox once through [Nylas](https://www.nylas.com) (Settings › _Email codes_: paste one API key) and JobToFill watches for code boxes, waits for that email, and types the code in: one box or a row of single-digit boxes, React widgets included. "Check your inbox to verify your email" pages get the link from that email opened in a new tab.
+- **Reads emails like a person.** It finds the code beside "verification code", "one-time passcode", "Bestätigungscode" and friends, and ignores order numbers, phone numbers, prices, years, dates, tracking links and the hidden preview text. The box decides the shape: six boxes take a six-digit code, a numeric box no letters.
+- **Only from the site that asked.** A code is filled by itself only when the email comes from that site: the same domain, the same portal (a Workday page and a Workday email; Oracle, SuccessFactors, iCIMS, Greenhouse and two dozen more), the company's own domain behind its portal, or an email that links back to the page. A code from anyone else is only offered with a _Use it_ button, so a look-alike page can't collect your bank's sign-in code. Secure pages only; each code is used once; nothing is submitted for you.
+- Right-click any box › _Insert verification code from email_ takes the newest code whoever sent it.
 
 **Also**
 
@@ -114,6 +121,7 @@ In both browsers the settings page opens on install. Fill in your profile and pi
 | New password on a sign-up form | Right-click the password box → _Generate strong password_ (or just fill the page)           |
 | Undo a fill                    | _Undo_ in the popup or in the on-page toast                                                 |
 | Write a cover letter           | Toolbar → _Write cover letter_ on the application page (set up a key under _Cover letters_) |
+| Emailed sign-in codes          | Automatic once your inbox is connected under _Email codes_; or right-click the box          |
 
 To change the shortcut, open `chrome://extensions/shortcuts` in Chromium browsers, or in Firefox go to `about:addons`, click ⚙, then **Manage Extension Shortcuts**. The settings page links there too.
 
@@ -128,9 +136,10 @@ The demo includes Greenhouse-, Workday- and Lever-style applications, searchable
 
 ## Privacy and security
 
-- **Nothing leaves your browser** unless you use the cover letter writer. There are no servers or analytics. The profile lives in the extension's local storage, plus the backup file in your own Downloads folder.
+- **Nothing leaves your browser** unless you use the cover letter writer or connect your inbox for codes. There are no servers or analytics. The profile lives in the extension's local storage, plus the backup file in your own Downloads folder.
 - **The cover letter writer** sends the job description, your CV's text, your profile, notes and example letters to the AI provider you chose, with your own API key, and only when you ask for a letter. In Firefox it asks for your permission first. Your API keys stay in this browser and in your own backup file, so they come back if JobToFill is reinstalled; switch off _Keep my API keys in the backup file_ to leave them out (they are never sent anywhere but to the provider). Job descriptions are fetched from the job sites directly, without your cookies. Browsing history is only searched if you switch that on; it is searched locally, and only the matching job pages are opened. To find the job behind an application, JobToFill remembers the last few job-related pages each tab showed (at most 12, for 3 hours) in the browser's session memory; they are never written to disk or sent anywhere, and are gone when the browser closes. If you came from a Trackr list, its public programme list is fetched to confirm which job it is.
-- **Nothing runs until you ask.** The fill code is injected into a page only when you press the shortcut or a button. It is not loaded on every site you visit.
+- **Email codes** are read through Nylas with your own API key: JobToFill asks Nylas for the last few messages of the inbox you connected, received in the last minutes, and picks the code in your browser. It never sends, deletes or marks mail, and no page content goes to Nylas. The key is kept like the AI keys (this browser and your backup file).
+- **Nothing runs until you ask.** The fill code is injected into a page only when you press the shortcut or a button. It is not loaded on every site you visit. The one exception is opt-in: once you connect your inbox, a small watcher that only looks for verification-code boxes goes into each secure page as it loads (switch _Fill codes by themselves_ off to stop that).
 - **The backup file is yours.** It is written only to your Downloads folder and contains your profile as plain JSON (the vault stays encrypted). Turn it off under _Backup & restore_ if you'd rather not keep one.
 - **The vault is encrypted** with AES-256-GCM. The key is derived from your master password (PBKDF2-SHA256, 600,000 iterations) and is kept only in memory (`storage.session`) while unlocked. Content scripts can't read it. The vault auto-locks after inactivity (30 minutes by default) and always locks when the browser closes. Backups contain the vault still encrypted.
 - **Secrets are guarded:**

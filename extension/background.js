@@ -3,14 +3,23 @@
  * Owns everything that needs privileges: injecting the content scripts on
  * demand, running a fill across all frames, handing out vault secrets (only to
  * the frame being filled, only over HTTPS), the keyboard shortcut, context
- * menus, vault auto-lock and the automatic backup file.
+ * menus, vault auto-lock, the automatic backup file, and verification codes from email.
  */
 // Chromium loads the libraries here; Firefox lists them in manifest.json "background.scripts".
 if (typeof importScripts === 'function') {
-  importScripts('lib/util.js', 'lib/geo.js', 'lib/fields.js', 'lib/matcher.js', 'lib/vault.js', 'lib/store.js');
+  importScripts(
+    'lib/util.js',
+    'lib/geo.js',
+    'lib/fields.js',
+    'lib/matcher.js',
+    'lib/vault.js',
+    'lib/store.js',
+    'lib/otp.js',
+    'lib/nylas.js',
+  );
 }
 
-const { store, vault, util, fields } = globalThis.JTF;
+const { store, vault, util, fields, otp, nylas } = globalThis.JTF;
 const api = globalThis.JTF.api;
 
 const CONTENT_FILES = [
@@ -140,6 +149,9 @@ async function fillTab(tabId, options) {
   } finally {
     endFill(tabId);
   }
+
+  // A sign-in step that asks for an emailed code: look out for it even when automatic watching is off.
+  if (!opts.only && (await otpReady())) watchOtp(tabId).catch(() => {});
 
   const summary = mergeReports(frames);
   summary.letter = letter ? { id: letter.id, company: letter.posting && letter.posting.company } : null;
@@ -552,6 +564,192 @@ async function attachLetter(tabId, letterId) {
   return { saved: true, filled: summary.filled, detected: summary.detected };
 }
 
+/* ---------------------------------------------------- verification codes */
+
+// The verification code watcher (content/otp.js) runs on its own: it is small, and once Nylas is connected
+// it goes into every page as it loads, so a code box is filled without anyone pressing anything.
+const OTP_FILES = ['content/otp.js'];
+const OTP_EXPLICIT_LOOKBACK = 15 * 60e3;
+
+/** Start the code watcher in a tab's frames. */
+async function watchOtp(tabId, frameIds, options) {
+  const probe = await execute(tabId, frameIds, { func: () => !!globalThis.__jtfOtp });
+  const missing = probe.filter((r) => !r.result).map((r) => r.frameId);
+  if (missing.length) await execute(tabId, missing, { files: OTP_FILES });
+  const settings = store.otpSettings(await store.getSettings());
+  return execute(tabId, frameIds, {
+    func: (opts) => globalThis.__jtfOtp && globalThis.__jtfOtp.watch(opts),
+    args: [{ links: settings.links !== false, ...(options || {}) }],
+  });
+}
+
+async function otpReady() {
+  const config = await store.getNylas();
+  return config && config.grantId ? config : null;
+}
+
+api.tabs.onUpdated.addListener(async (tabId, info, tab) => {
+  if (
+    info.status !== 'complete' ||
+    !tab ||
+    tab.incognito ||
+    !/^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(tab.url || '')
+  )
+    return;
+  try {
+    if (!(await otpReady()) || store.otpSettings(await store.getSettings()).auto === false) return;
+    await watchOtp(tabId);
+  } catch (err) {
+    /* a page that can't be scripted */
+  }
+});
+
+// Remembered in session storage (memory only, cleared when the browser closes): the emails whose code has
+// been used, so one code isn't typed twice, and codes offered with "Use it" but not yet taken.
+const memory = new Map();
+const sessionArea = () =>
+  (api.storage && api.storage.session) || {
+    get: async (k) => (memory.has(k) ? { [k]: memory.get(k) } : {}),
+    set: async (o) => Object.entries(o).forEach(([k, v]) => memory.set(k, v)),
+  };
+
+async function sessionGet(key, fallback) {
+  const got = await sessionArea()
+    .get(key)
+    .catch(() => ({}));
+  return got[key] != null ? got[key] : fallback;
+}
+
+async function markUsed(id) {
+  const used = await sessionGet('otpUsed', []);
+  await sessionArea().set({ otpUsed: [id, ...used.filter((x) => x !== id)].slice(0, 100) });
+}
+
+// Every frame of a page polls on its own: one request to Nylas serves them all for a few seconds.
+let mailCache = null;
+async function recentMail(config, since) {
+  const now = Date.now();
+  if (mailCache && mailCache.grant === config.grantId && now - mailCache.at < 2500 && mailCache.since <= since)
+    return mailCache.list;
+  const list = await nylas.messages(config, { since, limit: 15 });
+  mailCache = { grant: config.grantId, at: now, since, list };
+  return list;
+}
+
+const hostOf = (url) => {
+  try {
+    return new URL(url).hostname;
+  } catch (err) {
+    return '';
+  }
+};
+
+/**
+ * A content script asks for the code (or verify link) a page is waiting for. Only a code from an email
+ * that clearly comes from this site is handed over; one from an unrecognised sender is only offered
+ * ("Use it"), never filled by itself. Codes go to secure pages only.
+ */
+async function otpFor(msg, sender) {
+  const config = await otpReady();
+  if (!config) return { stop: true };
+  let url;
+  try {
+    url = new URL(sender.url);
+  } catch (err) {
+    return { stop: true };
+  }
+  if (!isSecureUrl(url)) return { stop: true };
+  const settings = store.otpSettings(await store.getSettings());
+  if (msg.kind === 'link' && (settings.links === false || sender.frameId !== 0)) return { stop: true };
+  const hosts = [url.hostname, hostOf(sender.tab && sender.tab.url)].filter(Boolean);
+  const since = Math.max(Number(msg.since) || 0, Date.now() - 30 * 60e3);
+  let list;
+  try {
+    list = await recentMail(config, since);
+  } catch (err) {
+    return { error: err.message, fatal: ['key', 'grant', 'setup'].includes(err.code) };
+  }
+  const want =
+    msg.want && typeof msg.want === 'object' ? { length: +msg.want.length || 0, numeric: !!msg.want.numeric } : {};
+  const found = otp.pick(list, {
+    kind: msg.kind === 'link' ? 'link' : 'code',
+    hosts,
+    since,
+    want,
+    used: await sessionGet('otpUsed', []),
+  });
+  if (!found) return { waiting: true };
+  const from = found.from || 'your inbox';
+
+  if (msg.kind === 'link') {
+    if (found.relevance !== 'strong') return { waiting: true };
+    await markUsed(found.id);
+    const tab = sender.tab || {};
+    await api.tabs.create({
+      url: found.link,
+      active: false,
+      index: tab.index != null ? tab.index + 1 : undefined,
+      openerTabId: tab.id,
+    });
+    return { opened: true, from };
+  }
+  await markUsed(found.id);
+  if (found.relevance === 'strong') return { code: found.code, from, subject: found.subject };
+  // Not obviously from this site: offer it, and keep the code here until the person says yes.
+  const token = util.uid();
+  const claims = (await sessionGet('otpClaims', {})) || {};
+  for (const [k, c] of Object.entries(claims)) if (c.expires < Date.now()) delete claims[k];
+  claims[token] = { code: found.code, tabId: sender.tab && sender.tab.id, expires: Date.now() + 5 * 60e3 };
+  await sessionArea().set({ otpClaims: claims });
+  return { suggest: token, from, subject: found.subject };
+}
+
+async function otpClaim(msg, sender) {
+  const claims = (await sessionGet('otpClaims', {})) || {};
+  const claim = claims[msg.token];
+  if (!claim || claim.expires < Date.now() || claim.tabId !== (sender.tab && sender.tab.id))
+    return { error: 'That code has expired.' };
+  delete claims[msg.token];
+  await sessionArea().set({ otpClaims: claims });
+  return { code: claim.code };
+}
+
+/** Right-click → "Insert verification code from email": the newest code, into the box you clicked. */
+async function insertOtp(tab, info, frameIds) {
+  const config = await otpReady();
+  if (!config) {
+    await showToast(tab.id, 'Connect your inbox first: JobToFill settings › Email codes.', {}, frameIds);
+    return;
+  }
+  const hosts = [hostOf(info.frameUrl), hostOf(tab.url)].filter(Boolean);
+  const since = Date.now() - OTP_EXPLICIT_LOOKBACK;
+  let found;
+  try {
+    const list = await nylas.messages(config, { since, limit: 15 });
+    found = otp.pick(list, { kind: 'code', hosts, since, explicit: true });
+  } catch (err) {
+    await showToast(tab.id, err.message, {}, frameIds);
+    return;
+  }
+  if (!found) {
+    await watchOtp(tab.id, frameIds);
+    await showToast(
+      tab.id,
+      'No code in your inbox from the last 15 minutes yet. JobToFill will keep checking.',
+      {},
+      frameIds,
+    );
+    return;
+  }
+  await markUsed(found.id);
+  await execute(tab.id, frameIds, { files: OTP_FILES });
+  await execute(tab.id, frameIds, {
+    func: (code) => globalThis.__jtfOtp && globalThis.__jtfOtp.fillFocused(code),
+    args: [found.code],
+  });
+  await showToast(tab.id, `Inserted the code from ${found.from || 'your inbox'}.`, {}, frameIds);
+}
+
 /* -------------------------------------------------------------- messages */
 
 const sum = (frames, key) => frames.reduce((n, f) => n + (f[key] || 0), 0);
@@ -579,9 +777,11 @@ const HANDLERS = {
   // From content scripts, during a fill.
   'jtf:secrets': secretsFor,
   'jtf:document': documentFor,
+  'jtf:otp': otpFor,
+  'jtf:otp-claim': otpClaim,
 };
 
-const CONTENT_ONLY = new Set(['jtf:secrets', 'jtf:document']);
+const CONTENT_ONLY = new Set(['jtf:secrets', 'jtf:document', 'jtf:otp', 'jtf:otp-claim']);
 const isExtensionPage = (sender) => !!sender.url && sender.url.startsWith(api.runtime.getURL(''));
 const isContentScript = (sender) => !!sender.tab && !isExtensionPage(sender);
 
@@ -612,6 +812,7 @@ async function createMenus() {
     add({ id: 'jtf-insert:' + type, parentId: 'jtf-insert', title: fields.labelOf(type), contexts: ['editable'] });
   }
   add({ id: 'jtf-genpass', title: 'Generate strong password', contexts: ['editable'] });
+  add({ id: 'jtf-otp', title: 'Insert verification code from email', contexts: ['editable'] });
 }
 
 api.contextMenus.onClicked.addListener((info, tab) => {
@@ -630,6 +831,8 @@ async function handleMenuClick(info, tab) {
     await callFrames(tab.id, 'fillActive', [id.slice('jtf-insert:'.length), { profile, settings }], frameIds);
   } else if (id === 'jtf-genpass') {
     await generatePasswordInto(tab, info, frameIds);
+  } else if (id === 'jtf-otp') {
+    await insertOtp(tab, info, frameIds);
   }
 }
 
@@ -698,5 +901,7 @@ globalThis.JTFBackground = {
   siteOf,
   writeBackup,
   lookForPreviousBackup,
+  otpFor,
+  watchOtp,
   handlers: HANDLERS,
 };
