@@ -235,7 +235,7 @@
       return { url: location.href, frame: 'captcha', filled: 0, detected: 0 };
     // A fill that changes nothing keeps the previous one undoable.
     const history = [];
-    const { fields, results, context } = scan(profile);
+    const { fields, results, context } = await scanWhenDrawn(profile);
     context.jobLocation = jobLocation(payload);
     // On a pure sign-up page in an account flow, the sign-up form's own terms box is part of creating the account.
     const page = JTF.flow.analyze({ fields, results });
@@ -371,6 +371,8 @@
     const keptKeys = new Set();
     // What went in, to read back once the page has settled (see recheck).
     const written = [];
+    // Lists that had nothing for you, perhaps because their options follow an earlier answer (see below).
+    const waiting = [];
     /**
      * Your CV's upload that takes several files (`types`: the CV, then your letter and transcript): an empty box gets
      * them all in one go. One that already has files only gets what must go in anew (the letter just written, a
@@ -496,6 +498,8 @@
       } else {
         report.failed++;
         report.unmatched.push(label);
+        if (res.status === 'nomatch' && field.kind === 'select')
+          waiting.push({ field, r, label, options: optionsKey(field) });
       }
       return res.status;
     };
@@ -549,7 +553,7 @@
     // please give details", the country once "Yes, I need sponsorship" is chosen. Fill fields that
     // weren't on the page before, a couple of rounds at most.
     const seen = new Set(fields.map((f) => f.el));
-    for (let round = 0; round < 2 && (filledKeys.size || uploaded); round++) {
+    for (let round = 0; round < 2 && (filledKeys.size || uploaded || waiting.length); round++) {
       await settle(1500, 300);
       const next = scan(profile);
       const fresh = next.fields
@@ -559,6 +563,24 @@
       let added = 0;
       for (const [field, r] of fresh) {
         if ((await fillOne(field, r, { count: false })) === 'filled') added++;
+      }
+      // A list whose options come from an earlier answer (the universities of the country you studied in, a
+      // degree's subjects) had none of yours when it was reached: once its options have changed, it is tried again.
+      for (const w of waiting.splice(0)) {
+        const field = next.fields.find((f) => f.el === w.field.el);
+        if (!field || JTF.fill.hasValue(field)) continue;
+        if (optionsKey(field) === w.options) {
+          waiting.push(w);
+          continue;
+        }
+        const before = { detected: report.detected, failed: report.failed, unmatched: report.unmatched.length };
+        const status = await fillOne(field, w.r, { count: false });
+        Object.assign(report, { detected: before.detected, failed: before.failed });
+        report.unmatched.length = before.unmatched;
+        if (status !== 'filled') continue;
+        report.failed--;
+        report.unmatched.splice(report.unmatched.indexOf(w.label), 1);
+        added++;
       }
       report.revealed = (report.revealed || 0) + added;
       if (!added) break;
@@ -578,6 +600,35 @@
     // What kind of page this is now (sign-in, sign-up, emailed code…), for signing in and creating accounts.
     report.account = JTF.flow.analyze(scan(profile));
     return report;
+  }
+
+  /** A field's options, to tell when they change. */
+  const optionsKey = (field) => (field.desc.options || []).map((o) => o.text).join('|');
+
+  /** Does the page look like it is still drawing itself: loading, a spinner or skeleton showing, next to no text? */
+  function stillDrawing() {
+    if (document.readyState !== 'complete') return true;
+    const busy = document.querySelector(
+      '[aria-busy="true"], [role="progressbar"], [class*="spinner" i], [class*="skeleton" i], [class*="loading" i], [class*="loader" i]',
+    );
+    if (busy && JTF.dom.isVisible(busy)) return true;
+    return !document.body || document.body.innerText.trim().length < 200;
+  }
+
+  /**
+   * Scan the page, but one still drawing its form (a single-page application fetching its questions when Fill is
+   * pressed) first gets a few seconds to show it, and a moment more to finish once fields appear.
+   */
+  async function scanWhenDrawn(profile) {
+    let found = scan(profile);
+    if (found.fields.length || root !== root.top || !stillDrawing()) return found;
+    for (let waited = 0; waited < 4000 && !found.fields.length && stillDrawing(); waited += 200) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      found = scan(profile);
+    }
+    if (!found.fields.length) return found;
+    await settle(1200, 250);
+    return scan(profile);
   }
 
   // One question's identity across re-renders: what it asks for and how it is worded.

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply: Graduate Programme 2027</title>
+    <!--
+      Lists whose options follow an earlier answer, as on Taleo, SuccessFactors and Oracle forms: the "University"
+      list is fetched once "Country of school" is chosen, and the "Discipline" list once "Degree level" is.
+    -->
+    <style>
+      body { font: 15px/1.4 system-ui, sans-serif; margin: 32px auto; max-width: 620px; }
+      .row { margin: 12px 0; }
+      label { display: block; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <h1>Graduate Programme 2027</h1>
+    <form onsubmit="return false">
+      <div class="row"><label for="first">First name</label><input id="first" /></div>
+      <div class="row">
+        <label for="school-country">Country of school</label>
+        <select id="school-country">
+          <option value="">Please select</option>
+          <option value="US">United States</option>
+          <option value="GB">United Kingdom</option>
+          <option value="FR">France</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="school">University</label>
+        <select id="school"><option value="">Choose a country first</option></select>
+      </div>
+      <div class="row">
+        <label for="level">Degree level</label>
+        <select id="level">
+          <option value="">Please select</option>
+          <option>Bachelor's</option>
+          <option>Master's</option>
+          <option>PhD</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="discipline">Discipline</label>
+        <select id="discipline"><option value="">Choose a degree level first</option></select>
+      </div>
+    </form>
+    <script>
+      const SCHOOLS = {
+        US: ['Harvard University', 'Stanford University', 'Yale University'],
+        GB: ['University of Oxford', 'University of Cambridge', 'University of Glasgow', 'Imperial College London'],
+        FR: ['Sorbonne Université', 'École Polytechnique'],
+      };
+      const SUBJECTS = ['Economics', 'History', 'Mathematics', 'Physics'];
+      const fillList = (select, items, empty) => {
+        select.innerHTML = `<option value="">${items.length ? 'Please select' : empty}</option>`;
+        for (const t of items) select.append(new Option(t, t));
+      };
+      // Fetched from the server a moment after the answer they depend on.
+      document.getElementById('school-country').addEventListener('change', (e) =>
+        setTimeout(() => fillList(document.getElementById('school'), SCHOOLS[e.target.value] || [], 'Choose a country first'), 300),
+      );
+      document.getElementById('level').addEventListener('change', (e) =>
+        setTimeout(() => fillList(document.getElementById('discipline'), e.target.value ? SUBJECTS : [], 'Choose a degree level first'), 300),
+      );
+    </script>
+  </body>
+</html>
