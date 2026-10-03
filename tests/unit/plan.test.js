@@ -796,6 +796,86 @@ test('round 2: graduation terms, past graduations, "Are you fluent in French?", 
   assert.equal(ask(start, 'job.startDate', q).text, 'No');
 });
 
+test('live survey (Glasgow undergraduate): start-date options to the day, a year for each date, dated "suitable" checks', () => {
+  const today = new Date('2026-10-03');
+  const p = student();
+  p.job.startDate = '2027-06-28';
+  const pick = (question, list) => {
+    const options = opts(...list);
+    const i = matcher.matchOption(options, ask(p, 'job.startDate', question, { today }));
+    return i < 0 ? null : options[i].text;
+  };
+  // Base Power: a season, then its own dates with their own year (not January 2028).
+  const base = ['Spring 2027 (January 11th - April 30th, 2027)', 'Summer 2027 (May 10th - August 20th, 2027)'];
+  assert.deepEqual([...matcher.optionSpan(base[0])], [2027 * 12, 2027 * 12 + 4]);
+  assert.equal(matcher.optionSpan(base[0]).day, 11);
+  assert.deepEqual([...matcher.optionSpan('Spring (January - April) 2027')], [2027 * 12, 2027 * 12 + 4]);
+  assert.equal(pick('Work Term Availability', base), base[1]);
+  // Monzo: the first start you can make, to the day.
+  const monzo = ['Start 1st June, finish 20th August 2027', 'Start 30th June, finish 17th September 2027'];
+  assert.equal(pick('Please select your preferred start date and end date for the internship', monzo), monzo[1]);
+  assert.equal(pick('Preferred start date', ['7th June 2027', '5th July 2027']), '5th July 2027');
+  assert.equal(
+    pick('Preferred start date', ['Monday 7 June 2027', 'Monday 28 June 2027', 'Monday 5 July 2027']),
+    'Monday 28 June 2027',
+  );
+  assert.equal(pick('What is the earliest you could start?', ['May 2027', 'July 2027', 'September 2027']), 'July 2027');
+  // Terms still cover the date.
+  assert.equal(
+    pick('When are you available for a 12 week internship?', ['Fall 2026', 'Spring 2027', 'Summer 2027']),
+    'Summer 2027',
+  );
+  p.job.startDate = '2027-06-01';
+  assert.equal(pick('Please select your preferred start date and end date for the internship', monzo), monzo[0]);
+
+  // Marshall Wace: "I confirm that the listed dates are suitable for me" asks about your start date, with no year.
+  const mw = (dates) => `I confirm that the listed dates are suitable for me; ${dates}`;
+  const yn = opts('Yes', 'No');
+  const classify = (label, kind = 'select', options = yn) =>
+    (matcher.classify(desc(label, { kind, options })) || {}).type;
+  assert.equal(classify(mw('14th June – 22nd August')), 'job.startDate');
+  assert.equal(classify(mw('14th June – 22nd August'), 'radio'), 'job.startDate');
+  const answer = (dates, at) => ask(p, 'job.startDate', mw(dates), { today: at || today }).text;
+  p.job.startDate = '2027-06-28';
+  assert.equal(answer('14th June – 22nd August'), 'No');
+  assert.equal(answer('28th June – 3rd September'), 'Yes');
+  assert.equal(
+    answer('14th June – 22nd August', new Date('2027-07-10')),
+    'Yes',
+    'next year’s dates once these are past',
+  );
+  p.job.startDate = '2027-06-01';
+  assert.equal(answer('14th June – 22nd August'), 'Yes');
+  // As a box to tick (acknowledgements on): only when you can make the dates.
+  p.job.startDate = '2027-06-28';
+  const tick = (q) => fields.resolve('consent', p, { consents: true, question: util.normalize(q), today });
+  assert.equal(classify(mw('14th June – 22nd August'), 'checkbox', null), 'consent');
+  assert.equal(tick(mw('14th June – 22nd August')), null);
+  assert.equal(tick(mw('28th June – 3rd September')).text, 'Yes');
+  // Without dates it is an acknowledgement as before, and interview dates are job.availability's to judge.
+  assert.equal(classify('I confirm that the internship dates are suitable for me'), 'consent');
+  assert.equal(tick('I confirm that I have read the privacy notice').text, 'Yes');
+  assert.equal(tick('I confirm I am available for the interview on 14th October').text, 'Yes');
+  assert.equal(
+    classify('Please select ALL dates/times for which you are available', 'checkboxes', opts('Mon 12th Oct AM')),
+    'job.availability',
+  );
+  assert.notEqual(
+    classify('Please confirm the interview dates (13th–14th October 2026) are suitable for you'),
+    'job.startDate',
+  );
+  // Other start-date questions that name no year.
+  assert.equal(ask(p, 'job.startDate', 'Are you available to start on 6th September?', { today }).text, 'Yes');
+  assert.equal(ask(p, 'job.startDate', 'Are you available to start on 1st June?', { today }).text, 'No');
+  assert.equal(
+    classify('What month will you be able to start your internship?', 'select', opts('May', 'June')),
+    'job.startDate',
+  );
+  const box = desc('Earliest date you could start (DD/MM/YYYY)');
+  assert.equal(classify(box.signals.label, 'text', null), 'job.startDate');
+  assert.equal(matcher.formatForText(ask(p, 'job.startDate', box.signals.label, { today }), box), '28/06/2027');
+});
+
 test('status lists: never "not authorized" when you are, your citizenship when it is listed', () => {
   const p = student();
   p.job.authorized = 'Yes';
@@ -1703,6 +1783,49 @@ test('a SuccessFactors sign-up page is a sign-up page with a country-code box', 
   const p = sample();
   assert.equal(fields.resolve('phone', p, context).text, '20 7946 0958', 'the national number');
   assert.equal(matcher.matchOption(page[8].options, fields.resolve('address.country', p, context)), 1);
+});
+
+test('live survey (Glasgow undergraduate): a whole-number phone box gets the international number, written its way', () => {
+  const p = sample();
+  Object.assign(p.contact, { phoneCountryCode: '+44', phone: '7700 900123' });
+  const fill = (signals, extra) => {
+    const d = desc(signals, extra);
+    const { results, context } = matcher.plan([d], p);
+    const v = fields.resolve(results[0].type, p, Object.assign({}, context, { kind: d.kind, index: 0 }));
+    return matcher.formatForText(v, d);
+  };
+  assert.equal(fill('Mobile number (inc. country code)', { kind: 'tel', inputType: 'tel' }), '+44 7700 900123');
+  assert.equal(fill('Telephone number (with international dialling code)'), '+44 7700 900123');
+  assert.equal(fill('Phone number (country code first)'), '+44 7700 900123');
+  assert.equal(fill('Mobile Number (+CountryCode)'), '+44 7700 900123');
+  assert.equal(fill('Mobile (incl. dialling code)', { kind: 'number', inputType: 'number' }), '447700900123');
+  // An example without spaces (or E.164): none in the number either.
+  assert.equal(
+    fill({ label: 'Phone', placeholder: '+447700900000' }, { placeholderRaw: '+447700900000' }),
+    '+447700900123',
+  );
+  assert.equal(fill('Mobile number (e.g. +447700900000)'), '+447700900123');
+  assert.equal(fill('Mobile number in E.164 format'), '+447700900123');
+  assert.equal(
+    fill({ label: 'Phone', placeholder: '+44 7700 900000' }, { placeholderRaw: '+44 7700 900000' }),
+    '+44 7700 900123',
+  );
+  assert.equal(fill({ label: 'Phone', placeholder: '+44…' }, { placeholderRaw: '+44…' }), '+44 7700 900123');
+  // Too long for the box: the national number, then without its spaces (never cut short).
+  assert.equal(fill('Phone', { maxLength: 11 }), '7700 900123');
+  assert.equal(fill('Phone', { maxLength: 10 }), '7700900123');
+  // A real code box beside it still takes the code, and the number goes in without it.
+  const page = [
+    desc('Country code', { kind: 'select', options: opts('+1 United States', '+44 United Kingdom') }),
+    desc('Mobile number'),
+  ];
+  const { results, context } = matcher.plan(page, p);
+  assert.deepEqual(
+    results.map((r) => r.type),
+    ['phone.countryCode', 'phone'],
+  );
+  assert.equal(matcher.matchOption(page[0].options, fields.resolve('phone.countryCode', p, context)), 1);
+  assert.equal(fields.resolve('phone', p, context).text, '7700 900123');
 });
 
 /** A University of Glasgow undergraduate expecting a 2:1 in 2027, living in Glasgow. */

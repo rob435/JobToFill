@@ -887,9 +887,11 @@
   /**
    * "Are you available to start from 6th September 2027?", "Are you available from 21st June to 20th August
    * 2027?", "I confirm my availability for a Summer 2027 internship": yes when your earliest start date is
-   * on or before the date asked about (the start of a range, the end of a season). Null when it isn't one.
+   * on or before the date asked about (the start of a range, the end of a season). "I confirm that the listed dates
+   * are suitable for me; 14th June – 22nd August" names no year: the next 14th June. Interview dates are not start
+   * dates (job.availability). Null when it isn't one.
    */
-  function availableAnswer(raw, question) {
+  function availableAnswer(raw, question, today) {
     const q = question || '';
     // The question can follow the facts: "The internship runs from 1 July to 30 September 2027. Can you confirm…"
     if (
@@ -898,12 +900,24 @@
       )
     )
       return null;
-    if (!/\bavailab|\bstart|\bready\b|\bcommence|\bjoin/.test(q)) return null;
+    if (!/\bavailab|\bstart|\bready\b|\bcommence|\bjoin|\bsuit(s|able)?\b|\bconvenient\b|\bwork for (me|you)\b/.test(q))
+      return null;
+    if (INTERVIEW_SLOTS.test(q)) return null;
     const start = U.parseDate(raw);
     if (!start || !start.month) return null;
+    const at = start.year * 12 + start.month - 1;
     // The first date mentioned, up to its year: "6th September 2027", "21st June" (year from later on), "Summer 2027".
     const year = q.match(/\b(?:19|20)\d{2}\b/);
-    if (!year) return null;
+    if (!year) {
+      const dm = q.match(DAY_MONTH);
+      if (!dm) return null;
+      const day = +(dm[1] || dm[4]);
+      const month = 'janfebmaraprmayjunjulaugsepoctnovdec'.indexOf((dm[2] || dm[3]).slice(0, 3)) / 3 + 1;
+      const now = today ? new Date(today) : new Date();
+      const past = month * 100 + day < (now.getMonth() + 1) * 100 + now.getDate();
+      const from = (now.getFullYear() + (past ? 1 : 0)) * 12 + month - 1;
+      return val(at < from || (at === from && (!start.day || start.day <= day)) ? 'Yes' : 'No');
+    }
     const head = q.slice(0, year.index + 4);
     const range = q.match(/\bfrom (.+?) (?:to|until|till|through) /);
     const phrase = range ? range[1] + ' ' + year[0] : head.replace(/^.*?\b(from|on|by|in|for|around|before)\b /, '');
@@ -911,7 +925,6 @@
       phrase.replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/g, ''),
     );
     if (!span) return null;
-    const at = start.year * 12 + start.month - 1;
     let ok = at <= (range ? span[0] : span[1]);
     const dm = phrase.match(DAY_MONTH);
     if (ok && dm && start.day && span[0] === span[1] && at === span[0]) ok = start.day <= +(dm[1] || dm[4]);
@@ -2211,7 +2224,13 @@
     'job.startDate': {
       label: 'Available start date',
       path: 'job.startDate',
-      get: (p, ctx) => availableAnswer(p.job.startDate, ctx.question) || dateVal(p.job.startDate, ctx.part, 9),
+      get(p, ctx) {
+        const answer = availableAnswer(p.job.startDate, ctx.question, ctx.today);
+        if (answer) return answer;
+        // The earliest you can start: never an option that starts before it (matcher.bestDate).
+        const v = dateVal(p.job.startDate, ctx.part, 9);
+        return v && v.date ? Object.assign(v, { earliest: true }) : v;
+      },
     },
     // A job site the form doesn't list ("Trackr") still picks its kind ("Online job board"), else "Other". Left
     // blank it is LinkedIn; "-" leaves the question for you.
@@ -2498,7 +2517,13 @@
     consent: {
       label: 'Acknowledgement',
       consent: true,
-      get: (p, ctx) => (ctx.consents ? val('Yes', { consent: true }) : null),
+      get(p, ctx) {
+        if (!ctx.consents) return null;
+        // "I confirm that the listed dates are suitable for me; 14th June – 22nd August" as a box to tick: not when
+        // you can only start later.
+        const dates = availableAnswer((p.job || {}).startDate, ctx.question, ctx.today);
+        return dates && dates.text === 'No' ? null : val('Yes', { consent: true });
+      },
     },
 
     'file.resume': { label: 'Resume file', file: 'resume', get: () => null },
@@ -2665,6 +2690,24 @@
   // these slots work for you?", "Assessment centre dates", "Select your preferred interview slot(s)".
   const INTERVIEW_SLOTS =
     /\b(interview|assessment|video (call|interview)|phone screen|superday|assessment cent(re|er)|call)s? (availability|slots?|dates?|times?|sessions?)\b|\bavailab\w* (for|to (attend|do|join|take part in)) (an |the |a |your |our )?(\w+ ){0,2}(interviews?|assessments?|assessment cent(re|er)s?|calls?|superdays?)\b|\b(dates?|times?|slots?|days?)( (and |or )?(dates?|times?))? (for which|when|that|on which) you (are|re|would be|will be|can be) (available|free)\b|\bwhich (of (these|the following) )?(dates?|times?|days?|slots?|sessions?)( (and |or )?(dates?|times?|slots?))? (work|suit|are you available|would you be available|can you (make|attend|do))\b|\bpreferred (interview |assessment )?(time ?)?(slots?|sessions?)\b|\b(select|choose|pick|book) (your |a |an |all )?(preferred )?(interview |assessment )?(time ?)?slots?\b/;
+
+  // The whole number, its code included: "Mobile number (inc. country code)", "Telephone number (with international
+  // dialling code)", "Phone number, including country and area code", "Mobile (incl. dialling code)", "Mobile phone
+  // number (country code + number)", "Phone number (country code first)", "Mobile Number (+CountryCode)" (the matcher
+  // reads that plus as a word), "…start with a + and then the country code".
+  const WHOLE_NUMBER =
+    /\b(start|begin)s? with\b|\b(inc|incl|including|include|with|plus|then|followed by) (the |your |a |an )?((country|international|dial(l)?ing|calling|area|and) )*code\b|\bcountry code (first|(and|plus|then|followed by) (your |the )?((phone|mobile|telephone) )?number)\b/;
+  // Not the number: a code box ("Phone country", "Phone area code", "Enter the code sent to your mobile") unless the
+  // code goes in with the number, an extension, fax, someone else's phone or a texting opt-in.
+  const PHONE_NOT = new RegExp(
+    `^(?!.*(${WHOLE_NUMBER.source})).*((?<!\\b(inc|incl|including|include|with|plus|then|the|your|a|by) )\\bcountry\\b|(?<!\\bcountry )\\bcode\\b)|` +
+      /type|\bext\b|extension|fax|device|prefix|emergency|referr|reference|manager|supervisor|employer|company|business|organi[sz]ation|\bsms\b|text messag|consent/
+        .source,
+  );
+  // "Alternative phone number", "Secondary phone", "WhatsApp number (if different)", "Landline": another number than
+  // your mobile, which already goes in the form's main phone box. Left empty ("Phone (mobile or landline)" isn't).
+  const OTHER_PHONE =
+    /\b(alternat(e|ive)|alt|secondary|second|additional|other|another|backup|2nd) (phone|mobile|telephone|tel|cell|contact|number)\b|\bif (it is |its )?different\b|(?<!\b(mobile|cell|cellular) or )\bland ?line\b(?! or (mobile|cell))/;
 
   // Order matters only for ties: put specific rules (and long questions that
   // mention other keywords, like "authorized to work in the country…") first.
@@ -2916,7 +2959,7 @@
     }),
     R(
       'job.startDate',
-      /when (can|could|would) you (like to |be able to )?(start|begin|join)|when (are|will) you (be )?(able|available) to (start|begin|join)|available (start|to start|to begin|from)|\bavailability\b|earliest (possible )?(start|date)|date (you are )?available|(desired|preferred) start|expected start|join(ing)? date|how soon|start (date|dates) (for|of) (the|this|your) (internship|placement|programme|program|role|position|job)|\bdate (that )?you (could|can|would|will) (start|begin|join)\b|\b(ready|available) for (full ?time )?(employment|work)\b|\beintritt\w*|\bdisponibilit[ea]\b|\bdate de debut\b|\b(will|would|could|can) be (able|available) to (start|begin|commence|join)\b|\b(what|which) date\b.*\bavailab|\bwhen (are|will|would) you (be )?available\b/,
+      /when (can|could|would) you (like to |be able to )?(start|begin|join)|when (are|will) you (be )?(able|available) to (start|begin|join)|available (start|to start|to begin|from)|\bavailability\b|earliest (possible )?(start|date)|date (you are )?available|(desired|preferred) start|expected start|join(ing)? date|how soon|start (date|dates) (for|of) (the|this|your) (internship|placement|programme|program|role|position|job)|\bdate (that )?you (could|can|would|will) (start|begin|join)\b|\b(ready|available) for (full ?time )?(employment|work)\b|\beintritt\w*|\bdisponibilit[ea]\b|\bdate de debut\b|\b(will|would|could|can) (you )?be (able|available) to (start|begin|commence|join)\b|\b(what|which) date\b.*\bavailab|\bwhen (are|will|would) you (be )?available\b/,
       { not: INTERVIEW_SLOTS },
     ),
     // "The internship runs from 1 July to 30 September 2027. Can you confirm that you are available…?"
@@ -2925,6 +2968,13 @@
       new RegExp(`\\bfrom (\\d{1,2}(st|nd|rd|th)? )?(${MONTH_RE})\\b.*\\b(to|until|till|through)\\b.*\\bavailab`),
       { not: INTERVIEW_SLOTS },
     ),
+    // "I confirm that the listed dates are suitable for me; 14th June – 22nd August": dates to check your start date
+    // against (availableAnswer), not an acknowledgement. Without dates it stays one.
+    R('job.startDate', /\bdates?\b.*\b(suits?|suitable|convenient|work for (me|you))\b/, {
+      kinds: CHOICE,
+      not: INTERVIEW_SLOTS,
+      test: (desc, text) => DAY_MONTH.test(text) || /\b(19|20)\d{2}\b/.test(text),
+    }),
     R(
       'job.yearsExperience',
       /years (of )?(relevant |professional |total |work |industry )?experience|how many years|experience in years|total experience|\byrs\b/,
@@ -2940,14 +2990,15 @@
 
     // Acknowledgements ("I have read the privacy notice", "Acknowledge/Confirm"), never marketing opt-ins
     // A dropdown or Yes/No question can be an acknowledgement too ("…take a look at our privacy notice and confirm").
-    // "I confirm that I will graduate in 2027" is a question about your date, answered from it.
+    // "I confirm that I will graduate in 2027" is a question about your date, answered from it, and so is "I confirm
+    // that the listed dates are suitable for me; 14th June – 22nd August" (your start date).
     // A group of statements to tick ("you consent to our Applicant Privacy Statement" + "…to background checks")
     // too. Never an opt-in, even when only the name says "consent" (Ashby's SMS "communicationConsent").
     R('consent', CONSENT, {
       kinds: ['checkbox', 'checkboxes', 'select', 'combo', 'combobox', 'radio'],
       not: OPT_IN,
       notAny: OPT_IN,
-      yieldsTo: ['edu.end'],
+      yieldsTo: ['edu.end', 'job.startDate'],
     }),
     // "I'm not a robot" as a plain <input type="checkbox">. A CAPTCHA widget's own box (role="checkbox" inside
     // reCAPTCHA's frame) is never one: those are left for you.
@@ -3243,8 +3294,9 @@
       'name.first',
       /\bfirst ?name|\bgiven ?names?\b|\bforenames?\b|\bfname\b|\bfirst$|^first\b(?! (time|choice|language|line|day|week|month|year|job))|\bvorname|\bprenom|\bnombre\b|\bnome\b/,
       {
-        // "Prénom et nom" / "Vor- und Nachname" / "Nombre y apellidos" is the whole name.
-        not: /last|sur ?name|family|middle|company|school|business|card|preferred|nick|employer|organi|user|father|mother|spouse|emergency|reference|referr|manager|contact person|\bnom\b|nachname|apellido|cognome/,
+        // "Prénom et nom" / "Vor- und Nachname" / "Nombre y apellidos" is the whole name; "Phone number (country code
+        // first)" is a phone number.
+        not: /last|sur ?name|family|middle|company|school|business|card|preferred|nick|employer|organi|user|father|mother|spouse|emergency|reference|referr|manager|contact person|\bnom\b|nachname|apellido|cognome|\b(phone|mobile|telephone|number|code)\b/,
       },
     ),
     R('name.middle', /\bmiddle ?(name|initial)s?\b|\bmname\b|^mi$|\bmiddle$|second (given )?name|segundo nombre/, {
@@ -3295,19 +3347,13 @@
       'phone.countryCode',
       // SuccessFactors: "Country/Region Code:" next to "Phone Number:".
       /country ?(phone )?(calling )?code|\bcountr(y|ies) (or |and )?(region|territory) (phone |calling |dial(l)?(ing)? )?code\b|dial(l)?(ing)? ?code|calling ?code|phone.*country|country.*phone|\bisd\b|(phone|tel|mobile) ?prefix|country ?prefix|international code|\bindicatif\b|\b(lander)?vorwahl\b|\bprefijo\b|\bprefisso\b/,
-      // "Mobile number (including country code)" is the whole number.
-      {
-        not: /\b(start|begin)s? with|\b(including|include|incl|with|plus|then|followed by) (the |your |a )?(country|dial(l)?ing|international) code\b/,
-      },
+      // "Mobile number (inc. country code)" is the whole number (WHOLE_NUMBER).
+      { not: WHOLE_NUMBER },
     ),
     R(
       'phone',
       /phone|mobile|\bmobil(nummer|telefon)?\b|\bcell\b|cellular|telephone|\btel\b|contact (number|no)|telefon|telefono|\bportable\b|\bhandy\b|whats ?app|\bmob\b/,
-      {
-        // "…start with a + and then the country code" is help for the whole number.
-        not: /type|\bext\b|extension|(?<!\b(including|include|incl|with|plus|then|the|your|a|by) )\bcountry\b|(?<!\bcountry )\bcode\b|fax|device|prefix|emergency|referr|reference|manager|supervisor|employer|company|business|organi[sz]ation|\bsms\b|text messag|consent/,
-        yieldsTo: ['phone.countryCode', 'phone.type'],
-      },
+      { not: PHONE_NOT, notAny: OTHER_PHONE, yieldsTo: ['phone.countryCode', 'phone.type'] },
     ),
 
     // Address

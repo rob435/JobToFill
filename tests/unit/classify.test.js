@@ -614,6 +614,61 @@ test('help text and wrapper ids do not make a phone field', () => {
   );
 });
 
+test('live survey (Glasgow undergraduate): a box for the whole number, code included, is the phone, not its code', () => {
+  const type = (label, kind = 'text') => typeOf(desc(label, { kind, inputType: kind }));
+  for (const label of [
+    'Mobile number (inc. country code)',
+    'Mobile number (inc country code)',
+    'Telephone number (with international dialling code)',
+    'Mobile phone number including international dialling code',
+    'Phone number, including country and area code',
+    'Mobile phone number (country code + number)',
+    'Mobile Number (+CountryCode)',
+    'Mobile (incl. dialling code)',
+    'Mobile Number (incl. international code)',
+    'Mobile number including area code',
+    'Phone number (country code first)',
+    'Phone (+44…)',
+    'Phone (mobile or landline)',
+    'WhatsApp number',
+    'Home telephone number',
+  ])
+    assert.equal(type(label), 'phone', label);
+  assert.equal(type('Mobile number (inc. country code)', 'tel'), 'phone');
+  assert.equal(type('Mobile (incl. dialling code)', 'number'), 'phone');
+  // A box of its own for the code still is one; an area code or a texted code is no phone number.
+  for (const label of [
+    'Country code',
+    'Phone country code',
+    'Dialling code',
+    'International dialling code',
+    'Phone number country code',
+    'Mobile Phone Country Code',
+  ])
+    assert.equal(type(label), 'phone.countryCode', label);
+  assert.equal(
+    typeOf(desc('Country/Region Code:*', { kind: 'select', options: opts('- Select -', 'UNITED KINGDOM (+44)') })),
+    'phone.countryCode',
+  );
+  assert.equal(type('Phone area code'), null);
+  assert.equal(type('Area code'), null);
+  assert.equal(type('Mobile verification code'), 'otp');
+  // Another number than your mobile is left empty, in a tel box too.
+  for (const label of [
+    'Alternative phone number',
+    'Secondary phone',
+    'Other phone',
+    'Mobile number (if different from above)',
+    'Landline',
+    'Home phone (landline)',
+  ])
+    assert.equal(type(label), null, label);
+  assert.equal(type('Alternative phone number', 'tel'), null);
+  // Names are still names.
+  assert.equal(type('First name (as on passport)'), 'name.first');
+  assert.equal(type('First'), 'name.first');
+});
+
 test('salary currency and pay period boxes are not the salary; a green card is not a payment card', () => {
   const currencies = opts('US Dollar ($)', 'Canadian Dollar ($)', 'Euro (€)', 'British Pound (£)');
   assert.equal(

@@ -86,7 +86,12 @@
     const s = desc.signals || {};
     for (const key of Object.keys(WEIGHTS)) {
       if (!s[key]) continue;
-      let text = norm(String(s[key]).slice(0, 300));
+      // "Mobile Number (+CountryCode)", "(country code + number)": that plus is a word.
+      let text = norm(
+        String(s[key])
+          .slice(0, 300)
+          .replace(/\+\s*(?=country|((phone|mobile) )?number)/gi, ' plus '),
+      );
       const m = text.match(EXAMPLES);
       if (m && text.slice(0, m.index).split(' ').length > 6) text = text.slice(0, m.index).trim();
       if (text) out.push({ key, text, weight: WEIGHTS[key] });
@@ -156,11 +161,15 @@
     const yesNoAsked = YES_NO_QUESTION.test(norm(s.question || s.label || s.aria || ''));
     const yesNo = yesNoOptions(desc) || yesNoAsked;
     const byType = new Map();
+    const ruledOut = new Set();
     let best = null;
     for (const rule of F().RULES) {
       if (!kindAllowed(rule, desc)) continue;
       // A strong signal naming something else ("cover letter" on an "Attach" button) rules this type out.
-      if (rule.notAny && signals.some((s) => s.weight >= 0.6 && rule.notAny.test(s.text))) continue;
+      if (rule.notAny && signals.some((s) => s.weight >= 0.6 && rule.notAny.test(s.text))) {
+        ruledOut.add(rule.type);
+        continue;
+      }
       let score = 0;
       let hits = 0;
       let hitText = '';
@@ -196,8 +205,11 @@
       if (!best || score > best.score + 1e-9) best = candidate;
     }
     // A word in the help text or a wrapper's id alone ("…your university's policy…") is not enough.
-    if (!best || best.score < MIN_SCORE || (best.score < ANCESTOR_ONLY && !F().DATE_TYPES.has(best.type)))
-      return refine(fromOptions(desc) || fallback(desc), desc);
+    // Nor is the box's own type when a strong signal ruled it out ("Alternative phone number" in a tel box).
+    if (!best || best.score < MIN_SCORE || (best.score < ANCESTOR_ONLY && !F().DATE_TYPES.has(best.type))) {
+      const fb = fallback(desc);
+      return refine(fromOptions(desc) || (fb && !ruledOut.has(fb.type) ? fb : null), desc);
+    }
     // "What did you receive in your undergraduate degree? First / Upper second / …" asks for the class.
     if (['edu.degree', 'edu.level', 'edu.gpa'].includes(best.type) && looksLikeDegreeClasses(desc.options))
       return refine({ type: 'edu.classification', part: null, score: best.score, source: 'options' }, desc);
@@ -835,7 +847,8 @@
   /**
    * The months an option stands for, as [first, last] counted in months from year 0:
    * "Spring/Summer 2027" -> March–August 2027, "Q4 2026", "May 2027", "2027", "Class of 2027",
-   * "2026-27", "2029 or later". Null when the option isn't a date.
+   * "2026-27", "2029 or later". The day it starts on, when it names one ("Start 30th June, finish 17th
+   * September 2027"), is the span's `day`. Null when the option isn't a date.
    */
   function optionSpan(text) {
     const raw = String(text || '')
@@ -847,20 +860,35 @@
     const t = norm(raw);
     if (!t || t.length > 60) return null;
     const words = t.split(' ');
-    if (words.some((w) => /^\d+$/.test(w) && w.length !== 4 && !(+w >= 1 && +w <= 12))) return null;
+    const isMonth = (k) => MONTH_TOKEN.test(words[k] || '');
+    // "1st", "30th", or a number next to a month ("28 June", "June 28"): a day of the month.
+    const isDay = (k) =>
+      /^(0?[1-9]|[12]\d|3[01])(st|nd|rd|th)?$/.test(words[k]) &&
+      (/\D$/.test(words[k]) || isMonth(k - 1) || isMonth(k + 1));
+    if (words.some((w, k) => /^\d+$/.test(w) && w.length !== 4 && !(+w >= 1 && +w <= 12) && !isDay(k))) return null;
     const units = [];
     let year = null;
+    let token = 0; // which written year a unit takes: "Spring 2027 (January 11th - April 30th, 2027)" has two
     let numericMonth = null;
-    for (const w of words) {
+    let day = null;
+    for (const [k, w] of words.entries()) {
       let range = null;
       if (/^(19|20)\d{2}$/.test(w)) {
         const y = +w;
+        token++;
         const open = units.filter((u) => u.year == null);
-        open.forEach((u) => (u.year = y));
-        if (numericMonth && !open.length) units.push({ from: numericMonth, to: numericMonth, year: y });
-        if (!open.length && !numericMonth) units.push({ from: 1, to: 12, year: y, wholeYear: true });
+        open.forEach((u) => Object.assign(u, { year: y, token }));
+        if (numericMonth && !open.length) units.push({ from: numericMonth, to: numericMonth, year: y, token });
+        if (!open.length && !numericMonth) units.push({ from: 1, to: 12, year: y, token, wholeYear: true });
         year = y;
         numericMonth = null;
+        continue;
+      }
+      if (isDay(k)) {
+        // "June 1st" (the month before it) or "1st June" (the month after it).
+        const last = units[units.length - 1];
+        if (isMonth(k - 1) && last && last.month && last.day == null) last.day = parseInt(w, 10);
+        else if (isMonth(k + 1)) day = parseInt(w, 10);
         continue;
       }
       if (/^\d{1,2}$/.test(w)) {
@@ -871,15 +899,20 @@
         continue;
       }
       if (w === 'winter') {
-        units.push({ from: 1, to: 2, year: null, winter: true });
+        units.push({ from: 1, to: 2, year: null, winter: true, term: true });
+        continue;
+      }
+      if (MONTH_TOKEN.test(w)) {
+        const m = MONTH_NUMBER[w.slice(0, 3)];
+        units.push({ from: m, to: m, year: null, month: true, day });
+        day = null;
         continue;
       }
       if (TERMS[w]) range = TERMS[w];
       else if (PERIODS[w]) range = PERIODS[w];
-      else if (MONTH_TOKEN.test(w)) range = [MONTH_NUMBER[w.slice(0, 3)], MONTH_NUMBER[w.slice(0, 3)]];
       else if (/^q[1-4]$/.test(w)) range = [+w[1] * 3 - 2, +w[1] * 3];
       else if (/^h[12]$/.test(w)) range = w === 'h1' ? [1, 6] : [7, 12];
-      if (range) units.push({ from: range[0], to: range[1], year: null });
+      if (range) units.push({ from: range[0], to: range[1], year: null, term: !!TERMS[w] });
     }
     if (/\b(first|1st) half\b/.test(t)) units.push({ from: 1, to: 6, year: null });
     if (/\b(second|2nd) half\b/.test(t)) units.push({ from: 7, to: 12, year: null });
@@ -891,26 +924,34 @@
     });
     let start = Infinity;
     let end = -Infinity;
+    let startDay = null;
     let prev = null;
     for (const u of units) {
       const y = u.year != null ? u.year : year;
       let from = u.from;
       let to = u.to;
-      // "Fall/Winter 2026": the winter after that fall.
-      if (prev && prev.year === u.year && from < prev.from && u.year != null && !prev.wholeYear) {
+      // "Fall/Winter 2026": the winter after that fall. Never past a year written for it ("Spring 2027 (January 11th -
+      // April 30th, 2027)"), nor when months spell out the season before them ("Spring (January - April) 2027").
+      const rolls = prev && prev.token === u.token && from < prev.from && !prev.wholeYear && !(prev.term && u.month);
+      if (rolls && u.year != null) {
         from += 12;
         to += 12;
       }
-      start = Math.min(start, y * 12 + from - 1);
+      const first = y * 12 + from - 1;
+      if (first < start || (first === start && startDay == null)) startDay = u.day || null;
+      start = Math.min(start, first);
       end = Math.max(end, y * 12 + to - 1);
       prev = u;
     }
+    const first = start;
     if (/\b(or|and) (later|after|beyond|above)\b|\bonwards?\b|\bbeyond\b|\+/.test(t + (/\+/.test(raw) ? ' +' : '')))
       end = Infinity;
     else if (/\bafter\b/.test(t)) [start, end] = [end + 1, Infinity];
     if (/\b(or|and) (earlier|before|prior)\b|\bearlier\b/.test(t)) start = -Infinity;
     else if (/\b(before|prior to)\b/.test(t)) [start, end] = [-Infinity, start - 1];
-    return [start, end];
+    const span = [start, end];
+    if (startDay && start === first) span.day = startDay;
+    return span;
   }
 
   const DOES_NOT_NEED =
@@ -920,7 +961,11 @@
   const GRADUATED =
     /\b(not|no longer) (currently )?(enrolled|a (current )?student|in (school|education|university|college)|studying)\b|\b(already )?graduated\b|\balumn/;
 
-  /** The option whose term or period best covers date value `v`, or -1. Null when no option is a date. */
+  /**
+   * The option whose term or period best covers date value `v`, or -1. Null when no option is a date. For the
+   * earliest date you can start (`v.earliest`), an option that starts before it can't be made, to the day when both
+   * name one ("Start 1st June" for 28 June): the first one you can make is picked ("Start 30th June").
+   */
   function bestDate(opts, v) {
     const d = v.date;
     const month = d.month || v.typicalMonth;
@@ -931,6 +976,8 @@
       const span = optionSpan(o.text);
       if (!span) continue;
       dated++;
+      const tooEarly = span[1] < target[0] || (span[0] === target[0] && span.day && d.day && span.day < d.day);
+      if (v.earliest && d.month && tooEarly) continue;
       const width = Math.min(span[1] - span[0] + 1, 240);
       const overlap = Math.min(target[1], span[1]) - Math.max(target[0], span[0]) + 1;
       let score;
@@ -940,6 +987,8 @@
         if (gap > 2) continue;
         score = 50 - 15 * gap - width / 10;
       }
+      // Of two that start the same month, the earlier day.
+      if (v.earliest && span.day) score -= span.day / 1000;
       if (!best || score > best.score) best = { i: o.i, score };
     }
     if (!dated) return null;
@@ -1504,6 +1553,24 @@
     return y;
   }
 
+  // An example number in the box or its label: "+447700900000", "e.g. +44 7700 900000".
+  const PHONE_EXAMPLE = /\+?\d[\d ().-]{5,}\d/;
+
+  /** A phone number written the way the box shows one ("+447…" or E.164: no spaces), and short enough for it. */
+  function formatPhone(v, desc, max) {
+    const s = desc.signals || {};
+    const hints = [desc.placeholderRaw, s.placeholder, s.label, s.question, s.aria, s.describedby].map((h) =>
+      String(h || ''),
+    );
+    const example = hints.map((h) => h.match(PHONE_EXAMPLE)).find(Boolean);
+    const compact = (n) => String(n).replace(/(?!^\+)\D/g, '');
+    let out = v.text;
+    if ((example && !/[ ().-]/.test(example[0])) || hints.some((h) => /\bE\.?\s?164\b/i.test(h))) out = compact(out);
+    if (max && out.length > max && v.national) out = v.national;
+    if (max && out.length > max) out = compact(out);
+    return out;
+  }
+
   /** The string to type into a text-like control for value `v`. */
   function formatForText(v, desc) {
     if (!v) return '';
@@ -1513,7 +1580,7 @@
     else if (v.kind === 'country' && max && out.length > max)
       out = (max === 2 && v.iso2) || (max === 3 && v.iso3) || out;
     else if (v.kind === 'region' && max && out.length > max && v.code) out = v.code;
-    else if (v.kind === 'phone' && max && out.length > max) out = v.national;
+    else if (v.kind === 'phone') out = formatPhone(v, desc, max);
     if (desc.inputType === 'number') {
       // One number ("£45,000", "3.8", "3.8/4.0"), never digits run together from "2:1" or "06/2027".
       // A phone number in a number box is its digits.
