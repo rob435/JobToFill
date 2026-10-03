@@ -6,7 +6,7 @@
  *   cv(cv, { fonts, paper, fit })                → same
  *
  * letter = { name, contact: [...], date, salutation, paragraphs: [...], closing, signature }
- * cv     = { name, contact: [...], sections: [{ title, entries: [{ heading, right, subheading, subright,
+ * cv     = { name, contact: [...], sections: [{ title, entries: [{ heading, tagline, right, subheading, subright,
  *            bullets, text }], lines: [{ label, text }] }] }
  *
  * The letter reproduces a LaTeX article (11pt, 1in margins, \parskip, Computer Modern) measured from a
@@ -631,12 +631,13 @@
 
   /**
    * Set a paragraph into lines of `width`. justify=false sets every line at its natural width
-   * (ragged right), still breaking where Knuth–Plass would.
+   * (ragged right), still breaking where Knuth–Plass would; hyphenate=false only breaks between words.
    */
-  function setParagraph(runs, width, ctx, { justify = true } = {}) {
+  function setParagraph(runs, width, ctx, { justify = true, hyphenate = true } = {}) {
     let items = itemize(runs, ctx, null);
     // TeX's passes: no hyphenation at \pretolerance, hyphenation at \tolerance, then anything.
     let breaks = breakLines(items, width, 100);
+    if (!breaks && !hyphenate) breaks = breakLines(items, width, INF);
     if (!breaks) {
       items = itemize(runs, ctx, ctx.fonts.hyphenation);
       breaks = breakLines(items, width, 200) || breakLines(items, width, 2000) || breakLines(items, width, INF);
@@ -1211,7 +1212,8 @@
     const row = (leftRuns, right, rightRun) => {
       const rightW = right ? textWidth(right, rightRun, ctx) : 0;
       const room = width - (right ? rightW + CV.hfillGap : 0);
-      const lines = leftRuns.length ? setParagraph(leftRuns, room, ctx, { justify: false }) : [];
+      // A long left part wraps between words: "Computing Sci-ence)" next to a place looks broken.
+      const lines = leftRuns.length ? setParagraph(leftRuns, room, ctx, { justify: false, hyphenate: false }) : [];
       lines.forEach((line, k) => {
         const ly = place();
         items.push({ kind: 'line', y: ly, line, x: m });

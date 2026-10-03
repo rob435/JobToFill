@@ -575,6 +575,9 @@
             }
           } else entry.heading = plain(el.left);
           if (el.hfill) entry.right = plain(el.right);
+        } else if (order.endsWith('l') && !entry) {
+          // A row without a label among labelled ones ("Duke of Edinburgh Silver Award").
+          lines.push({ text: plain(el.left) });
         } else {
           startEntry();
           entry.text = plain(el.left);
