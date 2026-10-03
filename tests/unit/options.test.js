@@ -331,3 +331,40 @@ test('non-compete and notice period share one box when the question asks for bot
   assert.equal(ask('text', 'non compete notice period comments'), '2 weeks');
   assert.equal(ask('text', 'are you subject to a non compete'), null);
 });
+
+test('countries: any spelling of the same country, never a different one', () => {
+  const country = (text) => {
+    const v = fields.resolve('address.country', Object.assign(profile(), { address: { country: text } }));
+    return v;
+  };
+  const gb = country('United Kingdom');
+  for (const label of [
+    'United Kingdom (GB)',
+    'United Kingdom of Great Britain and Northern Ireland',
+    'Great Britain',
+    'UK',
+    'GB',
+    'United Kingdom +44',
+    'UK - United Kingdom',
+    'GB - United Kingdom',
+    'England',
+  ]) {
+    assert.equal(pick(opts('Canada', 'Ireland', label, 'United States of America'), gb), label, label);
+  }
+  // A country code in the profile finds the long spelling, and "USA" the long American one.
+  assert.equal(
+    pick(opts('Canada', 'United Kingdom of Great Britain and Northern Ireland'), country('GB')),
+    'United Kingdom of Great Britain and Northern Ireland',
+  );
+  assert.equal(
+    pick(opts('Canada', 'United States of America (the)'), country('USA')),
+    'United States of America (the)',
+  );
+  assert.equal(pick(opts('Canada', 'US - United States'), country('United States')), 'US - United States');
+  // Plain spelling beats decorated ones.
+  assert.equal(pick(opts('United Kingdom (GB)', 'United Kingdom', 'England'), gb), 'United Kingdom');
+  // Never a different country, even one that shares a word.
+  assert.equal(pick(opts('Ireland', 'United States', 'United Arab Emirates', 'British Virgin Islands'), gb), null);
+  assert.equal(pick(opts('North Korea', 'Ireland'), country('Korea')), null);
+  assert.equal(pick(opts('Northern Ireland', 'Ireland'), country('Ireland')), 'Ireland');
+});

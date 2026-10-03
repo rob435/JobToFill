@@ -840,6 +840,48 @@
   }
 
   /** Every option a list value ("London, New York") picks, in the list's order. */
+  /** Which country an option spells: "United Kingdom (GB)", "UK - United Kingdom", "United Kingdom +44", "GB". */
+  function countryOfOption(text) {
+    const geo = JTF.geo;
+    const t = String(text || '').trim();
+    if (!t || !geo) return null;
+    const tries = [t, t.replace(/\([^)]*\)/g, ' '), t.replace(/\+\s*\d[\d\s-]*/g, ' ')];
+    for (const m of t.matchAll(/\(([^)]+)\)/g)) tries.push(m[1]);
+    tries.push(t.replace(/\([^)]*\)/g, ' ').replace(/\+\s*\d[\d\s-]*/g, ' '));
+    tries.push(...t.split(/\s+[-–—|:/]\s+|\s*[|/]\s*/));
+    const lead = t.match(/^([A-Za-z]{2,3})\s*[-–—:(]/);
+    if (lead) tries.push(lead[1]);
+    for (const x of tries) {
+      const row = geo.findCountry(x.replace(/\s+/g, ' ').trim());
+      if (row) return row;
+    }
+    return null;
+  }
+
+  /**
+   * A country from a list of countries: the option that spells the same country (any alias or code), never a
+   * different one. Returns an index, -1 (nothing safe) or null (not a country list: use generic matching).
+   */
+  function bestCountry(opts, v, cands) {
+    const known = opts.map((o) => ({ o, row: countryOfOption(o.text) || countryOfOption(o.value) }));
+    if (!known.some((k) => k.row)) return null;
+    const same = known.filter((k) => k.row && k.row[0] === v.iso2);
+    if (same.length) {
+      // The plain spelling over decorated ones: "United Kingdom" before "United Kingdom of Great Britain (GB)".
+      same.sort((a, b) => a.o.n.length - b.o.n.length);
+      for (const want of [norm(v.text), norm(v.search), norm(JTF.geo.COUNTRIES.find((r) => r[0] === v.iso2)[2])]) {
+        const hit = same.find((k) => k.o.n === want);
+        if (hit) return hit.o.i;
+      }
+      const exact = same.find((k) => cands.includes(k.o.n));
+      return (exact || same[0]).o.i;
+    }
+    const open = known.filter((k) => !k.row).map((k) => k.o);
+    if (!open.length) return -1;
+    const best = bestText(open, cands, v);
+    return best && best.score >= 60 ? best.i : -1;
+  }
+
   function matchAll(options, v) {
     if (!v) return [];
     const items =
@@ -916,6 +958,11 @@
     if (v.avoid) {
       for (let k = opts.length - 1; k >= 0; k--) if (v.avoid.test(opts[k].n)) opts.splice(k, 1);
       if (!opts.length) return -1;
+    }
+
+    if (v.kind === 'country' && v.iso2) {
+      const r = bestCountry(opts, v, cands);
+      if (r !== null) return r;
     }
 
     if ((v.kind === 'date' || v.kind === 'year') && v.date) {

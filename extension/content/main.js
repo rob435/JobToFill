@@ -700,6 +700,10 @@
     toast,
     fillActive,
     insertPassword,
+    /** Entries from another part of the content script (the AI assist) join the undoable fill. */
+    appendHistory(entries) {
+      if (entries && entries.length) state.history = state.history.concat(entries);
+    },
     undo() {
       const n = JTF.fill.undo(state.history);
       JTF.fill.clearHighlights();

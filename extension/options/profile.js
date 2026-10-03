@@ -246,6 +246,19 @@ const FORMS = {
     intro: 'Longer answers for summary, skills and cover letter boxes.',
     groups: [
       {
+        title: 'Extra details for the AI',
+        fields: [
+          f('extraDetails', 'Extra details', {
+            type: 'textarea',
+            rows: 5,
+            wide: true,
+            placeholder:
+              'I have no involvement with any government or political office, and no relatives who do. No criminal convictions. Happy to relocate. Notice period: none.',
+            hint: 'Anything an application might ask that isn’t in the boxes above, in your own words. The AI reads it when it answers the questions a fill leaves empty (if you’ve added a key under Cover letters) and when it writes your cover letter. Passwords and cards are never sent.',
+          }),
+        ],
+      },
+      {
         title: 'Text',
         fields: [
           f('skills', 'Skills', {

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Oracle-style searchable country dropdowns</title>
+  <style>
+    body { font: 14px system-ui; max-width: 720px; margin: 24px auto; }
+    .field { margin: 14px 0; position: relative; }
+    input { width: 100%; box-sizing: border-box; padding: 6px; }
+    .drop { position: absolute; background: #fff; border: 1px solid #999; margin: 0; padding: 0; list-style: none; z-index: 10; min-width: 260px; }
+    .drop li { padding: 4px 8px; cursor: pointer; }
+    .drop li.oj-focus { background: #cde; }
+  </style>
+</head>
+<body>
+  <h1>Candidate Experience (replica)</h1>
+  <form>
+    <div class="field"><label for="preferred-name">Preferred name</label><input id="preferred-name" type="text"></div>
+    <div class="field"><label for="preferred-full">Preferred full name</label><input id="preferred-full" type="text"></div>
+    <div class="field"><label for="legal-first">Legal first name</label><input id="legal-first" type="text"></div>
+
+    <!-- A: li[role=option] in a portal on <body>, picked with mousedown+mouseup (click is ignored) -->
+    <div class="field"><label for="country-a">Country</label>
+      <input id="country-a" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="list-a" autocomplete="off"></div>
+    <!-- B: no roles on the options at all: ul > li > div.oj-listbox-result-label; labels carry a code -->
+    <div class="field"><label for="country-b">Country of residence</label>
+      <input id="country-b" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="list-b" autocomplete="off"></div>
+    <!-- C: only knows "Great Britain", filters by prefix, and takes the keyboard (ArrowDown + Enter), not clicks -->
+    <div class="field"><label for="country-c">Home country</label>
+      <input id="country-c" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="list-c" autocomplete="off"></div>
+  </form>
+
+  <script>
+    const COUNTRIES = ['Canada', 'Ireland', 'Ukraine', 'United Arab Emirates', 'United Kingdom of Great Britain and Northern Ireland', 'United States of America'];
+    function widget(cfg) {
+      const input = document.getElementById(cfg.id);
+      let list = null;
+      let timer = null;
+      let active = -1;
+      const close = () => { if (list) { list.remove(); list = null; } input.setAttribute('aria-expanded', 'false'); };
+      const pick = (label) => { input.value = label; input.dataset.picked = label; close(); };
+      const open = () => {
+        close();
+        const q = input.value.trim().toLowerCase();
+        const shown = cfg.options.filter((o) => (cfg.prefix ? o.toLowerCase().startsWith(q) : o.toLowerCase().includes(q)));
+        list = document.createElement('ul');
+        list.id = cfg.list;
+        list.className = 'drop';
+        if (cfg.roles) list.setAttribute('role', 'listbox');
+        const r = input.getBoundingClientRect();
+        list.style.left = r.left + scrollX + 'px';
+        list.style.top = r.bottom + scrollY + 'px';
+        shown.forEach((label, i) => {
+          const li = document.createElement('li');
+          li.id = cfg.list + '-' + i;
+          if (cfg.roles) li.setAttribute('role', 'option');
+          if (cfg.labelDiv) li.innerHTML = '<div class="oj-listbox-result-label"></div>';
+          (li.firstElementChild || li).textContent = cfg.decorate ? cfg.decorate(label) : label;
+          if (cfg.mouse) {
+            li.addEventListener('mousedown', () => { li._down = true; });
+            li.addEventListener('mouseup', () => { if (li._down) pick(li.textContent); });
+          }
+          list.appendChild(li);
+        });
+        if (!shown.length) list.innerHTML = '<li class="oj-listbox-no-results">No matches found</li>';
+        document.body.appendChild(list);
+        input.setAttribute('aria-expanded', 'true');
+      };
+      input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(open, 200); });
+      input.addEventListener('keydown', (e) => {
+        if (!cfg.keyboard) return;
+        if (e.key === 'ArrowDown') {
+          if (!list) return open();
+          const items = [...list.querySelectorAll('[role=option]')];
+          active = Math.min(active + 1, items.length - 1);
+          items.forEach((li, i) => li.classList.toggle('oj-focus', i === active));
+          if (items[active]) input.setAttribute('aria-activedescendant', items[active].id);
+        } else if (e.key === 'Enter' && list && active >= 0) {
+          pick(list.querySelectorAll('[role=option]')[active].textContent);
+        }
+      });
+    }
+    widget({ id: 'country-a', list: 'list-a', options: COUNTRIES, roles: true, mouse: true });
+    widget({ id: 'country-b', list: 'list-b', options: COUNTRIES, labelDiv: true, mouse: true, decorate: (l) => (l.startsWith('United Kingdom') ? 'United Kingdom (GB)' : l) });
+    widget({ id: 'country-c', list: 'list-c', options: ['Canada', 'France', 'Great Britain', 'Germany'], roles: true, keyboard: true, prefix: true });
+  </script>
+</body>
+</html>

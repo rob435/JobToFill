@@ -992,10 +992,18 @@
     'name.first': simple('First name', 'personal.firstName'),
     'name.middle': simple('Middle name', 'personal.middleName'),
     'name.last': simple('Last name', 'personal.lastName'),
+    // Nickname-style boxes ("Preferred name", "Known as", "Display name") always get the LEGAL name: the first
+    // name when the label says first / given / short / nick, otherwise the full legal name. The profile's
+    // preferredName is never filled into forms.
     'name.preferred': {
       label: 'Preferred name',
-      path: 'personal.preferredName',
-      get: (p) => val(p.personal.preferredName || p.personal.firstName),
+      get(p, ctx) {
+        const q = U.normalize((ctx && ctx.question) || '');
+        const full =
+          /\b(full|legal|complete|whole|entire|surname|passport|official|nom complet|nombre completo)\b/.test(q);
+        const first = /\b(first|given|short|nick ?name|forename|prenom|vorname|nombre|nome)\b/.test(q);
+        return val(first && !full ? p.personal.firstName : fullName(p));
+      },
     },
     'name.prefix': simple('Title (Mr/Ms)', 'personal.prefix'),
     pronouns: simple('Pronouns', 'personal.pronouns'),
@@ -1801,7 +1809,7 @@
     // EEO notices ("Government officials engaged in enforcing laws…") are not questions.
     R(
       'compliance.government',
-      /\bgovernment (official|employee|position|role|connection|body|agency|department|entity|minister)s?\b|\bpublic (official|office|servant)s?\b|\bpolitically exposed|\bpeps?\b|\bstate ?owned (entit|enterprise|compan|business)|\bforeign (government )?official|\bcivil servant|\binvolved (in|with) (the )?(government|politics)\b|\b(public|political|government) (office|position|appointment)s?\b|\bsenior political figure/,
+      /\bgovernment (official|employee|position|role|connection|body|agency|department|entity|minister)s?\b|\bpublic (official|office|servant)s?\b|\bpolitically exposed|\bpeps?\b|\bstate ?owned (entit|enterprise|compan|business)|\bforeign (government )?official|\bcivil servant|\binvolved (in|with) (the )?(government|politics)\b|\b(public|political|government) (office|position|appointment)s?\b|\bpublic (function|trust|role|post)s?\b|\bprominent public\b|\bsenior political figure/,
       {
         kinds: CHOICE.concat(LONG_TEXT),
         not: /\bengaged in enforcing\b|\benforcing (the )?laws?\b|\bequal (employment|opportunity)\b|\bfederal contractor|\bgovernment (contracts?|contractors?|funding|grants?)\b|\bvisa\b|\bsponsor/,
@@ -1846,7 +1854,7 @@
     R('eeo.veteran', /veteran|military (service|status)|armed forces|served in the/, { kinds: CHOICE }),
     R('eeo.disability', /disabilit|disabled|handicap|impairment/, { kinds: CHOICE, not: /adjustments?\b|accommodat/ }),
     R('eeo.gender', /\bgender\b|\bsex\b|geschlecht|\bgenre\b|\bsexo\b/, {
-      not: /orientation|transgender|same as|(registered|assigned) at birth/,
+      not: /orientation|transgender|same as|(registered|assigned) at birth|\bpronouns?\b/,
     }),
     // UK social-mobility monitoring
     // "Were you eligible for free school meals?", "…receive FSM", pupil premium, the US free or reduced-price lunch.
@@ -2005,7 +2013,10 @@
     }),
     R(
       'name.preferred',
-      /preferred (first |given )?name|nick ?name|\bgoes by\b|known as|chosen name|name you (go by|prefer)|\benglish (first |given )?name\b/,
+      /\bpreferred (first |given |full |legal |short )?(name|forename)|\bpref(erred)? name|nick ?name|\bgoes by\b|\bgo by\b|\bknown as\b|\bchosen (first |full )?name|\bname you (go by|prefer|are known by|use|would like|like to (be called|go by))|\b(what|how) (should|do|can|may) (we|i) call you|\bcall you\b|\b(display|screen|short|common|informal|alias) name\b|\balias\b|\benglish (first |given |full )?name\b|\bspitzname|\brufname|\bbevorzugter (vor)?name|\bnom (d usage|usuel)|\bprenom usuel|\bsurnom\b|\bapodo\b|\bnombre (preferido|social)|\bsoprannome\b|\bnome (preferito|social)/,
+      {
+        not: /user ?name|company|employer|school|business|card|organi|contact|\breferences?\b|\breferr|emergency|manager|screen ?name ?(on|in)/,
+      },
     ),
     R(
       'name.first',

@@ -2,7 +2,7 @@
 import { api, download, el, plural, requestAiConsent } from '../ui/common.js';
 import { control, grid, group, sectionHead, table } from './controls.js';
 
-const { store, ai, doctext, letter: L } = globalThis.JTF;
+const { store, ai, doctext, letter: L, cvtex } = globalThis.JTF;
 
 const MAX_SAMPLE_BYTES = 5 * 1024 * 1024;
 
@@ -188,6 +188,132 @@ function aboutGroup(kit, saveKit) {
       kit.notes,
       (v) => saveKit({ notes: v }),
     ),
+  );
+}
+
+/** A tiny generic example, to show the shape the parser reads (not anyone's real CV). */
+const EXAMPLE_CV = {
+  name: 'Ada Example',
+  contact: ['07700 900123', 'ada@example.com', 'github.com/ada-example'],
+  sections: [
+    {
+      title: 'Education',
+      entries: [
+        {
+          heading: 'University of Example',
+          right: 'Leeds, England',
+          subheading: 'BSc Mathematics',
+          subright: 'Sep 2024 – Jun 2027',
+        },
+      ],
+      lines: [],
+    },
+    {
+      title: 'Projects',
+      entries: [
+        {
+          heading: 'PriceWatch',
+          tagline: 'price tracker',
+          right: 'Python, SQLite',
+          bullets: ['Built a tracker that checks 2,000 listings a day and alerts me to price drops.'],
+        },
+      ],
+      lines: [],
+    },
+    { title: 'Skills', entries: [], lines: [{ label: 'Languages', text: 'Python, SQL' }] },
+  ],
+};
+
+function cvGroup(kit, saveKit) {
+  const box = el('textarea', {
+    name: 'cv-tex',
+    className: 'mono',
+    rows: 14,
+    value: kit.cvTex || '',
+    spellcheck: false,
+    placeholder: '\\documentclass[11pt,a4paper]{article}\n…\n\\begin{document}\n…\n\\end{document}',
+  });
+  const status = el('span', { className: 'muted', attrs: { 'aria-live': 'polite' } });
+  const report = el('div', { className: 'stack', attrs: { 'aria-live': 'polite' } });
+  const show = (cv, warnings) => {
+    report.replaceChildren(
+      el(
+        'ul',
+        {},
+        cvtex.summarize(cv).map((t) => el('li', { textContent: t })),
+      ),
+      ...(warnings.length
+        ? [
+            el('p', { className: 'hint', textContent: 'Heads up:' }),
+            el(
+              'ul',
+              {},
+              warnings.map((t) => el('li', { textContent: t })),
+            ),
+          ]
+        : []),
+    );
+  };
+  const read = () => cvtex.parse(box.value);
+  const parse = () => {
+    if (!box.value.trim()) {
+      report.replaceChildren();
+      status.textContent = 'Paste your LaTeX first.';
+      return null;
+    }
+    const out = read();
+    show(out.cv, out.warnings);
+    status.textContent = '';
+    return out;
+  };
+  const save = async () => {
+    const out = parse();
+    if (!out) return;
+    if (!out.cv.sections.length) {
+      status.textContent = 'Nothing saved: no sections were found (each needs a \\section{…}).';
+      return;
+    }
+    await saveKit({ cvTex: box.value, cvMaster: out.cv });
+    status.textContent = `Saved. Tailoring now edits this CV (${out.cv.sections.length} sections) instead of reading your PDF.`;
+  };
+  const clear = async () => {
+    await saveKit({ cvTex: '', cvMaster: null });
+    box.value = '';
+    report.replaceChildren();
+    status.textContent = 'Removed. Tailoring reads your uploaded CV file again.';
+  };
+  const downloadTex = () => {
+    const text = box.value.trim() ? box.value : kit.cvMaster ? cvtex.render(kit.cvMaster) : '';
+    if (!text) {
+      status.textContent = 'There is no CV to download yet.';
+      return;
+    }
+    download(new Blob([text], { type: 'application/x-tex' }), 'cv.tex');
+  };
+  return group(
+    'Your CV as LaTeX',
+    'Paste the LaTeX of your CV. JobToFill reads its structure (name, contact line, sections, entries, bullets) and uses it as the ground truth: tailoring only rewords bullets and reorders what the AI may touch, and your names, dates, places, titles and grades are always kept exactly. The tailored CV is drawn like your template and can be downloaded as .tex to compile in Overleaf. Lines starting with % are ignored. Saved in this browser and in your backup.',
+    box,
+    el(
+      'div',
+      { className: 'row spaced' },
+      el('button', { type: 'button', textContent: 'Parse', onclick: parse }),
+      el('button', { type: 'button', className: 'primary', textContent: 'Save', onclick: save }),
+      el('button', { type: 'button', textContent: 'Download .tex', onclick: downloadTex }),
+      el('button', {
+        type: 'button',
+        textContent: 'Insert example',
+        onclick: () => {
+          box.value = cvtex.render(EXAMPLE_CV);
+          parse();
+        },
+      }),
+      kit.cvMaster
+        ? el('button', { type: 'button', className: 'small danger', textContent: 'Remove', onclick: clear })
+        : null,
+      status,
+    ),
+    report,
   );
 }
 
@@ -510,6 +636,7 @@ export async function renderLetters({ state, refresh }) {
       'On any job application, “Write cover letter” in the popup finds the job description, writes a letter in your style from your CV, checks every fact, and attaches the PDF to the form. It can tailor your CV to the job too. The same model answers the questions a fill leaves empty.',
     ),
     await aiGroup(),
+    cvGroup(kit, saveKit),
     aboutGroup(kit, saveKit),
     await answersGroup(kit, saveKit, settings, profile, refresh),
     samplesGroup(kit, saveKit, refresh),

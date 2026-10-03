@@ -17,7 +17,13 @@ export default [
     languageOptions: { sourceType: 'script', globals: { ...extension, ...globals.serviceworker, module: 'readonly' } },
   },
   {
-    files: ['extension/ui/**/*.js', 'extension/popup/**/*.js', 'extension/options/**/*.js', 'extension/studio/**/*.js'],
+    files: [
+      'extension/ui/**/*.js',
+      'extension/popup/**/*.js',
+      'extension/options/**/*.js',
+      'extension/studio/**/*.js',
+      'extension/quick/**/*.js',
+    ],
     languageOptions: { sourceType: 'module', globals: extension },
   },
   {
