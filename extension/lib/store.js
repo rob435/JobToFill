@@ -18,6 +18,8 @@
  *   (session) tabjob:<tabId>  the job found for the application open in a tab (see setTabJob)
  *   quickApply    the one result of the last "Quick apply" (see saveQuickApply), and quickStatus, its progress.
  *                 In storage.session where there is one (memory only), else storage.local; never in a backup.
+ *   nylas         the Nylas connection for verification codes: { apiKey, region, grantId, email }; in backups
+ *                 with the AI keys
  */
 (function (root) {
   'use strict';
@@ -40,6 +42,9 @@
     searchHistory: false,
     // Questions the rules leave empty are answered by the AI (when a key is set up) as part of each fill.
     aiAnswers: true,
+    // Verification codes from email (Nylas): auto: watch pages for code boxes and fill them by themselves;
+    // links: open the "verify your email" link when a page says one was sent.
+    otp: { auto: true, links: true },
   };
 
   // answerNotes: the candidate's own rules for answers ("I have never applied to any of these firms").
@@ -259,6 +264,23 @@
     if (other) config.fallback = { provider: other, model: modelFor(ai, other), baseUrl: '', apiKey: keys[other] };
     return config;
   }
+
+  /* ------------------------------------------------------ verification codes */
+
+  /** The Nylas connection: { apiKey, region, grantId, email }, or null when not set up. */
+  async function getNylas() {
+    const n = (await area().get('nylas')).nylas;
+    return n && n.apiKey ? n : null;
+  }
+
+  const setNylas = exclusive(async function setNylas(patch) {
+    const next = patch ? Object.assign({ region: 'us' }, (await area().get('nylas')).nylas || {}, patch) : null;
+    if (!next || !String(next.apiKey || '').trim()) await area().remove('nylas');
+    else await area().set({ nylas: { ...next, apiKey: String(next.apiKey).trim() } });
+    return next;
+  });
+
+  const otpSettings = (settings) => Object.assign({}, DEFAULT_SETTINGS.otp, (settings && settings.otp) || {});
 
   async function getLetters() {
     return (await area().get('letters')).letters || [];
@@ -625,6 +647,8 @@
     if (keys) {
       const aiKeys = await getAiKeys();
       if (Object.keys(aiKeys).length) out.aiKeys = aiKeys;
+      const nylas = await getNylas();
+      if (nylas) out.nylas = nylas;
     }
     return out;
   }
@@ -650,6 +674,18 @@
         if (PROVIDER_IDS.includes(id) && typeof key === 'string' && key.trim()) keys[id] = key.trim();
       set.aiKeys = keys;
     }
+    if (
+      data.nylas &&
+      typeof data.nylas === 'object' &&
+      typeof data.nylas.apiKey === 'string' &&
+      data.nylas.apiKey.trim()
+    )
+      set.nylas = {
+        apiKey: data.nylas.apiKey.trim(),
+        region: data.nylas.region === 'eu' ? 'eu' : 'us',
+        grantId: String(data.nylas.grantId || ''),
+        email: String(data.nylas.email || ''),
+      };
     await area().set(set);
     if (data.vault && JTF.vault) await JTF.vault.lock();
   });
@@ -676,6 +712,9 @@
     setAiKey,
     saveAiSettings,
     aiConfig,
+    getNylas,
+    setNylas,
+    otpSettings,
     getLetters,
     saveLetter,
     removeLetter,

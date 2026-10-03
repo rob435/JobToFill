@@ -1,6 +1,7 @@
 /* JobToFill settings page — shell: profile bar, navigation, autosave, site-access and restore banners. */
 import { $, $$, api, el, hasSiteAccess, requestSiteAccess } from '../ui/common.js';
 import { renderBackup, renderHistory, renderSettings } from './app.js';
+import { renderEmail } from './email.js';
 import { renderLetters } from './letters.js';
 import { DEGREES, PROFILE_SECTIONS } from './profile.js';
 import { renderVault } from './vault.js';
@@ -11,6 +12,7 @@ const SECTIONS = {
   ...PROFILE_SECTIONS,
   letters: renderLetters,
   vault: renderVault,
+  email: renderEmail,
   history: renderHistory,
   settings: renderSettings,
   backup: renderBackup,

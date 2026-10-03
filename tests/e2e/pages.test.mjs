@@ -19,7 +19,7 @@ test('every settings section renders', async () => {
     const links = [...document.querySelectorAll('#nav a')].map((a) => a.hash.slice(1));
     return document.querySelector('#sections h1') && links;
   });
-  assert.equal(sections.length, 14);
+  assert.equal(sections.length, 15);
   for (const section of sections) {
     const title = await until(
       settings.call,

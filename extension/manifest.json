@@ -37,6 +37,8 @@
       "lib/answers.js",
       "lib/jobpage.js",
       "lib/doctext.js",
+      "lib/otp.js",
+      "lib/nylas.js",
       "background.js"
     ]
   },
