@@ -157,3 +157,30 @@ test('cvtex: summarize says what was understood', () => {
   assert.ok(lines.includes('Experience: 1 entry, 3 bullets'));
   assert.ok(lines.includes('Skills: 4 rows'));
 });
+
+test('cvtex: a project’s tech line renders as small bold capitals and reads back', () => {
+  const { cv } = T.parse(FIXTURE);
+  const proj = cv.sections.find((s) => s.title === 'Projects');
+  proj.entries[0].tech = ['Python', 'eBay API', 'SQLite'];
+  const tex = T.render(cv);
+  assert.match(
+    tex,
+    /\\textbf\{eBaySpy\} -- eBay deal detector \\hfill \\textit\{Python, eBay API, SQLite, Telegram\} \\\\\n\{\\footnotesize\\bfseries PYTHON \$\\cdot\$ EBAY API \$\\cdot\$ SQLITE\}\n\\begin\{itemize\}/,
+  );
+  const back = T.parse(tex);
+  assert.deepEqual(back.warnings, []);
+  const entry = back.cv.sections.find((s) => s.title === 'Projects').entries[0];
+  assert.deepEqual(entry.tech, ['PYTHON', 'EBAY API', 'SQLITE']);
+  assert.equal(entry.subheading, undefined);
+  assert.equal(entry.bullets.length, 2);
+  // Given as text, it is split into items.
+  assert.deepEqual(
+    T.normalize({ sections: [{ title: 'P', entries: [{ heading: 'X', tech: 'A, B; C · D' }] }] }).sections[0].entries[0]
+      .tech,
+    ['A', 'B', 'C', 'D'],
+  );
+  // A plain (not bold) capitals line under a heading is still its subheading.
+  const plain = T.parse('\\section{Experience}\n\\noindent \\textbf{ACME} \\\\\nSENIOR ENGINEER\n').cv;
+  assert.equal(plain.sections[0].entries[0].subheading, 'SENIOR ENGINEER');
+  assert.equal(plain.sections[0].entries[0].tech, undefined);
+});

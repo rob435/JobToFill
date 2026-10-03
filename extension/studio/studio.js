@@ -1169,17 +1169,30 @@ async function quickApply() {
     const r = await send({ type: 'jtf:quick-fill', tabId, letterId: state.entry.id, cv: !!state.cv });
     if (!r || r.error) throw new Error((r && r.error) || 'Filling the form failed.');
     step('fill', 'done', `${r.filled} field${r.filled === 1 ? '' : 's'}`);
-    await quickStatus(cvNote ? `done (${cvNote})` : 'done', 'done');
+    const missed = [state.cv && !r.cv && 'the tailored CV isn’t attached yet: see the note on the page'].filter(
+      Boolean,
+    );
+    const notes = [cvNote, ...missed].filter(Boolean).join('; ');
+    await quickStatus(notes ? `done (${notes})` : 'done', 'done');
     const me = await api.tabs.getCurrent();
     if (me) await api.tabs.remove(me.id);
   } catch (err) {
     if (err && err.name === 'AbortError') return;
     const message = String((err && err.message) || err);
     await quickStatus(message, 'error');
-    // Say so on the application page too, since the person isn't looking at this tab.
-    await send({ type: 'jtf:toast', tabId, message: `Quick apply stopped: ${message}` }).catch(() => {});
+    // Say so on the application page too, since the person isn't looking at this tab, and put in the usual
+    // CV the first fill held back for the tailored one (unless the tab has gone to another site).
+    await releaseQuick(message);
     fail(err, current);
   }
+}
+
+/** Quick apply won't finish: the application gets what its first fill held back, and is told why. */
+async function releaseQuick(message) {
+  const tab = await api.tabs.get(tabId).catch(() => null);
+  const same = tab && (await stillSameJob(tab.url).catch(() => false));
+  if (same) await send({ type: 'jtf:quick-release', tabId, message }).catch(() => {});
+  else if (tab) await send({ type: 'jtf:toast', tabId, message: `Quick apply stopped: ${message}` }).catch(() => {});
 }
 
 /** A prerequisite is missing (site access, AI consent, an AI key): carry on as the normal page, in front. */
@@ -1187,13 +1200,10 @@ function leaveQuick() {
   if (!quick) return;
   quick = false;
   api.tabs.getCurrent().then((t) => t && api.tabs.update(t.id, { active: true }));
+  const message = 'Quick apply needs one more step first: finish it in the JobToFill tab.';
   store
-    .setQuickStatus({
-      state: 'error',
-      message: 'Quick apply needs one more step first: finish it in the JobToFill tab.',
-      tabId,
-      studioTabId,
-    })
+    .setQuickStatus({ state: 'error', message, tabId, studioTabId })
+    .then(() => send({ type: 'jtf:quick-release', tabId }))
     .catch(() => {});
 }
 
