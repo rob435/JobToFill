@@ -263,19 +263,38 @@
   }
 
   /**
+   * The choice a single-choice box shows as bare text beside its search input, in the box that names it in its
+   * title (Ant Design: `<div title="Italy">Italy<input role="combobox"></div>`): { box, text }, or null.
+   */
+  function shownValue(el) {
+    const box = el.parentElement;
+    if (!box || box.localName === 'label') return null;
+    const text = Array.from(box.childNodes)
+      .filter((n) => n.nodeType === 3)
+      .map((n) => n.nodeValue)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return text && box.getAttribute('title') === text ? { box, text } : null;
+  }
+
+  /**
    * Label for a control without a proper <label>: walk up to the largest
    * ancestor that contains no other control and use its text, else the text
    * just before it. Labels belonging to `members` (radio options) are ignored.
    */
   function contextLabel(start, members) {
-    const skip = (n) => members.has(n) || (n.localName === 'label' && n.control && members.has(n.control));
+    // What a dropdown shows as its choice ("Italy") is its value, not its label.
+    const shown = members.size === 1 ? shownValue(start) : null;
+    const skip = (n) =>
+      members.has(n) || (n.localName === 'label' && n.control && members.has(n.control)) || (shown && n === shown.box);
     let node = start;
     let boilerplate = '';
     for (let depth = 0; depth < 6; depth++) {
       const parent = node.parentElement;
       if (!parent || parent === node.ownerDocument.body) break;
       if (foreignControls(parent, members) > 0) return previousText(node) || boilerplate;
-      const t = textOf(parent, skip);
+      const t = shown && parent === shown.box ? '' : textOf(parent, skip);
       if (t && !PLACEHOLDERISH.test(t)) {
         if (!isUploadBoilerplate(t)) return U.cleanLabel(t, 200);
         boilerplate = boilerplate || U.cleanLabel(t, 200);
@@ -299,6 +318,11 @@
       if (l) return U.cleanLabel(l);
     }
     const set = new Set(members);
+    // A <label for> naming the group's own container (Ant Design's Form.Item over a Radio.Group or Checkbox.Group).
+    for (let a = members.length > 1 ? commonAncestor(members) : null, i = 0; a && i < 3; a = a.parentElement, i++) {
+      const t = containerLabel(a);
+      if (t && foreignControls(a, set) === 0) return t;
+    }
     // A fieldset around just this group; one around a whole page section ("3. Questions") is not the question.
     const fieldset = first.closest('fieldset');
     if (fieldset && members.every((m) => fieldset.contains(m)) && foreignControls(fieldset, set) === 0) {
@@ -371,6 +395,34 @@
     if (group.localName === 'fieldset') t = fieldsetTitle(group);
     if (!t) t = explicitLabel(group) || group.getAttribute('aria-label') || '';
     return U.cleanLabel(t, 200);
+  }
+
+  const countedIn = (node) => Array.from(node.querySelectorAll(COUNTED_SELECTOR)).filter((c) => !isShim(c));
+
+  const isPicker = (c) =>
+    c.localName === 'select' || c.getAttribute('role') === 'combobox' || c.hasAttribute('aria-haspopup');
+
+  /**
+   * The label over a picker and a box side by side, neither of them labelled, that together make one answer: a
+   * dial code and the number under "Phone number" (Ant Design's Space.Compact, whose label points at neither), a
+   * currency and an amount. The text just before the pair, looking out until other fields start.
+   */
+  function clusterLabel(el) {
+    let cluster = el.parentElement;
+    for (let i = 0; cluster && i < 6 && countedIn(cluster).length < 2; i++) cluster = cluster.parentElement;
+    if (!cluster || cluster === el.ownerDocument.body) return '';
+    const members = countedIn(cluster);
+    if (members.length !== 2 || members.filter(isPicker).length !== 1) return '';
+    if (members.some((c) => explicitLabel(c) || c.getAttribute('aria-label'))) return '';
+    let node = cluster;
+    for (let i = 0; i < 5; i++) {
+      const t = previousText(node);
+      if (t) return t;
+      const parent = node.parentElement;
+      if (!parent || parent === el.ownerDocument.body || countedIn(parent).length > members.length) break;
+      node = parent;
+    }
+    return '';
   }
 
   /**
@@ -663,9 +715,36 @@
     return controls.filter((m) => isUsable(m, 'checkbox'));
   }
 
+  /** The text of a <label for> that names a container rather than a control (Ant Design's Form.Item over a group). */
+  function containerLabel(node) {
+    if (!node || !node.id) return '';
+    const root = node.getRootNode();
+    const label = root.querySelector && root.querySelector(`label[for="${CSS.escape(node.id)}"]`);
+    return label ? U.cleanLabel(textOf(label)) : '';
+  }
+
+  /**
+   * Checkboxes without names in a container a label names (Ant Design's Checkbox.Group: `<label for="apply_offices">`
+   * over `<div id="apply_offices">` of "London", "New York"…) or that is a role="group": one checklist, unless its
+   * options read like statements (as for fieldsetCheckboxes).
+   */
+  function labelledCheckboxes(el) {
+    let a = el.parentElement;
+    for (let i = 0; a && i < 4; i++, a = a.parentElement) {
+      if (a.getAttribute('role') !== 'group' && !containerLabel(a)) continue;
+      const controls = countedIn(a);
+      if (controls.length < 2 || !controls.every((c) => c.localName === 'input' && c.type === 'checkbox')) return null;
+      const lengths = controls.map((c) => optionLabel(c).length);
+      if (lengths.some((n) => n > 120) || lengths.filter((n) => n > 60).length * 2 >= lengths.length) return null;
+      return controls.filter((m) => isUsable(m, 'checkbox'));
+    }
+    return null;
+  }
+
   function groupMembers(el) {
     if (isAriaChoice(el)) return ariaMembers(el, el.matches('button[aria-pressed]') ? 'radio' : kindOf(el));
     if (el.type === 'radio' && !el.hasAttribute('name')) return namelessRadios(el);
+    if (el.type === 'checkbox' && !el.hasAttribute('name')) return labelledCheckboxes(el) || [el];
     const scope = el.form || el.getRootNode();
     const type = el.type;
     const selector = `input[type="${type}"][name="${CSS.escape(el.name)}"]`;
@@ -720,7 +799,10 @@
       s.title = el.getAttribute('title') || '';
       if (kind === 'checkbox' && !s.label) s.label = nextText(el);
       if (!s.label && !s.aria) s.nearby = contextLabel(el, new Set([el]));
-      const group = groupLabel(el) || (kind === 'file' ? jobviteUploadLabel(el) : '');
+      const group =
+        groupLabel(el) ||
+        (kind === 'file' ? jobviteUploadLabel(el) : '') ||
+        (!s.label && !s.aria && kind !== 'checkbox' ? clusterLabel(el) : '');
       if (group && U.normalize(group) !== U.normalize(s.label || s.aria)) {
         // For an upload or a lone checkbox the group's legend is the question; elsewhere it is context.
         if (kind === 'file' || kind === 'checkbox') s.question = group;
@@ -771,7 +853,8 @@
           fields.push({ el: box, kind, members: parts, desc: describe(box, kind, parts) });
         continue;
       }
-      if ((kind === 'radio' || kind === 'checkbox') && (el.name || isAriaChoice(el) || kind === 'radio')) {
+      const nameless = kind === 'checkbox' && el.localName === 'input' && !el.hasAttribute('name');
+      if ((kind === 'radio' || kind === 'checkbox') && (el.name || isAriaChoice(el) || kind === 'radio' || nameless)) {
         const members = groupMembers(el);
         members.forEach((m) => seen.add(m));
         if (kind === 'radio' || members.length > 1) {
@@ -805,5 +888,6 @@
     deepActiveElement,
     standsFor,
     dateSegments,
+    shownValue,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

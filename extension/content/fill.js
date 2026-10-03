@@ -453,19 +453,24 @@
 
   const CHIP =
     '[class*="singleValue"], [class*="single-value"], [class*="selected-value"], [class*="multiValue"], [class*="multi-value"], [class*="MuiChip-root"], [data-automation-id="selectedItem"]';
+  // The tags of a dropdown that takes several (Ant Design's "selection-item") carry no role or ARIA state: their class
+  // is the only sign of them. Its one-choice dropdowns (antd v4/v5) use the class for the choice, which another
+  // pick replaces: not a chip to clear first.
+  const TAG = '[class*="selection-item"]';
 
   /**
    * The selected values ("chips") of a react-select style widget, looking only inside its own
    * container. Hidden helper inputs (react-select's required-field shim) don't count as neighbours.
    */
   function chipsOf(el) {
+    const selector = isMulti(el) ? `${CHIP}, ${TAG}` : CHIP;
     let a = el.parentElement;
     for (let i = 0; a && i < 5; i++, a = a.parentElement) {
       const others = Array.from(
         a.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]'),
       ).filter((c) => c !== el && !c.contains(el) && c.getAttribute('aria-hidden') !== 'true' && c.tabIndex >= 0);
       if (others.length) return [];
-      const all = Array.from(a.querySelectorAll(CHIP));
+      const all = Array.from(a.querySelectorAll(selector));
       if (all.length) return all.filter((c) => !all.some((o) => o !== c && o.contains(c)));
     }
     return unnamedChips(el);
@@ -534,6 +539,15 @@
    */
   const isEmptyMask = (v) => v.includes('_') && /^[\s_()/.:-]*$/.test(v.replace(/^\+\d{1,4}/, ''));
 
+  /**
+   * The choice a dropdown shows as bare text beside its search input (Ant Design's "Italy"). Not a chip: picking
+   * another option replaces it, no clear button needed.
+   */
+  function besideText(el) {
+    const shown = dom().shownValue(el);
+    return shown ? shown.text : '';
+  }
+
   /** Does this control already hold something the user (or site) put there? */
   function hasValue(field) {
     const { el, kind, members } = field;
@@ -555,7 +569,13 @@
         return !!t && !M().isPlaceholder(JTF.util.normalize(t));
       }
       case 'combobox':
-        return !!el.value.trim() || chipsOf(el).length > 0 || keptChips(el).length > 0 || shownChoices(el).length > 0;
+        return (
+          !!el.value.trim() ||
+          chipsOf(el).length > 0 ||
+          keptChips(el).length > 0 ||
+          shownChoices(el).length > 0 ||
+          !!besideText(el)
+        );
       default: {
         const shown = partsValue(el);
         if (shown != null) return !!shown;
@@ -583,9 +603,7 @@
         ? [comboText(el)]
         : el.value.trim()
           ? [el.value]
-          : chips.length
-            ? chips
-            : shownChoices(el);
+          : [...chips, ...shownChoices(el), besideText(el)].filter(Boolean);
     return shown.some((text) => text && M().matchOption([{ text, value: '' }], v) === 0);
   }
 
@@ -622,7 +640,7 @@
             .map((c) => dom().textOf(c))
             .filter(Boolean)
             .join(', ') ||
-          [...new Set([...keptChips(el), ...shownChoices(el)])].join(', ')
+          [...new Set([...keptChips(el), ...shownChoices(el), besideText(el)].filter(Boolean))].join(', ')
         );
       default: {
         const shown = partsValue(el);
@@ -690,6 +708,20 @@
     return owners.length > 0 && !Array.from(owners).some((o) => sameWidget(o, el));
   }
 
+  /**
+   * An open combobox whose listbox is a 0×0 box kept for screen readers (Ant Design's virtual lists name only the
+   * highlighted row and its neighbours there): the rows people see are in the popup around it. A listbox that is
+   * hidden (display: none) belongs to a closed menu.
+   */
+  function popupAround(lb, el) {
+    if (!lb.checkVisibility || !lb.checkVisibility({ checkVisibilityCSS: true })) return null;
+    for (let a = lb.parentElement, i = 0; a && i < 3 && a !== a.ownerDocument.body; a = a.parentElement, i++) {
+      if (a.contains(el)) return null;
+      if (dom().isVisible(a)) return a;
+    }
+    return null;
+  }
+
   function listboxFor(el) {
     const rootNode = el.getRootNode();
     const doc = el.ownerDocument;
@@ -701,6 +733,8 @@
     for (const id of ids) {
       const lb = (rootNode.getElementById && rootNode.getElementById(id)) || doc.getElementById(id);
       if (lb && dom().isVisible(lb) && !isChipList(lb)) return lb;
+      const around = lb && el.getAttribute('aria-expanded') === 'true' ? popupAround(lb, el) : null;
+      if (around) return around;
     }
     const comboLike =
       el.getAttribute('role') === 'combobox' ||
@@ -756,6 +790,9 @@
       });
     for (const sel of [OPTION_ROLES, MENUITEM_ROLES]) {
       const found = Array.from(lb.querySelectorAll(sel));
+      // Rows kept for screen readers only, none of them on screen (Ant Design's 0×0 role="listbox" naming the
+      // highlighted row and its neighbours): the rows people see and click are the other ones, whatever they carry.
+      if (found.length && !found.some((o) => dom().isVisible(o))) continue;
       if (found.length) return usable(found);
     }
     const lis = usable(Array.from(lb.querySelectorAll('li')));
@@ -910,7 +947,7 @@
     if (have.length >= 3 && have !== JTF.util.normalize(typed || '') && (want.includes(have) || have.includes(want)))
       return true;
     if (chipsOf(el).some((c) => JTF.util.normalize(dom().textOf(c)).includes(want))) return true;
-    const own = el.localName === 'input' ? '' : JTF.util.normalize(dom().textOf(el));
+    const own = el.localName === 'input' ? JTF.util.normalize(besideText(el)) : JTF.util.normalize(dom().textOf(el));
     return !!own && own.includes(want);
   }
 
@@ -1097,6 +1134,67 @@
   }
 
   /**
+   * A list that only has the rows in view in the page (Ant Design's virtual lists show ~10 of 60 countries): the
+   * element that scrolls it, when the rows it holds span much less than it scrolls through.
+   */
+  function virtualScroller(lb, opts) {
+    if (!lb || opts.length < 2) return null;
+    for (let n = opts[0].parentElement; n && n !== lb.parentElement; n = n.parentElement) {
+      if (n.scrollHeight <= n.clientHeight + 4) continue;
+      const span = opts[opts.length - 1].getBoundingClientRect().bottom - opts[0].getBoundingClientRect().top;
+      return span < n.scrollHeight * 0.7 ? n : null;
+    }
+    return null;
+  }
+
+  /** Scroll a virtual list down from the top a screenful at a time, until `visit(rows in view)` says stop. */
+  async function scrollThrough(el, box, visit) {
+    for (let i = 0, top = 0; i < 100; i++) {
+      const before = optionsKey(currentOptions(el));
+      const from = box.scrollTop;
+      box.scrollTop = top;
+      // The list draws the rows now in view once it hears the scroll.
+      for (let waited = 0; waited < 200 && box.scrollTop !== from; waited += 20) {
+        await sleep(20);
+        if (optionsKey(currentOptions(el)) !== before) break;
+      }
+      if (visit(currentOptions(el))) return true;
+      if (box.scrollTop + box.clientHeight >= box.scrollHeight - 2) return false;
+      top = box.scrollTop + Math.max(20, Math.floor(box.clientHeight * 0.8));
+    }
+    return false;
+  }
+
+  /** Every row of a virtual list, top to bottom, as describeOptions gives them. */
+  async function readVirtualList(el, box) {
+    const seen = [];
+    await scrollThrough(el, box, (rows) => {
+      for (const d of describeOptions(rows)) if (!seen.some((s) => s.text === d.text)) seen.push(d);
+      return false;
+    });
+    return seen;
+  }
+
+  /**
+   * In a virtual list nothing can be typed into, the row for `v`: every row is read by scrolling through the list,
+   * the best one judged among them all (never the best of the ten in view), then scrolled back into view.
+   * Returns { opts, idx } with idx -1 when none fits.
+   */
+  async function findInVirtualList(el, box, v, already) {
+    const pool = (await readVirtualList(el, box)).filter((s) => !already.includes(s.text));
+    const want = M().matchOption(pool, v);
+    let opts = [];
+    let idx = -1;
+    if (want >= 0)
+      await scrollThrough(el, box, (rows) => {
+        opts = rows;
+        idx = describeOptions(rows).findIndex((d) => d.text === pool[want].text);
+        return idx >= 0;
+      });
+    return { opts, idx };
+  }
+
+  /**
    * Pick one option for `v` in an open (or openable) dropdown, skipping options already chosen.
    * Returns { chosen: text | null, opts, multi } — `multi` is read while the menu is open.
    */
@@ -1125,6 +1223,8 @@
       return idx == null ? -1 : idx;
     };
     let idx = pick();
+    const virtual = idx < 0 && !searchable && !v.many ? virtualScroller(listboxFor(el), opts) : null;
+    if (virtual) ({ opts, idx } = await findInVirtualList(el, virtual, v, already));
     // Statements and slots are judged against the whole list as it opened: typing would only hide some.
     if (idx < 0 && box && !v.many) {
       const { full, narrow } = searchQueries(v);
@@ -1222,7 +1322,9 @@
     try {
       const opts = await openMenu(el, searchable);
       const multi = isMulti(el);
-      const options = describeOptions(opts)
+      // A virtual list has only the rows in view in the page: scroll through it for the rest.
+      const box = virtualScroller(listboxFor(el), opts);
+      const options = (box ? await readVirtualList(el, box) : describeOptions(opts))
         .map((o) => JTF.util.cleanLabel(o.text, 200))
         .filter((t) => t && !M().isPlaceholder(JTF.util.normalize(t)) && !/^no (options|results)/i.test(t));
       return { options: [...new Set(options)], multi };
@@ -1242,7 +1344,10 @@
     // A menu of ticks ("How did you hear about us?" on Teamtailor) takes several.
     if (lb && lb.querySelector('[role="menuitemcheckbox"]')) return true;
     if (el.getAttribute('aria-multiselectable') === 'true') return true;
-    return !!el.closest('[class*="is-multi" i], [class*="isMulti" i], [class*="--multi" i]');
+    // Ant Design's mode="multiple" says so only in its class ("ant-select-multiple"): no aria-multiselectable.
+    return !!el.closest(
+      '[class*="is-multi" i], [class*="isMulti" i], [class*="--multi" i], [class*="select-multiple" i]',
+    );
   }
 
   /* ------------------------------------------------------------ popups */
