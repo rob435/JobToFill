@@ -128,6 +128,13 @@ function signupGroup(data, settings, save) {
     ),
   );
   const fallback = secretInput(data.defaultPassword, (v) => save((d) => (d.defaultPassword = v)), 'defaultPassword');
+  // Saved as you type too (a "change" never comes if the tab is closed straight after typing), without
+  // re-drawing the section under your cursor.
+  let typing = null;
+  fallback.input.addEventListener('input', () => {
+    clearTimeout(typing);
+    typing = setTimeout(() => vault.update((d) => (d.defaultPassword = fallback.input.value)).catch(() => {}), 500);
+  });
   fallback.row.append(
     el('button', {
       type: 'button',

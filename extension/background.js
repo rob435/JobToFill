@@ -227,7 +227,7 @@ async function fillTab(tabId, options) {
   // A locked vault: offer to unlock it, and fill the passwords (and carry on) once it is.
   const actions = [];
   if (summary.vaultNeeded === 'locked' && top && top.url) {
-    waitForVault(tabId, top.url, opts);
+    await waitForVault(tabId, top.url, opts);
     actions.push({ label: 'Unlock', action: 'unlock' });
   } else if (summary.vaultNeeded === 'none') actions.push({ label: 'Set up', action: 'setup-vault' });
   if (opts.toast && settings.toast !== false)
@@ -1614,6 +1614,10 @@ async function forgetRemembered(flow) {
 
 /** Click one of the page's account controls (after the toast): record it, or end the flow and say why not. */
 function clickStep(tabId, flow, page, which, line, after) {
+  // The same click on the same kind of page moments ago: the page hasn't answered it yet. Never click twice.
+  const last = flow.clicks[flow.clicks.length - 1];
+  if (last && last.which === which && last.kind === page.kind && Date.now() - last.at < 30e3)
+    return { lines: [], clicked: flow.clicks.map((c) => c.label) };
   flow.clicks.push({
     which,
     label: which === 'to-signup' ? page.toSignup : which === 'to-signin' ? page.toSignin : page.submit,
@@ -1635,6 +1639,9 @@ function clickStep(tabId, flow, page, which, line, after) {
           flow.remembered = await rememberDefault(tabId, page).catch(() => null);
           if (flow.remembered) await putFlow(flow);
         }
+        // Pages that change in place (Workday's sign-in turning into its sign-up, an error under the form) have no
+        // load to continue from: look again shortly. A real page load reschedules this.
+        scheduleFlow(tabId, which === 'submit' ? 3000 : 2000);
         return;
       }
       await endFlow(tabId);
@@ -1810,8 +1817,12 @@ function scheduleFlow(tabId, delay) {
 }
 
 async function continueFlow(tabId) {
+  // Only after one of the flow's own clicks (a wait it was in ended with the page it was on).
   const flow = await getFlow(tabId);
-  if (!flow || !flow.clicks.length || flow.waiting) return;
+  if (!flow || !flow.clicks.length) return;
+  // Mid-navigation: the page's "complete" brings this back.
+  const tab = await api.tabs.get(tabId).catch(() => null);
+  if (!tab || tab.status === 'loading') return;
   // Pages built by scripts (Workday) show their form a moment after loading.
   for (let i = 0; i < 4; i++) {
     const summary = await fillTab(tabId, { toast: true, flow: true, consents: flow.quick || undefined, quick: false });
@@ -1844,7 +1855,7 @@ api.tabs.onUpdated.addListener(async (tabId, info, tab) => {
 api.tabs.onRemoved.addListener((tabId) => {
   endFlow(tabId);
   lastSecrets.delete(tabId);
-  vaultWaits.delete(tabId);
+  forgetVaultWait(tabId).catch(() => {});
 });
 
 /** The page's CAPTCHA was solved (or its terms accepted): check the page again and take the next step. */
@@ -1908,18 +1919,41 @@ async function otpFilled(msg, sender) {
 // tabId -> a fill that skipped passwords because the vault was locked: { at, url, flow, quick }. When the vault is
 // unlocked (from the toast's "Unlock", the toolbar popup or settings) within a few minutes, that page is filled
 // again, which puts the passwords in and carries the account flow on.
-const vaultWaits = new Map();
+// Kept in session storage, so a worker restarted while you type the master password still knows.
 const VAULT_WAIT = 5 * 60e3;
 
-function waitForVault(tabId, url, opts) {
-  vaultWaits.set(tabId, { at: Date.now(), url: url.split('#')[0], flow: !!opts.flow, quick: !!opts.quick });
+async function waitForVault(tabId, url, opts) {
+  const waits = await sessionGet('vaultWaits', {});
+  waits[tabId] = { at: Date.now(), url: url.split('#')[0], flow: !!opts.flow, quick: !!opts.quick };
+  await sessionArea()
+    .set({ vaultWaits: waits })
+    .catch(() => {});
 }
 
-async function resumeAfterUnlock() {
-  const waits = [...vaultWaits.entries()];
-  vaultWaits.clear();
+async function forgetVaultWait(tabId) {
+  const waits = await sessionGet('vaultWaits', {});
+  if (!(tabId in waits)) return;
+  delete waits[tabId];
+  await sessionArea()
+    .set({ vaultWaits: waits })
+    .catch(() => {});
+}
+
+// The popup's message and the storage change both say "unlocked": one resume serves both.
+let resuming = null;
+function resumeAfterUnlock() {
+  if (!resuming) resuming = resumeWaiting().finally(() => setTimeout(() => (resuming = null), 2000));
+  return resuming;
+}
+
+async function resumeWaiting() {
+  const waits = await sessionGet('vaultWaits', {});
+  await sessionArea()
+    .remove('vaultWaits')
+    .catch(() => {});
   let resumed = 0;
-  for (const [tabId, w] of waits) {
+  for (const [id, w] of Object.entries(waits)) {
+    const tabId = Number(id);
     if (Date.now() - w.at > VAULT_WAIT) continue;
     const tab = await api.tabs.get(tabId).catch(() => null);
     if (!tab || (tab.url || '').split('#')[0] !== w.url) continue;
@@ -1930,8 +1964,7 @@ async function resumeAfterUnlock() {
 }
 
 api.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === 'session' && changes.vaultKey && changes.vaultKey.newValue && vaultWaits.size)
-    resumeAfterUnlock().catch(() => {});
+  if (areaName === 'session' && changes.vaultKey && changes.vaultKey.newValue) resumeAfterUnlock().catch(() => {});
 });
 
 /**
