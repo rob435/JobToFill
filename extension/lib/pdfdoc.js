@@ -7,7 +7,7 @@
  *
  * letter = { name, contact: [...], date, salutation, paragraphs: [...], closing, signature }
  * cv     = { name, contact: [...], sections: [{ title, entries: [{ heading, tagline, right, subheading, subright,
- *            tech, bullets, text }], lines: [{ label, text }] }] }
+ *            bullets, text }], lines: [{ label, text }] }] }
  *
  * The letter reproduces a LaTeX article (11pt, 1in margins, \parskip, Computer Modern) measured from a
  * real one: Latin Modern fonts embedded as TrueType, Knuth–Plass paragraph breaking with TeX's
@@ -1131,7 +1131,6 @@
     itemsep: 1 * PT,
     topsep: 1 * PT,
     entryGap: 4 * PT, // \vspace{4pt} between entries
-    techScale: 9 / 10.95, // a project's tech line: \footnotesize bold capitals
     labelWidth: 5.475 * PT, // natural width of the bullet label
     labelSep: 5 * PT,
     hfillGap: 10, // least room kept between a row's left and right parts
@@ -1244,11 +1243,6 @@
         if (left.length || e.right) row(left, e.right, italic);
         if (e.subheading || e.subright)
           row(e.subheading ? [{ text: e.subheading, ...regular }] : [], e.subright, italic);
-        if (e.tech && e.tech.length) {
-          const tech = e.tech.map((t) => String(t).toUpperCase()).join(' · ');
-          const techRun = { font: f.bold, size: size * CV.techScale };
-          put(setParagraph([{ text: tech, ...techRun }], width, ctx, { justify: false }), m);
-        }
         if (e.text) put(setParagraph([{ text: e.text, ...regular }], width, ctx), m);
         const bullets = e.bullets || [];
         const indent = (CV.labelWidth + CV.labelSep) * step.size;

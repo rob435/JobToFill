@@ -12,11 +12,10 @@
  *   cv = { name, contact: [item], sections: [section] }
  *   item    = "07386 526574" | "me@example.com" | { text, href }       (emails and bare domains link by themselves)
  *   section = { title, entryGap?, entries: [entry], lines: [{ label?, text }] }
- *   entry   = { heading?, tagline?, right?, subheading?, subright?, tech?: [string], text?, bullets?: [string] }
+ *   entry   = { heading?, tagline?, right?, subheading?, subright?, text?, bullets?: [string] }
  *
  *   \noindent \textbf{heading} -- tagline \hfill \textit{right} \\
- *   subheading \hfill \textit{subright} \\
- *   {\footnotesize\bfseries PYTHON $\cdot$ SQLITE}          (tech: a project's technologies, small bold capitals)
+ *   subheading \hfill \textit{subright}
  *   \begin{itemize} \item bullets... \end{itemize}
  *
  * `lines` are the "\noindent \textbf{Label:} text \\" rows of Achievements and Skills. entryGap is the
@@ -60,15 +59,6 @@
 
   const str = (v) => (v == null ? '' : String(v)).replace(/\s+/g, ' ').trim();
 
-  /** A tech line's items: from a list, or text split at commas, semicolons, middle dots or bars. */
-  function techList(value) {
-    const raw = Array.isArray(value) ? value : String(value == null ? '' : value).split(/\s*[,;·•|]\s*/);
-    const out = [];
-    for (const t of raw.map(str).filter(Boolean))
-      if (!out.some((o) => o.toLowerCase() === t.toLowerCase())) out.push(t);
-    return out;
-  }
-
   /** Canonical shape: trimmed strings, empty fields dropped, every section with `entries` and `lines`. */
   function normalize(input) {
     const cv = input && typeof input === 'object' ? input : {};
@@ -87,8 +77,6 @@
         const v = str(e && e[k]);
         if (v) out[k] = v;
       }
-      const tech = techList(e && e.tech);
-      if (tech.length) out.tech = tech;
       const bullets = (Array.isArray(e && e.bullets) ? e.bullets : []).map(str).filter(Boolean);
       if (bullets.length) out.bullets = bullets;
       return out;
@@ -523,19 +511,6 @@
     return elements;
   }
 
-  /** "{\footnotesize\bfseries PYTHON $\cdot$ SQLITE}" under a heading: all bold capitals. */
-  function isTechLine(runs) {
-    const text = plain(runs);
-    const letters = text.replace(/[^\p{L}]/gu, '');
-    return (
-      !!letters &&
-      text.length <= 160 &&
-      letters === letters.toUpperCase() &&
-      runs.every((r) => r.b || !r.s.trim()) &&
-      (/·/.test(text) || !/\s/.test(text))
-    );
-  }
-
   /** A line's bold lead-in and what follows it. */
   function splitBold(runs) {
     let k = 0;
@@ -575,10 +550,7 @@
             ? { label: bold.replace(/:$/, '').trim(), text: plain(rest).replace(/^:\s*/, '') }
             : null;
         const continuing = el.afterBr && !el.noindent && entry && !label;
-        if (continuing && !el.hfill && !entry.tech && !entry.text && isTechLine(el.left)) {
-          entry.tech = techList(plain(el.left));
-          stage = 1;
-        } else if (label) {
+        if (label) {
           lines.push(label);
           entry = null;
           pending = null;
@@ -721,10 +693,6 @@
         .join(' ');
       rows.push(rows.length ? row : `\\noindent ${row}`);
     }
-    if (e.tech && e.tech.length) {
-      const row = `{\\footnotesize\\bfseries ${e.tech.map((t) => escape(t.toUpperCase())).join(' $\\cdot$ ')}}`;
-      rows.push(rows.length ? row : `\\noindent ${row}`);
-    }
     if (e.text) rows.push(rows.length ? lead(escape(e.text)) : `\\noindent ${escape(e.text)}`);
     const out = [rows.join(' \\\\\n')];
     if (e.bullets && e.bullets.length)
@@ -782,7 +750,7 @@
     return out;
   }
 
-  const cvtex = { PREAMBLE, DEFAULT_ENTRY_GAP, parse, render, normalize, summarize, escape, linkFor, techList };
+  const cvtex = { PREAMBLE, DEFAULT_ENTRY_GAP, parse, render, normalize, summarize, escape, linkFor };
   JTF.cvtex = cvtex;
   if (typeof module === 'object' && module.exports) module.exports = cvtex;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
