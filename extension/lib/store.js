@@ -10,11 +10,14 @@
  *   vault         encrypted blob, managed by vault.js
  *   backupInfo    { at, path, error, paused, previous, dismissed }  the automatic backup file (background.js)
  *   kit:<id>      cover letter material per profile: { notes, samples: [{ id, name, text }], contact, closing,
- *                 spelling, paper, cv: { updatedAt, text } (text read from the resume file) }
+ *                 spelling, paper, cv: { updatedAt, text } (text read from the resume file),
+ *                 cvTex (the user's CV as LaTeX, as pasted) and cvMaster (cvtex.parse() of it: the model tailoring edits) }
  *   aiKeys        the AI providers' API keys ({ openrouter, deepseek, custom }); in backups unless switched off
  *   letters       generated letters, newest first (see saveLetter)
  *   answers       answers the AI wrote, per application, newest first (see saveAnswers)
  *   (session) tabjob:<tabId>  the job found for the application open in a tab (see setTabJob)
+ *   quickApply    the one result of the last "Quick apply" (see saveQuickApply), and quickStatus, its progress.
+ *                 In storage.session where there is one (memory only), else storage.local; never in a backup.
  */
 (function (root) {
   'use strict';
@@ -49,6 +52,8 @@
     paper: 'a4',
     cv: null,
     answerNotes: '',
+    cvTex: '',
+    cvMaster: null,
   };
 
   const DOC_TYPES = ['resume', 'coverLetter', 'transcript'];
@@ -277,6 +282,71 @@
   });
 
   const LETTER_TTL = 3 * 86400000;
+
+  /* ------------------------------------------------------------ quick apply */
+
+  const QUICK_KEYS = ['quickApply', 'quickStatus'];
+  const quickAreas = () => {
+    const s = JTF.api.storage;
+    return s.session ? [s.session, s.local] : [s.local];
+  };
+
+  /**
+   * The result of the last Quick apply: { createdAt, tabUrl, company, role, letter: { text, pdf, name },
+   * cv: { pdf, name, tex, changes } | null, note } (pdf: data URL). There is only ever one: saving replaces it.
+   * It lives in memory-only session storage where the browser has it, so it is gone when the browser closes.
+   */
+  async function getQuickApply() {
+    for (const a of quickAreas()) {
+      const got = (await a.get('quickApply').catch(() => ({}))).quickApply;
+      if (got) return got;
+    }
+    return null;
+  }
+
+  const saveQuickApply = exclusive(async function saveQuickApply(record) {
+    const [first, ...rest] = quickAreas();
+    const entry = Object.assign({ createdAt: Date.now() }, record);
+    for (const a of rest) await a.remove('quickApply').catch(() => {});
+    try {
+      await first.set({ quickApply: entry });
+    } catch (err) {
+      // Session storage is small; local storage has room for two PDFs.
+      for (const a of rest) await a.set({ quickApply: entry });
+      if (!rest.length) throw err;
+    }
+    return entry;
+  });
+
+  /** Quick apply's progress: { state: 'running' | 'done' | 'error', message, tabId, studioTabId, at }. */
+  async function getQuickStatus() {
+    return (
+      (
+        await quickAreas()[0]
+          .get('quickStatus')
+          .catch(() => ({}))
+      ).quickStatus || null
+    );
+  }
+
+  async function setQuickStatus(status) {
+    const next = Object.assign({}, status, { at: Date.now() });
+    await quickAreas()[0].set({ quickStatus: next });
+    return next;
+  }
+
+  /** Letters saved by Quick apply (flagged `quick`): they exist only so the form fill can attach them. */
+  const removeQuickLetters = exclusive(async function removeQuickLetters() {
+    const letters = await getLetters();
+    const keep = letters.filter((l) => !l.quick);
+    if (keep.length !== letters.length) await area().set({ letters: keep });
+  });
+
+  /** Forget the last Quick apply: its record, its progress and the letter kept for the form. */
+  async function clearQuickApply() {
+    for (const a of quickAreas()) await a.remove(QUICK_KEYS).catch(() => {});
+    await removeQuickLetters();
+  }
 
   /**
    * The letter chosen for the application open in this tab: the same page, a page of the same job (its id is
@@ -618,6 +688,12 @@
     getTabJob,
     setTabJob,
     otherJob,
+    getQuickApply,
+    saveQuickApply,
+    getQuickStatus,
+    setQuickStatus,
+    removeQuickLetters,
+    clearQuickApply,
     getHistory,
     addHistory,
     clearHistory,

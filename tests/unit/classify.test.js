@@ -23,6 +23,22 @@ test('labels on text inputs', () => {
     'Legal name': 'name.full',
     'Preferred First Name': 'name.preferred',
     Nickname: 'name.preferred',
+    'Preferred name': 'name.preferred',
+    'Preferred full name': 'name.preferred',
+    'Preferred Name (optional)': 'name.preferred',
+    'Name you go by': 'name.preferred',
+    'Known as': 'name.preferred',
+    'Display name': 'name.preferred',
+    'What should we call you?': 'name.preferred',
+    'Nom d’usage': 'name.preferred',
+    'Bevorzugter Name': 'name.preferred',
+    'Nombre preferido': 'name.preferred',
+    'Gender pronouns': 'pronouns',
+    'Preferred pronouns': 'pronouns',
+    'Legal first name': 'name.first',
+    'Full legal name': 'name.full',
+    'Name as on passport': 'name.full',
+    'Legal last name': 'name.last',
     Email: 'email',
     'E-mail address': 'email',
     'Confirm email': 'email',
@@ -1065,4 +1081,13 @@ test('Hong Kong and EU personal details: Chinese / English names, ID cards, Germ
     Disponibilité: 'job.startDate',
   };
   for (const [label, want] of Object.entries(cases)) assert.equal(typeOf(desc(label)), want, label);
+});
+
+test('public function / public trust questions are the government-official answer', () => {
+  for (const q of [
+    'Do you hold or have you held a prominent public function?',
+    'Have you ever held a position of public trust?',
+    'Are you a politically exposed person (PEP)?',
+  ])
+    assert.equal(typeOf(desc(q, { kind: 'radio' })), 'compliance.government', q);
 });

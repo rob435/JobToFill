@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Last quick apply · JobToFill</title>
+    <link rel="icon" href="../icons/icon32.png" />
+    <link rel="stylesheet" href="../ui/theme.css" />
+    <link rel="stylesheet" href="quick.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <img src="../icons/icon32.png" alt="" width="24" height="24" />
+      <strong>Last quick apply</strong>
+      <span id="when" class="muted small"></span>
+      <span class="grow"></span>
+      <button id="clear" class="small" type="button" hidden>Clear</button>
+    </header>
+
+    <main>
+      <section id="empty" class="card" hidden>
+        <h2>Nothing stored</h2>
+        <p class="muted">
+          There is no quick apply to show. After you use <strong>Quick apply</strong> in the toolbar popup, its letter and CV appear here
+          until you run another one, clear them, or close the browser.
+        </p>
+      </section>
+
+      <section id="result" hidden>
+        <div class="summary">
+          <div>
+            <div id="job" class="job-title"></div>
+            <div id="site" class="muted small"></div>
+          </div>
+          <p id="note" class="note small" hidden></p>
+        </div>
+        <div class="bar">
+          <div class="tabs" role="tablist">
+            <button id="tab-letter" role="tab" type="button" aria-selected="true">Letter</button>
+            <button id="tab-cv" role="tab" type="button" aria-selected="false">CV</button>
+          </div>
+          <span class="grow"></span>
+          <button id="download-pdf" class="small" type="button">Download PDF</button>
+          <button id="download-tex" class="small" type="button" hidden>Download .tex</button>
+        </div>
+        <iframe id="preview" title="PDF preview"></iframe>
+        <div id="no-cv" class="preview-empty muted" hidden>No tailored CV was made for this application.</div>
+        <div id="changes" class="card" hidden>
+          <h2>What changed in the CV</h2>
+          <ul id="changes-list"></ul>
+        </div>
+      </section>
+    </main>
+
+    <script src="../lib/util.js"></script>
+    <script src="../lib/store.js"></script>
+    <script type="module" src="quick.js"></script>
+  </body>
+</html>

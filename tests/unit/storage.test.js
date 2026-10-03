@@ -221,6 +221,29 @@ test('store: cover letter material is per profile, exported, and the API key is 
   assert.equal((await store.exportData({ keys: true })).aiKeys.deepseek, 'sk-secret');
 });
 
+test('store: the master CV (LaTeX source and parsed model) is kept per profile and travels in backups', async () => {
+  installChrome();
+  const { profile } = await store.getActive();
+  assert.equal((await store.getKit(profile.id)).cvMaster, null, 'none by default');
+  assert.equal((await store.getKit(profile.id)).cvTex, '');
+  const cvMaster = {
+    name: 'Ada Example',
+    contact: ['ada@example.com'],
+    sections: [{ title: 'Skills', entries: [], lines: [{ label: 'Tools', text: 'Python' }] }],
+  };
+  await store.saveKit(profile.id, { cvTex: '\\section{Skills}', cvMaster });
+  await store.saveKit(profile.id, { notes: 'later edits keep it' });
+  assert.deepEqual((await store.getKit(profile.id)).cvMaster, cvMaster);
+  const backup = JSON.parse(JSON.stringify(await store.exportData()));
+  assert.deepEqual(backup.kits[`kit:${profile.id}`].cvMaster, cvMaster);
+  assert.equal(backup.kits[`kit:${profile.id}`].cvTex, '\\section{Skills}');
+  installChrome();
+  await store.importData(backup);
+  assert.deepEqual((await store.getKit(profile.id)).cvMaster, cvMaster);
+  await store.saveKit(profile.id, { cvTex: '', cvMaster: null });
+  assert.equal((await store.getKit(profile.id)).cvMaster, null, 'and can be removed');
+});
+
 test('store: each AI provider keeps its own key and model; another key stands in when one fails', async () => {
   installChrome();
   // Older versions kept one key and one model, for the provider chosen then.
@@ -369,4 +392,68 @@ test('AI answers are kept per application: never reused for another job in the s
     (await store.answerBank('p')).map((b) => b.company),
     ['Figma', 'Figma'],
   );
+});
+
+test('store: quick apply keeps one temporary result, replaced each time, in session memory, never in a backup', async () => {
+  assert.equal(await store.getQuickApply(), null);
+  await store.saveQuickApply({
+    company: 'Acme',
+    letter: { text: 'one', pdf: 'data:application/pdf;base64,AA==', name: 'a.pdf' },
+  });
+  await store.saveQuickApply({
+    company: 'Globex',
+    letter: { text: 'two', pdf: 'data:application/pdf;base64,AA==', name: 'b.pdf' },
+    cv: null,
+  });
+  const got = await store.getQuickApply();
+  assert.equal(got.company, 'Globex', 'the second replaced the first');
+  assert.equal(got.letter.text, 'two');
+  assert.ok(got.createdAt > 0);
+  assert.ok('quickApply' in chrome.storage.session._dump());
+  assert.ok(!('quickApply' in chrome.storage.local._dump()), 'not written to disk');
+
+  await store.setQuickStatus({ state: 'running', message: 'writing letter' });
+  assert.equal((await store.getQuickStatus()).state, 'running');
+
+  // A profile with data, so there is something to export.
+  const { profile } = await store.getActive();
+  profile.personal.firstName = 'Ada';
+  await store.saveProfile(profile);
+  const backup = JSON.stringify(await store.exportData());
+  assert.ok(!backup.includes('Globex') && !backup.includes('quickApply') && !backup.includes('quickStatus'));
+
+  // Clearing removes the record, the progress and the letter kept only for the form.
+  await store.saveLetter({ id: 'q1', quick: true, text: 'x' });
+  await store.saveLetter({ id: 'keep', text: 'mine' });
+  await store.clearQuickApply();
+  assert.equal(await store.getQuickApply(), null);
+  assert.equal(await store.getQuickStatus(), null);
+  assert.deepEqual(
+    (await store.getLetters()).map((l) => l.id),
+    ['keep'],
+  );
+});
+
+test('store: quick apply falls back to local storage without session storage', async () => {
+  const session = chrome.storage.session;
+  delete chrome.storage.session;
+  try {
+    await store.saveQuickApply({ company: 'Acme' });
+    await store.saveQuickApply({ company: 'Initech' });
+    assert.equal((await store.getQuickApply()).company, 'Initech');
+    await store.clearQuickApply();
+    assert.equal(await store.getQuickApply(), null);
+  } finally {
+    chrome.storage.session = session;
+  }
+});
+
+test('store: extraDetails survives save, export and import', async () => {
+  const { profile: p } = await store.getActive();
+  p.extraDetails = 'No criminal convictions.';
+  await store.saveProfile(p);
+  const exported = await store.exportData();
+  assert.equal(exported.profiles[p.id].extraDetails, 'No criminal convictions.');
+  await store.importData(JSON.parse(JSON.stringify(exported)));
+  assert.equal((await store.getActive()).profile.extraDetails, 'No criminal convictions.');
 });

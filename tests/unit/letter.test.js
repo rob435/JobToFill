@@ -504,3 +504,121 @@ test('ai: DeepSeek’s own API gets replies it accepts', async () => {
   assert.equal(fetch.seen[0].body.model, 'deepseek-chat');
   assert.equal(fetch.seen[0].url, 'https://api.deepseek.com/chat/completions');
 });
+
+/* ------------------------------------------------------------ master CV */
+
+const fs = require('node:fs');
+const path = require('node:path');
+require('../../extension/lib/cvtex.js');
+const { cvtex } = JTF;
+const MASTER = cvtex.parse(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'cv', 'robin-li.tex'), 'utf8')).cv;
+
+test('letter: extra details from the profile reach the candidate material', () => {
+  const withExtra = { ...profile, extraDetails: 'Won the 2024 regional robotics cup with a team of six.' };
+  assert.match(
+    L.materials(withExtra, kit, ''),
+    /Extra details from the candidate:\nWon the 2024 regional robotics cup/,
+  );
+  assert.doesNotMatch(L.materials(profile, kit, ''), /Extra details/);
+  assert.doesNotMatch(L.materials({ ...profile, extraDetails: undefined }, kit, ''), /Extra details/);
+});
+
+test('letter: enforceCv restores every frozen field of the master, whatever the model writes', () => {
+  const evil = structuredClone(MASTER);
+  evil.name = 'Someone Else';
+  evil.contact = ['evil@example.com'];
+  evil.sections[0].entries[0].heading = 'Harvard University';
+  evil.sections[0].entries[0].subright = 'Sep 2020 – Jun 2024';
+  evil.sections[1].entries[0].subheading = 'Senior Technology Developer';
+  evil.sections[1].entries[0].right = 'London, England';
+  evil.sections[1].entries[0].bullets = ['Reworded a bullet.'];
+  evil.sections[2].entries[0].right = 'Rust, Go, Kubernetes'; // a tech list may be reordered, not changed
+  evil.sections[2].entries[1].right = 'Systemd, Linux, WebSockets, Python'; // a reordering is fine
+  evil.sections[3].lines[0].text = 'World Chess Champion';
+  evil.sections[4].lines[2].text = 'French (Native)';
+  evil.sections[4].lines[0].text = 'NumPy, Python, pandas, SQL, Bash'; // reordered skills are fine
+  evil.sections[4].lines[1].text = 'Git, Rust'; // new skill: no
+  evil.sections.splice(0, 1); // dropping a whole section: no
+  const { cv, restored } = L.enforceCv(MASTER, evil);
+  assert.deepEqual(L.frozenDiffs(MASTER, cv), []);
+  assert.equal(cv.name, 'Robin Li');
+  assert.deepEqual(cv.contact, MASTER.contact);
+  assert.equal(cv.sections.length, MASTER.sections.length, 'no section is lost');
+  const byTitle = (t) => cv.sections.find((s) => s.title === t);
+  assert.equal(byTitle('Education').entries[0].heading, 'University of Glasgow');
+  assert.equal(byTitle('Experience').entries[0].subheading, 'Technology Developer Spring Week');
+  assert.equal(byTitle('Experience').entries[0].right, 'Glasgow, Scotland');
+  assert.deepEqual(
+    byTitle('Experience').entries[0].bullets,
+    ['Reworded a bullet.'],
+    'bullets are the model’s to reword',
+  );
+  assert.equal(byTitle('Projects').entries[0].right, 'Python, eBay API, SQLite, Telegram');
+  assert.equal(byTitle('Projects').entries[1].right, 'Systemd, Linux, WebSockets, Python');
+  assert.deepEqual(byTitle('Achievements').lines, MASTER.sections[3].lines);
+  assert.equal(byTitle('Skills').lines[2].text, 'English (Native), Mandarin (Proficient), Spanish (Conversational)');
+  assert.equal(byTitle('Skills').lines[0].text, 'NumPy, Python, pandas, SQL, Bash');
+  assert.equal(byTitle('Skills').lines[1].text, MASTER.sections[4].lines[1].text);
+  assert.ok(restored.length >= 5);
+  // A malformed reply still gives the whole master back.
+  assert.deepEqual(L.enforceCv(MASTER, { sections: 'nonsense' }).cv, MASTER);
+});
+
+test('letter: tailor() edits the master CV, keeps frozen fields byte-identical and still fact-checks', async () => {
+  const withExtra = { ...profile, extraDetails: 'Maintains an open-source CLI used by 40 people.' };
+  const reply = (bullets, extraSkill) => {
+    const cv = structuredClone(MASTER);
+    cv.name = 'Robin L.';
+    cv.sections[1].entries[0].heading = 'Barclays Capital';
+    cv.sections[1].entries[0].subright = 'Mar 2027';
+    cv.sections[1].entries[0].bullets = bullets;
+    cv.sections[2].entries.reverse();
+    cv.sections[4].lines[0].text += extraSkill;
+    return { ...cv, changes: ['Projects: Market Tape first for data pipeline work'] };
+  };
+  const { chat, calls } = scripted([
+    reply(['Built dashboards used by 900 analysts in Rust.'], ''), // invented number and skill
+    reply(
+      [
+        'Built a personal finance dashboard in Python with a team of four in a 24-hour hackathon.',
+        'Cleaned around 5,000 transactions with pandas and wrote regex rules to categorise them.',
+      ],
+      '',
+    ),
+  ]);
+  const analysis = {
+    company: 'Acme',
+    role: 'Analyst',
+    keywords: ['Python', 'data pipeline', 'Kafka'],
+    requirements: [],
+  };
+  const result = await L.tailor(
+    chat,
+    { profile: withExtra, kit: { ...kit, cvMaster: MASTER }, cvText: '', analysis },
+    {},
+  );
+  assert.equal(calls.length, 2, 'the first reply invented facts and was sent back');
+  assert.match(calls[0].messages[1].content, /"heading":"Barclays"/, 'the model sees the master as JSON');
+  assert.match(calls[0].messages[1].content, /Extra details from the candidate:\nMaintains an open-source CLI/);
+  assert.doesNotMatch(calls[0].messages[1].content, /Barclays Capital/);
+  assert.deepEqual(result.check.errors, []);
+  assert.deepEqual(L.frozenDiffs(MASTER, result.cv), []);
+  assert.equal(result.cv.name, 'Robin Li');
+  assert.equal(result.cv.sections[1].entries[0].subright, 'Mar 2026');
+  assert.equal(result.cv.sections[2].entries[0].heading, 'Market Tape', 'entries may be reordered');
+  assert.equal(result.cv.sections[1].entries[0].bullets.length, 2);
+  assert.ok(result.restored.length > 0);
+  assert.deepEqual(result.after.missing, ['data pipeline', 'Kafka']);
+  // The tailored CV renders as LaTeX and parses back to the same thing.
+  assert.deepEqual(cvtex.parse(cvtex.render(result.cv)).cv, cvtex.normalize(result.cv));
+});
+
+test('letter: tailor() without a master still rebuilds the CV from the file text', async () => {
+  const cvText = 'Ada Lovelace\n'.repeat(1) + 'Skills: Python, SQL, Excel\n'.repeat(30);
+  const { chat, calls } = scripted([
+    { sections: [{ title: 'Skills', lines: [{ label: 'Tools', text: 'Python, SQL' }] }] },
+  ]);
+  const result = await L.tailor(chat, { profile, kit, cvText, analysis: { keywords: ['Python'], requirements: [] } });
+  assert.equal(result.cv.name, 'Ada Lovelace');
+  assert.match(calls[0].messages[1].content, /text extracted from their file/);
+});

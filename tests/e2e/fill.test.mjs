@@ -828,3 +828,29 @@ test('questions that appear after an answer are filled too: ethnic background, "
     await h.setProfile({ eeo: original.eeo, compliance: original.compliance });
   }
 });
+
+test('Oracle-style country comboboxes and nickname boxes: aliases, mouse-only and keyboard-only lists', async () => {
+  const original = await h.profile();
+  await h.setProfile({
+    personal: { firstName: 'Ada', lastName: 'Lovelace', preferredName: 'Countess' },
+    address: { country: 'United Kingdom' },
+  });
+  try {
+    const page = await h.open('oracle-combobox.html');
+    const r = await h.fill(page);
+    assert.equal(r.error, undefined);
+    const picked = (id) => page.$eval(`#${id}`, (i) => [i.value, i.dataset.picked || '']);
+    assert.deepEqual(await picked('country-a'), [
+      'United Kingdom of Great Britain and Northern Ireland',
+      'United Kingdom of Great Britain and Northern Ireland',
+    ]);
+    assert.deepEqual(await picked('country-b'), ['United Kingdom (GB)', 'United Kingdom (GB)']);
+    assert.deepEqual(await picked('country-c'), ['Great Britain', 'Great Britain']);
+    assert.equal(await value(page, '#preferred-name'), 'Ada Lovelace', 'legal name, never the profile nickname');
+    assert.equal(await value(page, '#preferred-full'), 'Ada Lovelace');
+    assert.equal(await value(page, '#legal-first'), 'Ada');
+    await page.close();
+  } finally {
+    await h.setProfile(original);
+  }
+});

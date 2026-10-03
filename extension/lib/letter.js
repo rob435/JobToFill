@@ -150,6 +150,8 @@
     if (profile.languages) out.push(`Languages: ${profile.languages}`);
     if (profile.summary) out.push('', `Summary: ${profile.summary}`);
     if (kit && kit.notes && kit.notes.trim()) out.push('', 'Notes from the candidate:', kit.notes.trim());
+    const extra = profile.extraDetails == null ? '' : String(profile.extraDetails).trim();
+    if (extra) out.push('', 'Extra details from the candidate:', clip(extra, 4000));
     if (cvText && cvText.trim()) out.push('', 'CV:', clip(cvText, 12000));
     return out.join('\n').trim();
   }
@@ -158,6 +160,7 @@
   function hasSubstance(profile, kit, cvText) {
     if (cvText && words(cvText) > 60) return true;
     if (kit && words(kit.notes) > 40) return true;
+    if (words(profile.extraDetails) > 40) return true;
     const exp = (profile.experience || []).filter((x) => x.description && words(x.description) > 10);
     return exp.length > 0 || words(profile.summary) > 30;
   }
@@ -960,9 +963,11 @@
     const sections = (Array.isArray(r.sections) ? r.sections : [])
       .map((s) => ({
         title: str(s && s.title),
+        entryGap: s && s.entryGap,
         entries: (Array.isArray(s && s.entries) ? s.entries : [])
           .map((e) => ({
             heading: str(e.heading),
+            tagline: str(e.tagline),
             right: str(e.right),
             subheading: str(e.subheading),
             subright: str(e.subright),
@@ -979,13 +984,16 @@
           .filter((l) => l.text),
       }))
       .filter((s) => s.title && (s.entries.length || s.lines.length));
-    return {
+    const out = {
       name: header.name || str(r.name),
       contact:
         header.contact && header.contact.length ? header.contact : (Array.isArray(r.contact) ? r.contact : []).map(str),
       sections,
-      changes: (Array.isArray(r.changes) ? r.changes : []).map(str).filter(Boolean).slice(0, 20),
     };
+    const tex = JTF.cvtex;
+    const cv = tex ? tex.normalize(out) : out;
+    cv.changes = (Array.isArray(r.changes) ? r.changes : []).map(str).filter(Boolean).slice(0, 20);
+    return cv;
   }
 
   const cvText = (cv) =>
@@ -994,7 +1002,9 @@
         [
           s.title,
           ...(s.entries || []).map((e) =>
-            [e.heading, e.right, e.subheading, e.subright, e.text, ...(e.bullets || [])].filter(Boolean).join('\n'),
+            [e.heading, e.tagline, e.right, e.subheading, e.subright, e.text, ...(e.bullets || [])]
+              .filter(Boolean)
+              .join('\n'),
           ),
           ...(s.lines || []).map((l) => [l.label, l.text].filter(Boolean).join(': ')),
         ].join('\n'),
@@ -1035,29 +1045,235 @@
     return { errors, warnings, words: after };
   }
 
+  /* ------------------------------------------- tailoring the master CV */
+
+  // What the model may and may not touch when it edits the master CV (see enforceCv).
+  const CV_MASTER_SYSTEM = [
+    'You tailor a candidate’s CV to one job posting without changing any facts. The CV is given as JSON, parsed from their own LaTeX; you return the same JSON with only the allowed edits.',
+    'Goal: a recruiter or applicant tracking system scanning for the posting’s keywords should find every one the candidate honestly has. Go through the MISSING KEYWORDS: for each, decide whether the CV’s facts truly support it, and if so work the posting’s exact term into the most relevant bullet or tagline (e.g. a tool that records, checks and archives market data honestly is “a data pipeline” that protects “data integrity”). Skip a keyword only when no fact supports it.',
+    'YOU MAY: reword and tighten bullets (start with a strong verb); reorder bullets inside an entry; reorder entries inside a section and reorder sections so the most relevant come first; rewrite an entry’s "tagline" (the few words after a project’s name); reorder the items of a project’s "right" (its tech list) and of the rows in a Skills section; drop or merge the least relevant bullets so the CV stays on one A4 page (keep at least one bullet in every entry that has bullets).',
+    'FROZEN, copied back from the original whatever you write: "name", "contact", every section "title", every "heading", every "right" (apart from the order of a tech list), "subheading", "subright" (organisations, role titles, places, dates, grades), every row "label", the text of Achievements, Languages and Interests rows, and which items a Skills row lists. Keep every entry and every section; keep every number exactly. Never add tools, skills, numbers, employers, awards or claims that are not in the CV or the candidate material.',
+    'Reply with JSON only, the same shape as the CV you were given (no "name" or "contact" needed):',
+    '{"sections": [{"title": "Projects", "entries": [{"heading": "...", "tagline": "...", "right": "Python, SQLite", "subheading": "...", "subright": "...", "bullets": ["..."]}], "lines": [{"label": "Skills", "text": "Python, SQL"}]}],',
+    ' "changes": ["one line per meaningful change: what and why (e.g. “Projects: ‘records every trade’ → ‘data pipeline that records every trade’ to match ‘data pipelining’”)"]}',
+  ].join('\n');
+
+  function cvMasterPrompt({ master, candidate, analysis, instructions }) {
+    const missing = coverage(analysis.keywords, cvText(master)).missing;
+    const { name, sections } = master;
+    return [
+      { role: 'system', content: CV_MASTER_SYSTEM },
+      {
+        role: 'user',
+        content: [
+          'JOB:',
+          JSON.stringify(
+            {
+              company: analysis.company,
+              role: analysis.role,
+              team: analysis.team,
+              responsibilities: analysis.responsibilities,
+              requirements: analysis.requirements,
+              keywords: analysis.keywords,
+            },
+            null,
+            1,
+          ),
+          '',
+          `MISSING KEYWORDS (in the posting, not yet in the CV): ${missing.length ? missing.join('; ') : 'none'}`,
+          '',
+          `THE CANDIDATE’S CV (${name}), as JSON:`,
+          JSON.stringify({ sections: sections.map(({ entryGap, ...s }) => s) }),
+          '',
+          'OTHER CANDIDATE MATERIAL (facts you may use, not required):',
+          clip(candidate, 6000),
+          instructions ? `\nTHE CANDIDATE ALSO ASKS:\n${instructions}` : '',
+        ].join('\n'),
+      },
+    ];
+  }
+
+  const ACHIEVEMENTS = /achiev|award|honou?r|certif|prize|publication|qualification|scholarship/i;
+  const FROZEN_ROW = /language|interest|hobb/i;
+  const listItems = (s) =>
+    String(s || '')
+      .split(/\s*[,;]\s*/)
+      .map((x) => U.normalize(x))
+      .filter(Boolean)
+      .sort();
+  const sameItems = (a, b) => {
+    const x = listItems(a);
+    const y = listItems(b);
+    return x.length > 0 && x.length === y.length && x.every((v, i) => v === y[i]);
+  };
+
   /**
-   * Tailor the CV. input: { profile, kit, cvText, analysis, instructions }. Returns
-   * { cv, check, before, after } where before/after are keyword coverage of the posting.
+   * The master CV with only the allowed edits from a model reply applied: everything frozen (names,
+   * contact, titles, organisations, roles, places, dates, grades, row labels, achievements, languages,
+   * which skills are listed, entry and section titles) is copied from the master, so the model can't
+   * change it however it answers. Returns { cv, restored } where restored lists what it tried to change.
+   */
+  function enforceCv(master, reply) {
+    const tex = JTF.cvtex;
+    const m = tex.normalize(master);
+    const r = tex.normalize(reply);
+    const restored = [];
+    const key = (s) => U.normalize(s);
+    const take = (pool, test) => {
+      const at = pool.findIndex(test);
+      return at < 0 ? null : pool.splice(at, 1)[0];
+    };
+    const note = (what, mine, theirs) => {
+      if (theirs && key(mine) !== key(theirs)) restored.push(`${what}: “${theirs}” → “${mine}”`);
+    };
+
+    const pool = [...r.sections];
+    const matched = m.sections.map((ms) => ({ ms, rs: take(pool, (s) => key(s.title) === key(ms.title)) }));
+    // The reply's order of sections wins; sections it left out keep their place at the end.
+    const order = [...matched].sort((a, b) => {
+      const ia = a.rs ? r.sections.indexOf(a.rs) : 1e6;
+      const ib = b.rs ? r.sections.indexOf(b.rs) : 1e6;
+      return ia - ib || m.sections.indexOf(a.ms) - m.sections.indexOf(b.ms);
+    });
+    const sections = order.map(({ ms, rs }) => {
+      const out = { title: ms.title };
+      if (ms.entryGap != null) out.entryGap = ms.entryGap;
+      if (!rs || ACHIEVEMENTS.test(ms.title)) {
+        out.entries = structuredClone(ms.entries);
+        out.lines = structuredClone(ms.lines);
+        return out;
+      }
+      const left = [...ms.entries];
+      const entries = [];
+      for (const re of rs.entries) {
+        const me =
+          take(left, (e) => key(e.heading) === key(re.heading) && key(e.subheading) === key(re.subheading)) ||
+          take(left, (e) => key(e.heading) === key(re.heading) && key(re.heading)) ||
+          take(left, (e) => key(e.subheading) === key(re.subheading) && key(re.subheading)) ||
+          take(left, (e) => overlaps(e.heading, re.heading));
+        if (!me) {
+          restored.push(`Removed “${re.heading || re.subheading || re.text}”, which isn’t in your CV`);
+          continue;
+        }
+        entries.push(mergeEntry(me, re, note));
+      }
+      out.entries = [...entries, ...left.map((e) => structuredClone(e))];
+      const rows = [...ms.lines];
+      const lines = [];
+      for (const rl of rs.lines) {
+        const ml = take(rows, (l) => key(l.label) === key(rl.label));
+        if (ml) lines.push(mergeRow(ml, rl, note, ms.title));
+      }
+      out.lines = [...lines, ...rows.map((l) => structuredClone(l))];
+      return out;
+    });
+    return { cv: { name: m.name, contact: structuredClone(m.contact), sections }, restored };
+  }
+
+  /** Mostly the same words ("Barclays" and "Barclays Capital"): the model reworded a frozen heading. */
+  function overlaps(a, b) {
+    const x = U.tokens(a).filter((t) => t.length > 2);
+    const y = new Set(U.tokens(b).filter((t) => t.length > 2));
+    return x.length > 0 && y.size > 0 && x.filter((t) => y.has(t)).length / Math.min(x.length, y.size) >= 0.5;
+  }
+
+  function mergeEntry(me, re, note) {
+    const out = {};
+    for (const k of ['heading', 'right', 'subheading', 'subright'])
+      if (me[k]) {
+        out[k] = me[k];
+        note(`${me.heading || 'Entry'} ${k}`, me[k], re[k]);
+      }
+    if (me.tagline) out.tagline = re.tagline || me.tagline;
+    // A project's tech list may be reordered, nothing more.
+    if (me.tagline && me.right && re.right && sameItems(re.right, me.right)) out.right = re.right;
+    if (me.text) out.text = re.text || me.text;
+    if (me.bullets) out.bullets = re.bullets && re.bullets.length ? re.bullets : me.bullets;
+    return out;
+  }
+
+  function mergeRow(ml, rl, note, title) {
+    const out = { text: ml.text };
+    if (ml.label) out.label = ml.label;
+    if (!FROZEN_ROW.test(ml.label || '') && sameItems(rl.text, ml.text)) out.text = rl.text;
+    else note(`${title} ${ml.label || 'row'}`, ml.text, rl.text);
+    return out;
+  }
+
+  /** Frozen parts of the master that a CV doesn't match (empty when enforceCv has done its work). */
+  function frozenDiffs(master, cv) {
+    const tex = JTF.cvtex;
+    const m = tex.normalize(master);
+    const c = tex.normalize(cv);
+    const out = [];
+    if (m.name !== c.name) out.push('name');
+    if (JSON.stringify(m.contact) !== JSON.stringify(c.contact)) out.push('contact');
+    for (const ms of m.sections) {
+      const cs = c.sections.find((s) => s.title === ms.title);
+      if (!cs) {
+        out.push(`section ${ms.title}`);
+        continue;
+      }
+      for (const me of ms.entries) {
+        const ce = cs.entries.find((e) => e.heading === me.heading && e.subheading === me.subheading);
+        if (!ce) {
+          out.push(`entry ${me.heading || me.subheading}`);
+          continue;
+        }
+        for (const k of ['subright', 'right', 'subheading', 'heading'])
+          if (me[k] !== ce[k] && !(k === 'right' && me.tagline && sameItems(me.right, ce.right)))
+            out.push(`${me.heading} ${k}`);
+      }
+      for (const ml of ms.lines) {
+        const cl = cs.lines.find((l) => l.label === ml.label);
+        const frozen = ACHIEVEMENTS.test(ms.title) || FROZEN_ROW.test(ml.label || '');
+        if (!cl || (frozen ? cl.text !== ml.text : cl.text !== ml.text && !sameItems(cl.text, ml.text)))
+          out.push(`row ${ml.label}`);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Tailor the CV. input: { profile, kit, cvText, master, analysis, instructions }. With a master CV
+   * (input.master or kit.cvMaster, the parsed LaTeX) the model edits that and the frozen parts are
+   * restored from it; without one it rebuilds the CV from the text of the uploaded file.
+   * Returns { cv, check, before, after, restored } where before/after are keyword coverage.
    */
   async function tailor(chat, input, { onProgress = () => {}, signal } = {}) {
     const { profile, kit, analysis } = input;
-    if (!input.cvText || words(input.cvText) < 60)
+    const rawMaster = input.master || (kit && kit.cvMaster);
+    const master = rawMaster && JTF.cvtex ? JTF.cvtex.normalize(rawMaster) : null;
+    const useMaster = !!(master && master.sections.length);
+    if (!useMaster && (!input.cvText || words(input.cvText) < 60))
       throw new Error('JobToFill couldn’t read enough text from your CV to tailor it.');
     const candidate = materials(profile, kit, '');
-    const header = { name: fullName(profile), contact: contactLine(profile, kit) };
-    const messages = cvPrompt({ cvText: input.cvText, candidate, analysis, header, instructions: input.instructions });
-    const orgs = [
-      ...(profile.education || []).map((e) => e.school),
-      ...(profile.experience || []).map((x) => x.company),
-    ].filter((o) => o && o.trim().length > 2 && !/^personal|^self|^freelance|project/i.test(o));
-    const ctx = { cvText: input.cvText, sources: candidate, orgs };
+    const header = useMaster
+      ? { name: master.name || fullName(profile), contact: master.contact }
+      : { name: fullName(profile), contact: contactLine(profile, kit) };
+    const sourceText = useMaster ? cvText(master) : input.cvText;
+    const messages = useMaster
+      ? cvMasterPrompt({ master, candidate, analysis, instructions: input.instructions })
+      : cvPrompt({ cvText: input.cvText, candidate, analysis, header, instructions: input.instructions });
+    const orgs = useMaster
+      ? master.sections.flatMap((s) => s.entries.map((e) => e.heading)).filter((o) => o && o.trim().length > 2)
+      : [...(profile.education || []).map((e) => e.school), ...(profile.experience || []).map((x) => x.company)].filter(
+          (o) => o && o.trim().length > 2 && !/^personal|^self|^freelance|project/i.test(o),
+        );
+    const ctx = { cvText: sourceText, sources: candidate, orgs };
     let best = null;
     for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
       onProgress(attempt ? 'revising' : 'tailoring', attempt);
       const r = await chat(messages, { json: true, temperature: 0.3, maxTokens: 6000, signal });
-      const cv = cleanCv(r.json, header);
+      let cv = cleanCv(r.json, header);
+      let restored = [];
+      if (useMaster) {
+        const forced = enforceCv(master, cv);
+        cv = { ...forced.cv, changes: cv.changes };
+        restored = forced.restored;
+      }
       const check = checkCv(cv, ctx);
-      if (!best || score(check) < score(best.check)) best = { cv, check };
+      if (!best || score(check) < score(best.check)) best = { cv, check, restored };
       if (!check.errors.length) break;
       messages.push(
         { role: 'assistant', content: JSON.stringify(r.json) },
@@ -1066,7 +1282,7 @@
     }
     return {
       ...best,
-      before: coverage(analysis.keywords, input.cvText),
+      before: coverage(analysis.keywords, sourceText),
       after: coverage(analysis.keywords, cvText(best.cv)),
     };
   }
@@ -1132,6 +1348,9 @@
     sameJob,
     coverage,
     cleanCv,
+    enforceCv,
+    frozenDiffs,
+    cvMasterPrompt,
     checkCv,
     cvText,
     tailor,

@@ -218,6 +218,28 @@ test('popup offers to tick acknowledgement boxes, then does', async () => {
   await Promise.all([form.close(), popup.close()]);
 });
 
+test('popup: "Last quick apply" only shows while a result is kept; Quick apply without an AI key opens the normal studio', async () => {
+  const form = await h.open('letters/apply.html');
+  const tabId = await h.tabId(form);
+  const popup = await openExt(`popup/popup.html?tab=${tabId}`);
+  await popup.waitForSelector('#quick-apply');
+  assert.equal(await popup.isVisible('#quick-last'), false);
+  await h.bg(() =>
+    globalThis.JTF.store.saveQuickApply({ company: 'Acme', letter: { text: 'x', pdf: '', name: 'l.pdf' } }),
+  );
+  await popup.waitForSelector('#quick-last', { state: 'visible' });
+  await h.bg(() => globalThis.JTF.store.clearQuickApply());
+  await popup.waitForSelector('#quick-last', { state: 'hidden' });
+
+  // No key set up: the studio opens as usual (not in quick mode) so its setup card can ask.
+  const opened = h.context.waitForEvent('page');
+  await popup.click('#quick-apply');
+  const studio = await opened;
+  await studio.waitForSelector('#setup:not([hidden])');
+  assert.ok(!studio.url().includes('quick=1'));
+  await Promise.all([studio.close(), form.close(), popup.close()]);
+});
+
 test('backup section: "Back up now" writes the file and shows where', async () => {
   await h.bg(async () => {
     const { profile } = await globalThis.JTF.store.getActive();

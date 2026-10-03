@@ -1,0 +1,89 @@
+/* JobToFill — the last quick apply. */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.grow {
+  flex: 1;
+}
+.small {
+  font-size: 12.5px;
+}
+
+main {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px;
+}
+#result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.card h2 {
+  font-size: 15px;
+  margin: 0;
+}
+.card p {
+  margin: 0;
+}
+#changes ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.job-title {
+  font-weight: 650;
+  font-size: 16px;
+}
+.note {
+  margin: 8px 0 0;
+  color: var(--warn);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tabs {
+  display: flex;
+  gap: 6px;
+}
+.tabs button[aria-selected='true'] {
+  background: var(--primary-weak);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+#preview {
+  width: 100%;
+  height: 75vh;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.preview-empty {
+  display: grid;
+  place-items: center;
+  min-height: 200px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}

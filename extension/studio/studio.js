@@ -15,10 +15,12 @@ import {
   requestSiteAccess,
 } from '../ui/common.js';
 
-const { store, ai, letter: L, jobpage, doctext, pdfdoc, util } = globalThis.JTF;
+const { store, ai, letter: L, jobpage, doctext, pdfdoc, cvtex, util } = globalThis.JTF;
 
 const params = new URLSearchParams(location.search);
 const tabId = params.has('tab') ? Number(params.get('tab')) : null;
+// Quick apply: background.js opens this page unfocused with ?quick=1 and the whole chain runs without stopping.
+let quick = params.get('quick') === '1' && tabId != null;
 
 const state = {
   profile: null,
@@ -32,7 +34,7 @@ const state = {
   result: null, // JTF.letter.write() result, kept in sync with the editor
   entry: null, // the saved letter (store.saveLetter)
   letterPdf: null, // { bytes, url, overflow, pages }
-  cv: null, // { result, pdf }
+  cv: null, // { result, pdf, tex }
   showing: 'letter',
   controller: null,
   cost: 0,
@@ -58,10 +60,10 @@ const slug = (s) =>
     .slice(0, 40);
 
 /** "ada_lovelace_cover_letter_acme_capital.pdf", like people name these files themselves. */
-function fileName(kind) {
+function fileName(kind, ext = 'pdf') {
   const company = slug((state.analysis && state.analysis.company) || (state.job && state.job.posting.company) || '');
   const parts = [slug(L.fullName(state.profile)), kind === 'cv' ? 'cv' : 'cover_letter', company];
-  return parts.filter(Boolean).join('_') + '.pdf';
+  return parts.filter(Boolean).join('_') + '.' + ext;
 }
 
 /** The AI call used by JTF.letter, with the running cost shown in the top bar. */
@@ -391,6 +393,9 @@ async function useManual() {
 
 /** The text of the stored resume, read once per file and cached with the cover letter material. */
 async function readCv() {
+  // The pasted LaTeX master (Settings › Cover letters) is cleaner than text scraped from a PDF.
+  const master = state.kit.cvMaster && state.kit.cvMaster.sections && state.kit.cvMaster.sections.length;
+  if (master) return { text: L.cvText(state.kit.cvMaster), note: '' };
   const doc = await store.getDoc(state.profile.id, 'resume');
   if (!doc) return { text: '', note: 'No CV uploaded (Settings › Resume & files), so the letter uses your profile.' };
   if (state.kit.cv && state.kit.cv.updatedAt === doc.updatedAt && state.kit.cv.name === doc.name)
@@ -637,10 +642,10 @@ async function useForApplication() {
 
 /* ------------------------------------------------------------------- CV */
 
-function cvExtra() {
+function cvExtra(use = $('#cv-use').checked) {
   if (!state.cv) return { useCv: false };
   return {
-    useCv: $('#cv-use').checked,
+    useCv: use,
     cv: {
       name: fileName('cv'),
       type: 'application/pdf',
@@ -651,50 +656,73 @@ function cvExtra() {
   };
 }
 
+/**
+ * Tailor the CV to the analysed job and lay it out: no buttons, no page updates, so "Quick apply" can
+ * call it too. Uses the master CV (Settings › Cover letters) when there is one, else the text of the
+ * uploaded file. Returns { result, pdf, tex }: result is letter.tailor()'s { cv, check, before, after },
+ * pdf is pdfdoc.cv()'s { bytes, pages, overflow, ... }, tex the same CV as a LaTeX file.
+ */
+async function buildTailoredCv({ instructions = '' } = {}) {
+  const master = state.kit.cvMaster && state.kit.cvMaster.sections && state.kit.cvMaster.sections.length;
+  if (!master && !state.cvText)
+    throw new Error(
+      'JobToFill needs your CV to tailor it: paste it as LaTeX in Settings › Cover letters, or add the file in Settings › Resume & files.',
+    );
+  const result = await L.tailor(chat, {
+    profile: state.profile,
+    kit: state.kit,
+    cvText: state.cvText,
+    analysis: state.analysis,
+    instructions,
+  });
+  const pdf = await pdfdoc.cv(result.cv, { fonts: await fonts(), paper: state.kit.paper || 'a4', fit: true });
+  return { result, pdf, tex: cvtex.render(result.cv) };
+}
+
+/** Keep a built CV as the current one and show it (preview, keywords, checks, changes). */
+function showTailoredCv({ result, pdf, tex }) {
+  if (state.cv && state.cv.pdf.url) URL.revokeObjectURL(state.cv.pdf.url);
+  state.cv = {
+    result,
+    tex,
+    pdf: { ...pdf, url: URL.createObjectURL(new Blob([pdf.bytes], { type: 'application/pdf' })) },
+  };
+  const { before, after, check } = result;
+  $('#cv-coverage').hidden = false;
+  $('#cv-coverage').className = 'pill ok';
+  $('#cv-coverage').textContent =
+    `Keywords: ${before.matched.length} → ${after.matched.length} of ${after.matched.length + after.missing.length}`;
+  $('#cv-keywords').textContent = after.missing.length
+    ? `Not in your CV (and not added, because it isn’t in your material): ${after.missing.slice(0, 12).join(', ')}`
+    : 'Your CV now uses every keyword the job lists.';
+  $('#cv-checks').replaceChildren(
+    ...[
+      ...(check.errors.length
+        ? check.errors.map((t) => ['bad', t])
+        : [['ok', 'No new facts: every number, skill and organisation is from your CV.']]),
+      ...check.warnings.map((t) => ['warn', t]),
+      ...(result.restored && result.restored.length
+        ? [['ok', `Kept your names, dates, places and titles exactly (${result.restored.length} edit(s) undone).`]]
+        : []),
+      [pdf.overflow || pdf.pages > 1 ? 'warn' : 'ok', pdf.pages > 1 ? `${pdf.pages} pages.` : 'One page.'],
+    ].map(([cls, text]) => el('li', { className: cls, textContent: text })),
+  );
+  $('#cv-changes').replaceChildren(...result.cv.changes.map((c) => el('li', { textContent: c })));
+  $('#cv-result').hidden = false;
+  $('#cv-use-wrap').hidden = false;
+  $('#cv-download').hidden = false;
+  $('#cv-download-tex').hidden = false;
+  $('#tab-cv').hidden = false;
+  showPreview('cv');
+}
+
 async function tailorCv() {
   const button = $('#cv-make');
   button.disabled = true;
   button.textContent = 'Tailoring…';
   state.controller = new AbortController();
   try {
-    if (!state.cvText)
-      throw new Error('JobToFill needs your CV file to tailor it: add it in Settings › Resume & files.');
-    const result = await L.tailor(chat, {
-      profile: state.profile,
-      kit: state.kit,
-      cvText: state.cvText,
-      analysis: state.analysis,
-      instructions: $('#instructions').value,
-    });
-    const out = await pdfdoc.cv(result.cv, { fonts: await fonts(), paper: state.kit.paper || 'a4', fit: true });
-    if (state.cv && state.cv.pdf.url) URL.revokeObjectURL(state.cv.pdf.url);
-    state.cv = {
-      result,
-      pdf: { ...out, url: URL.createObjectURL(new Blob([out.bytes], { type: 'application/pdf' })) },
-    };
-    const { before, after, check } = result;
-    $('#cv-coverage').hidden = false;
-    $('#cv-coverage').className = 'pill ok';
-    $('#cv-coverage').textContent =
-      `Keywords: ${before.matched.length} → ${after.matched.length} of ${after.matched.length + after.missing.length}`;
-    $('#cv-keywords').textContent = after.missing.length
-      ? `Not in your CV (and not added, because it isn’t in your material): ${after.missing.slice(0, 12).join(', ')}`
-      : 'Your CV now uses every keyword the job lists.';
-    $('#cv-checks').replaceChildren(
-      ...[
-        ...(check.errors.length
-          ? check.errors.map((t) => ['bad', t])
-          : [['ok', 'No new facts: every number, skill and organisation is from your CV.']]),
-        ...check.warnings.map((t) => ['warn', t]),
-        [out.overflow || out.pages > 1 ? 'warn' : 'ok', out.pages > 1 ? `${out.pages} pages.` : 'One page.'],
-      ].map(([cls, text]) => el('li', { className: cls, textContent: text })),
-    );
-    $('#cv-changes').replaceChildren(...result.cv.changes.map((c) => el('li', { textContent: c })));
-    $('#cv-result').hidden = false;
-    $('#cv-use-wrap').hidden = false;
-    $('#cv-download').hidden = false;
-    $('#tab-cv').hidden = false;
-    showPreview('cv');
+    showTailoredCv(await buildTailoredCv({ instructions: $('#instructions').value }));
     if (state.entry) await saveEntry(cvExtra());
   } catch (err) {
     if (err.name !== 'AbortError') alert(err.message);
@@ -963,6 +991,212 @@ async function run(from = 'job') {
   }
 }
 
+/* ------------------------------------------------------------ quick apply */
+
+let studioTabId = null;
+
+async function quickStatus(message, stateName = 'running') {
+  await store.setQuickStatus({ state: stateName, message, tabId, studioTabId }).catch(() => {});
+}
+
+/** Show a step as running here and in the popup's status line. */
+function phase(id, message) {
+  step(id, 'active');
+  return quickStatus(message);
+}
+
+/** The application page's own text, when the real posting can't be found: better than stopping to ask. */
+function useApplicationPage(tried) {
+  const context = state.context || {};
+  const text = (context.posting && context.posting.description) || context.pageText || '';
+  if (L.words(text) < 60) return false;
+  state.job = {
+    posting: {
+      url: context.url,
+      title: context.title,
+      company: context.company,
+      location: context.location,
+      description: text.slice(0, 15000),
+      source: 'page-text',
+    },
+    verdict: 'pasted',
+    reasons: ['Quick apply used the text of the application page itself'],
+    tried: tried || [],
+  };
+  return true;
+}
+
+/**
+ * Quick apply: find the job (falling back to the application page), read the CV, write and fit the letter,
+ * tailor the CV, save both for this application, then have the background fill the whole form. No
+ * confirmations. Keeps one temporary result for the "Last quick apply" page and closes this tab when done.
+ */
+async function quickApply() {
+  state.controller = new AbortController();
+  const signal = state.controller.signal;
+  resetSteps();
+  $('#stop').hidden = true;
+  const list = $('#steps');
+  for (const [id, label] of [
+    ['tailor', 'Tailor your CV'],
+    ['fill', 'Fill the form'],
+  ])
+    list.append(
+      el(
+        'li',
+        { dataset: { step: id, state: 'pending' } },
+        el('span', { textContent: label }),
+        el('span', { className: 'detail' }),
+      ),
+    );
+  let current = 'job';
+  try {
+    await phase('job', 'finding the job…');
+    const found = await findJob();
+    let note = '';
+    if (!found.posting || found.verdict === 'different') {
+      if (!useApplicationPage(found.tried))
+        throw new Error(
+          'Quick apply couldn’t find this job’s description, and the application page doesn’t contain one. Use “Write cover letter” and paste it.',
+        );
+      note = 'used the application page';
+    }
+    step('job', 'done', note || (VERDICTS[state.job.verdict] || [])[1] || '');
+
+    current = 'cv';
+    await phase('cv', 'reading your CV…');
+    state.kit = await store.getKit(state.profile.id);
+    const cv = await readCv();
+    state.cvText = cv.text;
+    step('cv', cv.text ? 'done' : 'warn', cv.text ? `${L.words(cv.text)} words` : cv.note);
+    if (!L.fullName(state.profile))
+      throw new Error('Add your name in Settings › Personal & contact first: it goes at the top of the letter.');
+    if (!L.hasSubstance(state.profile, state.kit, state.cvText))
+      throw new Error(
+        'There isn’t enough about you to write from yet. Upload your CV (Settings › Resume & files) or add notes in Settings › Cover letters.',
+      );
+
+    current = 'analyse';
+    await phase('analyse', 'reading the job…');
+    state.analysis = await L.analyse(chat, state.job.posting, state.context, { signal });
+    if (!state.analysis.isPosting && state.job.posting.source !== 'page-text' && useApplicationPage(state.job.tried))
+      state.analysis = await L.analyse(chat, state.job.posting, state.context, { signal });
+    if (!state.analysis.isPosting)
+      throw new Error(
+        'The text Quick apply found doesn’t read like a job description. Use “Write cover letter” and paste it.',
+      );
+    step('analyse', 'done', [state.analysis.role, state.analysis.company].filter(Boolean).join(' at '));
+
+    current = 'write';
+    await phase('write', 'writing the letter…');
+    const input = {
+      profile: state.profile,
+      kit: state.kit,
+      cvText: state.cvText,
+      posting: state.job.posting,
+      analysis: state.analysis,
+      context: state.context,
+      instructions: '',
+    };
+    state.result = await L.write(chat, input, {
+      signal,
+      onProgress: (stage) => {
+        if (stage === 'auditing' || stage === 'checking') quickStatus('checking the letter…');
+      },
+    });
+    step('write', 'done', `${state.result.check.words} words`);
+    let pdf = await renderLetterPdf();
+    if (pdf.overflow) {
+      await quickStatus('shortening the letter…');
+      state.result.letter = await L.shorten(chat, input, state.result, 60, { signal });
+      pdf = await renderLetterPdf();
+    }
+    step('check', 'done');
+    step('pdf', pdf.overflow ? 'warn' : 'done');
+    const left = L.checkLetter(state.result.letter, checkContext()).errors.length + (pdf.overflow ? 1 : 0);
+
+    current = 'tailor';
+    let cvNote = '';
+    state.cv = null;
+    await phase('tailor', 'tailoring your CV…');
+    try {
+      const built = await buildTailoredCv();
+      state.cv = { ...built };
+      step('tailor', 'done', `${built.result.cv.changes.length} changes`);
+    } catch (err) {
+      if (err.name === 'AbortError') throw err;
+      cvNote = /needs your CV/.test(err.message)
+        ? 'No CV to tailor (add one in Settings).'
+        : `CV not tailored: ${err.message}`;
+      step('tailor', 'warn', cvNote);
+    }
+
+    // The letter (with the CV, if there is one) is saved for this application so the form fill attaches them.
+    await saveEntry({ quick: true, ...cvExtra(true) });
+    const letterText = L.asText(state.result);
+    await store.saveQuickApply({
+      tabUrl: (state.context && state.context.url) || '',
+      company: state.analysis.company || '',
+      role: state.analysis.role || '',
+      letter: { text: letterText, pdf: state.entry.pdf.dataUrl, name: state.entry.pdf.name },
+      cv: state.cv
+        ? {
+            pdf: state.entry.cv.dataUrl,
+            name: state.entry.cv.name,
+            tex: state.cv.tex,
+            changes: state.cv.result.cv.changes,
+          }
+        : null,
+      note: [
+        cvNote,
+        left ? `The letter has ${left} unresolved check${left === 1 ? '' : 's'}: read it before sending.` : '',
+      ]
+        .filter(Boolean)
+        .join(' '),
+    });
+
+    current = 'fill';
+    await phase('fill', 'filling the form…');
+    const tab = await api.tabs.get(tabId).catch(() => null);
+    if (!tab)
+      throw new Error(
+        'The application tab was closed, so nothing was filled. Open “Last quick apply” to see the letter and CV.',
+      );
+    if (!(await stillSameJob(tab.url)))
+      throw new Error(
+        'The application tab moved to another site, so nothing was filled. Open “Last quick apply” to see the letter and CV.',
+      );
+    const r = await send({ type: 'jtf:quick-fill', tabId, letterId: state.entry.id, cv: !!state.cv });
+    if (!r || r.error) throw new Error((r && r.error) || 'Filling the form failed.');
+    step('fill', 'done', `${r.filled} field${r.filled === 1 ? '' : 's'}`);
+    await quickStatus(cvNote ? `done (${cvNote})` : 'done', 'done');
+    const me = await api.tabs.getCurrent();
+    if (me) await api.tabs.remove(me.id);
+  } catch (err) {
+    if (err && err.name === 'AbortError') return;
+    const message = String((err && err.message) || err);
+    await quickStatus(message, 'error');
+    // Say so on the application page too, since the person isn't looking at this tab.
+    await send({ type: 'jtf:toast', tabId, message: `Quick apply stopped: ${message}` }).catch(() => {});
+    fail(err, current);
+  }
+}
+
+/** A prerequisite is missing (site access, AI consent, an AI key): carry on as the normal page, in front. */
+function leaveQuick() {
+  if (!quick) return;
+  quick = false;
+  api.tabs.getCurrent().then((t) => t && api.tabs.update(t.id, { active: true }));
+  store
+    .setQuickStatus({
+      state: 'error',
+      message: 'Quick apply needs one more step first: finish it in the JobToFill tab.',
+      tabId,
+      studioTabId,
+    })
+    .catch(() => {});
+}
+
 /* ----------------------------------------------------------------- boot */
 
 async function boot() {
@@ -972,6 +1206,7 @@ async function boot() {
   state.kit = await store.getKit(profile.id);
   state.config = await store.aiConfig();
   $('#profile-name').textContent = profile.name;
+  if (quick) studioTabId = ((await api.tabs.getCurrent()) || {}).id ?? null;
 
   $('#open-settings').onclick = () => api.tabs.create({ url: api.runtime.getURL('options/options.html#letters') });
   $('#retry').onclick = () => run(!state.job || !state.job.posting ? 'job' : state.analysis ? 'write' : 'cv');
@@ -1012,6 +1247,8 @@ async function boot() {
   $('#cv-use').onchange = () => state.entry && saveEntry(cvExtra());
   $('#cv-download').onclick = () =>
     state.cv && download(new Blob([state.cv.pdf.bytes], { type: 'application/pdf' }), fileName('cv'));
+  $('#cv-download-tex').onclick = () =>
+    state.cv && download(new Blob([state.cv.tex], { type: 'application/x-tex' }), fileName('cv', 'tex'));
   $('#tab-letter').onclick = () => showPreview('letter');
   $('#tab-cv').onclick = () => showPreview('cv');
 
@@ -1022,9 +1259,10 @@ async function boot() {
     renderJob();
   }
   // Each prerequisite is asked for from a click (browsers require it), then the next one.
-  const begin = () => (tabId == null ? null : run('job'));
+  const begin = () => (tabId == null ? null : quick ? quickApply() : run('job'));
   const consent = async () => {
     if (await hasAiConsent()) return begin();
+    leaveQuick();
     $('#consent').hidden = false;
     $('#consent-allow').onclick = async () => {
       if (!(await requestAiConsent())) return;
@@ -1032,9 +1270,14 @@ async function boot() {
       begin();
     };
   };
-  const setup = () => (ai.problem(state.config) ? renderSetup(begin) : consent());
+  const setup = () => {
+    if (!ai.problem(state.config)) return consent();
+    leaveQuick();
+    renderSetup(begin);
+  };
   if (await hasSiteAccess()) setup();
   else {
+    leaveQuick();
     $('#access').hidden = false;
     $('#access-allow').onclick = async () => {
       if (!(await requestSiteAccess())) return;

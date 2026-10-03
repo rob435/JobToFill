@@ -1,0 +1,52 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=0.65in]{geometry}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{microtype}
+\pagenumbering{gobble}
+\titleformat{\section}{\large\bfseries}{}{0pt}{\MakeUppercase}[\titlerule]
+\titlespacing{\section}{0pt}{10pt}{5pt}
+\setlist[itemize]{leftmargin=*, itemsep=1pt, topsep=1pt, parsep=0pt, partopsep=0pt}
+\begin{document}
+\noindent
+{\Huge \textbf{Robin Li}} \\[3pt]
+07386 526574 \ $|$ \ \href{mailto:robinlipersonal@gmail.com}{robinlipersonal@gmail.com} \ $|$ \ \href{https://github.com/rob435}{github.com/rob435}
+\section{Education}
+\noindent \textbf{University of Glasgow} \hfill \textit{Glasgow, Scotland} \\
+BSc Computing Science \hfill \textit{Sep 2025 -- Jun 2028}
+\vspace{4pt}
+\noindent \textbf{Madras College} \hfill \textit{St Andrews, Scotland} \\
+Scottish Highers: AAAAA (Maths, Physics, Chemistry, English, Computing Science) \hfill \textit{2025}
+\section{Experience}
+\noindent \textbf{Barclays} \hfill \textit{Glasgow, Scotland} \\
+Technology Developer Spring Week \hfill \textit{Mar 2026}
+\begin{itemize}
+    \item Built a personal finance dashboard in Python with a team of four in a 24-hour hackathon, using simulated bank transaction data.
+    \item Cleaned around 5,000 transactions with pandas, fixing missing values and inconsistent merchant names, and wrote regex rules to sort them into categories such as groceries, travel and entertainment.
+    \item Built charts of monthly spending by category and trends over time, and presented the prototype to a panel of Barclays judges.
+\end{itemize}
+\section{Projects}
+\noindent \textbf{eBaySpy} -- eBay deal detector \hfill \textit{Python, eBay API, SQLite, Telegram}
+\begin{itemize}
+    \item Built a bot that flags underpriced eBay listings by comparing each one against similar live listings and sends alerts to Telegram. Keyword filters exclude accessories, parts and bundles, and each variant (model, storage) is priced separately.
+    \item Runs unattended via launchd, polling within eBay API rate limits. Sent alerts are stored in SQLite, so restarts don't produce duplicates.
+\end{itemize}
+\vspace{4pt}
+\noindent \textbf{Market Tape} -- crypto market-data recorder \hfill \textit{Python, WebSockets, Linux, systemd}
+\begin{itemize}
+    \item Records every trade, price update and order-book change for around 500 crypto futures markets, running 24/7 as a systemd service. Data is compressed hourly, checksummed and archived to Google Drive.
+    \item Wrote the order-book sync logic: it detects gaps in the exchange's update sequence, re-fetches the affected book, and takes hourly snapshots so any hour replays on its own. The same module and tests are shared with my trading engine and backtester.
+    \item Recorded markets change automatically with trading activity, and low-priority feeds are dropped first if a month is on track to exceed the storage budget. Covered by 250 pytest tests.
+\end{itemize}
+\section{Achievements}
+\noindent \textbf{Chess:} University of Glasgow Chess Champion; 2000+ Rapid rating on Chess.com \\
+\noindent \textbf{Mathematics:} UKMT Gold Award; qualified for British Mathematical Olympiad Round 1
+\section{Skills}
+\noindent \textbf{Programming/Data:} Python, SQL, Bash, pandas, NumPy \\
+\noindent \textbf{Systems/Tools:} Git, Linux, systemd, pytest, WebSockets, GitHub Actions \\
+\noindent \textbf{Languages:} English (Native), Mandarin (Proficient), Spanish (Conversational) \\
+\noindent \textbf{Interests:} Swimming, Age of Empires II
+\end{document}
