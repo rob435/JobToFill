@@ -1,9 +1,9 @@
 /*
  * JobToFill — background (service worker in Chromium, event page in Firefox).
  * Owns everything that needs privileges: injecting the content scripts on
- * demand, running a fill across all frames, handing out vault secrets (only to
- * the frame being filled, only over HTTPS), the keyboard shortcut, context
- * menus, vault auto-lock, the automatic backup file, verification codes from email and the Discover
+ * demand, running a fill across all frames, handing out passwords and cards (only
+ * to the frame being filled, only over HTTPS), the keyboard shortcut, context
+ * menus, the automatic backup file, verification codes from email and the Discover
  * watchlist checks.
  */
 // Chromium loads the libraries here; Firefox lists them in manifest.json "background.scripts".
@@ -14,7 +14,7 @@ if (typeof importScripts === 'function') {
     'lib/fields.js',
     'lib/matcher.js',
     'lib/account.js',
-    'lib/vault.js',
+    'lib/passwords.js',
     'lib/store.js',
     'lib/ai.js',
     'lib/letter.js',
@@ -27,7 +27,7 @@ if (typeof importScripts === 'function') {
   );
 }
 
-const { store, vault, util, fields, answers, jobpage, doctext, otp, nylas } = globalThis.JTF;
+const { store, passwords, util, fields, answers, jobpage, doctext, otp, nylas } = globalThis.JTF;
 const llm = globalThis.JTF.ai;
 const api = globalThis.JTF.api;
 
@@ -149,7 +149,7 @@ async function fillPayload(tabId) {
     ? (letter.analysis && letter.analysis.location) || (letter.posting && letter.posting.location)
     : '';
   const jobLocation = (known && known.location) || written || '';
-  return { payload: { profile: filled, settings, docs, vault: await vault.status(), jobLocation }, letter: mine };
+  return { payload: { profile: filled, settings, docs, jobLocation }, letter: mine };
 }
 
 /**
@@ -231,21 +231,13 @@ async function fillTab(tabId, options) {
   }));
   const flowLines = (account && account.lines) || [];
   summary.account = account ? { lines: flowLines, clicked: account.clicked || [] } : null;
-  // A locked vault: offer to unlock it, and fill the passwords (and carry on) once it is.
-  const actions = [];
-  if (summary.vaultNeeded === 'locked' && top && top.url) {
-    await waitForVault(tabId, top.url, opts);
-    actions.push({ label: 'Unlock', action: 'unlock' });
-  } else if (summary.vaultNeeded === 'none') actions.push({ label: 'Set up', action: 'setup-vault' });
   if (opts.toast && settings.toast !== false)
     await showToast(tabId, [summaryText(summary), ...flowLines].join('\n'), {
       undo: summary.undoable,
-      actions,
-      duration:
-        summary.ai && summary.ai.status === 'running' ? 120000 : flowLines.length || actions.length ? 20000 : undefined,
+      duration: summary.ai && summary.ai.status === 'running' ? 120000 : flowLines.length ? 20000 : undefined,
     });
   else if (flowLines.length && settings.toast !== false)
-    await showToast(tabId, flowLines.join('\n'), { actions, duration: 20000 });
+    await showToast(tabId, flowLines.join('\n'), { duration: 20000 });
   summary.notes.push(...flowLines);
   // The click (or the wait for a CAPTCHA) comes after the toast that announces it.
   if (account && account.act) await account.act().catch(() => {});
@@ -270,7 +262,6 @@ function mergeReports(frames) {
     wantsLetter: false,
     ticked: 0,
     held: 0,
-    vaultNeeded: null,
     passwordSource: null,
     // Upload fields by type: 'filled' when any frame put the document in, else how it went.
     docs: {},
@@ -286,7 +277,6 @@ function mergeReports(frames) {
     summary.undoable = summary.undoable || !!f.undoable;
     summary.jobContext = summary.jobContext || (f.jobContext && f.filled > 0);
     summary.wantsLetter = summary.wantsLetter || !!f.wantsLetter;
-    summary.vaultNeeded = summary.vaultNeeded || f.vaultNeeded || null;
     summary.passwordSource = summary.passwordSource || f.passwordSource || null;
   }
   for (const key of ['missing', 'missingTypes', 'unmatched', 'notes']) summary[key] = [...new Set(summary[key])];
@@ -382,11 +372,11 @@ function newCredential(host, username, password, portal, note) {
 // created with your default password can be remembered. Never the password itself.
 const lastSecrets = new Map();
 
-/** The password rules a sign-up page sent (its help text and attributes), as vault.parseRules reads them. */
+/** The password rules a sign-up page sent (its help text and attributes), as passwords.parseRules reads them. */
 function rulesFrom(msg) {
   const r = msg && msg.rules;
   if (!r || typeof r !== 'object') return null;
-  return vault.parseRules({
+  return passwords.parseRules({
     text: String(r.text || '').slice(0, 4000),
     minLength: +r.minLength || 0,
     maxLength: +r.maxLength || 0,
@@ -407,10 +397,8 @@ async function secretsFor(msg, sender) {
   const url = new URL(sender.url);
   if (!isSecureUrl(url))
     return { error: `Passwords and cards are only filled on secure (https) pages — skipped ${url.hostname}.` };
-  if ((await vault.status()) !== 'unlocked')
-    return { error: 'The vault is locked, so passwords and cards were skipped.' };
 
-  const data = await vault.read();
+  const data = await passwords.read();
   const settings = await store.getSettings();
   const out = { notes: [] };
   const host = url.hostname;
@@ -421,9 +409,9 @@ async function secretsFor(msg, sender) {
     const signup = msg.password === 'signup';
     const rules = signup ? rulesFrom(msg) : null;
     const personal = { email: fill.email, names: fill.names };
-    const problems = (pw) => (rules ? vault.checkPassword(pw, rules, personal) : []);
+    const problems = (pw) => (rules ? passwords.checkPassword(pw, rules, personal) : []);
     const fallback = settings.passwordStrategy === 'default' ? data.defaultPassword || '' : '';
-    let cred = vault.findCredential(data, host, portal);
+    let cred = passwords.findCredential(data, host, portal);
     let source = cred ? 'saved' : null;
     // A login saved for this host that this sign-up page wouldn't take (made for another employer here): a new one.
     if (cred && signup && problems(cred.password).length && cred.portal !== portal) cred = source = null;
@@ -432,19 +420,18 @@ async function secretsFor(msg, sender) {
         cred = { username: fill.email || '', password: fallback };
         source = 'default';
       } else {
-        cred = newCredential(host, fill.email || '', vault.generatePassword({ rules }), portal);
-        data.credentials.push(cred);
-        await vault.write(data);
+        const made = newCredential(host, fill.email || '', passwords.generatePassword({ rules }), portal);
+        // Saved before it goes into the page, added to what is stored now (another frame may have saved one too).
+        await passwords.update((d) => d.credentials.push(made));
+        cred = made;
         source = 'generated';
         if (fallback)
           out.notes.push(
             `Your default password doesn’t meet ${host}’s rules (${problems(fallback).join(', ')}), so JobToFill made one that does and saved it for this site.`,
           );
         else if (settings.passwordStrategy === 'default')
-          out.notes.push(
-            `No default password is set, so JobToFill made a password for ${host} and saved it in your vault.`,
-          );
-        else out.notes.push(`Generated a new password for ${host} and saved it in your vault.`);
+          out.notes.push(`No default password is set, so JobToFill made a password for ${host} and saved it.`);
+        else out.notes.push(`Generated a new password for ${host} and saved it.`);
       }
     }
     if (!cred && fallback) {
@@ -458,9 +445,9 @@ async function secretsFor(msg, sender) {
   }
 
   if (msg.card) {
-    const card = vault.defaultCard(data);
+    const card = passwords.defaultCard(data);
     if (!cardAllowedIn(sender)) out.notes.push(`Card not filled into a frame from ${url.hostname}.`);
-    else if (!card) out.notes.push('No card saved in the vault.');
+    else if (!card) out.notes.push('No card saved: add one under JobToFill › Passwords & cards.');
     else
       out.card = {
         name: card.name,
@@ -471,7 +458,6 @@ async function secretsFor(msg, sender) {
       };
   }
 
-  await vault.touch();
   return out;
 }
 
@@ -491,9 +477,8 @@ async function documentFor(msg, sender) {
 /* --------------------------------------------------------------- backups */
 
 // Extension storage is deleted when an extension is removed, and Firefox removes temporary add-ons
-// every time it restarts. So a copy of everything (the vault still encrypted) is kept in
-// Downloads/JobToFill, rewritten shortly after each change, and offered back when JobToFill
-// starts out empty.
+// every time it restarts. So a copy of everything is kept in Downloads/JobToFill, rewritten shortly
+// after each change, and offered back when JobToFill starts out empty.
 const BACKUP_FILE = 'JobToFill/jobtofill-backup.json';
 
 api.storage.onChanged.addListener((changes, areaName) => {
@@ -1588,23 +1573,21 @@ function waitText(waits) {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-/** Is there an account at this site (and employer) as far as the vault knows? */
+/** Is there an account at this site (and employer) as far as your saved logins know? */
 async function accountKnown(page) {
-  if ((await vault.status()) !== 'unlocked') return false;
-  return !!vault.findCredential(await vault.read(), page.host, page.portal, true);
+  return !!passwords.findCredential(await passwords.read(), page.host, page.portal, true);
 }
 
 /**
- * An account created with your default password: remember it in the vault, so later sign-ins know it exists.
- * Returns the new login's id (taken back if the site then says the account already existed).
+ * An account created with your default password: remember it with your saved logins, so later sign-ins know it
+ * exists. Returns the new login's id (taken back if the site then says the account already existed).
  */
 async function rememberDefault(tabId, page) {
   const last = lastSecrets.get(tabId);
   if (!last || last.source !== 'default' || last.host !== page.host) return null;
-  if ((await vault.status()) !== 'unlocked') return null;
   let id = null;
-  await vault.update((data) => {
-    if (!data.defaultPassword || vault.findCredential(data, page.host, last.portal, true)) return;
+  await passwords.update((data) => {
+    if (!data.defaultPassword || passwords.findCredential(data, page.host, last.portal, true)) return;
     const cred = newCredential(
       page.host,
       last.username,
@@ -1620,10 +1603,10 @@ async function rememberDefault(tabId, page) {
 
 /** The site said the account already existed: it wasn't made with your default password after all. */
 async function forgetRemembered(flow) {
-  if (!flow.remembered || (await vault.status()) !== 'unlocked') return;
+  if (!flow.remembered) return;
   const id = flow.remembered;
   flow.remembered = null;
-  await vault.update((data) => (data.credentials = data.credentials.filter((c) => c.id !== id)));
+  await passwords.update((data) => (data.credentials = data.credentials.filter((c) => c.id !== id)));
 }
 
 /** Click one of the page's account controls (after the toast): record it, or end the flow and say why not. */
@@ -1704,8 +1687,7 @@ async function flowDecide(tabId, flow, page) {
       `Signing in to ${host} didn’t work. Check the password saved for it under JobToFill › Passwords & cards, or reset it on the site.`,
     );
   if (page.errors.length) return stop(`The page says: “${page.errors[0]}”. Fix that and press Fill again.`);
-  const locked = (await vault.status()) !== 'unlocked';
-  if (page.kind === 'login' && !locked && !flow.accountExists && !(await accountKnown(page))) {
+  if (page.kind === 'login' && !flow.accountExists && !(await accountKnown(page))) {
     if (page.toSignup && flow.stage !== 'to-signin') {
       flow.stage = 'to-signup';
       return clickStep(
@@ -1719,14 +1701,12 @@ async function flowDecide(tabId, flow, page) {
     if (!page.passwordFilled)
       return stop(`No login for ${host} saved in JobToFill: sign in yourself, or create an account.`);
   }
-  if (!page.passwordFilled) {
-    if (locked) return { lines: ['Unlock JobToFill: it then fills your password and carries on.'] };
+  if (!page.passwordFilled)
     return stop(
       page.kind === 'signup'
         ? 'No password to create the account with: fill one in and press Fill again.'
         : `No password for ${host}: sign in yourself.`,
     );
-  }
   const doing = page.kind === 'signup' ? 'creates the account' : 'signs you in';
   const typed = page.blockers.filter((b) => !b.wait);
   // A CAPTCHA that doesn't say when it's solved (Arkose): yours to finish, then Fill again.
@@ -1873,7 +1853,6 @@ api.tabs.onUpdated.addListener(async (tabId, info, tab) => {
 api.tabs.onRemoved.addListener((tabId) => {
   endFlow(tabId);
   lastSecrets.delete(tabId);
-  forgetVaultWait(tabId).catch(() => {});
 });
 
 /** The page's CAPTCHA was solved (or its terms accepted): check the page again and take the next step. */
@@ -1930,89 +1909,6 @@ async function otpFilled(msg, sender) {
   if (settings.toast !== false) await showToast(tabId, step.lines.join('\n'), { duration: 10000 });
   await step.act();
   return { ok: true };
-}
-
-/* ----------------------------------------------------------- vault prompts */
-
-// tabId -> a fill that skipped passwords because the vault was locked: { at, url, flow, quick }. When the vault is
-// unlocked (from the toast's "Unlock", the toolbar popup or settings) within a few minutes, that page is filled
-// again, which puts the passwords in and carries the account flow on.
-// Kept in session storage, so a worker restarted while you type the master password still knows.
-const VAULT_WAIT = 5 * 60e3;
-
-async function waitForVault(tabId, url, opts) {
-  const waits = await sessionGet('vaultWaits', {});
-  waits[tabId] = { at: Date.now(), url: url.split('#')[0], flow: !!opts.flow, quick: !!opts.quick };
-  await sessionArea()
-    .set({ vaultWaits: waits })
-    .catch(() => {});
-}
-
-async function forgetVaultWait(tabId) {
-  const waits = await sessionGet('vaultWaits', {});
-  if (!(tabId in waits)) return;
-  delete waits[tabId];
-  await sessionArea()
-    .set({ vaultWaits: waits })
-    .catch(() => {});
-}
-
-// The popup's message and the storage change both say "unlocked": one resume serves both.
-let resuming = null;
-function resumeAfterUnlock() {
-  if (!resuming) resuming = resumeWaiting().finally(() => setTimeout(() => (resuming = null), 2000));
-  return resuming;
-}
-
-async function resumeWaiting() {
-  const waits = await sessionGet('vaultWaits', {});
-  await sessionArea()
-    .remove('vaultWaits')
-    .catch(() => {});
-  let resumed = 0;
-  for (const [id, w] of Object.entries(waits)) {
-    const tabId = Number(id);
-    if (Date.now() - w.at > VAULT_WAIT) continue;
-    const tab = await api.tabs.get(tabId).catch(() => null);
-    if (!tab || (tab.url || '').split('#')[0] !== w.url) continue;
-    resumed++;
-    fillTab(tabId, { toast: true, flow: w.flow, consents: w.quick || undefined }).catch(() => {});
-  }
-  return { resumed };
-}
-
-api.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === 'session' && changes.vaultKey && changes.vaultKey.newValue) resumeAfterUnlock().catch(() => {});
-});
-
-/**
- * The toast's "Unlock": the toolbar popup where the browser lets an extension open it (Chrome), else the same
- * page in a small window. The master password is only ever typed into JobToFill's own page, never the site's.
- */
-async function openUnlock(tabId) {
-  const tab = tabId == null ? null : await api.tabs.get(tabId).catch(() => null);
-  try {
-    if (api.action && api.action.openPopup) {
-      await api.action.openPopup(tab ? { windowId: tab.windowId } : undefined);
-      return { ok: true };
-    }
-  } catch (err) {
-    /* needs a click on the browser's own UI (Firefox), or no focused window */
-  }
-  const url = api.runtime.getURL(`popup/popup.html?tab=${tabId}&unlock=1`);
-  await api.windows.create({ url, type: 'popup', width: 380, height: 620, focused: true });
-  return { ok: true };
-}
-
-/** A button on the page's toast (in the content script's closed shadow root). */
-async function toastAction(msg, sender) {
-  const tabId = sender.tab && sender.tab.id;
-  if (msg.action === 'unlock') return openUnlock(tabId);
-  if (msg.action === 'setup-vault') {
-    await api.tabs.create({ url: api.runtime.getURL('options/options.html#vault') });
-    return { ok: true };
-  }
-  return { error: 'Unknown action.' };
 }
 
 /* ------------------------------------------------------------- watchlist */
@@ -2072,7 +1968,6 @@ const sum = (frames, key) => frames.reduce((n, f) => n + (f[key] || 0), 0);
 const HANDLERS = {
   // From the popup and settings page.
   'jtf:fill': (msg) => fillTab(msg.tabId, { toast: !!msg.toast, flow: true }),
-  'jtf:vault-unlocked': () => resumeAfterUnlock(),
   'jtf:undo': async (msg) => ({ undone: sum(await callFrames(msg.tabId, 'undo'), 'undone') }),
   'jtf:inspect': async (msg) => {
     const { profile, settings } = await store.getActive();
@@ -2116,12 +2011,11 @@ const HANDLERS = {
   'jtf:otp-claim': otpClaim,
   'jtf:otp-filled': otpFilled,
   'jtf:flow-ready': flowReady,
-  'jtf:toast-action': toastAction,
 };
 
 // prettier-ignore
 const CONTENT_ONLY = new Set([
-  'jtf:secrets', 'jtf:document', 'jtf:otp', 'jtf:otp-claim', 'jtf:otp-filled', 'jtf:flow-ready', 'jtf:toast-action',
+  'jtf:secrets', 'jtf:document', 'jtf:otp', 'jtf:otp-claim', 'jtf:otp-filled', 'jtf:flow-ready',
 ]);
 const isExtensionPage = (sender) => !!sender.url && sender.url.startsWith(api.runtime.getURL(''));
 const isContentScript = (sender) => !!sender.tab && !isExtensionPage(sender);
@@ -2178,20 +2072,11 @@ async function handleMenuClick(info, tab) {
 }
 
 async function generatePasswordInto(tab, info, frameIds) {
-  const status = await vault.status();
-  if (status !== 'unlocked') {
-    const message =
-      status === 'none'
-        ? 'Set up the JobToFill vault first so generated passwords are saved.'
-        : 'Unlock JobToFill (click the toolbar icon) so the new password can be saved.';
-    await showToast(tab.id, message, {}, frameIds);
-    return;
-  }
   const host = new URL(info.frameUrl || info.pageUrl || tab.url).hostname;
   const { profile } = await store.getActive();
-  const password = vault.generatePassword();
-  await vault.update((data) => {
-    const existing = vault.findCredential(data, host);
+  const password = passwords.generatePassword();
+  await passwords.update((data) => {
+    const existing = passwords.findCredential(data, host);
     if (existing && existing.host === host) {
       existing.previousPassword = existing.password;
       existing.password = password;
@@ -2207,21 +2092,25 @@ async function generatePasswordInto(tab, info, frameIds) {
 /* ------------------------------------------------------------- lifecycle */
 
 async function ensureAlarm() {
-  if (!(await api.alarms.get('jtf-autolock'))) api.alarms.create('jtf-autolock', { periodInMinutes: 1 });
   if (!(await api.alarms.get('jtf-watch')))
     api.alarms.create('jtf-watch', { delayInMinutes: 5, periodInMinutes: WATCH_MINUTES });
 }
 
 api.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name === 'jtf-autolock') await vault.autoLock((await store.getSettings()).autoLockMinutes);
-  else if (alarm.name === 'jtf-backup') await writeBackup();
+  if (alarm.name === 'jtf-backup') await writeBackup();
   else if (alarm.name === 'jtf-watch' && (await store.getWatchlist()).length) await checkWatchlist();
 });
+
+// Passwords and cards kept by older versions in an encrypted vault: moved over by themselves while its key is still
+// in memory (otherwise Settings › Passwords & cards asks for its master password once).
+passwords.importLegacySession().catch(() => {});
 
 api.runtime.onInstalled.addListener(async (details) => {
   await createMenus();
   await ensureAlarm();
   await store.loadAll();
+  // The one-minute alarm older versions kept for locking passwords away.
+  if (details.reason === 'update') await api.alarms.clear('jtf-autolock').catch(() => {});
   if (details.reason === 'install') {
     await lookForPreviousBackup().catch((err) => console.warn('JobToFill: could not look for a backup:', err));
     api.runtime.openOptionsPage();
@@ -2256,7 +2145,6 @@ globalThis.JTFBackground = {
   watchOtp,
   getFlow,
   endFlow,
-  resumeAfterUnlock,
   checkWatchlist,
   updateBadge,
   handlers: HANDLERS,

@@ -97,11 +97,6 @@ const TOGGLES = [
   ],
 ];
 
-// prettier-ignore
-const LOCK_AFTER = [
-  [5, '5 minutes'], [15, '15 minutes'], [30, '30 minutes'], [60, '1 hour'], [240, '4 hours'], [0, 'Only when the browser closes'],
-];
-
 export async function renderSettings() {
   const settings = await store.getSettings();
   const toggle = ([key, label, hint]) =>
@@ -122,24 +117,12 @@ export async function renderSettings() {
         el('span', { className: 'muted', textContent: hint }),
       ),
     );
-  const lock = el(
-    'select',
-    { name: 'autoLockMinutes', onchange: (e) => store.saveSettings({ autoLockMinutes: +e.target.value }) },
-    LOCK_AFTER.map(([value, label]) =>
-      el('option', { value: String(value), textContent: label, selected: settings.autoLockMinutes === value }),
-    ),
-  );
   const shortcut = (await fillShortcut()) || 'not set';
   const where = isFirefox ? 'about:addons → ⚙ → Manage Extension Shortcuts' : 'chrome://extensions/shortcuts';
 
   return [
     sectionHead('Settings'),
     group('Filling', null, el('div', { className: 'stack' }, TOGGLES.map(toggle))),
-    group(
-      'Vault',
-      null,
-      el('label', { className: 'field narrow' }, el('span', { textContent: 'Lock the vault after inactivity' }), lock),
-    ),
     group(
       'Keyboard shortcut',
       null,
@@ -230,7 +213,7 @@ async function autoBackupGroup(saveNow) {
           el('span', {
             className: 'muted',
             textContent:
-              'Downloads › JobToFill › jobtofill-backup.json, saved half a minute after a change. The vault stays encrypted.',
+              'Downloads › JobToFill › jobtofill-backup.json, saved half a minute after a change. It holds your passwords and cards too, unencrypted.',
           }),
         ),
       ),
@@ -241,7 +224,7 @@ async function autoBackupGroup(saveNow) {
 }
 
 export async function renderBackup({ saveNow, reload }) {
-  const include = { documents: true, vault: true, history: true };
+  const include = { documents: true, passwords: true, history: true };
   const check = (key, label) =>
     el(
       'label',
@@ -277,7 +260,7 @@ export async function renderBackup({ saveNow, reload }) {
   return [
     sectionHead(
       'Backup & restore',
-      'Keep your details safe when JobToFill is removed or re-added, or move them to another browser. Backups are plain JSON; the vault inside stays encrypted with your master password.',
+      'Keep your details safe when JobToFill is removed or re-added, or move them to another browser. Backups are plain JSON, passwords and cards included: keep the file somewhere only you can open.',
     ),
     await autoBackupGroup(saveNow),
     group(
@@ -287,7 +270,7 @@ export async function renderBackup({ saveNow, reload }) {
         'div',
         { className: 'stack' },
         check('documents', 'Include resume and cover-letter files'),
-        check('vault', 'Include the encrypted vault'),
+        check('passwords', 'Include passwords and cards'),
         check('history', 'Include the application log'),
         el(
           'div',

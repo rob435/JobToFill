@@ -123,7 +123,7 @@
       boxShadow: '0 1px 3px rgba(0, 0, 0, 0.3)',
     },
   };
-  const TAG_COLORS = { ok: '#16a34a', empty: '#d97706', vault: '#7c3aed', unknown: '#6b7280' };
+  const TAG_COLORS = { ok: '#16a34a', empty: '#d97706', secret: '#7c3aed', unknown: '#6b7280' };
 
   function make(tag, style, text) {
     const node = document.createElement(tag);
@@ -151,15 +151,6 @@
     const box = make('div', STYLES.toast);
     box.setAttribute('role', 'status');
     box.append(make('span', STYLES.dot), make('span', STYLES.message, message));
-    // Buttons that ask the background to do something: "Unlock" (the vault), "Set up the vault".
-    for (const a of (opts && opts.actions) || []) {
-      const button = make('button', STYLES.button, a.label);
-      button.addEventListener('click', () => {
-        send({ type: 'jtf:toast-action', action: a.action });
-        box.remove();
-      });
-      box.append(button);
-    }
     if (opts && opts.undo && state.history.length) {
       const undo = make('button', STYLES.button, 'Undo');
       undo.addEventListener('click', () => {
@@ -228,34 +219,24 @@
     const page = JTF.flow.analyze({ fields, results });
     const accountTerms = !!payload.accountFlow && page.kind === 'signup' && page.pure;
 
-    // A username box alone doesn't need the vault; password and card boxes do.
+    // A username box alone needs nothing more; password and card boxes ask the background for theirs.
     const needs = {
       password: results.some((r) => r && r.type && r.type.startsWith('account.pass')),
       card: results.some((r) => r && r.type && r.type.startsWith('cc.')),
     };
     const notes = [];
     let secrets = null;
-    let vaultNeeded = null;
     if (needs.password || needs.card) {
-      if (payload.vault === 'unlocked') {
-        secrets = await send({
-          type: 'jtf:secrets',
-          password: needs.password ? (context.signup ? 'signup' : 'login') : null,
-          card: needs.card,
-          // What the sign-up page says its password must be, so a new one fits it.
-          rules: needs.password && context.signup ? passwordRules(fields, results) : null,
-          portal: JTF.flow.portal(),
-        });
-        if (secrets && secrets.error) notes.push(secrets.error);
-        if (secrets && secrets.notes) notes.push(...secrets.notes);
-      } else {
-        vaultNeeded = payload.vault;
-        notes.push(
-          payload.vault === 'none'
-            ? 'Passwords and cards need the vault: set it up in JobToFill settings.'
-            : 'The vault is locked, so passwords and cards were skipped. Unlock it and JobToFill fills them in.',
-        );
-      }
+      secrets = await send({
+        type: 'jtf:secrets',
+        password: needs.password ? (context.signup ? 'signup' : 'login') : null,
+        card: needs.card,
+        // What the sign-up page says its password must be, so a new one fits it.
+        rules: needs.password && context.signup ? passwordRules(fields, results) : null,
+        portal: JTF.flow.portal(),
+      });
+      if (secrets && secrets.error) notes.push(secrets.error);
+      if (secrets && secrets.notes) notes.push(...secrets.notes);
     }
 
     const report = {
@@ -278,7 +259,6 @@
       held: 0,
       docs: {},
       wantsLetter: false,
-      vaultNeeded,
       passwordSource: (secrets && secrets.credential && secrets.credential.source) || null,
     };
     // Attaching a cover letter fills just those fields, replacing whatever is in them.
@@ -796,7 +776,7 @@
             payload.docs && payload.docs[def.file] && JTF.fields.uploadApplies(r.type, profile, question)
               ? 'ok'
               : 'empty';
-        else if (def.secret) status = 'vault';
+        else if (def.secret) status = 'secret';
         else if (def.consent) status = payload.settings && payload.settings.consents ? 'ok' : 'unknown';
         else {
           const ctx = Object.assign({}, context, {

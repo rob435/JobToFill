@@ -196,38 +196,6 @@ button.quick-last:hover {
   overflow: hidden;
 }
 
-.vault {
-  display: grid;
-  gap: 6px;
-  padding: 9px 12px;
-  border-radius: var(--radius);
-  background: var(--surface-2);
-  font-size: 12.5px;
-}
-.vault-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.vault input {
-  flex: 1;
-  padding: 5px 8px;
-  font-size: 12.5px;
-}
-.vault .grow {
-  flex: 1;
-}
-.vault svg {
-  width: 16px;
-  height: 16px;
-  fill: currentColor;
-  flex: none;
-}
-.vault .err {
-  margin: 0;
-  color: var(--danger);
-}
-
 .card.warn {
   grid-template-columns: 1fr auto;
   align-items: center;

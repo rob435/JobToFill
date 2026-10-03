@@ -184,7 +184,7 @@ test('value resolution', () => {
   assert.equal(fields.resolve('edu.school', p, ctx({ index: 1 })).text, 'Cambridge');
   assert.equal(fields.resolve('edu.school', p, ctx({ index: 5 })), null);
   assert.equal(fields.resolve('job.authorized', p), null, 'unanswered questions are skipped');
-  assert.equal(fields.resolve('account.password', p, ctx()), null, 'no secrets without the vault');
+  assert.equal(fields.resolve('account.password', p, ctx()), null, 'no password unless the background sent one');
   assert.equal(
     fields.resolve('cc.number', p, ctx({ secrets: { card: { number: '4242 4242 4242 4242' } } })).text,
     '4242424242424242',

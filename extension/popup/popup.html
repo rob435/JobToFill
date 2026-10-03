@@ -103,37 +103,6 @@
         <ul id="learn-list" class="learn-list"></ul>
         <button id="learn-save" class="primary" type="button" hidden>Save selected</button>
       </section>
-
-      <section id="vault" class="vault">
-        <div class="vault-row" data-state="none" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 2a5 5 0 0 0-5 5v3H5v12h14V10h-2V7a5 5 0 0 0-5-5Zm-3 8V7a3 3 0 1 1 6 0v3H9Z" />
-          </svg>
-          <span class="grow">Save passwords &amp; cards in an encrypted vault</span>
-          <button id="vault-setup" class="small" type="button">Set up</button>
-        </div>
-        <form class="vault-row" data-state="locked" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 2a5 5 0 0 0-5 5v3H5v12h14V10h-2V7a5 5 0 0 0-5-5Zm-3 8V7a3 3 0 1 1 6 0v3H9Z" />
-          </svg>
-          <input
-            id="vault-password"
-            type="password"
-            placeholder="Master password"
-            autocomplete="current-password"
-            aria-label="Master password"
-          />
-          <button class="small primary" type="submit">Unlock</button>
-        </form>
-        <div class="vault-row" data-state="unlocked" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M17 2a5 5 0 0 0-5 5v3H5v12h14V10h-5V7a3 3 0 1 1 6 0v1h2V7a5 5 0 0 0-5-5Z" />
-          </svg>
-          <span class="grow">Vault unlocked: passwords &amp; cards will fill</span>
-          <button id="vault-lock" class="small" type="button">Lock</button>
-        </div>
-        <p id="vault-error" class="err" hidden></p>
-      </section>
     </main>
 
     <footer>
@@ -145,7 +114,6 @@
     <script src="../lib/geo.js"></script>
     <script src="../lib/fields.js"></script>
     <script src="../lib/matcher.js"></script>
-    <script src="../lib/vault.js"></script>
     <script src="../lib/store.js"></script>
     <script src="../lib/ai.js"></script>
     <script type="module" src="popup.js"></script>
