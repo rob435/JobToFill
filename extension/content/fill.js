@@ -367,6 +367,29 @@
   /** Workday's search prompts look up what was typed when Enter is pressed. */
   const searchesOnEnter = (el) => el.getAttribute('data-uxi-widget-type') === 'selectinput';
 
+  /** Are `a` and `b` parts of one widget (a box and its toggle button): nothing else to fill around them? */
+  function sameWidget(a, b) {
+    if (a === b || a.contains(b) || b.contains(a)) return true;
+    let common = a.parentElement;
+    while (common && !common.contains(b)) common = common.parentElement;
+    if (!common) return false;
+    const others = common.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]');
+    return !Array.from(others).some(
+      (c) => c.getAttribute('aria-hidden') !== 'true' && ![a, b].some((x) => x.contains(c) || c.contains(x)),
+    );
+  }
+
+  /**
+   * Is this list another dropdown's (another field's control names it in aria-controls / aria-owns)? The menu of a
+   * Select left open is not the one this field opens: reading it as ours would choose in the wrong field.
+   */
+  function ownedElsewhere(lb, el) {
+    if (!lb.id) return false;
+    const id = lb.id.replace(/["\\]/g, '\\$&');
+    const owners = lb.ownerDocument.querySelectorAll(`[aria-controls~="${id}"], [aria-owns~="${id}"]`);
+    return owners.length > 0 && !Array.from(owners).some((o) => sameWidget(o, el));
+  }
+
   function listboxFor(el) {
     const rootNode = el.getRootNode();
     const doc = el.ownerDocument;
@@ -392,7 +415,12 @@
     if (rootNode !== doc) all.push(...doc.querySelectorAll(selector));
     // Nested matches (ul inside div.oj-listbox-drop): keep the outermost.
     const cands = all.filter(
-      (lb) => dom().isVisible(lb) && !lb.closest('[data-jtf-ui]') && !lb.contains(el) && !isChipList(lb),
+      (lb) =>
+        dom().isVisible(lb) &&
+        !lb.closest('[data-jtf-ui]') &&
+        !lb.contains(el) &&
+        !isChipList(lb) &&
+        !ownedElsewhere(lb, el),
     );
     const visible = cands.filter((lb) => !cands.some((o) => o !== lb && o.contains(lb)));
     if (!visible.length) return null;
