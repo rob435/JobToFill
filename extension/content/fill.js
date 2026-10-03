@@ -96,15 +96,103 @@
     typeValue(el, typed.slice(-kept.length));
   }
 
-  /** A box that only takes keys: Workday's date spin buttons ("YYYY") put back a value set from script. */
+  /**
+   * A box that only takes keys: Workday's date spin buttons ("YYYY") put back a value set from script, and a date in
+   * parts that aren't inputs (MUI X's and React Aria's "MM/DD/YYYY" spans) has no value to set at all.
+   */
   const takesKeys = (el) =>
-    el.getAttribute('role') === 'spinbutton' || /^dateSection/.test(el.getAttribute('data-automation-id') || '');
+    el.getAttribute('role') === 'spinbutton' ||
+    /^dateSection/.test(el.getAttribute('data-automation-id') || '') ||
+    !!datePartsOf(el);
+
+  const datePartsOf = (el) => (el.localName === 'input' || el.localName === 'textarea' ? null : dom().dateSegments(el));
+
+  // A date being typed into its parts, by field: closePopups waits for it (typeKeys can't be awaited by its callers).
+  const typing = new WeakMap();
+
+  /** One key into a contenteditable part: the widget takes it itself (React Aria, on beforeinput), else it is typed in. */
+  function typeChar(target, ch) {
+    const doc = target.ownerDocument;
+    const init = keyInit(ch);
+    const down = new KeyboardEvent('keydown', init);
+    target.dispatchEvent(down);
+    if (!down.defaultPrevented) {
+      target.dispatchEvent(new KeyboardEvent('keypress', Object.assign({}, init, { charCode: ch.charCodeAt(0) })));
+      const before = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        inputType: 'insertText',
+        data: ch,
+      });
+      if (target.dispatchEvent(before)) {
+        // Over what the part shows ("MM"), which the widget selects when the part gets focus.
+        const range = doc.createRange();
+        range.selectNodeContents(target);
+        doc.getSelection().removeAllRanges();
+        doc.getSelection().addRange(range);
+        if (!doc.execCommand('insertText', false, ch)) {
+          target.textContent = ch;
+          target.dispatchEvent(
+            new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: ch }),
+          );
+        }
+      }
+    }
+    target.dispatchEvent(new KeyboardEvent('keyup', init));
+  }
+
+  /**
+   * Type a date into its parts like a person: focus each part ("MM", "DD", "YYYY") and type its digits, giving the
+   * widget time to re-render between keys: an MUI X field keeps which part is being typed, and the keys typed so far,
+   * in React state, so keys sent back to back would all be read against the state before the first. `text` is the
+   * date written in the parts' order ("06/14/2027", dom.js gives the field that format). Resolves to whether every part
+   * shows what was typed.
+   */
+  async function typeParts({ box, parts }, text) {
+    const runs = String(text)
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter(Boolean);
+    if (runs.length !== parts.length) return false;
+    const doc = box.ownerDocument;
+    for (let i = 0; i < parts.length; i++) {
+      parts[i].focus({ preventScroll: true });
+      await sleep(20);
+      for (const ch of runs[i]) {
+        // Keys go where the focus is: a widget that moves on to the next part by itself has it there.
+        const active = dom().deepActiveElement(doc);
+        typeChar(active && parts.includes(active) ? active : parts[i], ch);
+        await sleep(20);
+      }
+    }
+    const active = dom().deepActiveElement(doc);
+    if (active && box.contains(active)) active.blur();
+    await sleep(20);
+    return parts.every((p, i) => p.textContent.trim() === runs[i]);
+  }
+
+  /** What a date in parts shows ("06/14/2027"), '' while each part shows its placeholder ("MM"), null for other boxes. */
+  function partsValue(el) {
+    const found = datePartsOf(el);
+    if (!found) return null;
+    const filled = (p) =>
+      /\d/.test(p.textContent) ||
+      (p.hasAttribute('aria-valuenow') && !/^empty$/i.test(p.getAttribute('aria-valuetext') || ''));
+    return found.parts.some(filled) ? found.parts.map((p) => p.textContent.trim()).join('/') : '';
+  }
 
   /**
    * Type `text` key by key: each key goes to the widget first, and only when it doesn't take the key itself is the
-   * character inserted the way the browser does. Falls back to typeValue when the box still disagrees.
+   * character inserted the way the browser does. Falls back to typeValue when the box still disagrees. A date in parts
+   * is typed part by part (typeParts), which takes a while: that returns a promise.
    */
   function typeKeys(el, text) {
+    const found = datePartsOf(el);
+    if (found) {
+      const done = typeParts(found, text);
+      typing.set(el, done);
+      return done;
+    }
     const doc = el.ownerDocument;
     el.focus({ preventScroll: true });
     el.dispatchEvent(new FocusEvent('focusin', { bubbles: true, composed: true }));
@@ -158,7 +246,11 @@
 
   const isEditable = (el) => el.isContentEditable && el.localName !== 'input' && el.localName !== 'textarea';
   /** What a box holds: an input's value, an editor's text. */
-  const textIn = (el) => (isEditable(el) ? el.innerText || el.textContent || '' : el.value || '');
+  const textIn = (el) => {
+    const parts = partsValue(el);
+    if (parts != null) return parts;
+    return isEditable(el) ? el.innerText || el.textContent || '' : el.value || '';
+  };
 
   function selectAllIn(el) {
     el.focus({ preventScroll: true });
@@ -238,6 +330,8 @@
    * it), then real key presses (spin buttons, masks that build the value key by key), then a paste.
    */
   function writeWays(el) {
+    // A date in parts only takes keys, one part after the other.
+    if (datePartsOf(el)) return [typeKeys];
     if (isEditable(el)) return [pasteRich, insertRich];
     return takesKeys(el) ? [typeKeys, typeValue, pasteText] : [typeValue, typeKeys, pasteText];
   }
@@ -249,7 +343,7 @@
   async function writeText(el, text, from) {
     const ways = writeWays(el);
     for (let i = from || 0; i < ways.length; i++) {
-      ways[i](el, text);
+      await ways[i](el, text);
       if (textTook(el, text)) return i;
       if (isEditable(el)) for (let waited = 0; waited < 200 && !textTook(el, text); waited += 25) await sleep(25);
       if (textTook(el, text)) return i;
@@ -435,6 +529,8 @@
       case 'combobox':
         return !!el.value.trim() || chipsOf(el).length > 0 || keptChips(el).length > 0;
       default: {
+        const shown = partsValue(el);
+        if (shown != null) return !!shown;
         // A bare scheme or a dial code the widget put there ("+33" in react-phone-number-input) is still empty.
         const v = textIn(el).trim();
         return !!v && !/^https?:\/\/$/.test(v) && !/^\+\d{1,4}$/.test(v);
@@ -496,8 +592,10 @@
             .join(', ') ||
           keptChips(el).join(', ')
         );
-      default:
-        return textIn(el).trim();
+      default: {
+        const shown = partsValue(el);
+        return shown != null ? shown : textIn(el).trim();
+      }
     }
   }
 
@@ -535,6 +633,29 @@
   /** Workday's search prompts look up what was typed when Enter is pressed. */
   const searchesOnEnter = (el) => el.getAttribute('data-uxi-widget-type') === 'selectinput';
 
+  /** Are `a` and `b` parts of one widget (a box and its toggle button): nothing else to fill around them? */
+  function sameWidget(a, b) {
+    if (a === b || a.contains(b) || b.contains(a)) return true;
+    let common = a.parentElement;
+    while (common && !common.contains(b)) common = common.parentElement;
+    if (!common) return false;
+    const others = common.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]');
+    return !Array.from(others).some(
+      (c) => c.getAttribute('aria-hidden') !== 'true' && ![a, b].some((x) => x.contains(c) || c.contains(x)),
+    );
+  }
+
+  /**
+   * Is this list another dropdown's (another field's control names it in aria-controls / aria-owns)? The menu of a
+   * Select left open is not the one this field opens: reading it as ours would choose in the wrong field.
+   */
+  function ownedElsewhere(lb, el) {
+    if (!lb.id) return false;
+    const id = lb.id.replace(/["\\]/g, '\\$&');
+    const owners = lb.ownerDocument.querySelectorAll(`[aria-controls~="${id}"], [aria-owns~="${id}"]`);
+    return owners.length > 0 && !Array.from(owners).some((o) => sameWidget(o, el));
+  }
+
   function listboxFor(el) {
     const rootNode = el.getRootNode();
     const doc = el.ownerDocument;
@@ -571,7 +692,8 @@
         !lb.contains(el) &&
         !isChipList(lb) &&
         !clippedAway(lb) &&
-        !theirs(lb),
+        !theirs(lb) &&
+        !ownedElsewhere(lb, el),
     );
     // Nested matches (ul inside div.oj-listbox-drop): keep the outermost.
     const visible = cands.filter((lb) => !cands.some((o) => o !== lb && o.contains(lb)));
@@ -909,14 +1031,24 @@
     return null;
   }
 
+  /**
+   * Wait while a menu the widget already calls closed (aria-expanded="false") is still on screen: an MUI Select's menu
+   * fades out for ~200 ms after a pick or Escape. Clicking the widget then would open it again, and the next dropdown
+   * would find it still open.
+   */
+  async function menuGone(el) {
+    for (let waited = 0; waited < 500 && el.getAttribute('aria-expanded') === 'false' && listboxFor(el); waited += 40)
+      await sleep(40);
+    return !listboxFor(el);
+  }
+
   async function closeMenu(el) {
-    if (!listboxFor(el)) return;
+    if (await menuGone(el)) return;
     key(el.localName === 'input' ? el : el.ownerDocument.activeElement || el, 'Escape');
-    if (el.localName === 'input') return;
-    // The menu goes on the widget's next render (Radix Select): clicking its button before that would open it again,
-    // and an open Radix Select leaves the rest of the page aria-hidden and unclickable.
+    // The menu goes on the widget's next render (Radix Select) or fades out (MUI): clicking its button before that
+    // would open it again, and an open Radix Select leaves the rest of the page aria-hidden and unclickable.
     for (let waited = 0; waited < 150 && listboxFor(el); waited += 30) await sleep(30);
-    if (listboxFor(el)) pointerClick(el);
+    if (!(await menuGone(el)) && el.localName !== 'input') pointerClick(el);
   }
 
   /**
@@ -1081,6 +1213,12 @@
    * Escape, then a click outside. Popups that were open before (an application in a modal) are left alone.
    */
   async function closePopups(el, before) {
+    // A date still being typed in parts (typeKeys) is finished first.
+    const pending = typing.get(el);
+    if (pending) {
+      typing.delete(el);
+      await pending;
+    }
     const doc = el.ownerDocument;
     const fresh = () => openPopups(doc).filter((p) => !before.includes(p) && !p.contains(el));
     // Widgets open on focus synchronously: nothing new now means nothing to close (and no time lost per box).
@@ -1450,7 +1588,7 @@
       const order = ways.map((w, i) => i).filter((i) => i !== check.way);
       if (check.way >= 0) order.push(check.way);
       for (const i of order) {
-        ways[i](el, check.text);
+        await ways[i](el, check.text);
         await sleep(120);
         if (verify(field, check).ok) break;
       }

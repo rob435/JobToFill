@@ -2033,9 +2033,10 @@
         const num = String(p.contact.phone || '').trim();
         if (!num) return null;
         const cc = phoneCode(p);
-        // "07700 900123" with +44 is "+44 7700 900123": the trunk 0 goes, but in Italy, where it is part of the number.
-        const local = cc === '+39' ? num : num.replace(/^0(?=\d)/, '');
-        const international = cc && !num.startsWith('+') ? `${cc} ${local}` : num;
+        // From abroad "07386 526574" is dialled without its trunk zero: "+44 7386 526574". In Italy, San Marino and
+        // the Vatican the zero is part of the number.
+        const dialled = /^\+(39|378|379)$/.test(cc) ? num : num.replace(/^0(?=[\s().-]*[1-9])/, '');
+        const international = cc && !num.startsWith('+') ? `${cc} ${dialled}` : num;
         // "Country/Region Code" in a box of its own: the number goes in without it.
         const national = nationalNumber(num, cc);
         const full = ctx.hasCountryCodeField ? national : international;
