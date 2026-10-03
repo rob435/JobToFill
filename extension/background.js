@@ -3,11 +3,20 @@
  * Owns everything that needs privileges: injecting the content scripts on
  * demand, running a fill across all frames, handing out vault secrets (only to
  * the frame being filled, only over HTTPS), the keyboard shortcut, context
- * menus, vault auto-lock and the automatic backup file.
+ * menus, vault auto-lock, the automatic backup file and the Discover watchlist checks.
  */
 // Chromium loads the libraries here; Firefox lists them in manifest.json "background.scripts".
 if (typeof importScripts === 'function') {
-  importScripts('lib/util.js', 'lib/geo.js', 'lib/fields.js', 'lib/matcher.js', 'lib/vault.js', 'lib/store.js');
+  importScripts(
+    'lib/util.js',
+    'lib/geo.js',
+    'lib/fields.js',
+    'lib/matcher.js',
+    'lib/vault.js',
+    'lib/store.js',
+    'lib/jobpage.js',
+    'lib/discover.js',
+  );
 }
 
 const { store, vault, util, fields } = globalThis.JTF;
@@ -318,7 +327,7 @@ async function documentFor(msg, sender) {
 // Downloads/JobToFill, rewritten shortly after each change, and offered back when JobToFill
 // starts out empty.
 const BACKUP_FILE = 'JobToFill/jobtofill-backup.json';
-const BACKUP_KEYS = /^(profiles|profileOrder|settings|vault|aiKeys|doc:.+|kit:.+)$/;
+const BACKUP_KEYS = /^(profiles|profileOrder|settings|vault|aiKeys|watchlist|doc:.+|kit:.+)$/;
 
 api.storage.onChanged.addListener((changes, areaName) => {
   // Re-created on every change, so the file is written once things have been quiet for half a minute.
@@ -552,6 +561,56 @@ async function attachLetter(tabId, letterId) {
   return { saved: true, filled: summary.filled, detected: summary.detected };
 }
 
+/* ------------------------------------------------------------- watchlist */
+
+// Firms on the Discover watchlist are re-checked a few times a day; anything new shows as a number on the
+// toolbar button until it's seen on the Discover page. Small firms post once a year, often quietly.
+const WATCH_MINUTES = 360;
+let watching = null;
+
+function checkWatchlist() {
+  // One run at a time: the alarm and "Check now" can coincide.
+  if (!watching) watching = runWatchChecks().finally(() => (watching = null));
+  return watching;
+}
+
+async function runWatchChecks() {
+  const { discover } = globalThis.JTF;
+  const list = await store.getWatchlist();
+  const fetchFn = (url, init) => fetch(url, init);
+  let fresh = 0;
+  await discover.pool(list, 2, async (entry) => {
+    const state = (await store.getWatchState(entry.id)) || {};
+    const res = await discover.check({ ...entry, seen: state.seen }, { fetch: fetchFn });
+    const items = [...res.roles, ...res.programmes];
+    const added = items
+      .filter((it) => res.fresh.includes(discover.itemKey(it)))
+      .map((it) => ({ ...it, foundAt: Date.now() }));
+    const next = await store.setWatchState(entry.id, {
+      // A failed check keeps what was seen, so a firm's site being down doesn't make everything "new" later.
+      seen: res.status === 'unreachable' ? state.seen || null : [...new Set([...(state.seen || []), ...res.keys])],
+      fresh: [...added, ...((state && state.fresh) || [])],
+      checkedAt: res.checkedAt,
+      status: res.status,
+      roles: res.roles.length,
+      programmes: res.programmes.length,
+    });
+    fresh += next.fresh.length;
+  });
+  await updateBadge();
+  return { checked: list.length, fresh };
+}
+
+/** The toolbar number: new roles and programmes on watched firms not yet seen. */
+async function updateBadge() {
+  const list = await store.getWatchlist();
+  const states = await store.getWatchStates(list.map((w) => w.id));
+  const n = Object.values(states).reduce((sum, st) => sum + ((st && st.fresh && st.fresh.length) || 0), 0);
+  await api.action.setBadgeBackgroundColor({ color: '#2563eb' });
+  await api.action.setBadgeText({ text: n ? String(Math.min(n, 99)) : '' });
+  return n;
+}
+
 /* -------------------------------------------------------------- messages */
 
 const sum = (frames, key) => frames.reduce((n, f) => n + (f[key] || 0), 0);
@@ -571,6 +630,8 @@ const HANDLERS = {
   'jtf:job-context': (msg) => jobContext(msg.tabId),
   'jtf:scrape': (msg) => scrapeInTab(msg.url),
   'jtf:attach': (msg) => attachLetter(msg.tabId, msg.letterId),
+  'jtf:watch-check': () => checkWatchlist(),
+  'jtf:watch-badge': async () => ({ fresh: await updateBadge() }),
   'jtf:learn': async (msg) => {
     const { profile } = await store.getActive();
     const frames = await callFrames(msg.tabId, 'learn', [{ profile }]);
@@ -664,11 +725,14 @@ async function generatePasswordInto(tab, info, frameIds) {
 
 async function ensureAlarm() {
   if (!(await api.alarms.get('jtf-autolock'))) api.alarms.create('jtf-autolock', { periodInMinutes: 1 });
+  if (!(await api.alarms.get('jtf-watch')))
+    api.alarms.create('jtf-watch', { delayInMinutes: 5, periodInMinutes: WATCH_MINUTES });
 }
 
 api.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'jtf-autolock') await vault.autoLock((await store.getSettings()).autoLockMinutes);
   else if (alarm.name === 'jtf-backup') await writeBackup();
+  else if (alarm.name === 'jtf-watch' && (await store.getWatchlist()).length) await checkWatchlist();
 });
 
 api.runtime.onInstalled.addListener(async (details) => {
@@ -698,5 +762,7 @@ globalThis.JTFBackground = {
   siteOf,
   writeBackup,
   lookForPreviousBackup,
+  checkWatchlist,
+  updateBadge,
   handlers: HANDLERS,
 };

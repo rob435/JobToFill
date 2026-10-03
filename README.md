@@ -47,6 +47,16 @@ Save your details once: name, contact info, address, links, education, work hist
 - **Pick up where you left off.** Coming back to a job you already wrote for offers that letter, with your edits, instead of writing a new one.
 - **Bring your own model.** DeepSeek V4.1 Flash through [OpenRouter](https://openrouter.ai) by default (about a tenth of a cent per letter, ~10 seconds), [DeepSeek's own API](https://platform.deepseek.com/api_keys) (`deepseek-chat`), or any OpenAI-compatible provider. Settings › _Cover letters_. Each provider keeps its own key and model, so you can switch back and forth. With keys for both OpenRouter and DeepSeek, the other one takes over when the one you chose is out of credit, rate-limited or down (you can switch that off).
 
+**Discover internships (beyond Trackr)**
+
+- **Firms nobody advertises.** Toolbar → _Discover internships_ searches a bundled registry of 2,100+ reputable finance firms: SEC-registered advisers (from the SEC's Form ADV data: headcount, assets, private funds) plus the firms in Wikipedia's hedge fund, investment bank, private equity and Tiger Cub categories. Filter by kind (hedge funds, quant, prop trading, asset managers, credit, private equity, boutique advisory, family offices, VC), place and size. Small, well-regarded firms rank first.
+- **Leaves out what Trackr already lists.** It reads Trackr's own finance and tech trackers (this season and next) and hides those companies, so what's left are the HBKs and Lansdownes.
+- **Firms like the ones you name.** "HBK, Lansdowne Partners" finds firms in the same niche, city and size, and firms that share their Wikipedia categories.
+- **Checked live, not guessed.** _Check careers_ reads the firm's own website: its careers pages, the job board they embed or link to (Greenhouse, Lever, Ashby, Workable, Workday, SmartRecruiters, Recruitee, Phenom, Oleeo), and lists only student roles (internships, summer analyst, off-cycle, insight and spring weeks, graduate). Firms without a job board get the programme sentences from their careers page with the deadline and the application email (Cloudflare-hidden addresses decoded). A board is only guessed when the site doesn't name one, and a guessed board counts only if it carries the firm's name.
+- **AI ideas, verified.** With an AI key, _Ask the AI for more ideas_ adds firms the registry doesn't know, but only those whose website loads and names them **and** which the SEC adviser register or Wikipedia confirms. The rest are listed as left out, with the reason.
+- **Watchlist.** _Watch_ a firm and JobToFill re-checks its board and careers pages every six hours. New roles and programme pages show as a number on the toolbar button and in the popup. Small firms post once a year, often quietly.
+- `npm run firms` rebuilds the registry from the latest SEC file and Wikipedia (`FIRMS_CONTACT=you@example.org`, which the SEC requires).
+
 **General autofill**
 
 - Checkout and shipping forms, including country/state codes, phone numbers and split names. A "Company (optional)" box on a shipping form is _not_ filled with your employer.
@@ -128,7 +138,7 @@ The demo includes Greenhouse-, Workday- and Lever-style applications, searchable
 
 ## Privacy and security
 
-- **Nothing leaves your browser** unless you use the cover letter writer. There are no servers or analytics. The profile lives in the extension's local storage, plus the backup file in your own Downloads folder.
+- **Nothing leaves your browser** unless you use the cover letter writer. Discover only fetches public pages (firms' websites and job boards, Trackr's public lists, Wikipedia and the SEC adviser search) and sends no personal details; with _Ask the AI_ ticked, your search (not your profile) goes to your AI provider. There are no servers or analytics. The profile lives in the extension's local storage, plus the backup file in your own Downloads folder.
 - **The cover letter writer** sends the job description, your CV's text, your profile, notes and example letters to the AI provider you chose, with your own API key, and only when you ask for a letter. In Firefox it asks for your permission first. Your API keys stay in this browser and in your own backup file, so they come back if JobToFill is reinstalled; switch off _Keep my API keys in the backup file_ to leave them out (they are never sent anywhere but to the provider). Job descriptions are fetched from the job sites directly, without your cookies. Browsing history is only searched if you switch that on; it is searched locally, and only the matching job pages are opened. To find the job behind an application, JobToFill remembers the last few job-related pages each tab showed (at most 12, for 3 hours) in the browser's session memory; they are never written to disk or sent anywhere, and are gone when the browser closes. If you came from a Trackr list, its public programme list is fetched to confirm which job it is.
 - **Nothing runs until you ask.** The fill code is injected into a page only when you press the shortcut or a button. It is not loaded on every site you visit.
 - **The backup file is yours.** It is written only to your Downloads folder and contains your profile as plain JSON (the vault stays encrypted). Turn it off under _Backup & restore_ if you'd rather not keep one.
@@ -193,6 +203,7 @@ extension/
     vault.js           encryption, password generator, lock/unlock
     store.js           profiles, settings, documents, history, backups, cover letter material and letters
     util.js            text normalization, dates, and JTF.api (browser.* in Firefox, chrome.* elsewhere)
+    discover.js        Discover: registry search, Trackr dedupe, careers crawl, job boards, verification, watchlist checks
     ai.js              OpenAI-compatible chat client (OpenRouter, DeepSeek, custom): JSON mode, retries, errors
     letter.js          cover letter and CV prompts, and the checks every draft must pass
     jobpage.js         job postings: extraction, ATS APIs, finding the description, same-job validation
@@ -206,6 +217,8 @@ extension/
   ui/                  shared styles and helpers for the popup and settings page (ES modules)
   popup/               toolbar popup
   studio/              the cover letter page: find the job, write, check, preview, attach, tailor the CV
+  discover/            Discover internships page: search, careers checks, watchlist
+  data/firms.json      the registry Discover searches (built by scripts/firms.mjs)
   options/             settings page: main.js (shell), profile.js, vault.js, app.js, controls.js
 tests/
   unit/                node:test, no browser

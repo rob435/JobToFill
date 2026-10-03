@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Discover internships · JobToFill</title>
+    <link rel="icon" href="../icons/icon32.png" />
+    <link rel="stylesheet" href="../ui/theme.css" />
+    <link rel="stylesheet" href="discover.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <img src="../icons/icon32.png" alt="" width="24" height="24" />
+      <strong>Discover internships</strong>
+      <span class="muted small">Reputable firms that keep a low profile</span>
+      <span class="grow"></span>
+      <div class="tabs" role="tablist">
+        <button id="tab-find" role="tab" type="button" aria-selected="true">Find firms</button>
+        <button id="tab-watch" role="tab" type="button" aria-selected="false">Watchlist <span id="watch-count" class="pill"></span></button>
+      </div>
+    </header>
+
+    <div class="page">
+      <section id="access" class="card" hidden>
+        <h2>Allow JobToFill on websites</h2>
+        <p class="muted">Needed once so it can read firms’ careers pages and job boards.</p>
+        <div class="row"><button id="access-allow" class="primary" type="button">Allow</button></div>
+      </section>
+
+      <div id="find-view">
+        <form id="query" class="card">
+          <div class="card-head">
+            <h2>What are you looking for?</h2>
+            <span id="registry-info" class="muted small"></span>
+          </div>
+          <fieldset class="niches">
+            <legend>Kind of firm</legend>
+            <div id="niches" class="chips"></div>
+          </fieldset>
+          <div class="grid">
+            <label class="field"
+              ><span>Where</span>
+              <select id="place"></select>
+            </label>
+            <label class="field"
+              ><span>Size</span>
+              <select id="size"></select>
+            </label>
+            <label class="field wide"
+              ><span>Firms like</span>
+              <input
+                id="seeds"
+                type="text"
+                list="firm-names"
+                placeholder="HBK, Lansdowne Partners, Egerton Capital"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <datalist id="firm-names"></datalist>
+              <small>Separate names with commas. Firms like these (same niche, city, size, Wikipedia categories) rank first.</small>
+            </label>
+            <label class="field wide"
+              ><span>Name contains</span>
+              <input id="text" type="text" placeholder="Optional" autocomplete="off" spellcheck="false" />
+            </label>
+          </div>
+          <div class="row">
+            <label class="check"><input id="hide-trackr" type="checkbox" checked /> Leave out firms Trackr already lists</label>
+            <label class="check" id="ai-wrap"
+              ><input id="use-ai" type="checkbox" /> Ask the AI for more ideas
+              <span class="muted small">(each one checked against the SEC, Wikipedia and its own website)</span></label
+            >
+          </div>
+          <div class="row">
+            <button id="search" class="primary" type="submit">Search</button>
+            <span id="status" class="muted small" aria-live="polite"></span>
+          </div>
+        </form>
+
+        <section id="results-card" class="card" hidden>
+          <div class="card-head">
+            <h2 id="results-title">Firms</h2>
+            <div class="row">
+              <label class="check small"><input id="only-open" type="checkbox" /> Only firms with something open</label>
+              <button id="check-top" class="small" type="button">Check the top 10</button>
+            </div>
+          </div>
+          <ol id="results" class="firms"></ol>
+          <div class="row"><button id="more" class="small" type="button" hidden>Show more</button></div>
+          <details id="rejected" hidden>
+            <summary></summary>
+            <ul class="plain small"></ul>
+          </details>
+        </section>
+      </div>
+
+      <div id="watch-view" hidden>
+        <section class="card">
+          <div class="card-head">
+            <h2>Watchlist</h2>
+            <div class="row">
+              <span id="watch-status" class="muted small" aria-live="polite"></span>
+              <button id="watch-seen" class="small" type="button">Mark all as seen</button>
+              <button id="watch-check" class="small primary" type="button">Check now</button>
+            </div>
+          </div>
+          <p class="muted small">
+            Watched firms are checked every six hours. New internships and programme pages show up here and as a number on the toolbar
+            button.
+          </p>
+          <p id="watch-empty" class="muted">Nothing watched yet. Search for firms and press <strong>Watch</strong> on the ones you like.</p>
+          <ol id="watchlist" class="firms"></ol>
+        </section>
+      </div>
+
+      <p class="muted small footnote">
+        Firms come from the SEC’s register of investment advisers (Form ADV) and Wikipedia. Roles are read live from each firm’s own careers
+        pages and job boards; nothing is sent anywhere else unless you ask the AI.
+      </p>
+    </div>
+
+    <script src="../lib/util.js"></script>
+    <script src="../lib/geo.js"></script>
+    <script src="../lib/fields.js"></script>
+    <script src="../lib/matcher.js"></script>
+    <script src="../lib/vault.js"></script>
+    <script src="../lib/store.js"></script>
+    <script src="../lib/ai.js"></script>
+    <script src="../lib/jobpage.js"></script>
+    <script src="../lib/discover.js"></script>
+    <script type="module" src="discover.js"></script>
+  </body>
+</html>

@@ -267,3 +267,53 @@ test('after JobToFill is removed and added again, the settings page restores the
   assert.deepEqual(errors, []);
   await page.close();
 });
+
+test('Discover lists registry firms, and watched firms’ new programmes show on the toolbar button', async () => {
+  // Trackr's list comes from the cache, so the search needs no network.
+  await h.bg(() =>
+    globalThis.JTF.store.setDiscoverCache({
+      trackr: { names: ['man group', 'man'], domains: ['man.com'], at: Date.now(), answered: 1 },
+    }),
+  );
+  const popup = await openExt('popup/popup.html');
+  assert.equal(await popup.textContent('#discover span'), 'Discover internships');
+  await popup.close();
+
+  const pageErrors = [];
+  const page = await h.context.newPage();
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+  await page.goto(h.extUrl('discover/discover.html'));
+  await page.waitForFunction(() => /firms in the registry/.test(document.querySelector('#registry-info').textContent));
+  await page.selectOption('#place', 'any');
+  await page.selectOption('#size', 'any');
+  await page.click('#search');
+  await page.waitForSelector('#results .firm');
+  assert.ok((await page.$$('#results .firm')).length >= 10);
+  assert.match(await page.textContent('#status'), /firms? match/);
+  assert.ok(!(await page.textContent('#results')).includes('Man Group'), 'Trackr’s firms are left out');
+
+  // A watched firm whose careers page gains a programme.
+  const careers = h.url('discover-careers.html');
+  await h.bg(async (url) => {
+    const { store } = globalThis.JTF;
+    const firm = { id: 'd:quiet.example', name: 'Quiet Capital', aliases: [], cities: ['London'], tags: [] };
+    await store.saveWatch({ id: firm.id, firm, boards: [], pages: [url], emails: [] });
+    // Watched before the programme was posted: nothing seen yet.
+    await store.setWatchState(firm.id, { seen: [], fresh: [] });
+  }, careers);
+  const r = await h.bg(() => globalThis.JTFBackground.checkWatchlist());
+  assert.equal(r.checked, 1);
+  assert.ok(r.fresh >= 1);
+  assert.equal(await h.bg(() => globalThis.JTF.api.action.getBadgeText({})), String(r.fresh));
+  await page.click('#tab-watch');
+  await page.reload();
+  await page.waitForSelector('#watchlist .firm');
+  assert.match(await page.textContent('#watchlist'), /2027 Summer Internship Programme/);
+  await page.click('#watch-seen');
+  await page.waitForFunction(() => !document.querySelector('#watchlist .new'));
+  assert.equal(await h.bg(() => globalThis.JTF.api.action.getBadgeText({})), '');
+  // A second check finds nothing new.
+  assert.equal((await h.bg(() => globalThis.JTFBackground.checkWatchlist())).fresh, 0);
+  assert.deepEqual(pageErrors, []);
+  await page.close();
+});
