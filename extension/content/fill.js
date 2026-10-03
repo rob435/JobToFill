@@ -149,22 +149,26 @@
     return dom().visibleText(el) || '';
   }
 
-  // Ant Design's tags ("selection-item") carry no role or ARIA state: their class is the only sign of them.
   const CHIP =
-    '[class*="singleValue"], [class*="single-value"], [class*="selected-value"], [class*="multiValue"], [class*="multi-value"], [class*="MuiChip-root"], [class*="selection-item"], [data-automation-id="selectedItem"]';
+    '[class*="singleValue"], [class*="single-value"], [class*="selected-value"], [class*="multiValue"], [class*="multi-value"], [class*="MuiChip-root"], [data-automation-id="selectedItem"]';
+  // The tags of a dropdown that takes several (Ant Design's "selection-item") carry no role or ARIA state: their class
+  // is the only sign of them. Its one-choice dropdowns (antd v4/v5) use the class for the choice, which another
+  // pick replaces: not a chip to clear first.
+  const TAG = '[class*="selection-item"]';
 
   /**
    * The selected values ("chips") of a react-select style widget, looking only inside its own
    * container. Hidden helper inputs (react-select's required-field shim) don't count as neighbours.
    */
   function chipsOf(el) {
+    const selector = isMulti(el) ? `${CHIP}, ${TAG}` : CHIP;
     let a = el.parentElement;
     for (let i = 0; a && i < 5; i++, a = a.parentElement) {
       const others = Array.from(
         a.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]'),
       ).filter((c) => c !== el && !c.contains(el) && c.getAttribute('aria-hidden') !== 'true' && c.tabIndex >= 0);
       if (others.length) return [];
-      const all = Array.from(a.querySelectorAll(CHIP));
+      const all = Array.from(a.querySelectorAll(selector));
       if (all.length) return all.filter((c) => !all.some((o) => o !== c && o.contains(c)));
     }
     return unnamedChips(el);

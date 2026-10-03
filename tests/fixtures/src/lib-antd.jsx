@@ -1,10 +1,12 @@
 // An application form built the way Ant Design's docs build one (antd v6): one <Form> whose Form.Items carry the
-// name, label and rules, a phone number as a dial-code Select and an Input side by side in Space.Compact (the
-// "Registration" example), a long virtualized country Select (only ~10 rows are in the DOM, next to a 0×0
-// role="listbox" kept for screen readers), a remote-search Select that shows a Spin while it "fetches" (the "Search
-// and Select Users" example), button-style radios and date pickers with typed input. The site preselects Italy and
-// +39 from the visitor's IP address. The form's own state (form.getFieldsValue(true)) and its validation errors are
-// printed into #state, so tests check what the form registered.
+// name, label and rules; the phone number as a dial-code Select named "prefix" and an Input side by side in
+// Space.Compact under one label (the "Registration" example); long Selects with antd's default virtual lists (only
+// the ~10 rows in view are in the DOM, next to a 0×0 role="listbox" kept for screen readers): the countries
+// searchable, the dial codes not; a remote-search Select that shows a Spin while it "fetches" (the "Search and Select
+// Users" example); a State question that appears for the United States; button-style radios, a Checkbox.Group and
+// date pickers with typed input. The site preselects Italy and +39 from the visitor's IP address. The form's own
+// state (form.getFieldsValue(true)) and its validation errors are printed into #state, so tests check what the form
+// registered.
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AutoComplete, Button, Checkbox, DatePicker, Form, Input, InputNumber, Radio, Select, Space, Spin } from 'antd';

@@ -344,17 +344,21 @@
 
   const countedIn = (node) => Array.from(node.querySelectorAll(COUNTED_SELECTOR)).filter((c) => !isShim(c));
 
+  const isPicker = (c) =>
+    c.localName === 'select' || c.getAttribute('role') === 'combobox' || c.hasAttribute('aria-haspopup');
+
   /**
-   * The label over a small cluster of controls none of which is labelled, that together make one answer: a dial
-   * code picker and the number beside it under "Phone number" (Ant Design's Space.Compact, whose label points at
-   * neither). The text just before the cluster, looking out until other fields start.
+   * The label over a picker and a box side by side, neither of them labelled, that together make one answer: a
+   * dial code and the number under "Phone number" (Ant Design's Space.Compact, whose label points at neither), a
+   * currency and an amount. The text just before the pair, looking out until other fields start.
    */
   function clusterLabel(el) {
     let cluster = el.parentElement;
     for (let i = 0; cluster && i < 6 && countedIn(cluster).length < 2; i++) cluster = cluster.parentElement;
     if (!cluster || cluster === el.ownerDocument.body) return '';
     const members = countedIn(cluster);
-    if (members.length > 3 || members.some((c) => explicitLabel(c) || c.getAttribute('aria-label'))) return '';
+    if (members.length !== 2 || members.filter(isPicker).length !== 1) return '';
+    if (members.some((c) => explicitLabel(c) || c.getAttribute('aria-label'))) return '';
     let node = cluster;
     for (let i = 0; i < 5; i++) {
       const t = previousText(node);
