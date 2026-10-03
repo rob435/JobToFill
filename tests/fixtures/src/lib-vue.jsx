@@ -3,6 +3,7 @@
 // remote search; multiple), radio groups (el-radio and el-radio-button), el-checkbox, el-date-picker that shows
 // DD/MM/YYYY and keeps YYYY-MM-DD, and el-input-number. Every dropdown and the date panel are teleported to <body>.
 // The reactive model and each field's validation result are printed into #state.
+//   ?country=Italy  the country of residence comes preselected, as sites do from where your connection seems to be
 import { createApp, reactive, ref } from 'vue';
 import ElementPlus from 'element-plus';
 import css from 'element-plus/dist/index.css';
@@ -29,6 +30,8 @@ const LOCATIONS = ['London', 'Edinburgh', 'Glasgow', 'Manchester', 'Dublin', 'Ne
 
 const required = (message, trigger = 'change') => ({ required: true, message, trigger });
 
+const PRESET_COUNTRY = new URLSearchParams(location.search).get('country') || '';
+
 const App = {
   setup() {
     const form = reactive({
@@ -36,7 +39,7 @@ const App = {
       lastName: '',
       email: '',
       phone: '',
-      country: '',
+      country: PRESET_COUNTRY,
       university: '',
       degree: '',
       graduation: '',

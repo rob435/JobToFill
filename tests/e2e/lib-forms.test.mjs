@@ -148,14 +148,20 @@ test('react-imask (US): an MM/DD/YYYY date and a ZIP code', async () => {
   await page.close();
 });
 
-test('react-phone-number-input preset to Italy: the number goes in as +44 and the country follows', async () => {
-  const { page, report, s } = await fillPage('lib-forms.html?section=phone', STUDENT, '#mobile');
-  assert.deepEqual(s.phone, { value: '+447386526574', country: 'GB' });
-  assert.deepEqual(report.unmatched, []);
-  await page.close();
-  const us = await fillPage('lib-forms.html?section=phone', US, '#mobile');
-  assert.deepEqual(us.s.phone, { value: '+14155550100', country: 'US' });
-  await us.page.close();
+test('react-phone-number-input preset to Italy: its country menu and number box end on your number', async () => {
+  // The country menu is a transparent <select> laid over the flag. "fixedcode": the box shows "+39" and won't let
+  // it be typed over, so the country has to be chosen in that menu.
+  for (const variant of ['', '&fixedcode']) {
+    for (const [profile, want] of [
+      [STUDENT, { value: '+447386526574', country: 'GB' }],
+      [US, { value: '+14155550100', country: 'US' }],
+    ]) {
+      const { page, report, s } = await fillPage(`lib-forms.html?section=phone${variant}`, profile, '#mobile');
+      assert.deepEqual(s.phone, want, variant);
+      assert.deepEqual(report.unmatched, []);
+      await page.close();
+    }
+  }
 });
 
 test('HTML constraint validation: digits-only pattern with maxlength, email, url and date boxes are valid', async () => {
@@ -246,5 +252,12 @@ test('Element Plus (US profile): the same form', async () => {
   assert.deepEqual(report.unmatched, []);
   // Only the question this profile has no answer for fails the form's own validation.
   assert.deepEqual(await submit(page, '.el-form > .el-button', (x) => x.review), ['locations']);
+  await page.close();
+});
+
+test('Element Plus: a country preselected from the visitor’s connection (Italy) is put right', async () => {
+  const { page, s } = await fillPage('lib-vue.html?country=Italy', STUDENT, '.el-form');
+  assert.equal(s.form.country, 'United Kingdom');
+  assert.equal(s.validation.country, true);
   await page.close();
 });

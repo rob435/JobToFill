@@ -5,6 +5,7 @@
 // widget's value) is printed into #state, so tests check what the site itself registered.
 //   ?section=rhf,formik,imask,phone,native  only those sections (default: all of them)
 //   ?us                                      the masks a US site uses: (000) 000-0000, MM/DD/YYYY, a ZIP code
+//   ?fixedcode                               the phone box shows "+39", not editable (international, fixed code)
 import { forwardRef, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Controller, useForm } from 'react-hook-form';
@@ -21,6 +22,8 @@ document.head.append(style);
 const params = new URLSearchParams(location.search);
 const SECTIONS = (params.get('section') || 'rhf,formik,imask,phone,native').split(',');
 const US = params.has('us');
+// The phone box shows the country's code ("+39") and won't let it be typed over: the country is chosen in its menu.
+const FIXED_CODE = params.has('fixedcode');
 // A London employer's site is in British English; the US variant is an American site's.
 document.documentElement.lang = US ? 'en-US' : 'en-GB';
 
@@ -282,7 +285,14 @@ function PhoneSection({ report }) {
       <form noValidate onSubmit={(e) => e.preventDefault()}>
         <div className="field">
           <label htmlFor="mobile">Mobile phone number *</label>
-          <PhoneInput id="mobile" defaultCountry="IT" value={value} onChange={setValue} onCountryChange={setCountry} />
+          <PhoneInput
+            id="mobile"
+            defaultCountry="IT"
+            value={value}
+            onChange={setValue}
+            onCountryChange={setCountry}
+            {...(FIXED_CODE ? { international: true, countryCallingCodeEditable: false } : {})}
+          />
         </div>
       </form>
     </section>
