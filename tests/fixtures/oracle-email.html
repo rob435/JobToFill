@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Campus - Internship Programme - Undergraduate - AI Engineer - 2027 (UK - London)</title>
+    <!--
+      Oracle Recruiting Cloud's first apply step (…/apply/email): the email box and its legal disclaimer, a visually
+      hidden checkbox inside its label (Knockout's checked binding), with the terms behind a link that opens a dialog.
+    -->
+    <style>
+      body { font: 15px/1.4 system-ui, sans-serif; margin: 32px auto; max-width: 620px; }
+      .input-row__hidden-control { position: absolute; opacity: 0; width: 1px; height: 1px; }
+      .apply-flow-input-checkbox__button { display: inline-block; width: 16px; height: 16px; border: 1px solid #456; }
+      .apply-flow-input-checkbox__button--checked { background: #2a6; }
+    </style>
+  </head>
+  <body>
+    <h1>Campus - Internship Programme - Undergraduate - AI Engineer - 2027 (UK - London)</h1>
+    <div class="input-row">
+      <label for="primary-email-0" class="input-row__label">Email Address</label>
+      <input type="email" id="primary-email-0" class="input-row__control" autocomplete="email" required />
+    </div>
+    <label class="input-row legal-disclaimer-container" aria-labelledby="agreements-checkbox-label" for="legal-disclaimer-checkbox">
+      <input type="checkbox" class="input-row__hidden-control" id="legal-disclaimer-checkbox"
+        aria-labelledby="legal-disclaimer-checkbox-label" aria-describedby="legalDisclaimerErrorMessage" required />
+      <span class="apply-flow-input-checkbox apply-flow-input-checkbox--focus-enabled" id="legal-disclaimer-checkbox-label">
+        <span class="apply-flow-input-checkbox__button"></span>
+        <span class="apply-flow-input-checkbox__label apply-flow-input-checkbox__label--required">
+          I agree with the <a id="legal-disclaimer-link" href="#" aria-haspopup="true" class="agreements-label-text-link">terms and conditions</a>
+          <span class="apply-flow-input-checkbox__label--required-star" aria-hidden="true"></span>
+        </span>
+      </span>
+    </label>
+    <label><input type="checkbox" id="job-alerts" /> Send me job alerts and marketing emails</label>
+    <button type="button" id="next">NEXT</button>
+    <p id="accepted">no</p>
+    <script>
+      const box = document.getElementById('legal-disclaimer-checkbox');
+      box.addEventListener('change', () => {
+        document.getElementById('accepted').textContent = box.checked ? 'yes' : 'no';
+        document.querySelector('.apply-flow-input-checkbox__button').classList.toggle('apply-flow-input-checkbox__button--checked', box.checked);
+      });
+    </script>
+  </body>
+</html>

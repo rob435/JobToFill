@@ -87,7 +87,7 @@ const TOGGLES = [
   [
     'consents',
     'Tick acknowledgement boxes',
-    'Privacy-notice and “I confirm” checkboxes. Marketing and talent-pool opt-ins are never ticked. Off: they are left for you.',
+    'Privacy-notice, “I confirm” and “I agree with the terms and conditions” checkboxes. Marketing and talent-pool opt-ins are never ticked. Off: they are left for you.',
   ],
   ['logApplications', 'Keep an application log', 'Remember each job application page you filled.'],
   [

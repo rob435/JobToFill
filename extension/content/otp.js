@@ -74,12 +74,13 @@
     );
     if (!inputs.length) return null;
 
-    // A row of single-character boxes, one per digit.
-    const singles = inputs.filter(
-      (el) =>
-        el.maxLength === 1 ||
-        (el.getBoundingClientRect().width < 64 && el.size <= 2 && el.maxLength > 0 && el.maxLength <= 2),
-    );
+    // A row of single-character boxes, one per digit. Oracle's pin boxes have no maxlength at all: they are small,
+    // and keep only the first digit of what is typed into them.
+    const singles = inputs.filter((el) => {
+      if (el.maxLength === 1) return true;
+      const width = el.getBoundingClientRect().width;
+      return width > 0 && width < 64 && el.maxLength <= 2 && (el.size <= 2 || el.maxLength < 0);
+    });
     const groups = new Map();
     for (const el of singles) {
       let p = el.parentElement;

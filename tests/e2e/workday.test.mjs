@@ -1,4 +1,4 @@
-// End-to-end: Workday's own widgets as a live application has them (tests/fixtures/workday-prompts.html): a country
+// End-to-end: Workday's and Oracle's own widgets as live applications have them. Workday (workday-prompts.html): a country
 // preselected from the visitor's IP address, an address section rebuilt per country, search prompts with chips,
 // year spin buttons that only take keys, and an upload that takes several files.
 import { after, before, test } from 'node:test';
@@ -83,4 +83,20 @@ test('Workday: a country picked from the IP address is put right, then the addre
   assert.equal(await page.$$eval('[data-automation-id="activeListContainer"], ul.menu', (l) => l.length), 0);
   assert.ok(took < 20000, `the fill took ${took} ms`);
   await page.close();
+});
+
+test('Oracle’s apply step: its hidden “I agree with the terms and conditions” box is ticked; job alerts are not', async () => {
+  await h.setSettings({ consents: true });
+  try {
+    const page = await h.open('oracle-email.html');
+    const r = await h.fill(page);
+    assert.equal(r.error, undefined);
+    assert.equal(await value(page, '#primary-email-0'), 'robin@example.com');
+    assert.equal(await page.$eval('#legal-disclaimer-checkbox', (el) => el.checked), true);
+    assert.equal(await text(page, '#accepted'), 'yes', 'the page saw the tick');
+    assert.equal(await page.$eval('#job-alerts', (el) => el.checked), false);
+    await page.close();
+  } finally {
+    await h.setSettings({ consents: false });
+  }
 });

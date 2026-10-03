@@ -210,8 +210,8 @@ export async function launch() {
   const driver = isFirefox ? await firefoxDriver() : await chromiumDriver();
   await backgroundReady(driver);
   await driver.bg(() => globalThis.JTF.store.loadAll());
-  // Tests that want the automatic backup file switch it on themselves.
-  await driver.bg(() => globalThis.JTF.store.saveSettings({ autoBackup: false }));
+  // Tests that want the automatic backup file, or acknowledgement boxes ticked, switch them on themselves.
+  await driver.bg(() => globalThis.JTF.store.saveSettings({ autoBackup: false, consents: false }));
 
   const h = {
     ...driver,

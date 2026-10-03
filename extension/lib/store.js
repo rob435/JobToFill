@@ -36,7 +36,10 @@
     highlight: true,
     toast: true,
     comboboxes: true,
-    consents: false,
+    // Acknowledgement and terms boxes ("I agree with the terms and conditions") are ticked; marketing never is.
+    consents: true,
+    // Settings saved before revision 2 had consents off by default: they are switched on once (see loadAll).
+    revision: 2,
     autoBackup: true,
     passwordStrategy: 'generate',
     logApplications: true,
@@ -92,6 +95,11 @@
     let order = (data.profileOrder || Object.keys(profiles)).filter((id) => profiles[id]);
     const settings = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
     let dirty = false;
+    if (data.settings && !(data.settings.revision >= 2)) {
+      settings.consents = true;
+      settings.revision = 2;
+      dirty = true;
+    }
     if (!order.length) {
       // Fixed id: several contexts (worker, popup, settings tab) may create the first profile at once.
       const p = JTF.fields.createProfile('My profile');

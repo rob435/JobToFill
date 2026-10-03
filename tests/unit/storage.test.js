@@ -165,6 +165,16 @@ test('store: first profile is created once even with concurrent readers', async 
   assert.equal(settings.activeProfileId, order[0]);
 });
 
+test('store: acknowledgement boxes are ticked by default; older settings are switched on once, then left as set', async () => {
+  assert.equal((await store.getSettings()).consents, true, 'a fresh install');
+  await chrome.storage.local.set({ settings: { consents: false, overwrite: false } });
+  const upgraded = await store.getSettings();
+  assert.equal(upgraded.consents, true, 'settings saved before revision 2 had them off by default');
+  assert.equal((await chrome.storage.local.get('settings')).settings.revision, 2);
+  await store.saveSettings({ consents: false });
+  assert.equal((await store.getSettings()).consents, false, 'switched off afterwards, it stays off');
+});
+
 test('store: concurrent saves do not drop each other', async () => {
   const { profile } = await store.getActive();
   const b = await store.createProfile('Second');

@@ -134,6 +134,15 @@ test('six React digit boxes are filled from the site’s email as soon as the pa
   await page.close();
 });
 
+test('Oracle’s six pin boxes without a maxlength get the whole code, not just its first digit', { skip }, async () => {
+  mailbox = [codeMail('938804')];
+  const page = await h.open('otp-oracle.html');
+  const pins = () => page.$$eval('.pin-code-input__input', (list) => list.map((el) => el.value).join(''));
+  await eventually(async () => (await pins()) === '938804', 15000, 'the six boxes to be filled');
+  assert.equal(await page.$eval('#state', (el) => el.textContent), '938804', 'the page registered the code');
+  await page.close();
+});
+
 test('a single one-time-code box is filled, and the code waits for the email to arrive', { skip }, async () => {
   const page = await h.open('otp-single.html');
   await eventually(() => requests.length >= 1, 10000, 'the first poll');
