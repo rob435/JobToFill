@@ -109,7 +109,7 @@
   }
 
   const CHIP =
-    '[class*="singleValue"], [class*="single-value"], [class*="selected-value"], [class*="multiValue"], [class*="multi-value"], [class*="MuiChip-root"]';
+    '[class*="singleValue"], [class*="single-value"], [class*="selected-value"], [class*="multiValue"], [class*="multi-value"], [class*="MuiChip-root"], [data-automation-id="selectedItem"]';
 
   /**
    * The selected values ("chips") of a react-select style widget, looking only inside its own
@@ -449,6 +449,9 @@
     await sleep(40);
   }
 
+  /** A role="menuitemcheckbox" / "menuitemradio" that is ticked. */
+  const isTicked = (option) => option.isConnected && option.getAttribute('aria-checked') === 'true';
+
   async function choose(el, option) {
     const text = dom().textOf(option);
     const typed = el.localName === 'input' ? el.value : '';
@@ -457,11 +460,16 @@
       const Ctor = type.startsWith('pointer') ? PointerEvent : MouseEvent;
       option.dispatchEvent(new Ctor(type, { bubbles: true, composed: true }));
     }
+    const before = currentOptions(el);
     pointerClick(option);
-    // Registered once the value shows, or the menu closes behind the click (slow re-renders included).
+    // Registered once the value shows, or the menu closes behind the click (slow re-renders included). A category
+    // that opens its own options instead (Workday's "Social Media" > "LinkedIn") says so.
     for (let waited = 0; waited < 300; waited += 30) {
       await sleep(30);
-      if (selectionShows(el, text, typed) || !listboxFor(el)) return text;
+      // A menu that stays open ticks the item itself (Teamtailor shows "a, b, c, +2" once there are more than three).
+      if (selectionShows(el, text, typed) || !listboxFor(el) || isTicked(option)) return text;
+      const now = currentOptions(el);
+      if (!option.isConnected && now.length && optionsKey(now) !== optionsKey(before)) return { drilled: true };
     }
     // Some widgets only take the keyboard: highlight the option, then press Enter.
     if (option.isConnected && el.localName === 'input') {
@@ -488,11 +496,21 @@
     let opts = await openMenu(el, searchable);
     const multi = isMulti(el);
     const pick = () => {
-      const idx = M().matchOption(describeOptions(opts), v);
-      return idx >= 0 && !already.includes(dom().textOf(opts[idx])) ? idx : -1;
+      const listed = describeOptions(opts);
+      // A multi-select takes every slot or statement that fits, one per call, judged with the ones it took already
+      // (react-select hides those): "None of these dates work" is never added to them. One ticked already stays.
+      const list =
+        v.many && multi
+          ? M().matchAll([...listed, ...already.map((t) => ({ text: t, value: '' }))], v)
+          : [M().matchOption(listed, v)];
+      const idx = list.find(
+        (i) => i >= 0 && i < opts.length && !already.includes(dom().textOf(opts[i])) && !(multi && isTicked(opts[i])),
+      );
+      return idx == null ? -1 : idx;
     };
     let idx = pick();
-    if (idx < 0 && searchable) {
+    // Statements and slots are judged against the whole list as it opened: typing would only hide some.
+    if (idx < 0 && searchable && !v.many) {
       const { full, narrow } = searchQueries(v);
       let sawAny = false;
       for (const query of narrow ? [...full, narrow] : full) {
@@ -509,7 +527,14 @@
       }
     }
     if (idx < 0) return { chosen: null, opts, multi };
-    return { chosen: await choose(el, opts[idx]), opts, multi };
+    let chosen = await choose(el, opts[idx]);
+    // A two-level list (Workday's "Social Media" > "LinkedIn"): the category opened its own options; pick from those.
+    for (let depth = 0; chosen && chosen.drilled && depth < 2; depth++) {
+      opts = currentOptions(el);
+      idx = pick();
+      chosen = idx >= 0 ? await choose(el, opts[idx]) : null;
+    }
+    return { chosen: chosen && chosen.drilled ? null : chosen, opts, multi };
   }
 
   async function fillCombo(field, v) {
@@ -535,10 +560,13 @@
         multi = true;
         queue.push(...items.filter((it) => !chosen.some((c) => M().matchOption([{ text: c }], it) === 0)));
       }
+      if (!multi && r.multi && v.many) multi = true;
+      // Every slot or statement that fits: ask again until none is left.
+      if (multi && v.many && r.chosen && chosen.length < 40) queue.push(v);
       if (!multi) break;
     }
 
-    if (!chosen.length && searchable && !sawOptions) {
+    if (!chosen.length && searchable && !sawOptions && !v.many) {
       // A plain text box whose suggestions never appeared: type the full value and see if it sticks.
       const full = M().formatForText(v, field.desc) || v.text;
       typeQuery(el, full);
@@ -799,10 +827,11 @@
         case 'checkboxes': {
           // A list ("London, New York") ticks every match; a single answer ticks its one option; an
           // acknowledgement ticks each statement you agree to ("…you consent to our privacy statement").
-          let picks = v.kind === 'list' ? M().matchAll(desc.options, v) : [];
+          // Sanctions statements and interview slots tick each one that is true of you (or "None of the above").
+          let picks = v.kind === 'list' || v.many ? M().matchAll(desc.options, v) : [];
           if (v.consent)
             picks = desc.options.map((o, i) => (JTF.fields.isAcknowledgement(o.text) ? i : -1)).filter((i) => i >= 0);
-          if (!picks.length) {
+          if (!picks.length && !v.many) {
             const idx = M().matchOption(desc.options, v);
             picks = idx >= 0 ? [idx] : M().matchAll(desc.options, v);
           }
@@ -813,7 +842,7 @@
         }
         case 'checkbox': {
           // One option of a checklist ("London" under "Which offices…?"), or a yes/no box.
-          const tick = v.kind === 'list' ? M().matchAll(desc.options, v).length > 0 : v.canonical === 'yes';
+          const tick = v.kind === 'list' || v.many ? M().matchAll(desc.options, v).length > 0 : v.canonical === 'yes';
           if (!tick) return { status: 'skipped', reason: 'not one of your answers' };
           history.push({ el, kind, prev: isChecked(el) });
           setChecked(el, true);

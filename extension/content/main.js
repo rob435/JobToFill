@@ -300,6 +300,8 @@
           question,
           options: field.desc.options,
           consents: !!settings.consents || accountTerms,
+          // How the page writes "03/11" (interview slots).
+          dateOrder: JTF.matcher.dateOrder(field.desc),
         }),
       );
     };
@@ -517,8 +519,9 @@
 
   // Never for the AI: what only the profile knows or the person decides (contact details, diversity answers,
   // declarations), secrets, uploads, and a cover letter (the letter writer does those).
+  // Sanctions declarations and interview slots too: left for you when your profile can't tell.
   const NOT_FOR_AI =
-    /^(name\.|email$|phone|address\.|links\.|dob$|age$|pronouns$|account\.|otp$|human$|cc\.|file\.|consent$|eeo\.|coverLetter$|job\.salary$)/;
+    /^(name\.|email$|phone|address\.|links\.|dob$|age$|pronouns$|account\.|otp$|human$|cc\.|file\.|consent$|eeo\.|coverLetter$|job\.salary$|compliance\.sanctions$|job\.availability$)/;
   const FOLLOW_ON = /^(if|please (specify|explain|state|give|provide)|other\b|specify)\b/;
   const MAX_PENDING = 40;
 

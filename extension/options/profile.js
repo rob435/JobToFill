@@ -20,6 +20,7 @@ const YES_NO_DECLINE = [...YES_NO, DECLINE];
 const CHOICES = {
   prefix: [['', '—'], ...same(['Mr', 'Ms', 'Mrs', 'Miss', 'Mx', 'Dr'])],
   phoneType: same(['Mobile', 'Home', 'Work']),
+  contactMethod: [NONE, ...same(['Email', 'Phone', 'Text message', 'WhatsApp'])],
   gender: [NONE, ...same(['Male', 'Female', 'Non-binary']), DECLINE],
   // Detailed answers in optgroups (see RACE_GROUPS); the broad US categories stay for existing profiles.
   race: [NONE, ...RACE_GROUPS.flatMap((g) => g.items.map((v) => [v, v.replace(/^[^–]+ – /, '')])), DECLINE],
@@ -119,6 +120,11 @@ const FORMS = {
             autocomplete: 'tel-national',
           }),
           f('contact.phoneType', 'Phone type', { type: 'select', options: CHOICES.phoneType }),
+          f('contact.preferredContact', 'Preferred contact method', {
+            type: 'select',
+            options: CHOICES.contactMethod,
+            hint: '“What is your communication preference?”',
+          }),
         ],
       },
       {
@@ -142,7 +148,10 @@ const FORMS = {
         title: 'Other',
         fields: [
           f('personal.dob', 'Date of birth', { type: 'date' }),
-          f('personal.nationality', 'Nationality / citizenship', { list: 'countries' }),
+          f('personal.nationality', 'Nationality / citizenship', {
+            list: 'countries',
+            hint: 'Two? Write both: “British, Irish”. With your country, this answers US sanctions questions (“…a citizen or resident of Cuba, Iran…?”).',
+          }),
         ],
       },
     ],
@@ -242,11 +251,30 @@ const FORMS = {
           }),
           f('job.noticePeriod', 'Notice period', { placeholder: 'e.g. 2 weeks' }),
           f('job.startDate', 'Available from', { placeholder: 'Immediately, or 2026-11-01' }),
-          f('job.referralSource', 'How did you hear about us?', { placeholder: 'e.g. LinkedIn' }),
+          f('job.referralSource', 'How did you hear about us?', {
+            placeholder: 'LinkedIn',
+            hint: 'Left blank, forms get LinkedIn. Write “-” to answer it yourself.',
+          }),
           f('job.locations', 'Preferred locations', {
             wide: true,
             placeholder: 'London, New York, Remote',
             hint: 'Best first. Ticks matching office checkboxes, and a dropdown gets the first one it offers.',
+          }),
+        ],
+      },
+      {
+        title: 'Interview availability',
+        hint: '“Please select ALL dates/times you are available” ticks every interview or assessment slot that fits, and a single choice gets the earliest. A box that asks in words gets “Weekdays, 8am–8pm”. Untick every day to answer these yourself.',
+        fields: [
+          f('availability.days', 'Days you can do', { type: 'days', wide: true }),
+          f('availability.from', 'From', { type: 'time' }),
+          f('availability.to', 'Until', { type: 'time' }),
+          f('availability.unavailable', 'Dates you can’t do', {
+            type: 'textarea',
+            rows: 3,
+            wide: true,
+            placeholder: '12–23 January 2027 (exams)\n14 February 2027',
+            hint: 'One date or range per line, like “12–23 January 2027”. Slots on those days are left unticked.',
           }),
         ],
       },

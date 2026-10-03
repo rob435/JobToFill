@@ -6,9 +6,10 @@ const { util } = globalThis.JTF;
 /**
  * A labelled control bound to a value.
  * spec: { path, label, type?, options?, placeholder?, hint?, wide?, list?, rows?, autocomplete? }
- * type: text (default) | email | tel | url | date | select | textarea | checkbox | month
+ * type: text (default) | email | tel | url | date | time | select | textarea | checkbox | month | days
  */
 export function control(spec, value, onChange) {
+  if (spec.type === 'days') return daysControl(spec, value, onChange);
   if (spec.type === 'checkbox') {
     const box = el('input', {
       type: 'checkbox',
@@ -85,6 +86,32 @@ export function monthControl(spec, value, onChange) {
   month.addEventListener('change', emit);
   year.addEventListener('input', emit);
   return field(spec, el('div', { className: 'month-pair' }, month, year));
+}
+
+const WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** A toggle per weekday, storing the ones ticked as "Mon, Tue, Wed" (Monday first). */
+export function daysControl(spec, value, onChange) {
+  const have = String(value || '').toLowerCase();
+  const boxes = WEEK.map((day) =>
+    el('input', {
+      type: 'checkbox',
+      name: `${spec.path}-${day.toLowerCase()}`,
+      checked: new RegExp(`\\b${day.toLowerCase()}`).test(have),
+      onchange: () => onChange(WEEK.filter((d, i) => boxes[i].checked).join(', ')),
+    }),
+  );
+  return el(
+    'div',
+    { className: 'field' + (spec.wide ? ' wide' : ''), attrs: { role: 'group', 'aria-label': spec.label } },
+    el('span', { textContent: spec.label }),
+    el(
+      'div',
+      { className: 'day-row' },
+      boxes.map((box, i) => el('label', { className: 'check' }, box, WEEK[i])),
+    ),
+    spec.hint ? el('small', { textContent: spec.hint }) : null,
+  );
 }
 
 export function sectionHead(title, intro) {

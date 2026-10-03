@@ -133,7 +133,8 @@
     'BD:Bangladeshi;LK:Sri Lankan;NP:Nepalese,Nepali;CN:Chinese;HK:Hongkonger;TW:Taiwanese;JP:Japanese;' +
     'KR:South Korean,Korean;SG:Singaporean;MY:Malaysian;ID:Indonesian;TH:Thai;VN:Vietnamese;PH:Filipino;' +
     'AU:Australian;NZ:New Zealander;CA:Canadian;MX:Mexican;BR:Brazilian;AR:Argentine,Argentinian;CL:Chilean;' +
-    'CO:Colombian;PE:Peruvian;IR:Iranian;GE:Georgian;AM:Armenian;JM:Jamaican';
+    'CO:Colombian;PE:Peruvian;IR:Iranian;GE:Georgian;AM:Armenian;JM:Jamaican;CU:Cuban;SY:Syrian;KP:North Korean;' +
+    'BY:Belarusian;VE:Venezuelan;IQ:Iraqi;AF:Afghan;SD:Sudanese;MM:Burmese;YE:Yemeni;LY:Libyan';
 
   // International dialling codes (ITU), so a "Country/Region Code" list gets the right "United Kingdom (+44)".
   // prettier-ignore
@@ -278,13 +279,50 @@
     'AT BE BG HR CY CZ DK EE FI FR DE GR HU IE IT LV LT LU MT NL PL PT RO SK SI ES SE IS LI NO CH'.split(' '),
   );
 
-  /** The words a list of citizenship options may use for a nationality: names, demonyms, "EU". */
+  /**
+   * Every nationality of a dual national ("British, Irish", "British and Iranian", "British / Iranian") as country
+   * rows; one row when the whole text is a country ("Trinidad and Tobago").
+   */
+  function nationalities(value) {
+    const rows = [];
+    for (const part of String(value || '').split(/\s*[,;/&+]\s*/)) {
+      const whole = findCountry(part.trim());
+      if (whole) rows.push(whole);
+      else for (const w of part.split(/\s+(?:and|or)\s+/i)) rows.push(findCountry(w.trim()));
+    }
+    return [...new Map(rows.filter(Boolean).map((row) => [row[0], row])).values()];
+  }
+
+  /** The words a list of citizenship options may use for a nationality (or two): names, demonyms, "EU". */
   function citizenWords(value) {
-    const row = findCountry(value);
-    if (!row) return [];
-    const words = [...countryCandidates(value), ...demonyms(row[0])];
-    if (EUROPEAN.has(row[0])) words.push('EU', 'EEA', 'European', 'European Union');
+    const rows = nationalities(value);
+    const words = rows.length === 1 ? countryCandidates(value) : [];
+    for (const row of rows) {
+      words.push(...row.slice(2), row[0], row[1], ...demonyms(row[0]));
+      if (EUROPEAN.has(row[0])) words.push('EU', 'EEA', 'European', 'European Union');
+    }
     return [...new Set(words.map(norm).filter(Boolean))];
+  }
+
+  // Under comprehensive US sanctions (OFAC; export-control country groups E:1 and E:2), as forms list them, and the
+  // occupied regions of Ukraine they add ("…or the Crimea, Donetsk, Luhansk, Zaporizhzhia, or Kherson regions").
+  const SANCTIONED = ['CU', 'IR', 'KP', 'SY'];
+  // prettier-ignore
+  const OCCUPIED = [
+    ['Crimea', /\bcrim(ea|ean|ia)\b|\bkrym\b|\bsevastopol\b|\bsimferopol\b/],
+    ['Donetsk', /\bdonet[sz]k\b|\bdnr\b/],
+    ['Luhansk', /\blu[hg]ansk\b|\blnr\b/],
+    ['Zaporizhzhia', /\bzapor[io]z?h/],
+    ['Kherson', /\bkherson\b/],
+  ];
+  // What sanctions questions ask about beyond those (Russia and Belarus, Venezuela, other OFAC programmes): living in
+  // one, or holding its nationality, leaves "none of the above" and its follow-up for you.
+  const SANCTIONS_WATCH = new Set([...SANCTIONED, ...'RU BY VE MM SD SS IQ LY SO YE ZW NI LB ML CF CD'.split(' ')]);
+
+  /** The occupied regions of Ukraine a (normalised) text names: ["Crimea", "Donetsk"]. */
+  function occupiedRegions(text) {
+    const t = norm(text);
+    return OCCUPIED.filter(([, re]) => re.test(t)).map(([name]) => name);
   }
 
   let nameIndex = null;
@@ -541,7 +579,12 @@
     findCountry,
     countryCandidates,
     demonyms,
+    nationalities,
     citizenWords,
+    SANCTIONED,
+    OCCUPIED,
+    SANCTIONS_WATCH,
+    occupiedRegions,
     findRegion,
     regionCountry,
     regionCandidates,

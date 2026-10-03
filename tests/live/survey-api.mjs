@@ -68,8 +68,8 @@ export function simulate(JTF, descs, profile, settings = {}) {
         : { outcome: 'filled', type: r.type, answer: opts[idx].text };
     }
     if (d.kind === 'checkboxes') {
-      let picks = v.kind === 'list' ? matcher.matchAll(opts, v) : [];
-      if (!picks.length) {
+      let picks = v.kind === 'list' || v.many ? matcher.matchAll(opts, v) : [];
+      if (!picks.length && !v.many) {
         const idx = matcher.matchOption(opts, v);
         picks = idx >= 0 ? [idx] : matcher.matchAll(opts, v);
       }
@@ -78,7 +78,7 @@ export function simulate(JTF, descs, profile, settings = {}) {
         : { outcome: 'nomatch', type: r.type, value: v.text };
     }
     if (d.kind === 'checkbox') {
-      const tick = v.kind === 'list' ? matcher.matchAll(opts, v).length > 0 : v.canonical === 'yes';
+      const tick = v.kind === 'list' || v.many ? matcher.matchAll(opts, v).length > 0 : v.canonical === 'yes';
       return tick ? { outcome: 'filled', type: r.type, answer: 'ticked' } : { outcome: 'skipped', type: r.type };
     }
     const text = matcher.formatForText(v, d);

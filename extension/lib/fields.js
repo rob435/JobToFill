@@ -50,7 +50,7 @@
         dob: '',
         nationality: '',
       },
-      contact: { email: '', phoneCountryCode: '', phone: '', phoneType: 'Mobile' },
+      contact: { email: '', phoneCountryCode: '', phone: '', phoneType: 'Mobile', preferredContact: 'Email' },
       address: { line1: '', line2: '', city: '', state: '', postalCode: '', country: '', organization: '' },
       links: { linkedin: '', github: '', portfolio: '', website: '', twitter: '' },
       job: {
@@ -63,7 +63,8 @@
         noticePeriod: '',
         nonCompete: '',
         startDate: '',
-        referralSource: '',
+        // A blank one counts as LinkedIn too (see DEFS['job.referralSource']).
+        referralSource: 'LinkedIn',
         locations: '',
         otherOffers: '',
         // Countries you have the right to work in (blank: your nationality, and where you live if authorised).
@@ -106,6 +107,8 @@
         familyGovernmentOfficial: '',
         governmentDetails: '',
       },
+      // Interview and assessment slots you can do: weekdays, hours, and dates you can't ("12–23 January 2027").
+      availability: { days: 'Mon, Tue, Wed, Thu, Fri', from: '08:00', to: '20:00', unavailable: '' },
       education: [blankEducation()],
       experience: [blankExperience()],
       skills: '',
@@ -327,10 +330,9 @@
       .filter(Boolean)
       .map((row) => row[0]);
     if (listed.length) return listed;
-    const out = [];
-    const nation = JTF.geo.findCountry(p.personal.nationality);
-    if (!nation) return [];
-    out.push(nation[0]);
+    // Dual nationals ("British, Irish") have both.
+    const out = JTF.geo.nationalities(p.personal.nationality).map((row) => row[0]);
+    if (!out.length) return [];
     const home = JTF.geo.findCountry(p.address.country);
     if (home && JTF.matcher && JTF.matcher.canonicalOf(p.job.authorized) === 'yes') out.push(home[0]);
     return [...new Set(out)];
@@ -439,8 +441,8 @@
     let { codes } = countriesAsked(ctx.question, null);
     if (!codes.length) codes = jobCountries(ctx);
     if (codes.length !== 1) return null;
-    const nation = JTF.geo.findCountry(p.personal.nationality);
-    if (nation && JTF.geo.workRights([nation[0]]).has(codes[0])) {
+    const nations = JTF.geo.nationalities(p.personal.nationality).map((row) => row[0]);
+    if (nations.length && JTF.geo.workRights(nations).has(codes[0])) {
       const mine = JTF.geo.citizenWords(p.personal.nationality);
       const ours = (n) => mine.some((w) => (' ' + n + ' ').includes(' ' + w + ' '));
       const i = optionTexts(ctx).findIndex(
@@ -502,10 +504,14 @@
     return val(String(details).trim(), { canonical: 'yes' });
   }
 
-  /** The "If yes, please give details" box after one of those questions: filled only after a Yes. */
-  function detailsIfYes(answer, details) {
+  /**
+   * The "If yes, please give details" box after one of those questions: filled only after a Yes, or with the word
+   * it asks for otherwise ("…Otherwise, enter N/A") after a No.
+   */
+  function detailsIfYes(answer, details, ctx) {
     const v = JTF.matcher ? JTF.matcher.canonicalOf(answer) : null;
-    return v === 'yes' && !U.isBlank(details) ? val(String(details).trim(), { canonical: 'yes' }) : null;
+    if (v === 'yes' && !U.isBlank(details)) return val(String(details).trim(), { canonical: 'yes' });
+    return v === 'no' && ctx ? otherwiseVal(ctx) : null;
   }
 
   function numberVal(text) {
@@ -1084,7 +1090,20 @@
       /\b(trackr|bright ?network|gradcracker|rate ?my ?(placement|apprenticeship)|targetjobs|target ?connect|prospects|milkround|handshake|indeed|glassdoor|monster|reed|totaljobs|efinancialcareers|otta|welcome to the jungle|wellfound|angel ?list|simplyhired|ziprecruiter|built ?in|the student room|gradireland|jobteaser|unitemps|careerjet|job ?board|job ?site)\b/,
       JOB_SITE,
     ],
-    [/\blinked ?in\b/, ['Social media', 'Social network', 'Social networking', ...JOB_SITE]],
+    [
+      /\blinked ?in\b/,
+      [
+        'Linkedin',
+        'LinkedIn Jobs',
+        'LinkedIn job posting',
+        'LinkedIn job post',
+        'LinkedIn advert',
+        'Social media',
+        'Social network',
+        'Social networking',
+        ...JOB_SITE,
+      ],
+    ],
     [/\b(instagram|facebook|tiktok|twitter|x|youtube|reddit)\b/, ['Social media', 'Social network', 'Online']],
     [
       /\b(google|bing|search)\b/,
@@ -1113,6 +1132,401 @@
   const PROGRAMMING =
     /^(python|java|javascript|js|typescript|ts|c|c\+\+|cpp|c#|c sharp|go|golang|rust|scala|kotlin|swift|objective c|ruby|php|perl|r|matlab|julia|haskell|ocaml|f#|sql|t sql|pl sql|bash|shell|powershell|vba|sas|stata|lua|dart|elixir|erlang|clojure|fortran|cobol|assembly|solidity|q|kdb\+?|q kdb|verilog|vhdl|html|css|lisp|scheme|prolog|groovy|zig|nim|crystal)$/;
   const PROGRAMMING_QUESTION = /\b(programming|coding|scripting|computer|software) languages?\b/;
+
+  // The ways forms spell a contact method ("E-mail", "Text message (SMS)").
+  const CONTACT_METHODS = {
+    Email: ['Email', 'E-mail', 'Email address', 'By email'],
+    Phone: ['Phone', 'Phone call', 'Telephone', 'Call', 'Mobile', 'Mobile phone', 'By phone'],
+    'Text message': ['Text message', 'Text', 'SMS', 'Text (SMS)', 'SMS / text message'],
+    WhatsApp: ['WhatsApp'],
+  };
+
+  /* ---------------------------------------------------------------- sanctions */
+
+  // Places named in sanctions statements; two in one sentence make it one ("…of Cuba, Iran, North Korea, or Syria").
+  const SANCTIONED_PLACE =
+    '(cuban?|iran(ian)?|north korean?|syrian?|crimean?|donetsk|lu[hg]ansk|zapor[io]z?h\\w*|kherson|sevastopol)';
+  const TWO_SANCTIONED_PLACES = new RegExp(`\\b${SANCTIONED_PLACE}\\b.*\\b${SANCTIONED_PLACE}\\b`);
+  // "If you selected a response to the prior question other than "none of the above," please confirm…"
+  const SANCTIONS_FOLLOW_UP =
+    /\bother than (the )?none of (the above|these|them)\b|\b(if|where) (you|any) (selected|ticked|chose|checked|answered|picked)\b(?! (yes|no)\b).*\b(prior|previous|above|preceding|first) question\b/;
+  const CITIZEN_WORDS = /\b(citizen\w*|nationals?|nationality|passports?)\b/;
+  const PERMANENT_RESIDENT = /\bpermanent(ly)? residen\w*|\bgreen card\b/;
+  const RESIDENT_WORDS = /\b(residen\w*|reside|resided|residing|live|lives|lived|living|located|based|domiciled)\b/;
+  // "…a comprehensively sanctioned country", "subject to US embargo (E:1/E:2 countries)": the usual list.
+  const ANY_SANCTIONED = /\bsanction\w*|\bembargo\w*|\bofac\b|\be [12]\b|\bcountry group e\b/;
+  // The US as the authority ("U.S. sanctions", "subject to US embargo"), not a place you could be from.
+  const SANCTIONING =
+    /\b(u ?s( a)?|united states( of america)?|american)( government| treasury| department of \w+)? (sanction\w*|embargo\w*|export\w*|laws?|regulations?|government|treasury|department|ofac|trade)\b/g;
+
+  const or3 = (list) => (list.includes(true) ? true : list.includes(null) ? null : false);
+  const and3 = (a, b) => (a === false || b === false ? false : a === true && b === true ? true : null);
+
+  /** What sanctions statements are judged by: your nationalities, where you live (and its region), relocation. */
+  function sanctionFacts(p) {
+    const nations = JTF.geo.nationalities(p.personal.nationality).map((row) => row[0]);
+    const home = JTF.geo.findCountry(p.address.country);
+    const area = [p.address.state, p.address.city].filter((s) => !U.isBlank(s)).join(' ');
+    return {
+      nations: nations.length ? nations : null,
+      home: home ? home[0] : null,
+      // The occupied regions of Ukraine your region or city names; null when the address doesn't say.
+      regions: area ? JTF.geo.occupiedRegions(area) : null,
+      relocate: JTF.matcher ? JTF.matcher.canonicalOf(p.job.relocate) : null,
+    };
+  }
+
+  /** Nothing a sanctions list could ask about applies to you: "none of the above" even with its statements unseen. */
+  function sanctionsClear(f) {
+    const watch = JTF.geo.SANCTIONS_WATCH;
+    if (!f.nations || !f.home || f.nations.some((c) => watch.has(c)) || watch.has(f.home)) return false;
+    if (f.regions && f.regions.length) return false;
+    return f.home !== 'UA' || f.regions != null;
+  }
+
+  /**
+   * Is a sanctions statement true of you? "Citizen or permanent resident of Cuba, Iran, North Korea, or Syria" from
+   * your nationalities; "Ordinarily a resident of … the Crimea, Donetsk… regions of Ukraine" from your country and
+   * region; "…of Russia or Belarus and not willing to relocate" from your relocation answer too. A question that
+   * names no place ("…a comprehensively sanctioned country?") means the usual ones. true / false; null when your
+   * profile can't tell; undefined when it isn't such a statement ("None of the above").
+   */
+  function sanctionsApplies(text, f) {
+    const all = U.normalize(text);
+    let t = ' ' + all.replace(SANCTIONING, ' ') + ' ';
+    // "…and not willing to relocate for a Databricks role" is a condition, not a denial.
+    let relocation = null;
+    t = t.replace(/\b(and |but )?(not |un)(willing|able|prepared|open) to relocate\b.*$/, () => {
+      relocation = 'no';
+      return ' ';
+    });
+    t = t.replace(/\b(and |but )?(willing|able|prepared|open) to relocate\b.*$/, () => {
+      relocation = relocation || 'yes';
+      return ' ';
+    });
+    // "Individual granted citizenship in a country other than Cuba, Iran…": any other one.
+    const other = t.match(/\bother than\b(.*)$/);
+    const head = other ? t.slice(0, other.index) : t;
+    const scope = other ? other[1] : t;
+    const regions = JTF.geo.occupiedRegions(scope);
+    // Countries or their people ("Cuban, Iranian… nationality").
+    let countries = JTF.geo.nationalitiesNamed(scope);
+    // "North Korea" isn't South Korea (alias "Korea"); "the Crimea… regions of Ukraine" isn't all of Ukraine.
+    if (countries.includes('KP') && !/\bsouth korea/.test(scope)) countries = countries.filter((c) => c !== 'KR');
+    if (regions.length) countries = countries.filter((c) => c !== 'UA');
+    if (!countries.length && !regions.length) {
+      if (other || !ANY_SANCTIONED.test(all)) return undefined;
+      countries = JTF.geo.SANCTIONED;
+      regions.push(...JTF.geo.OCCUPIED.map(([name]) => name));
+    }
+    // "Have you ever lived in…?" asks about the past, which the profile doesn't know.
+    const past = /\b(ever|previously|formerly|in the past|lived|resided)\b/.test(head);
+    const lives = () => {
+      if (other) return null;
+      if (f.home && countries.includes(f.home)) return true;
+      if (regions.length && f.regions && f.regions.some((r) => regions.includes(r))) return true;
+      if (past || !f.home || (f.home === 'UA' && regions.length && f.regions == null)) return null;
+      return false;
+    };
+    const citizen = () => {
+      if (!f.nations) return null;
+      return other ? f.nations.some((c) => !countries.includes(c)) : f.nations.some((c) => countries.includes(c));
+    };
+    const tests = [];
+    const isCitizen = CITIZEN_WORDS.test(head);
+    const isPermanent = PERMANENT_RESIDENT.test(head);
+    const isResident = RESIDENT_WORDS.test(head.replace(PERMANENT_RESIDENT, ' '));
+    if (isCitizen || (!isPermanent && !isResident)) tests.push(citizen());
+    if (isResident || (!isCitizen && !isPermanent)) tests.push(lives());
+    // A permanent residency elsewhere than you live is unlikely; where you live it can't be told.
+    if (isPermanent) tests.push(citizen() || (lives() === false ? false : null));
+    // "Are you, or is any member of your family, a national of…?": your family's isn't known.
+    if (/\b(family|relatives?|parents?|spouse|household)\b/.test(head)) tests.push(null);
+    let result = or3(tests);
+    if (relocation) result = and3(result, f.relocate === relocation ? true : f.relocate ? false : null);
+    if (/\b(not|never|neither|nor)\b/.test(head)) result = result == null ? null : !result;
+    return result;
+  }
+
+  /* ------------------------------------------------------------- availability */
+
+  const WEEKDAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  // "Mon", "Tues", "Wednesday", "Thurs", "Saturdays".
+  const WEEKDAY = '(sun|mon|tue|wed|thu|fri|sat)(?:s|r|rs)?(?:day|nesday|sday|urday)?s?';
+  const SLOT_NONE =
+    /\bnone\b|\bnot available\b|\bunavailable\b|\b(cannot|can ?t|can not|unable to) (make|attend|do)\b|\bdo(es)? ?n[o']?t (work|suit)\b|\bother (dates?|times?)\b|\balternative (dates?|times?|slots?)\b/;
+  const SLOT_ANY =
+    /\bany ?time\b|\bany (day|date|slot)s?\b|\bflexible\b|\ball (of the above|dates|times|slots)\b|\bwhenever\b|\bno preference\b|\bavailable (at )?all times\b/;
+  const PARTS_OF_DAY = [
+    [/\bmornings?\b/, [9 * 60, 12 * 60]],
+    [/\blunch ?(time)?\b/, [12 * 60, 14 * 60]],
+    [/\bafternoons?\b/, [12 * 60, 17 * 60]],
+    [/\bevenings?\b/, [17 * 60, 20 * 60]],
+    [/\b(all|full|whole) day\b/, [9 * 60, 17 * 60]],
+  ];
+
+  const dayNumber = (y, m, d) => Math.floor(Date.UTC(y, m - 1, d) / 864e5);
+  const weekdayOf = (n) => (((n + 4) % 7) + 7) % 7; // 1 January 1970 was a Thursday
+  const todayNumber = (today) => {
+    const now = today || new Date();
+    return dayNumber(now.getFullYear(), now.getMonth() + 1, now.getDate());
+  };
+
+  /** "08:00", "8am", "20:00" -> minutes after midnight; `fallback` when blank. */
+  function clockMinutes(text, fallback) {
+    const m = String(text || '')
+      .toLowerCase()
+      .match(/(\d{1,2})(?:[:.h](\d{2}))?\s*(am|pm)?/);
+    if (!m) return fallback;
+    const h = +m[1] % 24;
+    return (m[3] ? (h % 12) + (m[3] === 'pm' ? 12 : 0) : h) * 60 + (+m[2] || 0);
+  }
+
+  /** "Mon, Tue, Wed", "Mon–Fri", "Weekdays", "Every day" -> [1, 2, 3] (0 is Sunday). */
+  function dayList(text) {
+    const t = String(text || '')
+      .toLowerCase()
+      .replace(/[–—]/g, '-');
+    if (/\b(every ?day|any ?day|all (days|week)|daily|7 days)\b/.test(t)) return [0, 1, 2, 3, 4, 5, 6];
+    const days = new Set();
+    if (/\bweekdays?\b/.test(t)) [1, 2, 3, 4, 5].forEach((d) => days.add(d));
+    if (/\bweekends?\b/.test(t)) [0, 6].forEach((d) => days.add(d));
+    const rest = t.replace(new RegExp(`\\b${WEEKDAY} ?(?:-|to|until|through|thru) ?${WEEKDAY}\\b`, 'g'), (s, a, b) => {
+      for (let d = WEEKDAY_NAMES.indexOf(a); ; d = (d + 1) % 7) {
+        days.add(d);
+        if (d === WEEKDAY_NAMES.indexOf(b)) break;
+      }
+      return ' ';
+    });
+    for (const m of rest.matchAll(new RegExp(`\\b${WEEKDAY}\\b`, 'g'))) days.add(WEEKDAY_NAMES.indexOf(m[1]));
+    return [...days].sort();
+  }
+
+  /**
+   * The year of a date given without one: the next time it comes round (from today); when the option names its
+   * weekday ("Monday 13th October"), the nearest year in which it falls on that day.
+   */
+  function slotYear(m, d, weekday, today) {
+    const now = new Date(today * 864e5).getUTCFullYear();
+    if (weekday != null) {
+      const fits = [now - 1, now, now + 1].filter((y) => weekdayOf(dayNumber(y, m, d)) === weekday);
+      if (fits.length)
+        return fits.sort((a, b) => Math.abs(dayNumber(a, m, d) - today) - Math.abs(dayNumber(b, m, d) - today))[0];
+    }
+    return dayNumber(now, m, d) >= today ? now : now + 1;
+  }
+
+  const to24 = (h, mer) => (mer ? (h % 12) + (mer[0] === 'p' ? 12 : 0) : h);
+
+  /**
+   * One interview slot as forms write them: "Monday 13th October – 10:00-11:00", "Tue 14/10 AM", "Wednesday 15
+   * October 2026 (2pm - 4pm)", "w/c 20th October", "Morning (9am-12pm)", "Any time", "None of these dates work for
+   * me". Returns { ranges: [[firstDay, lastDay]…] (day numbers), weekdays, time: [from, to] (minutes), any, none,
+   * agrees (a named weekday matches the date) }; `order` reads "03/11" as 'dmy' or 'mdy'.
+   */
+  function parseSlot(raw, today, order) {
+    let t =
+      ' ' +
+      String(raw || '')
+        .toLowerCase()
+        .replace(/[–—−]/g, '-')
+        .replace(/(\d)(st|nd|rd|th)\b/g, '$1')
+        .replace(/\b(noon|midday)\b/g, '12pm')
+        .replace(/\bmidnight\b/g, '12am')
+        .replace(/\s+/g, ' ') +
+      ' ';
+    if (SLOT_NONE.test(t)) return { none: true };
+    const slot = { ranges: [], weekdays: null, time: null };
+    const week = /\b(w ?\/ ?[cb]|wc|week (commencing|beginning|starting|of))\b/.test(t);
+    // Weekdays: "Mon-Fri", "Tuesday", "weekdays".
+    const named = [];
+    t = t.replace(new RegExp(`\\b${WEEKDAY} ?(?:-|to|until|through|thru) ?${WEEKDAY}\\b(?! ?\\d)`, 'g'), (s, a, b) => {
+      for (let d = WEEKDAY_NAMES.indexOf(a); ; d = (d + 1) % 7) {
+        named.push(d);
+        if (d === WEEKDAY_NAMES.indexOf(b)) break;
+      }
+      return ' ';
+    });
+    t = t
+      .replace(new RegExp(`\\b${WEEKDAY}\\b`, 'g'), (s, d) => (named.push(WEEKDAY_NAMES.indexOf(d)), ' '))
+      .replace(/\s+/g, ' ');
+    if (/\bweekdays\b/.test(t)) named.push(1, 2, 3, 4, 5);
+    if (/\bweekends?\b/.test(t)) named.push(0, 6);
+    // Dates: "2026-10-14", "14/10(/2026)", "14.10.2026", "13 October (2026)", "13-17 Oct", "October 13(, 2026)".
+    const dates = [];
+    const add = (y, m, d) => {
+      if (m >= 1 && m <= 12 && d >= 1 && d <= 31) dates.push({ y: y ? (+y < 100 ? 2000 + +y : +y) : null, m, d });
+      return ' @ ';
+    };
+    const M = MONTH_RE;
+    const month = (s) => U.MONTHS.findIndex((name) => name.startsWith(s.slice(0, 3))) + 1;
+    t = t.replace(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/g, (s, y, m, d) => add(y, +m, +d));
+    t = t.replace(/\b(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})\b/g, (s, d, m, y) => add(y, +m, +d));
+    t = t.replace(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{4}|\d{2}))?\b/g, (s, a, b, y) => {
+      let [d, m] = order === 'mdy' ? [+b, +a] : [+a, +b];
+      if (m > 12) [d, m] = [m, d];
+      return add(y, m, d);
+    });
+    const END = '(?![:.]\\d|\\d| ?[ap]\\.?m\\b)';
+    t = t.replace(
+      new RegExp(`\\b(\\d{1,2})(?: ?- ?(\\d{1,2})${END})? (?:of )?(${M})\\b\\.?(?:,? (20\\d{2}))?`, 'g'),
+      (s, d1, d2, mon, y) =>
+        d2 ? (add(y, month(mon), +d1), add(y, month(mon), +d2), ' @-@ ') : add(y, month(mon), +d1),
+    );
+    t = t.replace(
+      new RegExp(`\\b(${M})\\b\\.? (\\d{1,2})(?: ?- ?(\\d{1,2}))?${END}(?:,? (20\\d{2}))?`, 'g'),
+      (s, mon, d1, d2, y) =>
+        d2 ? (add(y, month(mon), +d1), add(y, month(mon), +d2), ' @-@ ') : add(y, month(mon), +d1),
+    );
+    // A whole month ("May 2027"), for the dates you can't do.
+    let wholeMonth = null;
+    if (!dates.length)
+      t = t.replace(new RegExp(`\\b(${M})\\b\\.? (20\\d{2})\\b`), (s, mon, y) => {
+        wholeMonth = { y: +y, m: month(mon) };
+        return ' ';
+      });
+    const days = dates.map((x, k) => {
+      const next = x.y || slotYear(x.m, x.d, null, today);
+      if (k === 0 && named.length) slot.agrees = weekdayOf(dayNumber(next, x.m, x.d)) === named[0];
+      const y = x.y || slotYear(x.m, x.d, k === 0 && named.length === 1 ? named[0] : null, today);
+      return dayNumber(y, x.m, x.d);
+    });
+    if (wholeMonth) {
+      const first = dayNumber(wholeMonth.y, wholeMonth.m, 1);
+      slot.ranges.push([first, dayNumber(wholeMonth.y, wholeMonth.m + 1, 1) - 1]);
+    } else if (days.length === 2 && /@ ?(-|to|until|till|through|thru) ?@/.test(t)) {
+      slot.ranges.push([Math.min(...days), Math.max(...days)]);
+    } else for (const n of days) slot.ranges.push(week ? [n, n + 6] : [n, n]);
+    if (!slot.ranges.length && named.length) slot.weekdays = [...new Set(named)];
+    // Times: "10:00-11:00", "2pm - 4pm", "11-1pm", "14:30"; else "morning", "AM".
+    const MER = '(am|pm|a\\.m\\.?|p\\.m\\.?)?';
+    const range = t.match(
+      new RegExp(
+        `\\b(\\d{1,2})(?:[:.h](\\d{2}))? ?${MER} ?(?:-|to|until|till) ?(\\d{1,2})(?:[:.h](\\d{2}))? ?${MER}(?![\\w])`,
+      ),
+    );
+    if (range && (range[2] || range[3] || range[5] || range[6]) && +range[1] <= 24 && +range[4] <= 24) {
+      const [, h1, m1, a1, h2, m2, a2] = range;
+      let from = to24(+h1, a1 || a2) * 60 + (+m1 || 0);
+      let to = to24(+h2, a2 || a1) * 60 + (+m2 || 0);
+      if (!a1 && a2 && from > to) from = to24(+h1, a2[0] === 'p' ? 'am' : 'pm') * 60 + (+m1 || 0);
+      if (to <= from && to < 12 * 60) to += 12 * 60;
+      slot.time = [from, to];
+    } else {
+      const one = t.match(
+        new RegExp(`\\b(\\d{1,2})(?:[:.h](\\d{2}) ?${MER}|( ?)(am|pm|a\\.m\\.?|p\\.m\\.?))(?![\\w])`),
+      );
+      if (one && +one[1] <= 24) {
+        const from = to24(+one[1], one[3] || one[5]) * 60 + (+one[2] || 0);
+        slot.time = [from, from + 60];
+      } else {
+        const part = PARTS_OF_DAY.find(([re]) => re.test(t));
+        if (part) slot.time = part[1];
+        else if (slot.ranges.length || slot.weekdays) {
+          if (/(?<!\bi )\b(am|a\.m\.)(?!\w)/.test(t)) slot.time = [9 * 60, 12 * 60];
+          else if (/\b(pm|p\.m\.)(?!\w)/.test(t)) slot.time = [12 * 60, 17 * 60];
+        }
+      }
+    }
+    if (SLOT_ANY.test(t) && !slot.ranges.length && !slot.weekdays) slot.any = true;
+    return slot;
+  }
+
+  /** Does a slot (parseSlot) suit you? undefined for "Any time", "None…" and options that name no day or time. */
+  function slotFits(slot, a) {
+    if (!slot || slot.none || slot.any) return undefined;
+    if (!slot.ranges.length && !slot.weekdays && !slot.time) return undefined;
+    if (slot.time && (slot.time[0] < a.from || slot.time[1] > a.to)) return false;
+    if (slot.weekdays) return slot.weekdays.some((d) => a.days.includes(d));
+    if (!slot.ranges.length) return a.days.length > 0;
+    const free = (n) =>
+      n >= a.today && a.days.includes(weekdayOf(n)) && !a.blocked.some(([from, to]) => n >= from && n <= to);
+    return slot.ranges.some(([from, to]) => {
+      for (let n = from; n <= Math.min(to, from + 62); n++) if (free(n)) return true;
+      return false;
+    });
+  }
+
+  /**
+   * Every option of a slot list, parsed: "03/11" is read day first unless the list says otherwise (a "10/14", a
+   * weekday that only fits month first, or a US page).
+   */
+  function parseSlots(texts, v) {
+    const pairs = texts.flatMap((t) => [...String(t || '').matchAll(/\b(\d{1,2})\/(\d{1,2})\b/g)]);
+    let order = pairs.some((m) => +m[1] > 12) ? 'dmy' : pairs.some((m) => +m[2] > 12) ? 'mdy' : null;
+    if (!order && pairs.length) {
+      const agree = (o) => texts.filter((t) => parseSlot(t, v.avail.today, o).agrees).length;
+      const dmy = agree('dmy');
+      const mdy = agree('mdy');
+      order = mdy > dmy ? 'mdy' : dmy > mdy ? 'dmy' : v.dateOrder === 'mdy' ? 'mdy' : 'dmy';
+    }
+    return texts.map((t) => parseSlot(t, v.avail.today, order || 'dmy'));
+  }
+
+  /** Your interview availability from the profile, or null when no day is ticked (then it's left for you). */
+  function availability(p, today) {
+    const a = p.availability || {};
+    const days = dayList(a.days);
+    if (!days.length) return null;
+    const now = todayNumber(today);
+    const blocked = String(a.unavailable || '')
+      .split(/\n|;/)
+      .map((line) => parseSlot(line.replace(/\b(not available|unavailable|none)\b/gi, ' '), now, 'dmy'))
+      .flatMap((s) => s.ranges || []);
+    return { days, from: clockMinutes(a.from, 0), to: clockMinutes(a.to, 24 * 60) || 24 * 60, blocked, today: now };
+  }
+
+  const clockText = (n) => {
+    const h = Math.floor(n / 60) % 24;
+    const m = n % 60;
+    if (n >= 24 * 60) return 'midnight';
+    return `${h % 12 || 12}${m ? ':' + U.pad2(m) : ''}${h < 12 ? 'am' : 'pm'}`;
+  };
+
+  /** "Weekdays, 8am–8pm, except 12–23 January 2027", for a box that asks for your availability in words. */
+  function availabilityText(a, p) {
+    const labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const order = a.days.map((d) => (d + 6) % 7).sort(); // Monday first
+    const key = a.days.join(',');
+    let days;
+    if (a.days.length === 7) days = 'Any day';
+    else if (key === '1,2,3,4,5') days = 'Weekdays';
+    else if (key === '0,6') days = 'Weekends';
+    else if (order.length >= 3 && order[order.length - 1] - order[0] === order.length - 1)
+      days = `${labels[(order[0] + 1) % 7]}–${labels[(order[order.length - 1] + 1) % 7]}`;
+    else {
+      const names = order.map((i) => labels[(i + 1) % 7]);
+      days = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0];
+    }
+    const hours = a.from <= 0 && a.to >= 24 * 60 ? 'any time' : `${clockText(a.from)}–${clockText(a.to)}`;
+    const except = String((p.availability || {}).unavailable || '')
+      .split(/\n|;/)
+      .map((s) => s.replace(/\([^)]*\)/g, '').trim())
+      .filter(Boolean);
+    return `${days}, ${hours}` + (except.length ? `, except ${except.join(', ')}` : '');
+  }
+
+  /* ---------------------------------------------------------- "otherwise N/A" */
+
+  // "…Otherwise, enter N/A.", "If not, please write 'None'", "(enter N/A if not applicable)": a box's word for No.
+  const OTHERWISE =
+    /\b(?:otherwise|if (?:not|no|none|not applicable|you (?:answered|selected|said|chose) no))\b,? (?:please )?(?:enter|write|type|put|input|insert|state|answer|fill in)(?: in)? (n a|na|none|not applicable|nil|no|nothing|0)\b|\b(?:enter|write|type|put|input|insert) (n a|na|none|not applicable|nil) (?:if|where|when) (?:not applicable|it does not apply|this does not apply|not|no|none|n a|you (?:answered|selected|said) no)\b/;
+  const OTHERWISE_WORDS = {
+    'n a': 'N/A',
+    na: 'NA',
+    none: 'None',
+    'not applicable': 'Not applicable',
+    nil: 'Nil',
+    no: 'No',
+    nothing: 'Nothing',
+    0: '0',
+  };
+
+  /** The word a box asks for when the answer is No ("Otherwise, enter N/A" -> "N/A"), or null. */
+  function otherwiseVal(ctx) {
+    const m = LONG_TEXT.includes(ctx.kind) && String(ctx.question || '').match(OTHERWISE);
+    return m ? val(OTHERWISE_WORDS[m[1] || m[2]], { otherwise: true, canonical: null }) : null;
+  }
 
   /* -------------------------------------------------------------- definitions */
 
@@ -1301,8 +1715,13 @@
       label: 'Nationality',
       path: 'personal.nationality',
       get(p) {
+        // Two nationalities ("British, Irish"): a text box gets both, a list the first.
+        const rows = JTF.geo.nationalities(p.personal.nationality);
+        const v =
+          rows.length > 1
+            ? Object.assign(countryVal(rows[0][2]), { text: String(p.personal.nationality).trim() })
+            : countryVal(p.personal.nationality);
         // Lists of nationalities ("American", "British") as well as of countries.
-        const v = countryVal(p.personal.nationality);
         if (v && v.iso2) v.candidates = [...new Set([...v.candidates, ...JTF.geo.demonyms(v.iso2)])];
         // A US citizenship-status list ("U.S. citizen / green card holder / … / Other (please explain)").
         if (v) v.fallback = ['Other', 'Other (please explain)', 'Other (please specify)', 'None of the above'];
@@ -1325,7 +1744,8 @@
         if (!JTF.geo.nationalitiesNamed(q).length) {
           const there = jobCountries(ctx);
           if (!there.length) return null;
-          if (there.includes(JTF.geo.findCountry(p.personal.nationality)[0])) return val('Yes');
+          const mineCodes = JTF.geo.nationalities(p.personal.nationality).map((row) => row[0]);
+          if (there.some((c) => mineCodes.includes(c))) return val('Yes');
         }
         return /permanent resident|green card|asylee|refugee|resident/.test(q) ? null : val('No');
       },
@@ -1554,18 +1974,71 @@
       path: 'job.startDate',
       get: (p, ctx) => availableAnswer(p.job.startDate, ctx.question) || dateVal(p.job.startDate, ctx.part, 9),
     },
-    // A job site the form doesn't list ("Trackr") still picks its kind ("Online job board"), else "Other".
+    // A job site the form doesn't list ("Trackr") still picks its kind ("Online job board"), else "Other". Left
+    // blank it is LinkedIn; "-" leaves the question for you.
     'job.referralSource': {
       label: 'How you heard about the job',
       path: 'job.referralSource',
       get(p) {
-        const v = val(p.job.referralSource);
-        if (!v) return v;
-        const kind = SOURCE_KINDS.find(([re]) => re.test(U.normalize(v.text)));
+        const raw = String(p.job.referralSource || '').trim();
+        if (/^[-–—]+$/.test(raw)) return null;
+        const v = val(raw || 'LinkedIn');
+        const words = U.normalize(v.text).split(' ');
+        const kind = SOURCE_KINDS.find(([re]) => re.test(words.join(' ')));
         v.candidates = [v.text, ...(kind ? kind[1] : [])];
         if (kind && kind[1] === JOB_SITE) v.avoid = NOT_A_JOB_SITE;
+        // An option that names it wins over broader ones: "Job Board / LinkedIn", "Social Media (LinkedIn, …)".
+        if (words.length <= 3) v.named = new RegExp(`\\b${words.join(' ?')}\\b`);
         v.fallback = ['Other', 'Other (please specify)', 'Others', 'Something else'];
         return v;
+      },
+    },
+    // "What is your communication preference?", "Preferred method of contact".
+    'contact.preference': {
+      label: 'Preferred contact method',
+      path: 'contact.preferredContact',
+      get(p) {
+        const v = withSpellings(p.contact.preferredContact, CONTACT_METHODS);
+        // Never a marketing opt-in offered in the same list ("Email me job alerts").
+        if (v) v.avoid = /\b(marketing|newsletters?|promotions?|alerts?|updates|offers|news|subscribe)\b/;
+        return v;
+      },
+    },
+    // "Please confirm whether any of the below applies to you… U.S. sanctions and export controls": each statement
+    // true of you (sanctionsApplies), else "None of the above"; its follow-up "Not applicable (I selected none of the
+    // above)". Yes / No versions ("Are you a citizen or resident of Cuba, Iran…?") are answered the same way. Left for
+    // you whenever your profile can't tell (no nationality, a region of Ukraine, Russia and relocating unknown).
+    'compliance.sanctions': {
+      label: 'Sanctions / export-control declaration',
+      get(p, ctx) {
+        const facts = sanctionFacts(p);
+        if (!facts.nations && !facts.home) return null;
+        const q = ctx.question || '';
+        const followUp = SANCTIONS_FOLLOW_UP.test(q);
+        const asked = followUp ? undefined : sanctionsApplies(q, facts);
+        const answer = asked === true ? 'Yes' : asked === false ? 'No' : null;
+        const clear = sanctionsClear(facts);
+        return val(answer || (clear ? 'None of the above' : 'It depends'), {
+          kind: 'sanctions',
+          facts,
+          followUp,
+          clear,
+          answer,
+          many: true,
+          canonical: answer ? answer.toLowerCase() : null,
+        });
+      },
+    },
+    // "Please select ALL dates/times for which you are available", "Which of these slots work for you?": every slot
+    // your days, hours and free dates allow (one choice: the earliest); a text box gets "Weekdays, 8am–8pm".
+    'job.availability': {
+      label: 'Interview availability',
+      get(p, ctx) {
+        const a = availability(p, ctx.today);
+        if (!a) return null;
+        const text = availabilityText(a, p);
+        if (LONG_TEXT.includes(ctx.kind)) return val(text, { canonical: null });
+        return val(text, { kind: 'availability', avail: a, many: true, dateOrder: ctx.dateOrder, canonical: null });
       },
     },
 
@@ -1630,7 +2103,7 @@
     'compliance.relativesDetails': {
       label: 'Relatives working here: details',
       path: 'compliance.relativesDetails',
-      get: (p) => detailsIfYes(p.compliance.relatives, p.compliance.relativesDetails),
+      get: (p, ctx) => detailsIfYes(p.compliance.relatives, p.compliance.relativesDetails, ctx),
     },
     // "Are you, or is any immediate family member, a current or former government official…?", "Are you a
     // politically exposed person?", "Were your parents involved in government?": you, your family, or both.
@@ -1663,12 +2136,11 @@
     'compliance.governmentDetails': {
       label: 'Government official / PEP: details',
       path: 'compliance.governmentDetails',
-      get(p) {
+      get(p, ctx) {
         const canon = (t) => (JTF.matcher ? JTF.matcher.canonicalOf(t) : null);
-        const yes = [p.compliance.governmentOfficial, p.compliance.familyGovernmentOfficial].some(
-          (x) => canon(x) === 'yes',
-        );
-        return detailsIfYes(yes ? 'Yes' : 'No', p.compliance.governmentDetails);
+        const answers = [p.compliance.governmentOfficial, p.compliance.familyGovernmentOfficial].map(canon);
+        const answer = answers.includes('yes') ? 'Yes' : answers.every((x) => x === 'no') ? 'No' : '';
+        return detailsIfYes(answer, p.compliance.governmentDetails, ctx);
       },
     },
 
@@ -1927,6 +2399,11 @@
   // Expiry dates of passports, visas and licences are not card expiry dates.
   const NOT_ID_DOCUMENT = /passport|visa|permit|licen[cs]e|certif|document|\bid\b/;
 
+  // "1st Stage Video Interview Availability — Please select ALL dates/times for which you are available", "Which of
+  // these slots work for you?", "Assessment centre dates", "Select your preferred interview slot(s)".
+  const INTERVIEW_SLOTS =
+    /\b(interview|assessment|video (call|interview)|phone screen|superday|assessment cent(re|er)|call)s? (availability|slots?|dates?|times?|sessions?)\b|\bavailab\w* (for|to (attend|do|join|take part in)) (an |the |a |your |our )?(\w+ ){0,2}(interviews?|assessments?|assessment cent(re|er)s?|calls?|superdays?)\b|\b(dates?|times?|slots?|days?)( (and |or )?(dates?|times?))? (for which|when|that|on which) you (are|re|would be|will be|can be) (available|free)\b|\bwhich (of (these|the following) )?(dates?|times?|days?|slots?|sessions?)( (and |or )?(dates?|times?|slots?))? (work|suit|are you available|would you be available|can you (make|attend|do))\b|\bpreferred (interview |assessment )?(time ?)?(slots?|sessions?)\b|\b(select|choose|pick|book) (your |a |an |all )?(preferred )?(interview |assessment )?(time ?)?slots?\b/;
+
   // Order matters only for ties: put specific rules (and long questions that
   // mention other keywords, like "authorized to work in the country…") first.
   const RULES = [
@@ -2008,6 +2485,27 @@
     R('cc.type', /card ?(type|brand|network)|type of card/, { kinds: CHOICE }),
 
     // Screening questions (long sentences that mention other keywords)
+    // US sanctions and export controls: "Are you a citizen or resident of Cuba, Iran, North Korea, Syria, or the Crimea
+    // region…?", "…ordinarily resident in a comprehensively sanctioned country or region?", "…a national of any country
+    // subject to US embargo (E:1/E:2 countries)?". Never your nationality, a citizenship or a refugee question.
+    R(
+      'compliance.sanctions',
+      new RegExp(
+        `\\b(sanction(s|ed)?|embargo(ed|es)?)\\b.*\\b(countr(y|ies)|regions?|territor(y|ies)|jurisdictions?|citizen\\w*|nationals?|nationality|residen\\w*|located|live|living|lived|based|ordinarily)\\b|\\b(countr(y|ies)|regions?|territor(y|ies)|jurisdictions?|citizen\\w*|nationals?|nationality|residen\\w*|located|ordinarily)\\b.*\\b(sanction(s|ed)?|embargo(ed|es)?)\\b|\\bsanctions (and|&) export controls?\\b|\\bexport controls? (and|&) sanctions\\b|\\bofac\\b|\\bcountry group e ?[12]\\b|\\be 1 (and |or )?e 2\\b|${TWO_SANCTIONED_PLACES.source}`,
+      ),
+      {
+        kinds: CHOICE,
+        // Not where you'd work or have been ("Are you willing to travel to Cuba or Iran?"), nor an ethnicity.
+        not: /\b(disciplinary|regulatory|professional|criminal)\b|\bconsent\b|\b(willing|happy|open|prepared) to\b|\btravel\w*|\bvisit\w*|\bdo(ing)? business\b|\bethnic\w*|\brace\b|\bheritage\b|\bancestr\w*|\bdescent\b|\blanguages?\b/,
+        // A lone box is a statement about you ("I am not a citizen or resident of…") or its "None of the above",
+        // never an acknowledgement that mentions sanctions.
+        test: (desc, hit) =>
+          desc.kind !== 'checkbox' ||
+          /\b(citizen\w*|nationals?|nationality|residen\w*|located|live|living)\b/.test(hit) ||
+          TWO_SANCTIONED_PLACES.test(hit) ||
+          /^(none|not applicable)\b|\bnone of\b/.test(U.normalize(((desc.options || [])[0] || {}).text)),
+      },
+    ),
     // "This role requires SC clearance…", "Are you eligible to obtain / willing to undergo a security clearance?"
     R(
       'job.clearanceEligible',
@@ -2144,14 +2642,22 @@
         not: /\bcommut|\bremote(ly)? only\b|\b(at|in) (our|the) (?!office\b|offices\b)[a-z]+( [a-z]+){0,2} (office|offices|headquarters|hq|campus|location)\b|\bon ?site (in|at) (?!(the|our) office\b)[a-z]/,
       },
     ),
+    // Interview slots (see INTERVIEW_SLOTS), never an essay box or a working pattern ("Which days are you available to
+    // work?").
+    R('job.availability', INTERVIEW_SLOTS, {
+      kinds: CHOICE.concat(LONG_TEXT),
+      not: /\b(available|availability|dates?|start)\b.{0,20}\b(to|for) (the |this |our )?(work|start|begin|commence|join|intern(ship)?|placement|programme|program|employment|role|position)\b|\bshifts?\b|\bper week\b|\bhours per\b/,
+    }),
     R(
       'job.startDate',
       /when (can|could|would) you (like to |be able to )?(start|begin|join)|when (are|will) you (be )?(able|available) to (start|begin|join)|available (start|to start|to begin|from)|\bavailability\b|earliest (possible )?(start|date)|date (you are )?available|(desired|preferred) start|expected start|join(ing)? date|how soon|start (date|dates) (for|of) (the|this|your) (internship|placement|programme|program|role|position|job)|\bdate (that )?you (could|can|would|will) (start|begin|join)\b|\b(ready|available) for (full ?time )?(employment|work)\b|\beintritt\w*|\bdisponibilit[ea]\b|\bdate de debut\b|\b(will|would|could|can) be (able|available) to (start|begin|commence|join)\b|\b(what|which) date\b.*\bavailab|\bwhen (are|will|would) you (be )?available\b/,
+      { not: INTERVIEW_SLOTS },
     ),
     // "The internship runs from 1 July to 30 September 2027. Can you confirm that you are available…?"
     R(
       'job.startDate',
       new RegExp(`\\bfrom (\\d{1,2}(st|nd|rd|th)? )?(${MONTH_RE})\\b.*\\b(to|until|till|through)\\b.*\\bavailab`),
+      { not: INTERVIEW_SLOTS },
     ),
     R(
       'job.yearsExperience',
@@ -2198,7 +2704,7 @@
     // Not about the company's auditors ("…employed by Ernst & Young, that engages in audit work?").
     R(
       'compliance.relatives',
-      /\b(related to|relatives?|family members?|immediate family|spouse|domestic partner|close (personal )?relationship)\b.*\b(work|works|working|worked|employ|employed|employee|employees|staff)\b|\b(know|related to) any ?one (who )?(currently )?(works?|working|employed|at)\b/,
+      /\b(related to|relatives?|family members?|immediate family|spouse|domestic partner|close (personal )?relationship)\b.*\b(work|works|working|worked|employ|employed|employee|employees|staff)\b|\b(know|related to) any ?one (who )?(currently )?(works?|working|employed|at)\b|\b(personal|family|romantic|intimate|close) relationships? with\b.*\b(employees?|employed|staff|work\w*|current|affiliates?|subsidiar\w*|colleagues?)\b|\b(employees?|staff)\b.*\b(with whom )?you have (a |an |any )?(personal|family|romantic|close) relationship\b/,
       {
         kinds: CHOICE.concat(LONG_TEXT),
         not: /government|public official|politically|referr|refer you|emergency|\b(ernst|ey|deloitte|pwc|pricewaterhouse\w*|kpmg|auditors?|audit)\b/,
@@ -2472,6 +2978,16 @@
     ),
 
     // Contact
+    // "What is your communication preference?", "Preferred method of contact", "How would you like us to contact you?"
+    // (a choice of Email / Phone / Text message, never an SMS opt-in).
+    R(
+      'contact.preference',
+      /\bcommunication preferences?\b|\bpreferred (method|means|mode|way|form|channel) of (contact|communication|correspondence)\b|\bpreferred (contact|communication) (method|channel|preference|type)?\b|\b(contact|communication) (preference|method|channel)s?\b|\bhow (would|do|should|can|may) (you like|you prefer|we) (us |to be )?(to )?(best )?(contact|reach|communicate with|get in touch with) you\b|\bbest way to (contact|reach) you\b/,
+      {
+        kinds: CHOICE,
+        not: /marketing|newsletter|promotion|job alerts?|talent (community|network|pool)|subscribe|opt ?in|consent|emergency|\breferee|\breferences?\b|\bnumber\b|\baddress\b/,
+      },
+    ),
     R('email', /e ?mail|courriel|correo|\bmail\b/, {
       not: /referr|reference|recruiter|manager|supervisor|emergency|friend|hiring|newsletter|marketing|subscribe/,
     }),
@@ -2696,7 +3212,7 @@
    * yes, will you require Appian to file a visa petition? Yes / No"), never as the details a box asks for.
    */
   function followUpAnswer(v, kind) {
-    return !!v && (v.canonical === 'yes' || (v.canonical === 'no' && CHOICE.includes(kind)));
+    return !!v && (!!v.otherwise || v.canonical === 'yes' || (v.canonical === 'no' && CHOICE.includes(kind)));
   }
 
   /** Resolve a field type to a value object (or null when the profile has nothing for it). */
@@ -2707,6 +3223,9 @@
     if (!def || !profile) return null;
     try {
       const v = def.get(profile, ctx) || null;
+      // "If yes, give their name. Otherwise, enter N/A" in a text box, after a No: "N/A".
+      const instead = v && v.canonical === 'no' && !v.otherwise ? otherwiseVal(ctx) : null;
+      if (instead) return instead;
       return v && FOLLOW_UP.test(ctx.question || '') && !followUpAnswer(v, ctx.kind) ? null : v;
     } catch (err) {
       return null;
@@ -2741,6 +3260,11 @@
     languagesNamed,
     isAcknowledgement,
     parseEthnicity,
+    sanctionsApplies,
+    isSanctionsFollowUp: (question) => SANCTIONS_FOLLOW_UP.test(question || ''),
+    TWO_SANCTIONED_PLACES,
+    parseSlots,
+    slotFits,
     ETHNICITY_CHOICES,
     cardBrand,
     val,

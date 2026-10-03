@@ -59,6 +59,12 @@
       <label for="input-7">Email Address</label>
       <input type="text" id="input-7" data-automation-id="email">
     </div>
+    <!-- Workday's two-level prompt: a category ("Social Media") opens its own options ("LinkedIn"). -->
+    <div data-automation-id="formField-source">
+      <label id="lbl-source">How Did You Hear About Us?<abbr title="required">*</abbr></label>
+      <button type="button" id="btn-source" aria-haspopup="listbox" aria-labelledby="lbl-source btn-source" data-automation-id="sourceDropdown"
+        data-options="Job Board>Indeed,Glassdoor|Social Media>Facebook,LinkedIn,Instagram|Company Website|Employee Referral">Select One</button>
+    </div>
     <fieldset data-automation-id="formField-previousWorker">
       <legend>Have you previously worked for Acme?</legend>
       <input type="radio" name="previousWorker" id="prev-yes" value="true"><label for="prev-yes">Yes</label>
@@ -132,13 +138,22 @@
         const r = btn.getBoundingClientRect();
         list.style.left = r.left + scrollX + 'px';
         list.style.top = r.bottom + scrollY + 'px';
-        for (const text of btn.dataset.options.split('|')) {
-          const li = document.createElement('li');
-          li.setAttribute('role', 'option');
-          li.innerHTML = '<div>' + text + '</div>';
-          li.addEventListener('click', (ev) => { ev.stopPropagation(); btn.textContent = text; btn.dataset.value = text; close(); });
-          list.appendChild(li);
-        }
+        const show = (items) => {
+          list.replaceChildren();
+          for (const item of items) {
+            const [text, children] = item.split('>');
+            const li = document.createElement('li');
+            li.setAttribute('role', 'option');
+            li.innerHTML = '<div>' + text + (children ? ' ›' : '') + '</div>';
+            li.addEventListener('click', (ev) => {
+              ev.stopPropagation();
+              if (children) return show(children.split(','));
+              btn.textContent = text; btn.dataset.value = text; close();
+            });
+            list.appendChild(li);
+          }
+        };
+        show(btn.dataset.options.split('|'));
         document.body.appendChild(list);
         btn.setAttribute('aria-expanded', 'true');
         btn.setAttribute('aria-controls', list.id);

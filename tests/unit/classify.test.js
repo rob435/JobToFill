@@ -1339,16 +1339,16 @@ test('live survey (British student in Glasgow): residence, commuting, UK visa an
   assert.equal(ask('Do you hold British citizenship?'), 'citizen');
   assert.equal(ask('Do you have a British passport?'), 'citizen');
   assert.equal(ask('Do you hold any other citizenships?'), null);
-  // The sanctions questions are not citizenship yes/no questions.
+  // The sanctions questions are not citizenship yes/no questions: they are sanctions declarations.
   assert.equal(
     ask(
       'Do you hold citizenship or permanent residency in any of the following countries: Cuba, Iran, North Korea, Syria?',
     ),
-    null,
+    'compliance.sanctions',
   );
   assert.equal(
     ask('Citizen or permanent resident of Cuba, Iran, North Korea, Syria, or the Crimea region', 'checkboxes', yn),
-    null,
+    'compliance.sanctions',
   );
   // "Is there any other context…?" about sponsorship is still a sponsorship question.
   assert.equal(
