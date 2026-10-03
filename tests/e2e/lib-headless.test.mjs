@@ -230,13 +230,9 @@ test('Radix: a Select with no option for the answer is closed again, and the fie
   await page.close();
 });
 
-test(
-  'A UK number in a plain phone box is written +44 7386 526574 or 07386 526574',
-  { todo: 'fields.js phone: the international form keeps the trunk 0 ("+44 07386 526574")' },
-  async () => {
-    const { page } = await fillPage('lib-radix.html', STUDENT);
-    const s = await stateOf(page);
-    assert.match(s.phone, /^(\+44 7386 526574|07386 526574)$/);
-    await page.close();
-  },
-);
+test('A UK number in a plain phone box is written +44 7386 526574 or 07386 526574', async () => {
+  const { page } = await fillPage('lib-radix.html', STUDENT);
+  const s = await stateOf(page);
+  assert.match(s.phone, /^(\+44 7386 526574|07386 526574)$/);
+  await page.close();
+});

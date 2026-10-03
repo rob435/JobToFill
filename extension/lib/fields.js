@@ -2033,7 +2033,9 @@
         const num = String(p.contact.phone || '').trim();
         if (!num) return null;
         const cc = phoneCode(p);
-        const international = cc && !num.startsWith('+') ? `${cc} ${num}` : num;
+        // "07700 900123" with +44 is "+44 7700 900123": the trunk 0 goes, but in Italy, where it is part of the number.
+        const local = cc === '+39' ? num : num.replace(/^0(?=\d)/, '');
+        const international = cc && !num.startsWith('+') ? `${cc} ${local}` : num;
         // "Country/Region Code" in a box of its own: the number goes in without it.
         const national = nationalNumber(num, cc);
         const full = ctx.hasCountryCodeField ? national : international;
