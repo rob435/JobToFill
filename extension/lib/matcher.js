@@ -1614,7 +1614,67 @@
     return out;
   }
 
+  // A UK postcode, a Canadian one, or any short code with a space in the middle ("SW1A 1AA", "K1A 0B1").
+  const POSTCODE = /^[a-z0-9]{2,4} ?[a-z0-9]{3}$/i;
+
+  /**
+   * Every way worth trying to write `v` in a text box, formatForText's first: what to try next when the box turns
+   * one down (a pattern, a mask, "Please enter a valid phone number"). A phone number with and without its code,
+   * spaces and leading 0; a date in each order and spelled out; a link with and without "https://"; a postcode
+   * with and without its space; a number without its commas. Nothing longer than the box takes.
+   */
+  function textVariants(v, desc) {
+    const out = [];
+    const max = desc.maxLength > 0 ? desc.maxLength : 0;
+    const add = (s) => {
+      s = String(s == null ? '' : s).trim();
+      if (s && (!max || s.length <= max) && !out.includes(s)) out.push(s);
+    };
+    const first = formatForText(v, desc);
+    if (first) out.push(first);
+    if (!v || !v.text) return out;
+    const text = String(v.text).trim();
+    if (v.kind === 'phone') {
+      const compact = (n) => String(n || '').replace(/(?!^\+)\D/g, '');
+      const intl = v.international || text;
+      const nat = v.national || '';
+      [intl, compact(intl), nat, compact(nat), compact(nat).replace(/^0/, '')].forEach(add);
+      if (/^\+/.test(compact(intl))) [compact(intl).slice(1), '00' + compact(intl).slice(1)].forEach(add);
+    } else if (v.date && v.kind === 'date' && v.date.month) {
+      const d = v.date;
+      const y = String(d.year);
+      const mm = U.pad2(d.month);
+      const month = U.monthName(d.month).replace(/^./, (c) => c.toUpperCase());
+      if (d.day) {
+        const dd = U.pad2(d.day);
+        // The page's own order first, then ISO (which every parser takes), then the other order, then words.
+        const us = dateOrder(desc) === 'mdy';
+        const mine = us ? [mm, dd, y] : [dd, mm, y];
+        const other = us ? [dd, mm, y] : [mm, dd, y];
+        [mine.join('/'), mine.join('-'), mine.join('.'), `${y}-${mm}-${dd}`].forEach(add);
+        [other.join('/'), other.join('-'), other.join('.'), `${y}/${mm}/${dd}`].forEach(add);
+        [`${d.day} ${month} ${y}`, `${month} ${d.day}, ${y}`].forEach(add);
+        add(`${d.day} ${month.slice(0, 3)} ${y}`);
+      } else [`${mm}/${y}`, `${y}-${mm}`, `${month} ${y}`, `${mm}/${y.slice(2)}`, `${mm}-${y}`].forEach(add);
+    } else if (/^https?:\/\//i.test(text)) {
+      const host = text.replace(/^https?:\/\//i, '');
+      [
+        text,
+        host,
+        host.replace(/^www\./i, ''),
+        'https://' + host.replace(/^www\./i, ''),
+        text.replace(/\/+$/, ''),
+      ].forEach(add);
+    } else if (POSTCODE.test(text) && /\d/.test(text) && /[a-z]/i.test(text)) {
+      const plain = text.replace(/\s+/g, '').toUpperCase();
+      [plain.slice(0, -3) + ' ' + plain.slice(-3), plain].forEach(add);
+    } else if (/^[£$€]?\s?\d{1,3}(,\d{3})+(\.\d+)?$/.test(text)) add(text.replace(/[^\d.]/g, ''));
+    add(text);
+    return out;
+  }
+
   const matcher = {
+    textVariants,
     classify,
     plan,
     questionText,

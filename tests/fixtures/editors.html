@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply: Graduate Analyst</title>
+    <!--
+      Long answers in rich-text editors, as some application forms have them: Quill (the cover letter), TipTap on
+      ProseMirror ("Why do you want to work here?"), Lexical (the summary) and a bare contenteditable box (skills).
+      Each label sits beside its editor, not tied to it. #state is what each editor itself holds.
+    -->
+    <style>
+      body { font: 15px/1.4 system-ui, sans-serif; margin: 32px auto; max-width: 680px; }
+      .row { margin: 18px 0; }
+      .row > label, .row > .label { display: block; font-weight: 600; margin-bottom: 4px; }
+      .box { border: 1px solid #99a; border-radius: 6px; min-height: 80px; padding: 8px; }
+      .ProseMirror, #lexical, #plain { outline: none; min-height: 80px; }
+    </style>
+  </head>
+  <body>
+    <h1>Graduate Analyst</h1>
+    <form id="apply" onsubmit="return false">
+      <div class="row"><label for="name">Full name</label><input id="name" name="name" /></div>
+      <div class="row">
+        <label>Cover letter</label>
+        <div id="quill"></div>
+      </div>
+      <div class="row">
+        <div class="label">Why do you want to work here?</div>
+        <div class="box" id="tiptap"></div>
+      </div>
+      <div class="row">
+        <label id="summary-label">Professional summary</label>
+        <div class="box"><div id="lexical" contenteditable="true" aria-labelledby="summary-label" role="textbox" aria-multiline="true"></div></div>
+      </div>
+      <div class="row">
+        <label id="skills-label">Skills</label>
+        <div class="box" id="plain" contenteditable="true" role="textbox" aria-labelledby="skills-label"></div>
+      </div>
+    </form>
+    <pre id="state">{}</pre>
+    <script src="build/editors.js"></script>
+  </body>
+</html>

@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply: Software Engineer Intern</title>
+    <!--
+      Boxes that don't simply keep what is set from script, each the way real forms behave: one that only keeps
+      what is typed key by key, one that only takes a paste, a pattern that wants digits only, a date checked
+      after a moment ("Please enter the date as YYYY-MM-DD"), a box a re-render makes anew, one a late state
+      update empties, a link that must not start with https://, a select whose state misses the first change,
+      and a number nobody's profile can satisfy. #state is what the page itself holds.
+    -->
+    <style>
+      body { font: 15px/1.4 system-ui, sans-serif; margin: 32px auto; max-width: 640px; }
+      .row { margin: 12px 0; }
+      label { display: block; font-weight: 600; }
+      .error { color: #b00; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <h1>Software Engineer Intern</h1>
+    <form id="apply" novalidate>
+      <div class="row"><label for="first">First name</label><input id="first" name="first" /></div>
+      <div class="row"><label for="last">Last name</label><input id="last" name="last" /></div>
+      <div class="row">
+        <label for="mobile">Mobile number (digits only)</label><input id="mobile" name="mobile" pattern="[0-9]{10,11}" />
+      </div>
+      <div class="row">
+        <label for="dob">Date of birth</label><input id="dob" name="dob" aria-describedby="dob-error" />
+        <span id="dob-error" class="error"></span>
+      </div>
+      <div class="row" id="city-row"><label for="city">City</label><input id="city" name="city" /></div>
+      <div class="row"><label for="zip">ZIP code</label><input id="zip" name="zip" /></div>
+      <div class="row">
+        <label for="linkedin">LinkedIn profile</label><input id="linkedin" name="linkedin" />
+        <span class="error" id="linkedin-error"></span>
+      </div>
+      <div class="row">
+        <label for="source">How did you hear about us?</label>
+        <select id="source" name="source">
+          <option value="">Select…</option>
+          <option>Indeed</option>
+          <option>LinkedIn</option>
+          <option>Referral</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="phone2">Mobile (UK numbers only)</label><input id="phone2" name="phone2" />
+        <span class="error" id="phone2-error"></span>
+      </div>
+    </form>
+    <pre id="state">{}</pre>
+    <script>
+      const model = {};
+      const show = () => (document.getElementById('state').textContent = JSON.stringify(model));
+      const $ = (id) => document.getElementById(id);
+      const bind = (el, name) => el.addEventListener('input', () => ((model[name] = el.value), show()));
+
+      // Keeps only what was typed: a value that arrives without a key press is put back.
+      let keyed = false;
+      $('first').addEventListener('keydown', () => (keyed = true));
+      $('first').addEventListener('input', () => {
+        if (!keyed) $('first').value = model.first || '';
+        else model.first = $('first').value;
+        keyed = false;
+        show();
+      });
+
+      // Takes nothing but a paste.
+      $('last').addEventListener('keydown', (e) => e.key.length === 1 && e.preventDefault());
+      $('last').addEventListener('input', () => ($('last').value = model.last || ''));
+      $('last').addEventListener('paste', (e) => {
+        e.preventDefault();
+        model.last = e.clipboardData.getData('text');
+        $('last').value = model.last;
+        show();
+      });
+
+      bind($('mobile'), 'mobile');
+
+      // Checked a moment after it is left.
+      bind($('dob'), 'dob');
+      $('dob').addEventListener('blur', () =>
+        setTimeout(() => {
+          const ok = /^\d{4}-\d{2}-\d{2}$/.test($('dob').value);
+          $('dob').setAttribute('aria-invalid', String(!ok));
+          $('dob-error').textContent = ok ? '' : 'Please enter the date as YYYY-MM-DD';
+        }, 60),
+      );
+
+      // Made anew (an empty copy) a moment after the first answer, as a framework re-mounting it would.
+      let remade = false;
+      const watchCity = (el) => bind(el, 'city');
+      watchCity($('city'));
+      $('city').addEventListener('change', () => {
+        if (remade) return;
+        remade = true;
+        setTimeout(() => {
+          const copy = $('city').cloneNode();
+          copy.value = '';
+          model.city = '';
+          $('city').replaceWith(copy);
+          watchCity(copy);
+          show();
+        }, 250);
+      });
+
+      // A late state update empties it once.
+      let emptied = false;
+      bind($('zip'), 'zip');
+      $('zip').addEventListener('change', () => {
+        if (emptied) return;
+        emptied = true;
+        setTimeout(() => {
+          $('zip').value = '';
+          model.zip = '';
+          show();
+        }, 150);
+      });
+
+      // Wants the link without its scheme, and only says so through aria-invalid.
+      bind($('linkedin'), 'linkedin');
+      $('linkedin').addEventListener('blur', () => {
+        const bad = /^https?:/i.test($('linkedin').value);
+        $('linkedin').setAttribute('aria-invalid', String(bad));
+        $('linkedin-error').textContent = bad ? 'Remove https:// from the link' : '';
+      });
+
+      // The page's state misses the first change and puts the select back.
+      let changes = 0;
+      $('source').addEventListener('change', () => {
+        if (++changes === 1) {
+          setTimeout(() => ($('source').selectedIndex = 0), 50);
+          return;
+        }
+        model.source = $('source').value;
+        show();
+      });
+
+      // Only a UK number will do.
+      bind($('phone2'), 'phone2');
+      $('phone2').addEventListener('blur', () => {
+        const ok = /^\+?44/.test($('phone2').value.replace(/\s/g, ''));
+        $('phone2').setAttribute('aria-invalid', String(!ok));
+        $('phone2-error').textContent = ok ? '' : 'Please enter a UK mobile number starting with +44';
+      });
+    </script>
+  </body>
+</html>

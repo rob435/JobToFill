@@ -110,6 +110,7 @@ function renderResult(r) {
     ),
     r.missing.length ? resultLine('Missing from your profile:', r.missing) : null,
     r.unmatched.length ? resultLine('No matching option:', r.unmatched) : null,
+    r.check && r.check.length ? resultLine('Check (outlined in red):', r.check) : null,
     r.consents ? consentLine(r.consents) : null,
     r.ticked
       ? el('p', {

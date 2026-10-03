@@ -369,7 +369,8 @@
     // which already had an answer (an earlier fill's): a CV parse that clears either gets them put back.
     const filledKeys = new Set();
     const keptKeys = new Set();
-    const keyOf = (r, question) => [r.type, r.index || 0, r.part || '', question].join('|');
+    // What went in, to read back once the page has settled (see recheck).
+    const written = [];
     /**
      * Your CV's upload that takes several files (`types`: the CV, then your letter and transcript): an empty box gets
      * them all in one go. One that already has files only gets what must go in anew (the letter just written, a
@@ -487,6 +488,7 @@
         if (def && def.consent) report.ticked++;
         if (field.kind === 'file') uploaded = true;
         else filledKeys.add(keyOf(r, question));
+        if (res.check) written.push({ field, v, check: res.check, label, key: keyOf(r, question) });
         if (settings.highlight !== false) JTF.fill.highlight(res.target || field.el);
       } else if (res.status === 'skipped') {
         report.skipped++;
@@ -561,6 +563,10 @@
       report.revealed = (report.revealed || 0) + added;
       if (!added) break;
     }
+    const checked = await recheck(written, { profile, settings, history });
+    report.check = checked.check;
+    if (checked.repaired) report.repaired = checked.repaired;
+    if (checked.restored) report.restored = (report.restored || 0) + checked.restored;
     report.missing = [...new Set(report.missing)];
     report.missingTypes = [...new Set(report.missingTypes)];
     report.unmatched = [...new Set(report.unmatched)];
@@ -572,6 +578,55 @@
     // What kind of page this is now (sign-in, sign-up, emailed code…), for signing in and creating accounts.
     report.account = JTF.flow.analyze(scan(profile));
     return report;
+  }
+
+  // One question's identity across re-renders: what it asks for and how it is worded.
+  const keyOf = (r, question) => [r.type, r.index || 0, r.part || '', question].join('|');
+
+  /**
+   * Read back what a fill wrote (`written`: { field, v, check, label, key }) once the page has settled, and put right
+   * what didn't hold: a box a re-render made anew gets its answer again, one emptied or put back gets it typed or
+   * pasted, one whose rules or messages turn it down ("Please enter a valid phone number") gets it written another
+   * way. What is still wrong is outlined in red and listed (`check`), with what the page says when it says something.
+   */
+  async function recheck(written, { profile, settings, history }) {
+    const out = { check: [], repaired: 0, restored: 0 };
+    if (!written.length) return out;
+    await settle(1200, 150);
+    const opts = { comboboxes: settings.comboboxes !== false, history };
+    let fresh = null;
+    for (const w of written) {
+      let field = w.field;
+      let res = await JTF.fill.repair(field, w.v, w.check, opts).catch(() => ({ ok: true }));
+      if (res.gone) {
+        // Made anew (a re-render, a CV parse): the same question, found again, gets the answer if it lost it.
+        fresh = fresh || scan(profile);
+        const i = fresh.fields.findIndex(
+          (f, k) =>
+            fresh.results[k] &&
+            fresh.results[k].type &&
+            keyOf(fresh.results[k], U.normalize(JTF.matcher.questionText(f.desc))) === w.key,
+        );
+        if (i < 0 || JTF.fill.hasValue(fresh.fields[i])) continue;
+        field = fresh.fields[i];
+        const again = await JTF.fill.apply(field, w.v, Object.assign({ overwrite: false }, opts));
+        if (again.status !== 'filled') continue;
+        out.restored++;
+        if (settings.highlight !== false) JTF.fill.highlight(again.target || field.el);
+        if (!again.check) continue;
+        await settle(600, 120);
+        res = await JTF.fill.repair(field, w.v, again.check, opts).catch(() => ({ ok: true }));
+      }
+      if (res.ok) {
+        if (res.fixed) out.repaired++;
+        continue;
+      }
+      if (res.gone) continue;
+      const said = res.refused && !/^(marked invalid|not accepted)$/.test(res.refused) ? res.refused : '';
+      out.check.push(said ? `${w.label} (“${U.cleanLabel(said, 80)}”)` : w.label);
+      if (settings.highlight !== false) JTF.fill.highlight(w.check.targets ? w.check.targets[0] : field.el, 'check');
+    }
+    return out;
   }
 
   /**
@@ -747,6 +802,7 @@
     let filled = 0;
     let fresh = null;
     const results = [];
+    const written = [];
     for (const a of list || []) {
       let field = state.pending.get(String(a.id));
       if (!field || !field.el.isConnected) {
@@ -763,7 +819,8 @@
         results.push({ id: a.id, status: 'skipped' });
         continue;
       }
-      const res = await JTF.fill.apply(field, answerValue(a), {
+      const v = answerValue(a);
+      const res = await JTF.fill.apply(field, v, {
         overwrite: false,
         comboboxes: settings.comboboxes !== false,
         history,
@@ -772,12 +829,14 @@
         filled++;
         state.aiFilled.set(field.el, JTF.fill.currentValue(field));
         if (settings.highlight !== false) JTF.fill.highlight(res.target || field.el, true);
+        if (res.check) written.push({ field, v, check: res.check, label: U.cleanLabel(a.question, 60), key: null });
       }
       results.push({ id: a.id, status: res.status });
     }
+    const checked = await recheck(written, { profile: state.profile, settings, history });
     if (history.length) state.history = history;
     state.lastFill = history;
-    return { filled, results, undoable: state.history.length > 0 };
+    return { filled, results, check: checked.check, undoable: state.history.length > 0 };
   }
 
   /**

@@ -11,8 +11,10 @@
   // Choices built from ARIA widgets instead of <input>s: Radix/Headless UI radios, toggle-button
   // groups like Ashby's Yes/No, custom checkboxes and switches.
   const ARIA_CHOICE = '[role="radio"], [role="checkbox"], [role="switch"], button[aria-pressed]';
-  const CONTROL_SELECTOR = `input, select, textarea, [role="combobox"], [aria-haspopup="listbox"], ${ARIA_CHOICE}`;
-  const COUNTED_SELECTOR = `input:not([type="hidden"]), select, textarea, [role="combobox"], [aria-haspopup="listbox"], ${ARIA_CHOICE}`;
+  // Rich-text editors (Quill, ProseMirror/TipTap, Lexical, CKEditor): the element that holds the contenteditable.
+  const EDITOR = '[contenteditable]:not([contenteditable="false"])';
+  const CONTROL_SELECTOR = `input, select, textarea, [role="combobox"], [aria-haspopup="listbox"], ${ARIA_CHOICE}, ${EDITOR}`;
+  const COUNTED_SELECTOR = `input:not([type="hidden"]), select, textarea, [role="combobox"], [aria-haspopup="listbox"], ${ARIA_CHOICE}, ${EDITOR}`;
   const SKIP_INPUT_TYPES = new Set([
     'hidden',
     'submit',
@@ -74,6 +76,13 @@
       .split(' ')
       .every((w) => !w || UPLOAD_WORDS.has(w) || /^\d+$/.test(w));
 
+  /** The root of a rich-text editor: editable itself, inside nothing editable (its paragraphs are not fields). */
+  function isEditor(el) {
+    if (!el.isContentEditable || el.getAttribute('contenteditable') === 'false') return false;
+    if (!el.hasAttribute('contenteditable') || el.localName === 'body' || el.localName === 'html') return false;
+    return !el.parentElement || !el.parentElement.isContentEditable;
+  }
+
   /* ------------------------------------------------------------ visibility */
 
   function isVisible(el, opts) {
@@ -118,6 +127,8 @@
         if (n.nodeType === 3) return NodeFilter.FILTER_ACCEPT;
         if (
           SKIP_TEXT_TAGS.has(n.localName) ||
+          // What is written in an editor is an answer, not part of anyone's label.
+          isEditor(n) ||
           n.hidden ||
           n.getAttribute('aria-hidden') === 'true' ||
           (n.style && n.style.display === 'none') ||
@@ -444,7 +455,8 @@
       if (PASS_THROUGH_TYPES.has(type)) return type;
       return isComboInput(el) ? 'combobox' : 'text';
     }
-    if (el.isContentEditable) return null;
+    // A rich-text editor is a text area (a cover letter, "Why do you want to join us?").
+    if (el.isContentEditable) return isEditor(el) ? 'textarea' : null;
     // A custom dropdown (button / div). Wrappers around a real input are handled via the input.
     if (el.querySelector('input:not([type="hidden"]), select, textarea')) return null;
     return 'combo';
@@ -549,12 +561,21 @@
 
   function describe(el, kind, members) {
     const s = {};
+    const editor = isEditor(el);
     const desc = {
       kind,
-      inputType: el.localName === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : el.localName,
+      inputType:
+        el.localName === 'input'
+          ? (el.getAttribute('type') || 'text').toLowerCase()
+          : editor
+            ? 'textarea'
+            : el.localName,
       autocomplete: (el.getAttribute('autocomplete') || '').toLowerCase(),
       maxLength: el.maxLength > 0 ? el.maxLength : 0,
-      placeholderRaw: el.getAttribute('placeholder') || '',
+      // Editors keep theirs in aria-placeholder or data-placeholder ("Tell us why you'd like to join").
+      placeholderRaw:
+        el.getAttribute('placeholder') ||
+        (editor ? el.getAttribute('aria-placeholder') || el.getAttribute('data-placeholder') || '' : ''),
       // The page's language and site, for formats it doesn't spell out (day or month first).
       lang: ((el.closest && el.closest('[lang]')) || document.documentElement).getAttribute('lang') || '',
       host: location.hostname,
@@ -568,7 +589,7 @@
     } else {
       s.label = explicitLabel(el);
       s.aria = el.getAttribute('aria-label') || '';
-      s.placeholder = el.getAttribute('placeholder') || '';
+      s.placeholder = desc.placeholderRaw;
       s.name = el.getAttribute('name') || '';
       s.id = el.id || '';
       s.title = el.getAttribute('title') || '';
@@ -636,5 +657,5 @@
     return a;
   }
 
-  JTF.dom = { collect, describe, kindOf, isVisible, textOf, visibleText, deepActiveElement };
+  JTF.dom = { collect, describe, kindOf, isEditor, isVisible, textOf, visibleText, deepActiveElement };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

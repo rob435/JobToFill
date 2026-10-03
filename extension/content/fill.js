@@ -13,6 +13,8 @@
   const HIGHLIGHT = 'rgba(124, 92, 255, 0.95)';
   // Answers the AI wrote: a different colour, so they stand out for review.
   const AI_HIGHLIGHT = 'rgba(234, 145, 12, 0.95)';
+  // What the page didn't keep or turned down, for you to look at.
+  const CHECK_HIGHLIGHT = 'rgba(220, 38, 38, 0.95)';
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   /* --------------------------------------------------------------- events */
@@ -96,8 +98,10 @@
       const down = new KeyboardEvent('keydown', init);
       el.dispatchEvent(down);
       if (!down.defaultPrevented) {
-        el.dispatchEvent(new KeyboardEvent('keypress', Object.assign({}, init, { charCode: ch.charCodeAt(0) })));
-        if (!doc.execCommand('insertText', false, ch)) {
+        // A mask that takes the key on keypress puts the character in itself (and says so by cancelling it).
+        const press = new KeyboardEvent('keypress', Object.assign({}, init, { charCode: ch.charCodeAt(0) }));
+        el.dispatchEvent(press);
+        if (!press.defaultPrevented && !doc.execCommand('insertText', false, ch)) {
           setNativeValue(el, el.value + ch);
           el.dispatchEvent(
             new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: ch }),
@@ -106,10 +110,198 @@
       }
       el.dispatchEvent(new KeyboardEvent('keyup', init));
     }
-    if (el.value !== text) return typeValue(el, text);
+    if (el.value !== text && !textTook(el, text)) return typeValue(el, text);
     fire(el, 'change');
     el.blur();
     el.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true }));
+  }
+
+  /** Paste `text` over what the box holds: masks and editors that ignore a set value often take a paste. */
+  function pasteText(el, text) {
+    const doc = el.ownerDocument;
+    el.focus({ preventScroll: true });
+    el.dispatchEvent(new FocusEvent('focusin', { bubbles: true, composed: true }));
+    if (el.select) el.select();
+    const data = new DataTransfer();
+    data.setData('text/plain', text);
+    const paste = new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true, composed: true });
+    el.dispatchEvent(paste);
+    // Nobody took the paste: the browser would insert it.
+    if (!paste.defaultPrevented && !doc.execCommand('insertText', false, text)) {
+      setNativeValue(el, text);
+      el.dispatchEvent(
+        new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertFromPaste', data: text }),
+      );
+    }
+    fire(el, 'change');
+    el.blur();
+    el.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true }));
+  }
+
+  /* ------------------------------------------------------ rich-text editors */
+
+  const isEditable = (el) => el.isContentEditable && el.localName !== 'input' && el.localName !== 'textarea';
+  /** What a box holds: an input's value, an editor's text. */
+  const textIn = (el) => (isEditable(el) ? el.innerText || el.textContent || '' : el.value || '');
+
+  function selectAllIn(el) {
+    el.focus({ preventScroll: true });
+    const doc = el.ownerDocument;
+    const range = doc.createRange();
+    range.selectNodeContents(el);
+    const selection = doc.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    // Editors follow the selection on selectionchange, which the browser only sends later: send it now, so what
+    // comes next replaces everything rather than going in where the cursor was.
+    doc.dispatchEvent(new Event('selectionchange'));
+  }
+
+  const escapeHtml = (t) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+  /** Paste into an editor, paragraphs as paragraphs: Quill, ProseMirror, Lexical and CKEditor all read a paste. */
+  function pasteRich(el, text) {
+    selectAllIn(el);
+    const data = new DataTransfer();
+    data.setData('text/plain', text);
+    data.setData(
+      'text/html',
+      text
+        .split(/\n/)
+        .map((line) => `<p>${escapeHtml(line) || '<br>'}</p>`)
+        .join(''),
+    );
+    const paste = new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true, composed: true });
+    el.dispatchEvent(paste);
+    // A plain contenteditable ignores a paste from script: type it in instead.
+    if (!paste.defaultPrevented) insertRich(el, text);
+    else el.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true }));
+  }
+
+  /** Type into an editor the way the browser does, a paragraph at a time (each one an input the editor sees). */
+  function insertRich(el, text) {
+    const doc = el.ownerDocument;
+    selectAllIn(el);
+    if (textIn(el).trim()) {
+      // Editors clear a selection on Backspace (Lexical ignores the delete command); a bare box on delete.
+      const back = new KeyboardEvent('keydown', keyInit('Backspace'));
+      el.dispatchEvent(back);
+      if (!back.defaultPrevented) doc.execCommand('delete');
+    }
+    text.split(/\n/).forEach((line, i) => {
+      if (i) doc.execCommand('insertParagraph');
+      if (line) doc.execCommand('insertText', false, line);
+    });
+    el.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true }));
+  }
+
+  // Letters and digits only: what a mask's spaces, brackets and dashes don't change.
+  const bare = (s) =>
+    String(s || '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, '');
+
+  /**
+   * Did the box take `want`? Exactly, or reshaped by a mask ("+1 415 555 0100" shown as "(415) 555-0100"), or cut
+   * to the box's length. A box left empty, put back as it was, or holding only the first key or two did not.
+   */
+  function textTook(el, want) {
+    const have = textIn(el);
+    if (have === want) return true;
+    const a = bare(have);
+    const b = bare(want);
+    if (!a || !b) return !a && !b;
+    if (a === b) return true;
+    // An editor may tidy what it took (quotes, spaces): the same start and about the same length, never twice over.
+    if (isEditable(el)) return Math.abs(a.length - b.length) <= 0.1 * b.length && a.slice(0, 40) === b.slice(0, 40);
+    return a.length >= 0.6 * b.length && (b.includes(a) || a.includes(b));
+  }
+
+  /**
+   * The ways to write text into a box, the cheapest first: the value set from script (React, Vue, Angular all see
+   * it), then real key presses (spin buttons, masks that build the value key by key), then a paste.
+   */
+  function writeWays(el) {
+    if (isEditable(el)) return [pasteRich, insertRich];
+    return takesKeys(el) ? [typeKeys, typeValue, pasteText] : [typeValue, typeKeys, pasteText];
+  }
+
+  /**
+   * Write `text` the first way the box keeps it; resolves to that way's index, or -1 when none did. An editor that
+   * applies a paste a moment later (Lexical) is given that moment before the next way is tried on top of it.
+   */
+  async function writeText(el, text, from) {
+    const ways = writeWays(el);
+    for (let i = from || 0; i < ways.length; i++) {
+      ways[i](el, text);
+      if (textTook(el, text)) return i;
+      if (isEditable(el)) for (let waited = 0; waited < 200 && !textTook(el, text); waited += 25) await sleep(25);
+      if (textTook(el, text)) return i;
+    }
+    return -1;
+  }
+
+  /* ------------------------------------------------------- will it pass? */
+
+  const PATTERN_TYPES = new Set(['text', 'search', 'url', 'tel', 'email', 'password']);
+
+  /**
+   * Would the box's own rules accept `s`: its pattern, length limits and type? (The browser compiles a pattern with
+   * the v flag and ignores one that doesn't compile; so does this.)
+   */
+  function fits(el, s) {
+    if (el.localName !== 'input' && el.localName !== 'textarea') return true;
+    if (el.maxLength > 0 && s.length > el.maxLength) return false;
+    if (el.minLength > 0 && s.length < el.minLength) return false;
+    const type = (el.getAttribute('type') || 'text').toLowerCase();
+    if (type === 'email' && !/^[^\s@]+@[^\s@]+$/.test(s)) return false;
+    if (type === 'url' && !/^[a-z][a-z\d+.-]*:\S+$/i.test(s)) return false;
+    if (type === 'number' && !Number.isFinite(Number(s))) return false;
+    const pattern = el.getAttribute('pattern');
+    if (pattern && PATTERN_TYPES.has(type)) {
+      try {
+        if (!new RegExp(`^(?:${pattern})$`, 'v').test(s)) return false;
+      } catch (err) {
+        /* not a pattern the browser would use either */
+      }
+    }
+    return true;
+  }
+
+  const ERROR_TEXT =
+    /\b(invalid|not valid|valid (\w+ )*(number|email|date|address|url|link|format|value|phone|postcode|zip)|format|must|should|required|please (enter|provide|use|select|choose|fill)|incorrect|not allowed|too (short|long)|at least|no more than|only (digits|numbers|letters)|enter a|doesn t match|does not match)\b/;
+  const ERROR_CLASS =
+    /\b(error|invalid|danger|is-invalid|has-error|feedback|validation|warning)\b|--error|__error|-error\b/i;
+
+  /**
+   * What the page says is wrong with a box, if anything: its own validity (pattern, type, length), else the error
+   * message it points to (aria-errormessage, aria-describedby) or shows beside it ("Please enter a valid phone
+   * number"). A form that only says "Required" before it is filled has nothing to say about what was written.
+   */
+  function complaint(el) {
+    if (!el || !el.isConnected) return '';
+    const v = el.validity;
+    if (v && !v.valid && !v.valueMissing) return el.validationMessage || 'not accepted';
+    const said = [];
+    for (const attr of ['aria-errormessage', 'aria-describedby']) {
+      for (const id of (el.getAttribute(attr) || '').split(/\s+/).filter(Boolean)) {
+        const ref = (el.getRootNode().getElementById && el.getRootNode().getElementById(id)) || null;
+        if (ref && dom().isVisible(ref)) said.push(dom().textOf(ref));
+      }
+    }
+    // Error text in the box's own row: up to where other fields start.
+    for (let a = el.parentElement, i = 0; a && i < 4; a = a.parentElement, i++) {
+      if (Array.from(a.querySelectorAll('input:not([type="hidden"]), select, textarea')).some((c) => c !== el)) break;
+      for (const n of a.querySelectorAll('[role="alert"], [aria-live="assertive"], [class]')) {
+        if (n.contains(el) || (n.getAttribute('role') !== 'alert' && !ERROR_CLASS.test(n.getAttribute('class'))))
+          continue;
+        if (n.querySelector('input, select, textarea') || !dom().isVisible(n)) continue;
+        said.push(dom().textOf(n));
+      }
+    }
+    const text = said.map((t) => JTF.util.cleanLabel(t, 160)).find((t) => ERROR_TEXT.test(JTF.util.normalize(t)));
+    if (text) return text;
+    return el.getAttribute('aria-invalid') === 'true' ? 'marked invalid' : '';
   }
 
   /** Checked state of a native radio/checkbox or an ARIA one (role="radio", aria-pressed buttons). */
@@ -204,7 +396,7 @@
         return !!el.value.trim() || chipsOf(el).length > 0;
       default: {
         // A bare scheme or a dial code the widget put there ("+33" in react-phone-number-input) is still empty.
-        const v = (el.value || '').trim();
+        const v = textIn(el).trim();
         return !!v && !/^https?:\/\/$/.test(v) && !/^\+\d{1,4}$/.test(v);
       }
     }
@@ -256,7 +448,7 @@
             .join(', ')
         );
       default:
-        return (el.value || '').trim();
+        return textIn(el).trim();
     }
   }
 
@@ -900,14 +1092,14 @@
           el.selectedIndex = idx;
           fire(el, 'input');
           fire(el, 'change');
-          return { status: 'filled' };
+          return { status: 'filled', check: { idx } };
         }
         case 'radio': {
           const idx = M().matchOption(desc.options, v);
           if (idx < 0) return { status: 'nomatch' };
           history.push({ el, kind, members, prev: members.map(isChecked) });
           setChecked(members[idx], true);
-          return { status: 'filled', target: members[idx] };
+          return { status: 'filled', target: members[idx], check: { targets: [members[idx]] } };
         }
         case 'checkboxes': {
           // A list ("London, New York") ticks every match; a single answer ticks its one option; an
@@ -923,7 +1115,7 @@
           if (!picks.length) return { status: 'nomatch' };
           history.push({ el, kind, members, prev: members.map(isChecked) });
           for (const i of picks) setChecked(members[i], true);
-          return { status: 'filled', target: members[picks[0]] };
+          return { status: 'filled', target: members[picks[0]], check: { targets: picks.map((i) => members[i]) } };
         }
         case 'checkbox': {
           // One option of a checklist ("London" under "Which offices…?"), or a yes/no box.
@@ -931,7 +1123,7 @@
           if (!tick) return { status: 'skipped', reason: 'not one of your answers' };
           history.push({ el, kind, prev: isChecked(el) });
           setChecked(el, true);
-          return { status: 'filled' };
+          return { status: 'filled', check: { targets: [el] } };
         }
         case 'file': {
           // A box that takes several files gets them in one go ("Resume/CV/Transcripts": CV, letter, transcript).
@@ -955,6 +1147,8 @@
             // A picked option is undone with the widget's clear button; typed text by typing back.
             if (res.status === 'filled' && kind === 'combobox')
               history.push(res.typed ? { el, kind, prev } : { el, kind, prev: '', picked: true });
+            // Read back later only when it can be read now: a widget that never shows its pick isn't picked again.
+            if (res.status === 'filled') res.check = { had: hasValue(field) };
             return res;
           }
           // Custom dropdown handling switched off: type into searchable ones, leave buttons alone.
@@ -970,17 +1164,127 @@
           if (v.kind === 'phone' && v.international && /^\+\d{1,4}$/.test((el.value || '').trim()))
             text = M().formatForText(Object.assign({}, v, { text: v.international }), desc);
           if (!text) return { status: 'nomatch' };
-          history.push({ el, kind, prev: el.value });
+          // The other ways to write it, for a box that turns this one down: those its own rules (pattern, length,
+          // type) accept go first, so "+44 7700 900123" never meets a box that only takes digits.
+          const variants = [
+            text,
+            ...M()
+              .textVariants(v, desc)
+              .filter((s) => s !== text),
+          ].slice(0, 12);
+          const ways = [...variants.filter((s) => fits(el, s)), ...variants.filter((s) => !fits(el, s))];
+          history.push({ el, kind, prev: textIn(el) });
           const before = openPopups(el.ownerDocument);
-          if (takesKeys(el)) typeKeys(el, text);
-          else typeValue(el, text);
+          const said = complaint(el);
+          let wrote = ways[0];
+          let way = await writeText(el, wrote);
+          // Its rules reject what went in at once (a pattern or type the attributes didn't show): the next way.
+          const rejected = () => !!el.validity && !el.validity.valid && !el.validity.valueMissing;
+          for (let i = 1; i < ways.length && way >= 0 && rejected(); i++) way = await writeText(el, (wrote = ways[i]));
+          if (way >= 0 && rejected() && wrote !== ways[0]) way = await writeText(el, (wrote = ways[0]));
           await closePopups(el, before);
-          return { status: 'filled' };
+          return { status: 'filled', check: { text: wrote, ways, way, said } };
         }
       }
     } catch (err) {
       return { status: 'error', reason: String((err && err.message) || err) };
     }
+  }
+
+  /* ------------------------------------------------------ check and repair */
+
+  /**
+   * Is what `apply` wrote (its result's `check`) still there, and does the page take it? { ok }, or { gone } (the
+   * box was re-made: find it again), { lost } (empty again, or put back as it was), { refused: what the page says }.
+   */
+  function verify(field, check) {
+    const { el, kind } = field;
+    if (!el.isConnected) return { gone: true };
+    switch (kind) {
+      case 'select':
+        return el.selectedIndex === check.idx ? { ok: true } : { lost: true };
+      case 'radio':
+      case 'checkbox':
+      case 'checkboxes':
+        if (check.targets.some((t) => !t.isConnected)) return { gone: true };
+        return check.targets.every(isChecked) ? { ok: true } : { lost: true };
+      case 'combo':
+      case 'combobox':
+        return !check.had || hasValue(field) ? { ok: true } : { lost: true };
+      case 'file':
+        return { ok: true };
+      default: {
+        if (!textTook(el, check.text)) return { lost: true };
+        const said = complaint(el);
+        return said && said !== check.said ? { refused: said } : { ok: true };
+      }
+    }
+  }
+
+  /** Tick a box that a click didn't tick: its label, the space bar, then its checked state with events. */
+  async function tickHarder(el) {
+    const label = el.localName === 'input' && el.labels && el.labels[0];
+    const tries = [
+      () => label && pointerClick(label),
+      () => key(el, ' '),
+      () => {
+        if (el.localName !== 'input') return;
+        el.checked = true;
+        fire(el, 'input');
+        fire(el, 'change');
+      },
+    ];
+    for (const attempt of tries) {
+      if (isChecked(el)) return;
+      attempt();
+      await sleep(60);
+    }
+  }
+
+  /**
+   * Put right what `verify` finds wrong, once the page has had its say. A box emptied or put back gets the text
+   * again, the other ways first (key by key, a paste: the page undid what was set from script); one whose rules or
+   * messages turn it down gets the other ways of writing it ("07700 900123", "30/06/2027", "linkedin.com/in/ada")
+   * until one is taken, else the first back. Returns verify's verdict afterwards, `fixed` when it took a repair.
+   */
+  async function repair(field, v, check, opts) {
+    const { el, kind } = field;
+    const first = verify(field, check);
+    if (first.ok || first.gone) return first;
+    if (kind === 'select') {
+      el.selectedIndex = check.idx;
+      fire(el, 'input');
+      fire(el, 'change');
+    } else if (kind === 'radio' || kind === 'checkbox' || kind === 'checkboxes') {
+      for (const t of check.targets) if (!isChecked(t)) await tickHarder(t);
+    } else if (kind === 'combo' || kind === 'combobox') {
+      if (opts && opts.comboboxes) await fillCombo(field, v);
+    } else if (first.lost) {
+      const ways = writeWays(el);
+      const order = ways.map((w, i) => i).filter((i) => i !== check.way);
+      if (check.way >= 0) order.push(check.way);
+      for (const i of order) {
+        ways[i](el, check.text);
+        await sleep(120);
+        if (verify(field, check).ok) break;
+      }
+    } else {
+      let fixed = false;
+      for (const text of check.ways.slice(0, 8)) {
+        if (text === check.text) continue;
+        if ((await writeText(el, text)) < 0) continue;
+        await sleep(150);
+        const said = complaint(el);
+        if (!said || said === check.said) {
+          check.text = text;
+          fixed = true;
+          break;
+        }
+      }
+      if (!fixed) await writeText(el, check.ways[0]);
+    }
+    const now = verify(field, check);
+    return now.ok ? { ok: true, fixed: true } : now;
   }
 
   /**
@@ -1029,6 +1333,8 @@
           if (!clearPicked(h.el)) continue;
           key(h.el, 'Escape'); // clearing can pop the menu open again
           h.el.blur();
+        } else if (isEditable(h.el)) {
+          insertRich(h.el, h.prev || '');
         } else {
           typeValue(h.el, h.prev || '');
         }
@@ -1045,16 +1351,21 @@
 
   const highlighted = [];
 
-  function highlight(el, ai) {
+  /** Outline a filled field: solid purple, dashed orange for the AI's answers (`how`: true or 'ai'), red to check. */
+  function highlight(el, how) {
     const target =
       el.type === 'radio' || el.type === 'checkbox'
         ? (el.labels && el.labels[0]) || el
         : el.type === 'file'
           ? el.parentElement || el
           : el;
-    if (!target || !target.style || highlighted.some((h) => h.target === target)) return;
+    if (!target || !target.style) return;
+    // A field to check takes the place of its fill outline.
+    if (how === 'check') clearOne(target);
+    if (highlighted.some((h) => h.target === target)) return;
+    const ai = how === true || how === 'ai';
     highlighted.push({ target, outline: target.style.outline, offset: target.style.outlineOffset });
-    target.style.outline = `2px ${ai ? 'dashed' : 'solid'} ${ai ? AI_HIGHLIGHT : HIGHLIGHT}`;
+    target.style.outline = `2px ${ai ? 'dashed' : 'solid'} ${how === 'check' ? CHECK_HIGHLIGHT : ai ? AI_HIGHLIGHT : HIGHLIGHT}`;
     target.style.outlineOffset = '1px';
     const clear = () => clearOne(target);
     target.addEventListener('focus', clear, { once: true });
@@ -1076,6 +1387,8 @@
 
   JTF.fill = {
     apply,
+    verify,
+    repair,
     undo,
     hasValue,
     currentValue,

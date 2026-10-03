@@ -255,6 +255,7 @@ function mergeReports(frames) {
     missing: [],
     missingTypes: [],
     unmatched: [],
+    check: [],
     notes: [],
     frames: frames.length,
     undoable: false,
@@ -269,22 +270,28 @@ function mergeReports(frames) {
   for (const f of frames) {
     if (typeof f.filled !== 'number') continue;
     // prettier-ignore
-    for (const key of ['filled', 'detected', 'skipped', 'failed', 'unknown', 'consents', 'restored', 'revealed', 'ticked', 'held'])
+    for (const key of ['filled', 'detected', 'skipped', 'failed', 'unknown', 'consents', 'restored', 'revealed', 'repaired', 'ticked', 'held'])
       summary[key] = (summary[key] || 0) + (f[key] || 0);
     for (const [type, status] of Object.entries(f.docs || {}))
       if (summary.docs[type] !== 'filled') summary.docs[type] = status;
-    for (const key of ['missing', 'missingTypes', 'unmatched', 'notes']) summary[key].push(...(f[key] || []));
+    for (const key of ['missing', 'missingTypes', 'unmatched', 'check', 'notes']) summary[key].push(...(f[key] || []));
     summary.undoable = summary.undoable || !!f.undoable;
     summary.jobContext = summary.jobContext || (f.jobContext && f.filled > 0);
     summary.wantsLetter = summary.wantsLetter || !!f.wantsLetter;
     summary.passwordSource = summary.passwordSource || f.passwordSource || null;
   }
-  for (const key of ['missing', 'missingTypes', 'unmatched', 'notes']) summary[key] = [...new Set(summary[key])];
+  for (const key of ['missing', 'missingTypes', 'unmatched', 'check', 'notes'])
+    summary[key] = [...new Set(summary[key])];
   return summary;
 }
 
 function consentText(n) {
   return `${n === 1 ? 'One acknowledgement box is' : `${n} acknowledgement boxes are`} left for you to tick.`;
+}
+
+/** The fields the page didn't keep or turned down after every way of writing them (outlined in red). */
+function checkText(list) {
+  return `Check ${list.length === 1 ? 'this field' : 'these fields'} (outlined in red): ${list.slice(0, 4).join(', ')}${list.length > 4 ? '…' : ''}`;
 }
 
 function tickedText(n) {
@@ -297,6 +304,7 @@ function summaryText(s) {
   const lines = [`Filled ${s.filled} field${s.filled === 1 ? '' : 's'}.`];
   if (s.missing.length)
     lines.push(`Add to your profile: ${s.missing.slice(0, 5).join(', ')}${s.missing.length > 5 ? '…' : ''}`);
+  if (s.check && s.check.length) lines.push(checkText(s.check));
   if (s.consents) lines.push(consentText(s.consents));
   if (s.ticked) lines.push(tickedText(s.ticked));
   lines.push(...s.notes.slice(0, 2));
