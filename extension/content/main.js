@@ -1006,6 +1006,19 @@
     toast,
     fillActive,
     insertPassword,
+    /**
+     * A redacted copy of this frame's form for a bug report, with what the last fills here did (content/snapshot.js).
+     * A CAPTCHA's frame is left out.
+     */
+    snapshot(payload) {
+      if (JTF.accounts.isCaptchaFrame(location.href))
+        return { url: JTF.snapshot.cleanUrl(location.href), skipped: 'captcha' };
+      try {
+        return JTF.snapshot.capture(document, payload);
+      } catch (err) {
+        return { url: JTF.snapshot.cleanUrl(location.href), error: String((err && err.message) || err) };
+      }
+    },
     /** Entries from another part of the content script (the AI assist) join the undoable fill. */
     appendHistory(entries) {
       if (entries && entries.length) state.history = state.history.concat(entries);

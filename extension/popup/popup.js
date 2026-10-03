@@ -418,6 +418,29 @@ async function inspect() {
   button.querySelector('span').textContent = r.on ? `Hide labels (${r.detected} found)` : 'Show detected fields';
 }
 
+/* ------------------------------------------------------------- snapshot */
+
+/** A copy of the page's form without the person's details, saved to their disk for a bug report. */
+async function snapshot() {
+  const button = $('#snapshot');
+  const status = $('#snapshot-status');
+  button.disabled = true;
+  status.hidden = false;
+  status.classList.remove('error');
+  status.textContent = 'Saving…';
+  try {
+    tab = tab || (await tabFound);
+    const r = await send({ type: 'jtf:snapshot' });
+    if (r && r.error) throw new Error(r.error);
+    status.textContent = 'Snapshot saved';
+  } catch (err) {
+    status.classList.add('error');
+    status.textContent = String((err && err.message) || err);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 /* ---------------------------------------------------------------- learn */
 
 async function learn() {
@@ -494,7 +517,8 @@ async function init() {
   $('#shortcut').hidden = !shortcut;
 
   if (!tab || !/^(https?|file):/.test(tab.url || '')) {
-    for (const id of ['#fill', '#inspect', '#learn', '#write-letter', '#quick-apply']) $(id).disabled = true;
+    for (const id of ['#fill', '#inspect', '#learn', '#write-letter', '#quick-apply', '#snapshot'])
+      $(id).disabled = true;
     $('#page-note').hidden = false;
   }
 
@@ -505,6 +529,7 @@ async function init() {
   api.storage.onChanged.addListener(onStorage);
   $('#inspect').addEventListener('click', inspect);
   $('#learn').addEventListener('click', learn);
+  $('#snapshot').addEventListener('click', snapshot);
   $('#discover').addEventListener('click', () => openDiscover());
   $('#watch-news-open').addEventListener('click', () => openDiscover('#watch'));
   $('#learn-save').addEventListener('click', saveLearned);

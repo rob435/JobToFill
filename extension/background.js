@@ -14,6 +14,7 @@ if (typeof importScripts === 'function') {
     'lib/fields.js',
     'lib/matcher.js',
     'lib/account.js',
+    'lib/redact.js',
     'lib/passwords.js',
     'lib/store.js',
     'lib/ai.js',
@@ -27,7 +28,7 @@ if (typeof importScripts === 'function') {
   );
 }
 
-const { store, passwords, util, fields, answers, jobpage, doctext, otp, nylas } = globalThis.JTF;
+const { store, passwords, util, fields, answers, jobpage, doctext, otp, nylas, redact: redaction } = globalThis.JTF;
 const llm = globalThis.JTF.ai;
 const api = globalThis.JTF.api;
 
@@ -37,8 +38,10 @@ const CONTENT_FILES = [
   'lib/fields.js',
   'lib/matcher.js',
   'lib/account.js',
+  'lib/redact.js',
   'content/dom.js',
   'content/fill.js',
+  'content/snapshot.js',
   'content/account.js',
   'content/main.js',
 ];
@@ -488,14 +491,15 @@ api.storage.onChanged.addListener((changes, areaName) => {
 });
 
 /** Firefox's background page can make blob URLs; Chromium's service worker can't, so it gets a data URL. */
-function jsonUrl(json) {
-  if (typeof URL.createObjectURL === 'function')
-    return URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-  const bytes = new TextEncoder().encode(json);
+function fileUrl(text, type) {
+  if (typeof URL.createObjectURL === 'function') return URL.createObjectURL(new Blob([text], { type }));
+  const bytes = new TextEncoder().encode(text);
   let bin = '';
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-  return 'data:application/json;base64,' + btoa(bin);
+  return `data:${type};base64,` + btoa(bin);
 }
+
+const jsonUrl = (json) => fileUrl(json, 'application/json');
 
 async function finishedDownload(id) {
   for (let i = 0; i < 150; i++) {
@@ -551,6 +555,137 @@ async function lookForPreviousBackup() {
   const previous = { path: found.filename, at: Date.parse(found.endTime || found.startTime) || null };
   await store.setBackupInfo({ previous, paused: true, dismissed: false });
   return previous;
+}
+
+/* -------------------------------------------------------------- snapshot */
+
+// "Save a snapshot for a bug report": the form in a tab as one HTML file a developer can open and turn into a test
+// fixture, without the person in it. Each frame copies itself (content/snapshot.js: typed values left out, personal
+// details replaced, scripts gone); the file is only ever saved to the person's own disk.
+
+const pad = (n) => String(n).padStart(2, '0');
+const localDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const localTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+// What the file says about itself, at its top. An HTML comment: no "--" in it.
+const snapshotNote = (version, when) =>
+  `Redacted snapshot made by JobToFill ${version} on ${localDate(when)} ${localTime(when)}: form values and your personal details are removed. Send it with your bug report.
+
+  Taken out: whatever is typed into fields, your name, email, phone, address, postcode, date of birth, links,
+  file names, employers and longer answers (they read [first name], [email]…), scripts, images and hidden tokens.
+  Kept: city, country, school and degree names (forms list them as options), and which options are ticked or
+  picked, except in equal-opportunity (diversity) questions.
+  The page's other frames follow it in <template data-frame-url> blocks; what JobToFill saw and did is in the
+  jtf-trace JSON at the end. The Content-Security-Policy at the top keeps anything in the page from running.`;
+
+/** Saved logins for the sites in these frames: their usernames and passwords are redacted too (never sent to a page). */
+async function snapshotSecrets(hosts) {
+  const data = await passwords.read().catch(() => null);
+  if (!data) return { usernames: [], secrets: [] };
+  const creds = (data.credentials || []).filter((c) => hosts.some((h) => h && util.hostMatches(h, c.host)));
+  return {
+    usernames: creds.map((c) => c.username).filter(Boolean),
+    secrets: [...creds.map((c) => c.password), data.defaultPassword].filter(Boolean),
+  };
+}
+
+// Chromium hands results over with their keys sorted: the ones a reader looks for first go first again.
+// prettier-ignore
+const FIELD_KEYS = [
+  'kind', 'question', 'section', 'type', 'index', 'part', 'hasValue', 'required', 'invalid', 'validity',
+  'validationMessage', 'options', 'optionCount', 'inputType', 'autocomplete', 'path',
+];
+const TRACE_KEYS = ['at', 'question', 'kind', 'type', 'status', 'reason', 'ms', 'path'];
+const ordered = (obj, keys) =>
+  Object.assign(Object.fromEntries(keys.filter((k) => k in obj).map((k) => [k, obj[k]])), obj);
+
+/** The frames' copies as one self-contained file: the page, its other frames in templates, and the trace. */
+function snapshotFile(frames, redact, { version, when }) {
+  const top = frames.find((f) => f.frameId === 0);
+  const others = frames.filter((f) => f !== top && typeof f.html === 'string');
+  const trace = {
+    url: top.url,
+    title: top.title,
+    when: when.toISOString(),
+    version,
+    frames: frames.map((f) => {
+      const out = {
+        url: f.url || '',
+        fields: (f.fields || []).map((x) => ordered(x, FIELD_KEYS)),
+        fillTrace: (f.fillTrace || []).map((x) => ordered(x, TRACE_KEYS)),
+      };
+      if (f.skipped || f.error || f.scanError) out.problem = f.skipped || f.error || f.scanError;
+      return out;
+    }),
+  };
+  // As script data, "</script>" or "<!--" in the JSON would end or confuse the block: no "<" in it at all.
+  const json = JSON.stringify(trace, null, 1).replace(/</g, '\\u003c');
+  const attr = (s) => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  const tail =
+    others.map((f) => `\n<template data-frame-url="${attr(f.url || '')}">${f.html}</template>`).join('') +
+    `\n<script type="application/json" id="jtf-trace">\n${json}\n</script>\n`;
+  let page = top.html;
+  const end = page.lastIndexOf('</body>') >= 0 ? page.lastIndexOf('</body>') : page.lastIndexOf('</html>');
+  page = end >= 0 ? page.slice(0, end) + tail + page.slice(end) : page + tail;
+  // A last pass over the whole file for what can be matched in markup too (email, phone, links, saved logins).
+  return redact.strict(`<!doctype html>\n<!--\n  ${snapshotNote(version, when)}\n-->\n${page}\n`);
+}
+
+/**
+ * Snapshot the form in a tab. Saves jobtofill-snapshot-<host>-<yyyymmdd-hhmm>.html with a Save As dialog, or
+ * returns { html } when `returnHtml` (tests); `saveAs: false` saves straight to Downloads.
+ */
+async function snapshotTab(tabId, opts = {}) {
+  const { payload } = await fillPayload(tabId);
+  const { profile, docs } = payload;
+  const files = Object.entries(docs || {})
+    .filter(([, d]) => d && d.name)
+    .map(([which, d]) => ({ which, name: d.name }));
+  let frames;
+  try {
+    frames = await callFrames(tabId, 'snapshot', [{ profile, files }]);
+  } catch (err) {
+    return { error: await explainError(err, tabId) };
+  }
+  frames.sort((a, b) => a.frameId - b.frameId);
+  const top = frames.find((f) => f.frameId === 0);
+  if (!top || typeof top.html !== 'string')
+    return { error: `Couldn’t copy this page${top && top.error ? `: ${top.error}` : ''}. Reload it and try again.` };
+  const tab = await api.tabs.get(tabId).catch(() => null);
+  const host = (() => {
+    try {
+      return new URL(tab.url).hostname;
+    } catch (err) {
+      return '';
+    }
+  })();
+  const redact = redaction.redactor(profile, {
+    files,
+    ...(await snapshotSecrets([host, ...frames.map((f) => f.host)])),
+  });
+  // A frame that couldn't redact itself still names where it is and what it's called: those go through here.
+  for (const f of frames) Object.assign(f, { url: redact.text(f.url || ''), title: redact.text(f.title || '') });
+  const when = new Date();
+  const html = snapshotFile(frames, redact, { version: api.runtime.getManifest().version, when });
+  if (opts.returnHtml) return { html };
+
+  const stamp = `${localDate(when).replace(/-/g, '')}-${localTime(when).replace(':', '')}`;
+  const filename = `jobtofill-snapshot-${host.replace(/[^a-z0-9.-]+/gi, '-') || 'page'}-${stamp}.html`;
+  // The byte order mark keeps the file UTF-8 when it is opened from disk, whatever the browser would guess.
+  const url = fileUrl('﻿' + html, 'text/html;charset=utf-8');
+  try {
+    const id = await api.downloads.download({
+      url,
+      filename,
+      saveAs: opts.saveAs !== false,
+      conflictAction: 'uniquify',
+    });
+    return { ok: true, id, filename };
+  } catch (err) {
+    return { error: String((err && err.message) || err) };
+  } finally {
+    // Firefox's download() returns once the Save As dialog is answered, and reads the blob then: let it go later.
+    if (url.startsWith('blob:')) setTimeout(() => URL.revokeObjectURL(url), 5 * 60e3);
+  }
 }
 
 /* ---------------------------------------------------------- cover letters */
@@ -1977,6 +2112,7 @@ const HANDLERS = {
     return { on: frames.some((f) => f.on), detected: sum(frames, 'detected') };
   },
   'jtf:backup': () => writeBackup({ force: true }),
+  'jtf:snapshot': (msg) => snapshotTab(msg.tabId, { returnHtml: !!msg.returnHtml, saveAs: msg.saveAs !== false }),
   'jtf:job-context': (msg) => jobContext(msg.tabId),
   'jtf:scrape': (msg) => scrapeInTab(msg.url),
   'jtf:attach': (msg) => attachLetter(msg.tabId, msg.letterId),
@@ -2141,6 +2277,7 @@ globalThis.JTFBackground = {
   siteOf,
   writeBackup,
   lookForPreviousBackup,
+  snapshotTab,
   otpFor,
   watchOtp,
   getFlow,

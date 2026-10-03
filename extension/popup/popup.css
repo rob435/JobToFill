@@ -281,3 +281,26 @@ footer {
   color: var(--text);
   font-weight: 600;
 }
+
+/* Save a snapshot for a bug report */
+.snapshot {
+  margin: -2px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: 12.5px;
+}
+.snapshot button.link {
+  color: var(--muted);
+}
+.snapshot button.link:hover:not(:disabled) {
+  color: var(--primary);
+}
+#snapshot-status {
+  color: var(--ok);
+}
+#snapshot-status.error {
+  color: var(--danger);
+}
