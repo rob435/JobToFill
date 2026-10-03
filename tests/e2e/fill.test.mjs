@@ -233,6 +233,40 @@ test('Greenhouse job board with real react-select: terms, multi-select, checklis
   }
 });
 
+test('right to work where the job is: the page’s location line, else the job found for the tab', async () => {
+  const original = await h.profile();
+  await h.setProfile({
+    personal: { nationality: 'British' },
+    address: { city: 'Glasgow', state: 'Scotland', postalCode: 'G12 8RS', country: 'United Kingdom' },
+  });
+  try {
+    // "New York, NY" above the form: a British student is not authorized there and needs sponsorship.
+    const page = await h.open('work-rights.html');
+    const r = await h.fill(page);
+    assert.equal(r.error, undefined);
+    assert.equal(await selectedText(page, '#q_based'), 'No');
+    assert.equal(await selectedText(page, '#q_sponsor'), 'Yes');
+    assert.match(await value(page, '#q_context'), /don’t have the right to work in the United States/);
+    assert.equal(await checked(page, '#us-no'), true, 'never “Yes, but I will need visa sponsorship”');
+    assert.equal(await selectedText(page, '#q_london'), 'No', 'Glasgow is not London');
+    await page.close();
+    // The job found for this tab before (Quick apply, AI answers) says London: the UK answers.
+    const again = await h.open('work-rights.html');
+    const tabId = await h.tabId(again);
+    await h.bg(
+      ([id, url]) => globalThis.JTF.store.setTabJob(id, { host: 'localhost', url, job: { location: 'London, UK' } }),
+      [tabId, again.url()],
+    );
+    await h.fill(again);
+    assert.equal(await selectedText(again, '#q_based'), 'Yes');
+    assert.equal(await selectedText(again, '#q_sponsor'), 'No');
+    assert.equal(await value(again, '#q_context'), 'I have the right to work and do not need visa sponsorship.');
+    await again.close();
+  } finally {
+    await h.setProfile({ personal: original.personal, address: original.address });
+  }
+});
+
 test('Ashby-style form: Yes/No toggle buttons, ARIA radios and checkboxes, label-titled fieldsets', async () => {
   const page = await h.open('ashby.html');
   const r = await h.fill(page);

@@ -49,7 +49,7 @@ test('Databricks on Greenhouse’s job board: sanctions multi-selects and a free
   }
 });
 
-test('Pinpoint (Alloyed): "How did you hear about Alloyed?" and interview slots in react-select', async () => {
+test('Pinpoint’s Singleselect and Multiselect: "How did you hear…?" and interview slots in react-select', async () => {
   const page = await h.open('pinpoint.html');
   await page.waitForSelector('#application_form_application_answers_attributes_12_text_answer');
   const r = await h.fill(page);
@@ -61,6 +61,37 @@ test('Pinpoint (Alloyed): "How did you hear about Alloyed?" and interview slots 
   assert.deepEqual(s.application_form_application_answers_attributes_12_text_answer, slots.slice(0, 2));
   assert.deepEqual(r.unmatched, []);
   await page.close();
+});
+
+test('Teamtailor (Alloyed): "How did you hear about Alloyed?" and interview slots in menus of ticks', async () => {
+  const original = await h.profile();
+  // Free from noon: the afternoon slots fit, the mornings don't.
+  await h.setProfile({ job: { referralSource: '' }, availability: { ...original.availability, from: '12:00' } });
+  try {
+    const page = await h.open('teamtailor.html');
+    const r = await h.fill(page);
+    assert.equal(r.error, undefined);
+    const s = await state(page);
+    assert.equal(s['How did you hear about Alloyed?'], 'LinkedIn', 'LinkedIn alone, in a menu that takes several');
+    const slots = await page.$$eval('#dropdown-12 [role="menuitemcheckbox"]', (items) =>
+      items.map((i) => i.textContent.trim()),
+    );
+    const afternoons = slots.filter((t) => / - PM$/.test(t));
+    assert.equal(afternoons.length, 7);
+    assert.deepEqual(s['1st Stage Video Interview Availability (Multiple Choice)'], afternoons);
+    assert.equal(
+      await page.$eval('#dropdown-12', (m) => m.classList.contains('hidden')),
+      true,
+      'the menu is closed again',
+    );
+    assert.ok(!r.unmatched.some((label) => /availab|hear/i.test(label)), JSON.stringify(r.unmatched));
+    // Filling again keeps them.
+    const refill = await h.fill(page);
+    assert.equal(refill.filled, 0, JSON.stringify(refill));
+    await page.close();
+  } finally {
+    await h.setProfile({ job: original.job, availability: original.availability });
+  }
 });
 
 test('SuccessFactors (Moody’s): communication preference, a personal relationship, "Otherwise, enter N/A"', async () => {

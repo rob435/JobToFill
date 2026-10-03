@@ -115,7 +115,27 @@ test('store: profiles are upgraded to the current schema', async () => {
   assert.equal(profile.personal.lastName, '');
   assert.equal(profile.education[0].school, 'X');
   assert.equal(profile.education[0].degree, '');
+  assert.equal(profile.education[0].classification, '', 'entries saved before the classification box get one');
   assert.deepEqual(profile.customAnswers, []);
+});
+
+test('store: a degree classification survives save, export and import; a class kept as the GPA is left there', async () => {
+  installChrome();
+  await chrome.storage.local.set({
+    profiles: { old: { id: 'old', name: 'Old', education: [{ school: 'University of Glasgow', gpa: '2:1' }] } },
+    profileOrder: ['old'],
+  });
+  const { profile: p } = await store.getActive();
+  assert.equal(p.education[0].gpa, '2:1', 'user data is never moved about');
+  assert.equal(p.education[0].classification, '');
+  p.education[0].classification = 'First';
+  await store.saveProfile(p);
+  const exported = await store.exportData();
+  assert.equal(exported.profiles[p.id].education[0].classification, 'First');
+  delete exported.profiles[p.id].education[0].classification; // a backup from before the field existed
+  await store.importData(JSON.parse(JSON.stringify(exported)));
+  assert.equal((await store.getActive()).profile.education[0].classification, '');
+  assert.equal((await store.getActive()).profile.education[0].gpa, '2:1');
 });
 
 test('store: history merges refills of the same page', async () => {

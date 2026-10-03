@@ -139,7 +139,14 @@ async function fillPayload(tabId) {
     if (letter.useCv && letter.cv) docs.resume = docMeta(letter.cv);
   }
   const mine = letter && letter.profileId === profile.id ? letter : null;
-  return { payload: { profile: filled, settings, docs, vault: await vault.status() }, letter: mine };
+  // Where the job is ("…authorized to work in the country where this role is based?"), from what this tab already
+  // knows: the job found for it (Quick apply, AI answers) or its letter. Never a new request; else the page says.
+  const known = await knownTabJob(tabId, tab && tab.url);
+  const written = letter
+    ? (letter.analysis && letter.analysis.location) || (letter.posting && letter.posting.location)
+    : '';
+  const jobLocation = (known && known.location) || written || '';
+  return { payload: { profile: filled, settings, docs, vault: await vault.status(), jobLocation }, letter: mine };
 }
 
 /**
@@ -808,6 +815,14 @@ const hostOf = (url) => {
   }
 };
 
+/** The job found for this tab before, unless the tab has moved on to another job (another job id in the address). */
+async function knownTabJob(tabId, url) {
+  const cached = await store.getTabJob(tabId);
+  return cached && cached.host === hostOf(url || '') && cached.job && !store.otherJob(cached.url, url || '')
+    ? cached.job
+    : null;
+}
+
 /**
  * What the AI needs to know about the job behind the application in a tab: { company, title, location, url,
  * description, summary, companyNotes }. From the job found for this tab before, the letter written for this
@@ -817,9 +832,8 @@ async function jobFor(tabId) {
   const tab = await api.tabs.get(tabId).catch(() => null);
   const url = (tab && tab.url) || '';
   const host = hostOf(url);
-  // The job found for this tab before, unless the tab has moved on to another job (another job id in the address).
-  const cached = await store.getTabJob(tabId);
-  if (cached && cached.host === host && cached.job && !store.otherJob(cached.url, url)) return cached.job;
+  const cached = await knownTabJob(tabId, url);
+  if (cached) return cached;
 
   let job;
   const letter = await store.letterFor({ tabId, url, trail: await readTrail(tabId) });

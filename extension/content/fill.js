@@ -104,7 +104,8 @@
 
   function comboText(el) {
     if (el.localName === 'input') return el.value.trim();
-    return dom().textOf(el) || '';
+    // What the button shows: the choice, not a placeholder kept for screen readers or hidden once chosen.
+    return dom().visibleText(el) || '';
   }
 
   const CHIP =
@@ -248,7 +249,7 @@
   }
 
   const OPTION_ROLES = '[role="option"]';
-  const MENUITEM_ROLES = '[role="menuitem"], [role="menuitemradio"], [role="treeitem"]';
+  const MENUITEM_ROLES = '[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="treeitem"]';
   const OPTION_CLASSES =
     '[class*="option" i], [class*="result" i], [class*="item" i], [class*="suggest" i], [class*="cx-select" i]';
   const NO_RESULTS =
@@ -448,6 +449,9 @@
     await sleep(40);
   }
 
+  /** A role="menuitemcheckbox" / "menuitemradio" that is ticked. */
+  const isTicked = (option) => option.isConnected && option.getAttribute('aria-checked') === 'true';
+
   async function choose(el, option) {
     const text = dom().textOf(option);
     const typed = el.localName === 'input' ? el.value : '';
@@ -462,7 +466,8 @@
     // that opens its own options instead (Workday's "Social Media" > "LinkedIn") says so.
     for (let waited = 0; waited < 300; waited += 30) {
       await sleep(30);
-      if (selectionShows(el, text, typed) || !listboxFor(el)) return text;
+      // A menu that stays open ticks the item itself (Teamtailor shows "a, b, c, +2" once there are more than three).
+      if (selectionShows(el, text, typed) || !listboxFor(el) || isTicked(option)) return text;
       const now = currentOptions(el);
       if (!option.isConnected && now.length && optionsKey(now) !== optionsKey(before)) return { drilled: true };
     }
@@ -493,12 +498,14 @@
     const pick = () => {
       const listed = describeOptions(opts);
       // A multi-select takes every slot or statement that fits, one per call, judged with the ones it took already
-      // (react-select hides those): "None of these dates work" is never added to them.
+      // (react-select hides those): "None of these dates work" is never added to them. One ticked already stays.
       const list =
         v.many && multi
           ? M().matchAll([...listed, ...already.map((t) => ({ text: t, value: '' }))], v)
           : [M().matchOption(listed, v)];
-      const idx = list.find((i) => i >= 0 && i < opts.length && !already.includes(dom().textOf(opts[i])));
+      const idx = list.find(
+        (i) => i >= 0 && i < opts.length && !already.includes(dom().textOf(opts[i])) && !(multi && isTicked(opts[i])),
+      );
       return idx == null ? -1 : idx;
     };
     let idx = pick();
@@ -601,6 +608,8 @@
   function isMulti(el) {
     const lb = listboxFor(el);
     if (lb && lb.getAttribute('aria-multiselectable') === 'true') return true;
+    // A menu of ticks ("How did you hear about us?" on Teamtailor) takes several.
+    if (lb && lb.querySelector('[role="menuitemcheckbox"]')) return true;
     if (el.getAttribute('aria-multiselectable') === 'true') return true;
     return !!el.closest('[class*="is-multi" i], [class*="isMulti" i], [class*="--multi" i]');
   }

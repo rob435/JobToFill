@@ -96,7 +96,16 @@ test('sanctions: every shape of the question is recognised, never as nationality
   );
   assert.equal(matcher.classify(lone).type, 'compliance.sanctions');
 
+  assert.equal(typeOf('Do you hold Cuban, Iranian, North Korean or Syrian nationality?'), 'compliance.sanctions');
+  assert.equal(
+    typeOf('Are you located in Cuba, Iran, North Korea, Syria, or the Crimea region?'),
+    'compliance.sanctions',
+  );
+  assert.equal(typeOf('Do you hold a passport from Cuba, Iran, North Korea or Syria?'), 'compliance.sanctions');
+
   // What it must leave alone.
+  assert.notEqual(typeOf('Are you willing to work in Cuba or Iran?'), 'compliance.sanctions');
+  assert.equal(typeOf('Have you travelled to Cuba, Iran, North Korea or Syria in the last 5 years?'), null);
   assert.equal(typeOf('Are you a US citizen?'), 'citizen');
   assert.equal(typeOf('Nationality', 'select', ['British', 'Cuban', 'Iranian', 'Syrian']), 'nationality');
   assert.equal(
@@ -104,6 +113,9 @@ test('sanctions: every shape of the question is recognised, never as nationality
     'address.country',
   );
   assert.equal(typeOf('Are you a refugee or asylum seeker?'), 'eeo.refugee');
+  const mena = 'Middle Eastern or North African (e.g. Lebanese, Iranian, Egyptian, Syrian)';
+  assert.equal(typeOf('What is your ethnicity?', 'select', ['White', mena, 'Asian']), 'eeo.race');
+  assert.equal(typeOf('Ethnic background (e.g. Iranian, Syrian, Kurdish)', 'select', ['White', mena]), 'eeo.race');
   assert.equal(typeOf('Have you ever been subject to any regulatory sanctions or disciplinary action?'), null);
   assert.equal(
     typeOf('Do you consent to sanctions and background screening of your country of residence?'),
@@ -126,6 +138,8 @@ test('sanctions: a British student gets "None of the above", then the follow-upâ
   ]);
   for (const q of YES_NO_SHAPES)
     assert.deepEqual(picks(opts('Yes', 'No'), ask(p, 'compliance.sanctions', q)), ['No'], q);
+  const demonyms = 'Do you hold Cuban, Iranian, North Korean or Syrian nationality?';
+  assert.deepEqual(picks(opts('Yes', 'No'), ask(p, 'compliance.sanctions', demonyms)), ['No']);
   // Yes/No options worded as statements.
   const worded = opts(
     'Yes, I am a citizen or resident of one of these countries',

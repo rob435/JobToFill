@@ -35,6 +35,44 @@
     return { fields, results: planned.results, context: planned.context };
   }
 
+  // Where application pages show the job's location: Greenhouse (new and old boards), Lever, Workday.
+  const LOCATION_LINES = [
+    '.job__location',
+    '#header .location',
+    '.posting-categories .location',
+    '.posting-header .posting-categories > :first-child',
+    '[data-automation-id="locations"] dd',
+  ];
+
+  /**
+   * Where the job is, for "Are you authorized to work in the country where this role is based?": what the extension
+   * already knew about the job in this tab, else the location line on the application page itself.
+   */
+  function jobLocation(payload) {
+    if (payload && payload.jobLocation) return payload.jobLocation;
+    try {
+      for (const selector of LOCATION_LINES) {
+        const el = document.querySelector(selector);
+        if (el && el.textContent.trim()) return U.cleanLabel(el.textContent, 200);
+      }
+      // Ashby: "Location" over it in the side pane.
+      for (const h of document.querySelectorAll('.ashby-job-posting-left-pane h2'))
+        if (/^location$/i.test(h.textContent.trim()) && h.nextElementSibling)
+          return U.cleanLabel(h.nextElementSibling.textContent, 200);
+      // A JobPosting's jobLocation in the page's JSON-LD.
+      for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+        const block = (s.textContent.match(/"jobLocation"[\s\S]{0,600}/) || [''])[0];
+        const part = (key) =>
+          (block.match(new RegExp(`"${key}"\\s*:\\s*(?:\\{[^}]*?"name"\\s*:\\s*)?"([^"]+)"`)) || [])[1];
+        const where = ['addressLocality', 'addressRegion', 'addressCountry'].map(part).filter(Boolean).join(', ');
+        if (where) return where;
+      }
+    } catch (err) {
+      /* nothing to go by */
+    }
+    return '';
+  }
+
   // "If you said yes above, please tell us more": only worth filling when the answer was yes.
   const FOLLOW_UP = /^if (yes|so|you (said|answered|selected|chose|checked|ticked) yes)\b/;
 
@@ -170,6 +208,7 @@
     // A fill that changes nothing keeps the previous one undoable.
     const history = [];
     const { fields, results, context } = scan(profile);
+    context.jobLocation = jobLocation(payload);
 
     // A username box alone doesn't need the vault; password and card boxes do.
     const needs = {
@@ -236,6 +275,7 @@
           secrets,
           answer: r.answer,
           question,
+          options: field.desc.options,
           consents: !!settings.consents,
           // How the page writes "03/11" (interview slots).
           dateOrder: JTF.matcher.dateOrder(field.desc),
@@ -268,6 +308,9 @@
       const def = JTF.fields.DEFS[r.type];
       const label = labelFor(field, r);
       const question = U.normalize(JTF.matcher.questionText(field.desc));
+      // "If applicable, please provide a recent transcript of your graduate studies.": not for a level you haven't
+      // studied at, and nothing missing from your profile either.
+      if (def && def.file && !JTF.fields.uploadApplies(r.type, profile, question)) return null;
       if (def && def.consent && !settings.consents) {
         if (!JTF.fill.hasValue(field)) report.consents++;
         return null;
@@ -405,6 +448,7 @@
           part: r.part,
           kind: field.kind,
           question: q,
+          options: field.desc.options,
         });
         // A follow-up after a "No" ("If yes, give details") or a box the profile said no to stays empty.
         if (v && (field.kind === 'checkbox' || (FOLLOW_UP.test(q) && !JTF.fields.followUpAnswer(v, field.kind))))
@@ -582,7 +626,7 @@
       if (def) {
         if (def.secret || JTF.fields.DATE_TYPES.has(r.type) || r.part) return;
         let path = def.path;
-        if (!path && def.list && (profile[def.list] || [])[r.index || 0] && def.key !== 'current')
+        if (!path && def.list && (profile[def.list] || [])[r.index || 0] && def.key !== 'current' && !def.derived)
           path = `${def.list}.${r.index || 0}.${def.key}`;
         if (!path || !U.isBlank(U.getPath(profile, path))) return;
         if (seen.has(path)) return;
@@ -610,6 +654,7 @@
     }
     const { profile } = payload;
     const { fields, results, context } = scan(profile);
+    context.jobLocation = jobLocation(payload);
     const { layer } = ui();
     state.overlay = [];
     let detected = 0;
@@ -621,7 +666,12 @@
       if (def) {
         detected++;
         text = labelFor(field, r) + (r.index ? ` #${r.index + 1}` : '') + (r.part ? ` (${r.part})` : '');
-        if (def.file) status = payload.docs && payload.docs[def.file] ? 'ok' : 'empty';
+        const question = U.normalize(JTF.matcher.questionText(field.desc));
+        if (def.file)
+          status =
+            payload.docs && payload.docs[def.file] && JTF.fields.uploadApplies(r.type, profile, question)
+              ? 'ok'
+              : 'empty';
         else if (def.secret) status = 'vault';
         else if (def.consent) status = payload.settings && payload.settings.consents ? 'ok' : 'unknown';
         else {
@@ -630,7 +680,8 @@
             part: r.part,
             kind: field.kind,
             answer: r.answer,
-            question: U.normalize(JTF.matcher.questionText(field.desc)),
+            question,
+            options: field.desc.options,
           });
           status = JTF.fields.resolve(r.type, profile, ctx) ? 'ok' : 'empty';
         }
@@ -712,6 +763,7 @@
     applyAnswers,
     async pending(payload) {
       const { context } = scan(payload.profile);
+      context.jobLocation = jobLocation(payload);
       return { items: await pendingQuestions(payload.profile, context, { peek: !!payload.ai }) };
     },
     hold,

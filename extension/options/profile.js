@@ -78,6 +78,17 @@ export const DEGREES = [
   'Bachelor of Engineering', 'Master’s Degree', 'Master of Science', 'Master of Arts', 'MBA', 'PhD', 'JD', 'MD',
 ];
 
+// UK degree classes (and a master's Distinction / Merit), offered on the classification box: [value, description].
+export const CLASSIFICATIONS = [
+  ['First', 'First class (1st)'],
+  ['2:1', 'Upper second (2.1, 2(i))'],
+  ['2:2', 'Lower second (2.2, 2(ii))'],
+  ['Third', 'Third class (3rd)'],
+  ['Pass', 'Pass / ordinary degree'],
+  ['Distinction', 'Master’s: distinction'],
+  ['Merit', 'Master’s: merit'],
+];
+
 const f = (path, label, extra) => ({ path, label, ...extra });
 
 const FORMS = {
@@ -388,8 +399,16 @@ const LISTS = {
       f('school', 'School / university', { wide: true }),
       f('degree', 'Degree', { list: 'degrees' }),
       f('field', 'Field of study / major'),
-      f('gpa', 'GPA / grade'),
-      f('location', 'Location', { placeholder: 'City, State' }),
+      f('gpa', 'GPA / grade', { placeholder: 'e.g. 3.8 or 3.8/4.0' }),
+      f('classification', 'Degree classification', {
+        list: 'classifications',
+        placeholder: 'e.g. 2:1',
+        hint: 'Expected or achieved: First, 2:1, 2:2, Third, Pass; Distinction or Merit for a master’s. For “Expected/Achieved Degree Classification” and “Predicted grade”; matches “Upper Second Class Honours (2:1)”, “2(i)” and the like.',
+      }),
+      f('location', 'Location', {
+        placeholder: 'City, Country or State',
+        hint: '“Glasgow, UK” also answers “Country of School”.',
+      }),
       f('startDate', 'Start', { type: 'month' }),
       f('endDate', 'End / expected graduation', { type: 'month' }),
     ],

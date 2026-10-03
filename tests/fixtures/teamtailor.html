@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <title>Software Engineering Graduate / Internship Opportunities – Teamtailor application replica</title>
+    <style>
+      body {
+        font: 15px/1.4 system-ui, sans-serif;
+        margin: 32px auto;
+        max-width: 680px;
+      }
+      .question {
+        margin: 0 0 28px;
+      }
+      fieldset {
+        border: 0;
+        padding: 0;
+        margin: 0;
+      }
+      label,
+      legend {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+      .choice-input-wrapper label {
+        display: inline;
+        font-weight: normal;
+      }
+      input[type='text'],
+      input[type='email'],
+      input[type='tel'],
+      input[type='date'],
+      textarea {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px;
+      }
+      .relative {
+        position: relative;
+      }
+      .trigger {
+        display: flex;
+        width: 100%;
+        padding: 12px 20px;
+        text-align: left;
+        background: #fff;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+      }
+      .opacity-60 {
+        opacity: 0.6;
+      }
+      [role='menu'] {
+        position: absolute;
+        left: 0;
+        top: 100%;
+        z-index: 10;
+        flex-direction: column;
+        min-width: 175px;
+        max-height: 500px;
+        overflow-y: auto;
+        padding: 8px;
+        background: #fff;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+      }
+      [role='menu'].flex {
+        display: flex;
+      }
+      [role='menuitemradio'],
+      [role='menuitemcheckbox'] {
+        display: block;
+        padding: 6px 12px;
+        text-align: left;
+        background: none;
+        border: 0;
+      }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border-width: 0;
+      }
+      .invisible {
+        visibility: hidden;
+      }
+      .hidden {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Modelled on careers.alloyed.com (Teamtailor), "Software Engineering Graduate / Internship Opportunities",
+         October 2026. Every label ends in an aria-hidden "*" and a screen-reader-only "Required". Questions shown as
+         dropdowns ("University:", "Expected/Achieved Degree Classification") are a "Select an option" button with
+         aria-haspopup="menu" over role="menuitemradio" buttons; the real radios sit in a display:none list, and
+         picking an item ticks one (Teamtailor's forms--inputs--choice and common--dropdown controllers, replayed
+         below). The menu stays open after a pick, closes on Escape or a click outside. Multiple-choice ones use
+         role="menuitemcheckbox" over hidden checkboxes. -->
+    <form id="job-application-form" action="#" onsubmit="return false">
+      <div id="questions"></div>
+      <div class="question">
+        <label for="candidate_first_name">First name<sup data-asterisk="true" aria-hidden="true">*</sup><span class="sr-only">Required</span></label>
+        <input autocomplete="given-name" maxlength="50" type="text" name="candidate[first_name]" id="candidate_first_name" />
+      </div>
+      <div class="question">
+        <label for="candidate_last_name">Last name<sup data-asterisk="true" aria-hidden="true">*</sup><span class="sr-only">Required</span></label>
+        <input autocomplete="family-name" maxlength="50" type="text" name="candidate[last_name]" id="candidate_last_name" />
+      </div>
+      <div class="question">
+        <label for="candidate_email">Email<sup data-asterisk="true" aria-hidden="true">*</sup><span class="sr-only">Required</span></label>
+        <input autocomplete="email" type="email" name="candidate[email]" id="candidate_email" />
+      </div>
+      <div class="question">
+        <label for="candidate_phone">Phone</label>
+        <input type="tel" name="candidate[phone]" id="candidate_phone" />
+      </div>
+      <div class="question">
+        <label for="candidate_resume_remote_url">Upload CV<sup data-asterisk="true" aria-hidden="true">*</sup><span class="sr-only">Required</span></label>
+        <input type="file" name="candidate[resume]" id="candidate_resume_remote_url" />
+      </div>
+      <div class="question">
+        <input type="checkbox" name="candidate[consent_given]" id="candidate_consent_given" />
+        <label for="candidate_consent_given" style="display: inline"
+          ><span class="sr-only">Required.</span>By submitting this application, I agree that I have read the
+          <a href="#">Privacy Policy</a> and confirm that Alloyed store my personal details to be able to process my job application.<sup
+            aria-hidden="true"
+            >*</sup
+          ></label
+        >
+      </div>
+    </form>
+    <pre id="state"></pre>
+    <script>
+      const UNIVERSITIES = [
+        'Birmingham City University', 'Brunel University of London', 'Cardiff University',
+        "City St George's, University of London", 'Coventry University', 'Cranfield University  ', 'De Montfort University',
+        'Durham University', 'Edinburgh Napier University', 'Glasgow Caledonian University', 'Heriot-Watt University',
+        'Imperial College London', 'King’s College London', 'Kingston University', 'Lancaster University',
+        'Liverpool John Moores University', 'London South Bank University', 'Loughborough University',
+        'Manchester Metropolitan University', 'Newcastle University', 'Northumbria University', 'Nottingham Trent University',
+        'Oxford Brookes University', 'Queen Mary University of London', 'Queen’s University Belfast',
+        'Sheffield Hallam University', 'Swansea University', 'Teesside University', 'Ulster University',
+        'University College London (UCL) ', 'University of Aberdeen ', 'University of Bath', 'University of Birmingham ',
+        'University of Bradford', 'University of Brighton', 'University of Bristol', 'University of Cambridge  ',
+        'University of Derby', 'University of Dundee', 'University of Edinburgh  ', 'University of Exeter',
+        'University of Glasgow', 'University of Greenwich', 'University of Hertfordshire', 'University of Huddersfield',
+        'University of Hull', 'University of Leeds  ', 'University of Leicester', 'University of Liverpool',
+        'University of Manchester  ', 'University of Nottingham ', 'University of Oxford  ', 'University of Portsmouth',
+        'University of Salford', 'University of Sheffield  ', 'University of South Wales', 'University of Southampton  ',
+        'University of Strathclyde', 'University of Surrey  ', 'University of Sussex', 'University of the West of Scotland',
+        'University of Warwick', 'University of York', 'UWE Bristol (University of the West of England)', 'Other',
+        'University of St Andrews', 'University of Aberdeen',
+      ];
+      // Interview slots as Alloyed writes them ("Monday 9 November - AM"), from the Monday at least a week away.
+      const slotDay = (offset) => {
+        const d = new Date();
+        d.setHours(12, 0, 0, 0);
+        d.setDate(d.getDate() + 7 + ((8 - d.getDay()) % 7) + offset);
+        return `${d.toLocaleDateString('en-GB', { weekday: 'long' })} ${d.getDate()} ${d.toLocaleDateString('en-GB', { month: 'long' })}`;
+      };
+      const SLOTS = [0, 1, 2, 3, 4, 7, 8].flatMap((k) => [`${slotDay(k)} - AM`, `${slotDay(k)} - PM`]);
+
+      // [kind, label, options, help]; kinds: text, textarea, date, boolean, radios, dropdown, multi.
+      const QUESTIONS = [
+        ['textarea', 'Why would you like to work for Alloyed, and why will you excel?'],
+        ['boolean', 'Do you require sponsorship to work in the UK?'],
+        ['dropdown', 'University:', UNIVERSITIES],
+        ['text', 'University Course'],
+        ['radios', 'Gender', ['Male', 'Female', 'Non-Binary', 'Prefer not to say']],
+        ['radios', 'Degree Type', ['Bachelors Degree', 'Integrated Masters Degree', 'Masters Degree', 'PhD', 'Other']],
+        ['radios', 'Year of Graduation', ['2025', '2026', 'Other', '2027', '2028', '2029']],
+        ['dropdown', 'Expected/Achieved Degree Classification', ['1st', '2:1', '2:2', 'Pass', 'Merit', 'Distinction', 'Other']],
+        ['date', 'Start Date', null, 'Please indicate the earliest date you would be available to start with us.'],
+        ['boolean', 'Location Availability', null, 'This is an onsite role based at our Oxfordshire sites. Are you able and willing to work onsite on a regular basis?'],
+        ['boolean', 'Would you be comfortable working on projects that are in or related to the defence sector?'],
+        ['multi', 'How did you hear about Alloyed?', ['Careers Fair', 'Department mailing list', 'Gradcracker', 'Job Board', 'LinkedIn', 'Student Society', 'Word of Mouth', 'Other', 'Indeed', 'Glassdoor', 'Internal Referral']],
+        ['multi', '1st Stage Video Interview Availability (Multiple Choice)', SLOTS, 'Please select ALL dates/times for which you are available:'],
+        ['radios', 'Graduate Engineer / Summer Internship', ['Graduate Engineer', 'Summer Internship'], 'Please select which role classification you would like to progress with. '],
+      ];
+
+      const h = (tag, attrs, ...children) => {
+        const node = document.createElement(tag);
+        for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, v);
+        for (const c of children.flat()) if (c != null) node.append(c);
+        return node;
+      };
+      const required = () => [h('sup', { 'data-asterisk': 'true', 'aria-hidden': 'true' }, '*'), h('span', { class: 'sr-only' }, 'Required')];
+
+      function choiceList(n, type, options, hidden) {
+        const name = type === 'radio' ? `candidate[answers_attributes][${n}][choice]` : `candidate[answers_attributes][${n}][choices][]`;
+        const key = type === 'radio' ? 'choice' : 'choices';
+        return h(
+          'div',
+          { class: 'flex flex-wrap' + (hidden ? ' hidden' : '') },
+          options.map((label, i) =>
+            h(
+              'div',
+              { class: 'choice-input-wrapper' },
+              h('input', { 'data-forms--inputs--choice-target': type, type, value: String(i + 1), name, id: `candidate_answers_attributes_${n}_${key}_${i + 1}` }),
+              h('label', { class: 'choice-input-wrapper__label', for: `candidate_answers_attributes_${n}_${key}_${i + 1}` }, label),
+            ),
+          ),
+        );
+      }
+
+      function dropdown(n, id, options, multiple) {
+        const placeholder = multiple ? 'Select one or more options' : 'Select an option';
+        const menu = h(
+          'div',
+          { id: `dropdown-${n}`, role: 'menu', 'aria-labelledby': `trigger-dropdown-${n}`, class: 'hidden', 'data-common--dropdown-target': 'dropdown' },
+          options.length > 10
+            ? h('div', { class: 'search' }, h('input', { type: 'search', placeholder: 'Search', autocomplete: 'off', 'data-forms--inputs--choice-target': 'searchInput' }))
+            : null,
+          h('div', { class: 'hidden', 'data-forms--inputs--choice-target': 'emptyState' }, 'No results found'),
+          options.map((label, i) =>
+            h(
+              'button',
+              {
+                type: 'button',
+                role: multiple ? 'menuitemcheckbox' : 'menuitemradio',
+                'data-common--dropdown-target': 'menuItem',
+                'data-value': String(i + 1),
+                'data-search-text': label,
+                'data-forms--inputs--choice-target': 'filterableOption',
+                'aria-checked': 'false',
+              },
+              h('div', {}, h('i', { class: 'fas fa-check invisible', 'aria-hidden': 'true' }), label),
+            ),
+          ),
+        );
+        return h(
+          'div',
+          { class: 'relative', 'data-controller': 'common--dropdown' },
+          h('div', { class: 'relative' }, h('input', { class: 'sr-only', required: 'required', tabindex: '-1', 'aria-hidden': 'true', 'data-common--dropdown-target': 'hiddenInput' })),
+          h(
+            'button',
+            {
+              type: 'button',
+              role: 'button',
+              id: `trigger-dropdown-${n}`,
+              class: 'trigger',
+              'aria-required': 'true',
+              'aria-label': placeholder,
+              'aria-haspopup': 'menu',
+              'aria-expanded': 'false',
+              'aria-controls': `dropdown-${n}`,
+              'aria-labelledby': `${id}_label ${id}_selected`,
+            },
+            h('span', { class: 'sr-only' }, placeholder),
+            h(
+              'div',
+              {},
+              h('div', { id: `${id}_selected`, 'data-forms--inputs--choice-target': multiple ? 'selectedOptions' : 'selectedOption' }),
+              h('span', { class: 'opacity-60', 'data-forms--inputs--choice-target': 'dropdownTrigger' }, placeholder),
+            ),
+          ),
+          menu,
+        );
+      }
+
+      function question(n, [kind, label, options, help]) {
+        const id = `id_${2056 + n}`;
+        const wrap = h('div', { class: 'question', 'data-question-mandatory': 'true' }, h('input', { type: 'hidden', name: `candidate[answers_attributes][${n}][question_id]`, value: String(5863500 + n) }));
+        const helpText = help ? h('div', {}, h('p', {}, help)) : null;
+        if (kind === 'text' || kind === 'textarea' || kind === 'date') {
+          const fieldId = `candidate_answers_attributes_${n}_${kind === 'date' ? 'date' : 'text'}`;
+          const input =
+            kind === 'textarea'
+              ? h('textarea', { rows: '3', name: `candidate[answers_attributes][${n}][text]`, id: fieldId })
+              : h('input', { type: kind, name: `candidate[answers_attributes][${n}][${kind === 'date' ? 'date' : 'text'}]`, id: fieldId });
+          wrap.append(h('div', { id }, h('label', { for: fieldId }, label, required()), helpText, input));
+          return wrap;
+        }
+        const legend = h('legend', { id: `${id}_label` }, h('span', { class: 'block' }, label, required()), helpText);
+        if (kind === 'boolean') {
+          const yes = `boolean-${n}-true`;
+          const no = `boolean-${n}-false`;
+          const name = `candidate[answers_attributes][${n}][boolean]`;
+          wrap.append(
+            h(
+              'fieldset',
+              { id },
+              legend,
+              h(
+                'div',
+                { 'data-controller': 'forms--inputs--boolean' },
+                h('div', {}, h('input', { id: yes, type: 'radio', value: 'true', name }), h('label', { for: yes, style: 'display:inline' }, 'Yes')),
+                h('div', {}, h('input', { id: no, type: 'radio', value: 'false', name }), h('label', { for: no, style: 'display:inline' }, 'No')),
+              ),
+            ),
+          );
+          return wrap;
+        }
+        const multiple = kind === 'multi';
+        const asDropdown = kind !== 'radios';
+        const choice = h(
+          'div',
+          {
+            class: 'flex flex-col',
+            'data-controller': 'forms--inputs--choice',
+            'data-forms--inputs--choice-show-as-dropdown-value': String(asDropdown),
+            'data-forms--inputs--choice-multiple-value': String(multiple),
+          },
+          asDropdown ? dropdown(n, id, options, multiple) : null,
+          choiceList(n, multiple ? 'checkbox' : 'radio', options, asDropdown),
+        );
+        wrap.append(h('fieldset', { id, class: 'group min-w-0' }, legend, choice));
+        return wrap;
+      }
+
+      const host = document.getElementById('questions');
+      QUESTIONS.forEach((q, n) => host.append(question(n, q)));
+
+      // Teamtailor's controllers, as far as a form filler can tell.
+      for (const root of document.querySelectorAll('[data-forms--inputs--choice-show-as-dropdown-value="true"]')) {
+        const multiple = root.getAttribute('data-forms--inputs--choice-multiple-value') === 'true';
+        const button = root.querySelector('button[aria-haspopup="menu"]');
+        const menu = root.querySelector('[role="menu"]');
+        const hiddenInput = root.querySelector('[data-common--dropdown-target="hiddenInput"]');
+        const shown = root.querySelector('[data-forms--inputs--choice-target^="selectedOption"]');
+        const trigger = root.querySelector('[data-forms--inputs--choice-target="dropdownTrigger"]');
+        const search = root.querySelector('[data-forms--inputs--choice-target="searchInput"]');
+        const inputs = () => Array.from(root.querySelectorAll('input[type="radio"], input[type="checkbox"]'));
+        const items = () => Array.from(menu.querySelectorAll('[data-common--dropdown-target="menuItem"]'));
+        let open = false;
+        const outside = (e) => {
+          if (open && !button.contains(e.target)) setOpen(false);
+        };
+        function setOpen(next) {
+          open = next;
+          menu.classList.toggle('hidden', !open);
+          menu.classList.toggle('flex', open);
+          button.setAttribute('aria-expanded', String(open));
+          if (open) {
+            window.addEventListener('click', outside);
+            const first = items().find((i) => !i.classList.contains('hidden'));
+            if (first) first.focus();
+          } else window.removeEventListener('click', outside);
+        }
+        function update() {
+          const checked = inputs().filter((i) => i.checked);
+          const labels = checked.map((i) => document.querySelector(`label[for="${i.id}"]`).textContent.trim());
+          shown.textContent = multiple && labels.length > 3 ? `${labels.slice(0, 3).join(', ')}, +${labels.length - 3}` : labels.join(', ');
+          trigger.classList.toggle('hidden', labels.length > 0);
+          for (const item of items()) {
+            const on = checked.some((i) => i.value === item.dataset.value);
+            item.setAttribute('aria-checked', String(on));
+            item.querySelector('i').classList.toggle('invisible', !on);
+          }
+          hiddenInput.value = labels.length ? 'selected' : '';
+          report();
+        }
+        button.addEventListener('click', (e) => {
+          e.preventDefault();
+          setOpen(!open);
+        });
+        document.addEventListener('keydown', (e) => {
+          if (open && e.key === 'Escape') {
+            e.preventDefault();
+            setOpen(false);
+            button.focus();
+          }
+        });
+        for (const item of items())
+          item.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const input = inputs().find((i) => i.value === item.dataset.value);
+            input.checked = multiple ? !input.checked : true;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            update();
+          });
+        if (search)
+          search.addEventListener('input', () => {
+            const q = search.value.trim().toLowerCase();
+            for (const item of items()) {
+              const hit = !q || item.dataset.searchText.toLowerCase().includes(q);
+              item.classList.toggle('hidden', !hit);
+              item.setAttribute('aria-hidden', String(!hit));
+            }
+          });
+      }
+
+      // What the form would submit: each question's chosen labels (and dropdowns' required shim).
+      function report() {
+        const out = {};
+        QUESTIONS.forEach(([, label], n) => {
+          const chosen = Array.from(document.querySelectorAll(`input[name^="candidate[answers_attributes][${n}]"]:checked`)).map(
+            (i) => (document.querySelector(`label[for="${i.id}"]`) || {}).textContent.trim(),
+          );
+          if (chosen.length) out[label] = chosen.length === 1 ? chosen[0] : chosen;
+        });
+        document.getElementById('state').textContent = JSON.stringify(out);
+      }
+      document.addEventListener('change', report);
+      report();
+    </script>
+  </body>
+</html>
