@@ -32,10 +32,24 @@
       "lib/matcher.js",
       "lib/vault.js",
       "lib/store.js",
+      "lib/ai.js",
+      "lib/letter.js",
+      "lib/answers.js",
+      "lib/jobpage.js",
+      "lib/doctext.js",
       "background.js"
     ]
   },
-  "permissions": ["storage", "unlimitedStorage", "scripting", "activeTab", "contextMenus", "alarms", "downloads"],
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "scripting",
+    "activeTab",
+    "contextMenus",
+    "alarms",
+    "downloads",
+    "offscreen"
+  ],
   "optional_permissions": ["history"],
   "host_permissions": ["<all_urls>"],
   "commands": {

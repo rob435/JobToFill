@@ -329,6 +329,91 @@ function layoutGroup(kit, saveKit, profile) {
   );
 }
 
+async function answersGroup(kit, saveKit, settings, profile, refresh) {
+  const box = el('input', { type: 'checkbox', checked: settings.aiAnswers !== false, name: 'ai-answers' });
+  box.addEventListener('change', async () => {
+    // Firefox asks once before anything is sent to the AI provider; straight from the click.
+    if (box.checked && !(await requestAiConsent())) box.checked = false;
+    await store.saveSettings({ aiAnswers: box.checked });
+  });
+  const entries = (await store.getAnswers()).filter((e) => e.profileId === profile.id);
+  const rows = entries.slice(0, 30).map((e) =>
+    el(
+      'tr',
+      {},
+      el('td', { textContent: new Date(e.at).toLocaleDateString() }),
+      el(
+        'td',
+        {},
+        el(
+          'details',
+          {},
+          el('summary', { textContent: [e.role, e.company].filter(Boolean).join(' · ') || e.host }),
+          el(
+            'dl',
+            { className: 'answers-list' },
+            (e.items || []).flatMap((i) => [
+              el('dt', { textContent: i.question }),
+              el('dd', { textContent: Array.isArray(i.value) ? i.value.join('; ') : i.value }),
+            ]),
+          ),
+        ),
+      ),
+      el('td', { textContent: String((e.items || []).length) }),
+      el(
+        'td',
+        {},
+        el('button', {
+          type: 'button',
+          className: 'small danger',
+          textContent: 'Delete',
+          onclick: async () => {
+            await store.removeAnswers(e.id);
+            refresh();
+          },
+        }),
+      ),
+    ),
+  );
+  return group(
+    'Answers to new questions',
+    'After each fill, questions JobToFill has no saved answer for (“Why Figma?”, “Which desk interests you most?”, “Do you have practical Python experience?”) are answered by the same AI model from your CV, notes and the job’s description, then checked like letters: choices must be one of the options, and written answers keep to the word limit and use only facts from your material. Diversity questions, declarations and ID numbers are never sent. Answers are outlined in dashed orange for you to read before submitting.',
+    el(
+      'label',
+      { className: 'check top' },
+      box,
+      el(
+        'span',
+        {},
+        el('strong', { textContent: 'Answer new questions with AI when I fill a page' }),
+        el('br'),
+        el('small', {
+          className: 'muted',
+          textContent:
+            'Uses your API key above. When it’s off, the popup still offers “Answer them with AI” for one page.',
+        }),
+      ),
+    ),
+    control(
+      {
+        path: 'kit.answerNotes',
+        type: 'textarea',
+        rows: 6,
+        label: 'Answer guidance',
+        hint: 'Facts and rules the AI may rely on for questions your CV doesn’t settle. Only what’s true for every application.',
+        placeholder:
+          'e.g. I have never applied to or worked for any of these firms before, and have no relatives working at them.\nI have no criminal convictions and no regulatory history.\nI don’t need any adjustments for interviews.\nI’m happy to work in the office five days a week.\nI haven’t taken the SAT, ACT or GRE.',
+        wide: true,
+      },
+      kit.answerNotes,
+      (v) => saveKit({ answerNotes: v }),
+    ),
+    rows.length
+      ? table(['When', 'Application (click to see the answers)', 'Answers', ''], rows)
+      : el('p', { className: 'empty', textContent: 'No AI answers yet.' }),
+  );
+}
+
 async function findingGroup(settings) {
   const granted = await api.permissions.contains({ permissions: ['history'] }).catch(() => false);
   const box = el('input', { type: 'checkbox', checked: !!settings.searchHistory && granted, name: 'search-history' });
@@ -421,11 +506,12 @@ export async function renderLetters({ state, refresh }) {
   const settings = await store.getSettings();
   return [
     sectionHead(
-      'Cover letters',
-      'On any job application, “Write cover letter” in the popup finds the job description, writes a letter in your style from your CV, checks every fact, and attaches the PDF to the form. It can tailor your CV to the job too.',
+      'Cover letters & AI answers',
+      'On any job application, “Write cover letter” in the popup finds the job description, writes a letter in your style from your CV, checks every fact, and attaches the PDF to the form. It can tailor your CV to the job too. The same model answers the questions a fill leaves empty.',
     ),
     await aiGroup(),
     aboutGroup(kit, saveKit),
+    await answersGroup(kit, saveKit, settings, profile, refresh),
     samplesGroup(kit, saveKit, refresh),
     layoutGroup(kit, saveKit, profile),
     await findingGroup(settings),

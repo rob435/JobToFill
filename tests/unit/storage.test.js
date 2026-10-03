@@ -330,3 +330,43 @@ test('geo and util helpers', () => {
   assert.ok(util.hostMatches('boards.greenhouse.io', 'greenhouse.io'));
   assert.ok(!util.hostMatches('evilgreenhouse.io', 'greenhouse.io'));
 });
+
+test('AI answers are kept per application: never reused for another job in the same tab', async () => {
+  const { store } = load();
+  await chrome.storage.local.clear();
+  const item = {
+    key: 'why#',
+    question: 'Why are you interested in this role?',
+    kind: 'essay',
+    value: 'Because of Figma.',
+  };
+  await store.saveAnswers({
+    profileId: 'p',
+    url: 'https://job-boards.greenhouse.io/figma/jobs/5555501',
+    host: 'job-boards.greenhouse.io',
+    tabId: 7,
+    company: 'Figma',
+    items: [item],
+  });
+  const at = (url, tabId = 7) => store.answersFor({ profileId: 'p', tabId, url });
+  assert.equal((await at('https://job-boards.greenhouse.io/figma/jobs/5555501')).length, 1, 'the same page');
+  assert.equal((await at('https://job-boards.greenhouse.io/figma/jobs/5555501/apply', 9)).length, 1, 'its apply step');
+  assert.equal((await at('https://job-boards.greenhouse.io/figma/review')).length, 1, 'the next step, same tab');
+  assert.equal((await at('https://job-boards.greenhouse.io/monzo/jobs/7777702')).length, 0, 'another job, same tab');
+  assert.equal((await at('https://jobs.lever.co/figma/5555501')).length, 0, 'another site');
+  // Saving again for the same application adds to it; the bank offers the written answers.
+  await store.saveAnswers({
+    profileId: 'p',
+    url: 'https://job-boards.greenhouse.io/figma/jobs/5555501',
+    host: 'job-boards.greenhouse.io',
+    tabId: 7,
+    company: 'Figma',
+    items: [{ ...item, key: 'proj#', question: 'Describe a project', value: 'I built a tool.' }],
+  });
+  assert.equal((await store.getAnswers()).length, 1);
+  assert.equal((await at('https://job-boards.greenhouse.io/figma/jobs/5555501')).length, 2);
+  assert.deepEqual(
+    (await store.answerBank('p')).map((b) => b.company),
+    ['Figma', 'Figma'],
+  );
+});

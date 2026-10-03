@@ -242,6 +242,34 @@
     return [...new Set([c, base].filter(Boolean))];
   }
 
+  // Wanting to learn a tool is fine ("I want to build up my Excel skills"); claiming it isn't.
+  const LEARNING =
+    /\b(learn|learning|build up|develop|improve|pick up|get better|keen to|want to|would like to|hope to|work(ing)? towards?|stud(y|ying) for|train(ing)? (for|towards?|as)|qualify as)\b/i;
+  // A qualification the programme trains you for ("the ACA Graduate Programme") isn't a claim to hold it.
+  const PROGRAMME = /\b(programme|program|scheme|apprenticeship|training contract|qualification|sponsor\w*|exams?)\b/i;
+  const QUALIFICATION = new Set(['cfa', 'acca', 'aca', 'cima', 'frm', 'series 7']);
+
+  /**
+   * Tools, languages and qualifications `text` claims for the candidate that their own material (`mine`) never
+   * mentions. Wanting to learn one, the programme's own qualification and the job's title ("applying for the
+   * Python Developer Internship") aren't claims.
+   */
+  function unbackedSkills(text, mine, role) {
+    const sentences = String(text || '').split(/(?<=[.?!])\s+/);
+    const job = String(role || '');
+    return SKILL_RES.filter(
+      ([name, re]) =>
+        !re.test(mine) &&
+        sentences.some(
+          (sentence) =>
+            re.test(sentence) &&
+            !LEARNING.test(sentence) &&
+            !(QUALIFICATION.has(name) && PROGRAMME.test(sentence)) &&
+            !(re.test(job) && /\bappl(y|ying|ication)\b/i.test(sentence)),
+        ),
+    ).map(([name]) => name);
+  }
+
   /**
    * Check a draft. `ctx`: { company, role, sources (candidate text), posting (text), samples, today, minWords,
    * maxWords }. Errors must be fixed; warnings are shown to the person.
@@ -344,27 +372,7 @@
       );
 
     const mine = [ctx.sources, (ctx.samples || []).map((s) => s.text || s).join('\n')].join('\n');
-    // Wanting to learn a tool is fine ("I want to build up my Excel skills"); claiming it isn't.
-    const sentences = body.split(/(?<=[.?!])\s+/);
-    const LEARNING =
-      /\b(learn|learning|build up|develop|improve|pick up|get better|keen to|want to|would like to|hope to|work(ing)? towards?|stud(y|ying) for|train(ing)? (for|towards?|as)|qualify as)\b/i;
-    // A qualification the programme trains you for ("the ACA Graduate Programme") isn't a claim to hold it.
-    const PROGRAMME =
-      /\b(programme|program|scheme|apprenticeship|training contract|qualification|sponsor\w*|exams?)\b/i;
-    const QUALIFICATION = new Set(['cfa', 'acca', 'aca', 'cima', 'frm', 'series 7']);
-    const role = String(ctx.role || '');
-    const claimed = SKILL_RES.filter(
-      ([name, re]) =>
-        !re.test(mine) &&
-        sentences.some(
-          (sentence) =>
-            re.test(sentence) &&
-            !LEARNING.test(sentence) &&
-            !(QUALIFICATION.has(name) && PROGRAMME.test(sentence)) &&
-            // "I am applying for the Python Developer Internship": the job's name, not a claim.
-            !(re.test(role) && /\bappl(y|ying|ication)\b/i.test(sentence)),
-        ),
-    ).map(([name]) => name);
+    const claimed = unbackedSkills(body, mine, ctx.role);
     if (claimed.length)
       wrong(
         `The candidate’s material doesn’t mention ${claimed.join(', ')}; don’t claim it (you may say they want to learn it, once).`,
@@ -1095,8 +1103,12 @@
     LANG_NAMES,
     postingLanguage,
     CLICHES,
+    PLACEHOLDER,
     words,
     tidy,
+    clip,
+    unbackedSkills,
+    britishOrAmerican,
     decodeEntities,
     numbers,
     formatDate,
