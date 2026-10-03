@@ -1847,6 +1847,24 @@ test('live survey (Glasgow undergraduate): a whole-number phone box gets the int
   );
   assert.equal(matcher.matchOption(page[0].options, fields.resolve('phone.countryCode', p, context)), 1);
   assert.equal(fields.resolve('phone', p, context).text, '7700 900123');
+  // Only the number box beside the code box: another phone box further down takes the whole number.
+  const long = [
+    desc('Phone number'),
+    desc('Email'),
+    desc('First name'),
+    desc('Last name'),
+    desc('Phone number country', { kind: 'select', options: opts('Italy', 'United Kingdom', 'United States') }),
+    desc('Mobile phone number', { kind: 'tel', inputType: 'tel' }),
+  ];
+  const planned = matcher.plan(long, p);
+  assert.deepEqual(
+    planned.results.map((r) => r.type),
+    ['phone', 'email', 'name.first', 'name.last', 'phone.countryCode', 'phone'],
+  );
+  const phoneAt = (i) =>
+    fields.resolve('phone', p, Object.assign({}, planned.context, { part: planned.results[i].part })).text;
+  assert.equal(phoneAt(0), '+44 7700 900123');
+  assert.equal(phoneAt(5), '7700 900123');
 });
 
 /** A University of Glasgow undergraduate expecting a 2:1 in 2027, living in Glasgow. */

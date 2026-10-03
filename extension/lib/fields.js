@@ -2035,9 +2035,11 @@
         const cc = phoneCode(p);
         // "07386 526574" with +44 is "+44 7386 526574": the trunk 0 is not dialled after the code.
         const international = cc && !num.startsWith('+') ? `${cc} ${JTF.geo.afterCode(num, cc)}` : num;
-        // "Country/Region Code" in a box of its own: the number goes in without it.
+        // "Country/Region Code" in a box of its own: the number goes in without it. The plan says which phone box
+        // that box is beside (part "national"; "whole" for another one), else any such box on the page counts.
         const national = nationalNumber(num, cc);
-        const full = ctx.hasCountryCodeField ? national : international;
+        const own = ctx.part === 'national' || ctx.part === 'whole' ? ctx.part === 'national' : ctx.hasCountryCodeField;
+        const full = own ? national : international;
         return val(full, { kind: 'phone', national, international });
       },
     },

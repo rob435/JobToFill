@@ -635,6 +635,15 @@
       prev = g;
     }
 
+    // A country-code box speaks for the number box beside it (Workday's "Country Phone Code" then "Phone Number",
+    // react-phone-number-input's country menu then its number box): that one takes the number without its code. A
+    // phone box elsewhere on the page takes the whole number (a "+{44} 0000 000000" mask makes "07386…" a wrong one).
+    const codeBoxes = results.map((r, i) => (r && r.type === 'phone.countryCode' ? i : -1)).filter((i) => i >= 0);
+    if (codeBoxes.length)
+      results.forEach((r, i) => {
+        if (r && r.type === 'phone') r.part = codeBoxes.some((c) => Math.abs(c - i) <= 2) ? 'national' : 'whole';
+      });
+
     const types = results.filter((r) => r && r.type).map((r) => r.type);
     const passwordFields = descs.filter((d) => d.kind === 'password').length;
     // "Are you legally authorized to work in the United States?" then "Will you require sponsorship for employment

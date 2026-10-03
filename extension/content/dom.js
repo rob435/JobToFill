@@ -473,6 +473,9 @@
     if (kind === 'combobox') return isVisible(el, { ignoreOpacity: true }) || isVisible(el.parentElement);
     if (el.readOnly) return false;
     if (el.closest('[aria-hidden="true"]')) return false;
+    // A <select> made transparent and laid over what shows its choice (react-phone-number-input's country, over the
+    // flag) is what a person clicks.
+    if (kind === 'select') return isVisible(el, { ignoreOpacity: true }) && isVisible(el.parentElement);
     return isVisible(el);
   }
 
