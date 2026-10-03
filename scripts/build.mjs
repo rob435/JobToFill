@@ -27,6 +27,8 @@ const TARGETS = {
   firefox(m) {
     delete m.key;
     m.background = { scripts: m.background.scripts };
+    // Firefox's background page has a DOM of its own; offscreen documents are a Chromium API.
+    m.permissions = m.permissions.filter((p) => p !== 'offscreen');
     delete m.minimum_chrome_version;
     if (process.env.FIREFOX_VERSION) m.version = process.env.FIREFOX_VERSION;
     if (process.env.FIREFOX_UPDATE_URL) m.browser_specific_settings.gecko.update_url = process.env.FIREFOX_UPDATE_URL;

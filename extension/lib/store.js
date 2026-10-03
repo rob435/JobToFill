@@ -13,6 +13,8 @@
  *                 spelling, paper, cv: { updatedAt, text } (text read from the resume file) }
  *   aiKeys        the AI providers' API keys ({ openrouter, deepseek, custom }); in backups unless switched off
  *   letters       generated letters, newest first (see saveLetter)
+ *   answers       answers the AI wrote, per application, newest first (see saveAnswers)
+ *   (session) tabjob:<tabId>  the job found for the application open in a tab (see setTabJob)
  */
 (function (root) {
   'use strict';
@@ -33,11 +35,23 @@
     // this one is out of credit or down; backupKeys: keep the API keys in the backup file.
     ai: { provider: 'openrouter', model: '', baseUrl: '', models: {}, fallback: true, backupKeys: true },
     searchHistory: false,
+    // Questions the rules leave empty are answered by the AI (when a key is set up) as part of each fill.
+    aiAnswers: true,
   };
 
-  const DEFAULT_KIT = { notes: '', samples: [], contact: '', closing: '', spelling: 'auto', paper: 'a4', cv: null };
+  // answerNotes: the candidate's own rules for answers ("I have never applied to any of these firms").
+  const DEFAULT_KIT = {
+    notes: '',
+    samples: [],
+    contact: '',
+    closing: '',
+    spelling: 'auto',
+    paper: 'a4',
+    cv: null,
+    answerNotes: '',
+  };
 
-  const DOC_TYPES = ['resume', 'coverLetter'];
+  const DOC_TYPES = ['resume', 'coverLetter', 'transcript'];
   const HISTORY_LIMIT = 500;
   const LETTER_LIMIT = 25;
   const area = () => JTF.api.storage.local;
@@ -317,6 +331,126 @@
     return null;
   }
 
+  /* ------------------------------------------------------------ AI answers */
+
+  const ANSWERS_LIMIT = 80;
+  const ANSWERS_TAB_TTL = 6 * 3600000;
+
+  async function getAnswers() {
+    return (await area().get('answers')).answers || [];
+  }
+
+  const pathOf = (url) => {
+    try {
+      const u = new URL(url);
+      return u.hostname + u.pathname.replace(/\/(apply|application)\/?$/, '').replace(/\/+$/, '');
+    } catch (err) {
+      return '';
+    }
+  };
+
+  // Job ids in an address: long numbers and UUIDs (Greenhouse 4988792101, Lever and Ashby UUIDs, Workday R-12345).
+  const JOB_ID = /\d{5,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+  const jobIdsIn = (url) => [
+    ...new Set(
+      (
+        String(url || '')
+          .replace(/[?#].*$/, '')
+          .match(JOB_ID) || []
+      ).map((x) => x.toLowerCase()),
+    ),
+  ];
+
+  /** Do two addresses name different jobs (each has job ids, and they share none)? */
+  function otherJob(a, b) {
+    const x = jobIdsIn(a);
+    const y = jobIdsIn(b);
+    return x.length > 0 && y.length > 0 && !x.some((id) => y.includes(id));
+  }
+
+  /**
+   * Is saved entry `e` the application at `url`: the same page, or the next step of it in the same tab (never a
+   * page whose address names another job, as when one tab moves from one Greenhouse job to the next)?
+   */
+  function sameApplication(e, { profileId, tabId, url }, now) {
+    if (profileId && e.profileId !== profileId) return false;
+    if (!url || !e.url) return false;
+    let u;
+    try {
+      u = new URL(url);
+    } catch (err) {
+      return false;
+    }
+    if (e.host !== u.hostname) return false;
+    if (pathOf(e.url) === pathOf(url)) return true;
+    if (otherJob(e.url, url)) return false;
+    return tabId != null && e.tabId === tabId && now - (e.at || 0) < ANSWERS_TAB_TTL;
+  }
+
+  /** The answers the AI already wrote for the application open in a tab: [{ key, question, kind, value, … }]. */
+  async function answersFor(where) {
+    const now = Date.now();
+    return (await getAnswers()).filter((e) => sameApplication(e, where, now)).flatMap((e) => e.items || []);
+  }
+
+  /**
+   * Remember answers written for an application: { profileId, url, host, tabId, company, role, items: [{ key,
+   * question, kind, value, basis, warnings }] }. A later save for the same application adds to it.
+   */
+  const saveAnswers = exclusive(async function saveAnswers(entry) {
+    const list = await getAnswers();
+    const now = Date.now();
+    const old = list.find((e) => sameApplication(e, entry, now));
+    if (old) {
+      const keys = new Set(entry.items.map((i) => i.key));
+      Object.assign(old, entry, {
+        at: now,
+        items: [...entry.items, ...(old.items || []).filter((i) => !keys.has(i.key))],
+      });
+      list.splice(list.indexOf(old), 1);
+      list.unshift(old);
+    } else list.unshift({ id: JTF.util.uid(), at: now, ...entry });
+    await area().set({ answers: list.slice(0, ANSWERS_LIMIT) });
+    return old || list[0];
+  });
+
+  const removeAnswers = exclusive(async function removeAnswers(id) {
+    await area().set({ answers: (await getAnswers()).filter((e) => e.id !== id) });
+  });
+
+  /** Written answers from every application, for the model to reuse: [{ question, answer, company, at }]. */
+  async function answerBank(profileId) {
+    return (await getAnswers())
+      .filter((e) => !profileId || e.profileId === profileId)
+      .flatMap((e) =>
+        (e.items || [])
+          .filter((i) => i.kind === 'essay' && typeof i.value === 'string')
+          .map((i) => ({ question: i.question, answer: i.value, company: e.company || '', at: e.at })),
+      );
+  }
+
+  /* ------------------------------------------------------------- tab jobs */
+
+  // The job behind the application open in a tab (found by the letter studio or a fill), kept in session
+  // storage (memory only) so the next step of the same application doesn't look it up again.
+  const sessionArea = () => (JTF.api.storage && JTF.api.storage.session) || null;
+  const tabJobKey = (tabId) => `tabjob:${tabId}`;
+  const TAB_JOB_TTL = 6 * 3600000;
+
+  async function getTabJob(tabId) {
+    const s = sessionArea();
+    if (!s || tabId == null) return null;
+    const got = (await s.get(tabJobKey(tabId)).catch(() => ({})))[tabJobKey(tabId)];
+    return got && Date.now() - got.at < TAB_JOB_TTL ? got : null;
+  }
+
+  /** { url, job: { company, title, location, url, description, summary, companyNotes } } for a tab. */
+  async function setTabJob(tabId, entry) {
+    const s = sessionArea();
+    if (!s || tabId == null) return;
+    await s.set({ [tabJobKey(tabId)]: { ...entry, at: Date.now() } }).catch(() => {});
+  }
+
   /* ---------------------------------------------------------------- history */
 
   async function getHistory() {
@@ -414,6 +548,8 @@
     }
     if (opts.vault) out.vault = (await area().get('vault')).vault || null;
     if (opts.history) out.history = await getHistory();
+    const answers = await getAnswers();
+    if (answers.length) out.answers = answers;
     // The API keys come back with everything else after a reinstall, unless that's switched off.
     const keys = opts.keys != null ? opts.keys : aiSettings(all.settings).backupKeys !== false;
     if (keys) {
@@ -430,9 +566,10 @@
     for (const id of order) profiles[id] = JTF.fields.upgradeProfile(data.profiles[id]);
     const set = { profiles, profileOrder: order, settings: Object.assign({}, DEFAULT_SETTINGS, data.settings || {}) };
     if (data.history) set.history = data.history;
+    if (Array.isArray(data.answers)) set.answers = data.answers;
     if (data.vault) set.vault = data.vault;
     for (const [key, doc] of Object.entries(data.documents || {})) {
-      if (/^doc:[^:]+:(resume|coverLetter)$/.test(key)) set[key] = doc;
+      if (/^doc:[^:]+:(resume|coverLetter|transcript)$/.test(key)) set[key] = doc;
     }
     for (const [key, kit] of Object.entries(data.kits || {})) {
       if (/^kit:[^:]+$/.test(key) && kit && typeof kit === 'object') set[key] = kit;
@@ -473,6 +610,14 @@
     saveLetter,
     removeLetter,
     letterFor,
+    getAnswers,
+    answersFor,
+    saveAnswers,
+    removeAnswers,
+    answerBank,
+    getTabJob,
+    setTabJob,
+    otherJob,
     getHistory,
     addHistory,
     clearHistory,

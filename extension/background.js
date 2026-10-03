@@ -7,10 +7,23 @@
  */
 // Chromium loads the libraries here; Firefox lists them in manifest.json "background.scripts".
 if (typeof importScripts === 'function') {
-  importScripts('lib/util.js', 'lib/geo.js', 'lib/fields.js', 'lib/matcher.js', 'lib/vault.js', 'lib/store.js');
+  importScripts(
+    'lib/util.js',
+    'lib/geo.js',
+    'lib/fields.js',
+    'lib/matcher.js',
+    'lib/vault.js',
+    'lib/store.js',
+    'lib/ai.js',
+    'lib/letter.js',
+    'lib/answers.js',
+    'lib/jobpage.js',
+    'lib/doctext.js',
+  );
 }
 
-const { store, vault, util, fields } = globalThis.JTF;
+const { store, vault, util, fields, answers, jobpage, doctext } = globalThis.JTF;
+const llm = globalThis.JTF.ai;
 const api = globalThis.JTF.api;
 
 const CONTENT_FILES = [
@@ -130,6 +143,9 @@ async function fillTab(tabId, options) {
   const { payload, letter } = await fillPayload(tabId);
   const { profile, settings } = payload;
   if (opts.only) Object.assign(payload, { only: opts.only, force: true });
+  // With AI answers on, the page opens custom dropdowns it left empty to read their options for the model.
+  const aiReady = opts.only ? { ok: false } : await aiAvailable(settings);
+  payload.ai = aiReady.ok;
 
   let frames;
   beginFill(tabId, profile.contact.email, letter && letter.id);
@@ -153,7 +169,21 @@ async function fillTab(tabId, options) {
       profile: profile.name,
     });
   }
-  if (opts.toast && settings.toast !== false) await showToast(tabId, summaryText(summary), { undo: summary.undoable });
+  // What the rules left empty goes to the AI, in the background: the fill doesn't wait for it.
+  const pending = frames.flatMap((f) => (f.pending || []).map((item) => ({ ...item, frameId: f.frameId })));
+  summary.pending = pending.length;
+  if (pending.length && !opts.only) {
+    if (aiReady.ok) {
+      summary.ai = { status: 'running', stage: 'job', asked: pending.length };
+      const run = answerWithAi(tabId, pending, { toast: opts.toast && settings.toast !== false });
+      if (opts.waitAi) summary.ai = await run;
+    } else summary.ai = { status: aiReady.reason, asked: pending.length };
+  }
+  if (opts.toast && settings.toast !== false)
+    await showToast(tabId, summaryText(summary), {
+      undo: summary.undoable,
+      duration: summary.ai && summary.ai.status === 'running' ? 120000 : undefined,
+    });
   return summary;
 }
 
@@ -199,8 +229,13 @@ function summaryText(s) {
     lines.push(`Add to your profile: ${s.missing.slice(0, 5).join(', ')}${s.missing.length > 5 ? '…' : ''}`);
   if (s.consents) lines.push(consentText(s.consents));
   lines.push(...s.notes.slice(0, 2));
+  if (s.ai && s.ai.status === 'running') lines.push(`Answering ${plural(s.ai.asked, 'more question')} with AI…`);
+  else if (s.ai && s.ai.status === 'setup')
+    lines.push(`${plural(s.ai.asked, 'question')} left: add an AI key in JobToFill settings to answer them.`);
   return lines.join('\n');
 }
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 async function showToast(tabId, message, opts, frameIds) {
   try {
@@ -318,7 +353,7 @@ async function documentFor(msg, sender) {
 // Downloads/JobToFill, rewritten shortly after each change, and offered back when JobToFill
 // starts out empty.
 const BACKUP_FILE = 'JobToFill/jobtofill-backup.json';
-const BACKUP_KEYS = /^(profiles|profileOrder|settings|vault|aiKeys|doc:.+|kit:.+)$/;
+const BACKUP_KEYS = /^(profiles|profileOrder|settings|vault|aiKeys|answers|doc:.+|kit:.+)$/;
 
 api.storage.onChanged.addListener((changes, areaName) => {
   // Re-created on every change, so the file is written once things have been quiet for half a minute.
@@ -552,6 +587,381 @@ async function attachLetter(tabId, letterId) {
   return { saved: true, filled: summary.filled, detected: summary.detected };
 }
 
+/* ------------------------------------------------------------ AI answers */
+
+// Firefox asks before an add-on sends personal data anywhere (granted from the popup or settings).
+const AI_DATA = { data_collection: ['personallyIdentifyingInfo', 'websiteContent'] };
+
+async function aiConsent() {
+  if (!util.isFirefox()) return true;
+  try {
+    return await api.permissions.contains(AI_DATA);
+  } catch (err) {
+    return true; // a Firefox without data-collection permissions doesn't ask
+  }
+}
+
+/** Can a fill hand its leftover questions to the AI? { ok } or { ok: false, reason: off | setup | consent }. */
+async function aiAvailable(settings, { force } = {}) {
+  if (settings.aiAnswers === false && !force) return { ok: false, reason: 'off' };
+  if (llm.problem(await store.aiConfig())) return { ok: false, reason: 'setup' };
+  if (!(await aiConsent())) return { ok: false, reason: 'consent' };
+  return { ok: true };
+}
+
+// tabId -> the latest AI run for that tab (what the popup shows), with its AbortController.
+const aiRuns = new Map();
+
+const runView = (run) => {
+  const view = { ...run };
+  delete view.controller;
+  return view;
+};
+
+function broadcast(tabId, run) {
+  api.runtime.sendMessage({ type: 'jtf:ai-progress', tabId, run: runView(run) }).catch(() => {});
+}
+
+// Never fetch addresses that might do something when opened; GET only (or a JSON API's POST), no cookies.
+const UNSAFE =
+  /logout|log-out|signout|sign-out|unsubscribe|delete|remove|withdraw|cancel|confirm|verify|activate|reset|token=|password/i;
+
+function safeFetch(url, init) {
+  const method = ((init && init.method) || 'GET').toUpperCase();
+  const isApi = !!(init && init.headers && /json/i.test(JSON.stringify(init.headers)));
+  if (UNSAFE.test(url) && !isApi) return Promise.reject(new Error('skipped: looks like an action link'));
+  if (method !== 'GET' && !(method === 'POST' && isApi)) return Promise.reject(new Error('skipped: not a page load'));
+  return fetch(url, { credentials: 'omit', redirect: 'follow', ...init });
+}
+
+// Chromium's service worker has no DOMParser, which reading a job page's HTML needs: an offscreen document
+// does that part. (Firefox's background page has one; job boards' JSON APIs need none.)
+const OFFSCREEN = 'offscreen/offscreen.html';
+let offscreenReady = null;
+
+function ensureOffscreen() {
+  if (!offscreenReady)
+    offscreenReady = (async () => {
+      const url = api.runtime.getURL(OFFSCREEN);
+      const open = api.runtime.getContexts
+        ? await api.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [url] })
+        : [];
+      if (!open.length)
+        await api.offscreen
+          .createDocument({
+            url,
+            reasons: ['DOM_PARSER'],
+            justification: 'Read job postings from job sites to answer application questions about the job.',
+          })
+          .catch((err) => {
+            if (!/single offscreen|already/i.test(String(err && err.message))) throw err;
+          });
+    })().catch((err) => {
+      offscreenReady = null;
+      throw err;
+    });
+  return offscreenReady;
+}
+
+/** The posting behind an application (jobpage.find), with HTML pages read where a DOMParser is. */
+async function findPosting(context) {
+  const opts = { fetch: safeFetch, now: Date.now(), budget: 6, timeout: 8000 };
+  if (typeof DOMParser === 'undefined' && api.offscreen) {
+    try {
+      await ensureOffscreen();
+      const r = await api.runtime.sendMessage({ type: 'jtf:offscreen-find', context });
+      if (r && r.found) return r.found;
+    } catch (err) {
+      /* fall back to the board APIs, which need no DOMParser */
+    }
+  }
+  return jobpage.find(context, opts);
+}
+
+const hostOf = (url) => {
+  try {
+    return new URL(url).hostname;
+  } catch (err) {
+    return '';
+  }
+};
+
+/**
+ * What the AI needs to know about the job behind the application in a tab: { company, title, location, url,
+ * description, summary, companyNotes }. From the job found for this tab before, the letter written for this
+ * application, the page itself, or the job site's listing (proved to be the same job).
+ */
+async function jobFor(tabId) {
+  const tab = await api.tabs.get(tabId).catch(() => null);
+  const url = (tab && tab.url) || '';
+  const host = hostOf(url);
+  // The job found for this tab before, unless the tab has moved on to another job (another job id in the address).
+  const cached = await store.getTabJob(tabId);
+  if (cached && cached.host === host && cached.job && !store.otherJob(cached.url, url)) return cached.job;
+
+  let job;
+  const letter = await store.letterFor({ tabId, url, trail: await readTrail(tabId) });
+  if (letter && letter.analysis) {
+    const a = letter.analysis;
+    const p = letter.posting || {};
+    const list = (label, xs) => (xs && xs.length ? `${label}: ${xs.join('; ')}` : '');
+    job = {
+      company: a.company || p.company || '',
+      title: a.role || p.title || '',
+      location: a.location || p.location || '',
+      url: p.url || url,
+      summary: [
+        a.summary,
+        a.team && `Team: ${a.team}`,
+        list('Responsibilities', a.responsibilities),
+        list('Requirements', a.requirements),
+        list('Values', a.values),
+        a.asks && `The employer asks applicants to cover: ${a.asks}`,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    };
+  } else {
+    const context = await jobContext(tabId);
+    const found = await findPosting(context).catch(() => null);
+    const sameCompany = (p) =>
+      !!p &&
+      !!p.company &&
+      !!context.company &&
+      util.normalize(p.company).split(' ')[0] === util.normalize(context.company).split(' ')[0];
+    const ok =
+      found &&
+      found.posting &&
+      (['same', 'likely'].includes(found.verdict) || (found.verdict === 'unsure' && sameCompany(found.posting)));
+    const onPage =
+      context.posting && String(context.posting.description || '').split(/\s+/).length > 120 ? context.posting : null;
+    const posting = (ok && found.posting) || onPage;
+    const hint = (found && found.hint) || null;
+    job = {
+      company: (posting && posting.company) || context.company || (hint && hint.company) || '',
+      title: (posting && posting.title) || (hint && hint.programme) || context.title || '',
+      location: (posting && posting.location) || context.location || ((hint && hint.locations) || []).join(', '),
+      url: (posting && posting.url) || url,
+      description: (posting && posting.description) || '',
+      companyNotes: (hint && hint.about) || '',
+    };
+  }
+  await store.setTabJob(tabId, { host, url, job });
+  return job;
+}
+
+/** The text of the profile's CV, read once per file and kept with the cover letter material. */
+async function cvTextFor(profile, kit) {
+  const doc = await store.getDoc(profile.id, 'resume');
+  if (!doc) return '';
+  if (kit.cv && kit.cv.updatedAt === doc.updatedAt && kit.cv.name === doc.name) return kit.cv.text || '';
+  try {
+    const out = await doctext.fromDataUrl(doc.dataUrl, { type: doc.type, name: doc.name });
+    await store.saveKit(profile.id, { cv: { name: doc.name, updatedAt: doc.updatedAt, text: out.text } });
+    return out.text;
+  } catch (err) {
+    await store.saveKit(profile.id, { cv: { name: doc.name, updatedAt: doc.updatedAt, text: '', error: err.message } });
+    return '';
+  }
+}
+
+function aiSummaryText(run) {
+  if (run.status === 'error') return `AI answers: ${run.error}`;
+  if (!run.answered && !run.asked) return 'No questions left to answer.';
+  const lines = [];
+  if (run.filled)
+    lines.push(`AI answered ${plural(run.filled, 'question')} (dashed orange outline). Read them before you submit.`);
+  else if (run.answered) lines.push('The AI’s answers couldn’t be put into the form.');
+  const left = run.asked - run.filled;
+  if (left > 0) lines.push(`${plural(left, 'question')} left for you.`);
+  return lines.join('\n');
+}
+
+/**
+ * One round of AI answers: reuse what this application already has, write the rest, put them into the form,
+ * save the new ones. `pending`: the frames' reports, each with its frameId. Returns what was answered.
+ */
+async function answerRound(tabId, pending, ctx) {
+  const { profile, settings, config, controller, report, tab } = ctx;
+  // Ids are per frame: the model gets them unique.
+  const items = pending.map((p) => ({ ...p, id: `${p.frameId}:${p.id}` }));
+  const byId = new Map(items.map((it) => [it.id, it]));
+  const { reused, rest } = answers.reuse(items, await store.answersFor({ profileId: profile.id, tabId, url: tab.url }));
+  let written = { answers: [], skipped: [], calls: 0 };
+  if (rest.length) {
+    if (!ctx.job) {
+      report({ stage: 'job' });
+      ctx.job = (await jobFor(tabId).catch(() => null)) || {};
+    }
+    report({ stage: 'writing', company: ctx.job.company || '' });
+    const kit = await store.getKit(profile.id);
+    const [cvText, bank] = await Promise.all([cvTextFor(profile, kit), store.answerBank(profile.id)]);
+    const chat = async (messages, options) => {
+      const r = await llm.chat(config, { messages, ...options, signal: controller.signal });
+      if (r.usage && typeof r.usage.cost === 'number') ctx.cost = (ctx.cost || 0) + r.usage.cost;
+      return r;
+    };
+    written = await answers.answer(chat, { profile, kit, cvText, job: ctx.job, bank, today: Date.now() }, rest, {
+      signal: controller.signal,
+      onProgress: (stage) => report({ stage }),
+    });
+  }
+  if (controller.signal.aborted) throw Object.assign(new Error('Stopped.'), { name: 'AbortError' });
+
+  report({ stage: 'filling' });
+  const all = [...reused, ...written.answers];
+  const frameOf = (id) => id.split(':')[0];
+  const localId = (id) => id.split(':').slice(1).join(':');
+  const status = new Map();
+  let filled = 0;
+  for (const frameId of [...new Set(all.map((a) => frameOf(a.id)))]) {
+    const list = all
+      .filter((a) => frameOf(a.id) === frameId)
+      .map((a) => ({ ...a, id: localId(a.id), question: byId.get(a.id).question }));
+    const out = await callFrames(tabId, 'applyAnswers', [list, { settings }], [Number(frameId)]).catch(() => []);
+    for (const f of out) {
+      filled += f.filled || 0;
+      for (const r of f.results || []) status.set(`${frameId}:${r.id}`, r.status);
+    }
+  }
+  if (written.answers.length)
+    await store.saveAnswers({
+      profileId: profile.id,
+      url: tab.url,
+      host: hostOf(tab.url),
+      tabId,
+      company: ctx.job.company || '',
+      role: ctx.job.title || '',
+      items: written.answers.map((a) => {
+        const it = byId.get(a.id);
+        return {
+          key: answers.questionKey(it),
+          question: it.question,
+          kind: a.kind,
+          value: a.value,
+          basis: a.basis,
+          warnings: a.warnings,
+        };
+      }),
+    });
+  return {
+    keys: items.map((it) => answers.questionKey(it)),
+    answered: all.length,
+    filled,
+    items: all.map((a) => ({
+      question: byId.get(a.id).question,
+      value: a.value,
+      basis: a.basis,
+      warnings: a.warnings || [],
+      reused: !!a.reused,
+      filled: status.get(a.id) === 'filled',
+    })),
+    skipped: written.skipped.map((x) => ({
+      question: (byId.get(x.id) || {}).question || '',
+      reason: x.reason,
+      withheld: x.withheld || null,
+    })),
+  };
+}
+
+/**
+ * Answer the questions a fill left empty and put the answers into the form. An answer can bring up a question
+ * of its own ("Other" → "Please specify"): those get one more round.
+ */
+async function answerWithAi(tabId, pending, opts = {}) {
+  const prior = aiRuns.get(tabId);
+  if (prior && prior.status === 'running') prior.controller.abort();
+  const controller = new AbortController();
+  const run = {
+    status: 'running',
+    stage: 'job',
+    asked: pending.length,
+    answered: 0,
+    filled: 0,
+    items: [],
+    skipped: [],
+    startedAt: Date.now(),
+    controller,
+  };
+  aiRuns.set(tabId, run);
+  const report = (patch) => {
+    Object.assign(run, patch);
+    broadcast(tabId, run);
+  };
+  await callFrames(tabId, 'hold', [240000], [0]).catch(() => {});
+  try {
+    const { profile, settings } = await store.getActive();
+    const ctx = {
+      profile,
+      settings,
+      config: await store.aiConfig(),
+      controller,
+      report,
+      tab: await api.tabs.get(tabId),
+      job: null,
+      cost: 0,
+    };
+    const first = await answerRound(tabId, pending, ctx);
+    const total = { ...first };
+    if (first.filled) {
+      // Give the page a moment to show what the answers revealed, then answer only questions not asked before.
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      const frames = await callFrames(tabId, 'pending', [{ profile, settings, ai: true }]).catch(() => []);
+      const seen = new Set(first.keys);
+      const fresh = frames
+        .flatMap((f) => (f.items || []).map((item) => ({ ...item, frameId: f.frameId })))
+        .filter((item) => !seen.has(answers.questionKey(item)));
+      if (fresh.length) {
+        report({ asked: run.asked + fresh.length, items: first.items });
+        const next = await answerRound(tabId, fresh, ctx);
+        Object.assign(total, {
+          answered: first.answered + next.answered,
+          filled: first.filled + next.filled,
+          items: [...first.items, ...next.items],
+          skipped: [...first.skipped, ...next.skipped],
+        });
+      }
+    }
+    report({
+      status: 'done',
+      stage: 'done',
+      answered: total.answered,
+      filled: total.filled,
+      items: total.items,
+      skipped: total.skipped,
+      company: (ctx.job && ctx.job.company) || '',
+      cost: ctx.cost,
+      finishedAt: Date.now(),
+    });
+    if (opts.toast) await showToast(tabId, aiSummaryText(run), { undo: total.filled > 0 });
+    return runView(run);
+  } catch (err) {
+    const error = err && err.name === 'AbortError' ? 'Stopped.' : String((err && err.message) || err);
+    report({ status: 'error', stage: 'done', error });
+    if (opts.toast && error !== 'Stopped.') await showToast(tabId, aiSummaryText(run));
+    return runView(run);
+  } finally {
+    callFrames(tabId, 'release', [], [0]).catch(() => {});
+  }
+}
+
+/** "Answer with AI" from the popup: the questions on the page now, whatever the setting says. */
+async function answerPage(tabId, opts = {}) {
+  const { profile, settings } = await store.getActive();
+  const ready = await aiAvailable(settings, { force: true });
+  if (!ready.ok) return { status: ready.reason };
+  const frames = await callFrames(tabId, 'pending', [{ profile, settings, ai: true }]);
+  const pending = frames.flatMap((f) => (f.items || []).map((item) => ({ ...item, frameId: f.frameId })));
+  if (!pending.length) return { status: 'done', asked: 0, answered: 0, filled: 0, items: [], skipped: [] };
+  const run = answerWithAi(tabId, pending, { toast: !!opts.toast });
+  return opts.wait ? run : { status: 'running', stage: 'job', asked: pending.length };
+}
+
+// The page keeps a port open while the AI works; each ping is an event, which keeps this worker awake.
+api.runtime.onConnect.addListener((port) => {
+  if (port.name === 'jtf-hold') port.onMessage.addListener(() => {});
+});
+
 /* -------------------------------------------------------------- messages */
 
 const sum = (frames, key) => frames.reduce((n, f) => n + (f[key] || 0), 0);
@@ -571,6 +981,16 @@ const HANDLERS = {
   'jtf:job-context': (msg) => jobContext(msg.tabId),
   'jtf:scrape': (msg) => scrapeInTab(msg.url),
   'jtf:attach': (msg) => attachLetter(msg.tabId, msg.letterId),
+  'jtf:ai-status': (msg) => {
+    const run = aiRuns.get(msg.tabId);
+    return { run: run ? runView(run) : null };
+  },
+  'jtf:ai-answer': (msg) => answerPage(msg.tabId, { toast: !!msg.toast }),
+  'jtf:ai-stop': (msg) => {
+    const run = aiRuns.get(msg.tabId);
+    if (run && run.status === 'running') run.controller.abort();
+    return { stopped: !!run };
+  },
   'jtf:learn': async (msg) => {
     const { profile } = await store.getActive();
     const frames = await callFrames(msg.tabId, 'learn', [{ profile }]);
@@ -689,6 +1109,9 @@ api.runtime.onStartup.addListener(async () => {
 // For debugging from the background console, and for the end-to-end tests.
 globalThis.JTFBackground = {
   fillTab,
+  answerWithAi,
+  answerPage,
+  jobFor,
   callFrames,
   ensureInjected,
   handleMenuClick,

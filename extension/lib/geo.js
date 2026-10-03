@@ -207,8 +207,84 @@
     return [...new Set(words.map(norm).filter(Boolean))];
   }
 
+  let nameIndex = null;
+  /** Country names and aliases a sentence can name (not codes or demonyms, which read as ordinary words). */
+  function names() {
+    if (nameIndex) return nameIndex;
+    nameIndex = [];
+    for (const row of COUNTRIES)
+      for (const key of row.slice(2)) {
+        const n = norm(key);
+        if (n.length >= 4) nameIndex.push([' ' + n + ' ', row[0]]);
+      }
+    // "UK", "U.S.", "USA", "the US" (never "us" on its own), "the EU", "EEA".
+    nameIndex.push(
+      [' uk ', 'GB'],
+      [' u k ', 'GB'],
+      [' usa ', 'US'],
+      [' u s ', 'US'],
+      [' u s a ', 'US'],
+      [' the us ', 'US'],
+      // "US work authorization", "US citizen", "US-based": the country, not the pronoun.
+      ...[
+        'work',
+        'employment',
+        'visa',
+        'citizen',
+        'citizenship',
+        'based',
+        'person',
+        'green card',
+        'passport',
+        'national',
+        'permanent',
+      ].map((w) => [` us ${w}`, 'US']),
+      [' eu ', 'EU'],
+      [' eea ', 'EU'],
+      [' european union ', 'EU'],
+      [' european economic area ', 'EU'],
+    );
+    return nameIndex;
+  }
+
+  /**
+   * The countries a question names ("…authorized to work in the United States?", "in the UK", "anywhere in the EU"),
+   * as ISO codes ('EU' for the EU / EEA). "New Jersey" or "New Mexico" are places in the US, not other countries.
+   */
+  function countriesNamed(text) {
+    const t = ' ' + norm(text) + ' ';
+    const out = [];
+    for (const [key, code] of names()) {
+      const at = t.indexOf(key);
+      if (at < 0 || out.includes(code)) continue;
+      if (/ new $/.test(t.slice(Math.max(0, at - 4), at + 1))) continue;
+      out.push(code);
+    }
+    return out;
+  }
+
+  /**
+   * Where someone with the right to work in `countries` (ISO codes) may work: the EU / EEA and Switzerland's free
+   * movement, and the UK and Ireland's Common Travel Area.
+   */
+  function workRights(countries) {
+    const out = new Set();
+    for (const c of countries || []) {
+      out.add(c);
+      if (EUROPEAN.has(c)) {
+        for (const e of EUROPEAN) out.add(e);
+        out.add('EU');
+      }
+      if (c === 'GB') out.add('IE');
+      if (c === 'IE') out.add('GB');
+    }
+    return out;
+  }
+
   const geo = {
     COUNTRIES,
+    countriesNamed,
+    workRights,
     REGIONS,
     findCountry,
     countryCandidates,

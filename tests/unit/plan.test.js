@@ -819,8 +819,9 @@ test('status lists: never "not authorized" when you are, your citizenship when i
   assert.equal(matcher.matchOption(de, ask(p, 'job.authorized', eligibility)), 0);
   p.personal.nationality = 'France';
   assert.equal(matcher.matchOption(de, ask(p, 'job.authorized', eligibility)), 1);
+  // British (after Brexit): no right to work in Germany, so the truthful option is the sponsorship one.
   p.personal.nationality = 'British';
-  assert.equal(matcher.matchOption(de, ask(p, 'job.authorized', eligibility)), -1);
+  assert.equal(matcher.matchOption(de, ask(p, 'job.authorized', eligibility)), 3);
   // A negated status is never yours.
   p.personal.nationality = 'United States';
   const yn = opts('No, I am not a U.S. citizen', 'Yes, I am a U.S. citizen');
@@ -1466,4 +1467,138 @@ test('enrolment status from your education dates (SpaceX, Cloover)', () => {
     ).type,
     'edu.end',
   );
+});
+
+test('round 3 (live Trackr forms): right to work by country, job sites, number boxes, programming languages', () => {
+  const p = student();
+  Object.assign(p.address, { city: 'London', state: '', country: 'United Kingdom' });
+  p.personal.nationality = 'British';
+  p.job.authorized = 'Yes';
+  p.job.sponsorship = 'No';
+  const yn = opts('Yes', 'No');
+  const pick = (type, q, o = yn) => {
+    const v = ask(p, type, q, { kind: 'select' });
+    const i = matcher.matchOption(o, v);
+    return i < 0 ? null : o[i].text;
+  };
+  // A British student: the UK and Ireland yes; the US and the Netherlands no, with sponsorship needed.
+  assert.equal(pick('job.authorized', 'Are you legally authorized to work in the United States?'), 'No');
+  assert.equal(
+    pick('job.sponsorship', 'Will you now or in the future require sponsorship to work in the U.S.?'),
+    'Yes',
+  );
+  assert.equal(pick('job.authorized', 'Do you have the right to work in the UK?'), 'Yes');
+  assert.equal(pick('job.sponsorship', 'Do you require visa sponsorship to work in the UK?'), 'No');
+  assert.equal(pick('job.authorized', 'Are you authorized to work in Ireland?'), 'Yes');
+  assert.equal(pick('job.authorized', 'Do you have the right to work in the Netherlands?'), 'No');
+  assert.equal(pick('job.authorized', 'Are you eligible to work in the UK or the US?'), 'Yes');
+  assert.equal(pick('job.authorized', 'Are you authorized to work in the country where this job is located?'), 'Yes');
+  const us = opts(
+    'I am authorized to work in the United States for any employer',
+    'I require sponsorship to work in the United States',
+  );
+  assert.equal(pick('job.authorized', 'Are you legally authorized to work in the United States?', us), us[1].text);
+  assert.match(
+    ask(p, 'job.sponsorship', 'Please describe your US work authorization status', { kind: 'textarea' }).text,
+    /don’t have the right to work in the United States/,
+  );
+  // EU citizens: the whole EU; the listed countries win over the nationality.
+  p.personal.nationality = 'French';
+  assert.equal(pick('job.authorized', 'Do you have the right to work in the Netherlands?'), 'Yes');
+  p.job.workCountries = 'United Kingdom, United States';
+  assert.equal(pick('job.authorized', 'Are you legally authorized to work in the United States?'), 'Yes');
+  assert.equal(pick('job.authorized', 'Do you have the right to work in Germany?'), 'No');
+  // Without a nationality or a list, the answers stand for wherever you apply, as before.
+  p.job.workCountries = '';
+  p.personal.nationality = '';
+  assert.equal(pick('job.authorized', 'Are you legally authorized to work in the United States?'), 'Yes');
+  // "Will you in the future require authorization to work in the US?" is a sponsorship question.
+  const q = 'Will you in the future require authorization to legally work in the United States?';
+  assert.equal(matcher.classify(desc(q, { kind: 'select', options: yn })).type, 'job.sponsorship');
+
+  // A job site the form doesn't list: its kind of option, never a campus board or the firm's own site; else Other.
+  p.job.referralSource = 'Trackr';
+  const hear = (...o) => pick('job.referralSource', 'How did you hear about us?', opts(...o));
+  assert.equal(hear('LinkedIn', 'Online job board', 'Careers fair', 'Other'), 'Online job board');
+  assert.equal(hear('LinkedIn', 'DV Website', 'Campus Event', 'Other'), 'Other');
+  assert.equal(
+    hear('School job board (Handshake, Target Connect etc.)', 'Other (please state in next box)'),
+    'Other (please state in next box)',
+  );
+  assert.equal(hear('LinkedIn', 'Glassdoor', 'Other Online Job Board'), 'Other Online Job Board');
+  assert.equal(hear('LinkedIn', 'Indeed', 'Internet forum (Reddit/Hacker News/etc.)'), null);
+  p.job.referralSource = 'Handshake';
+  assert.equal(hear('LinkedIn', 'Handshake', 'Other'), 'Handshake');
+
+  // Number boxes: a UK class isn't a number; a phone number is its digits.
+  p.education[0].gpa = '2:1';
+  const gpa = ask(p, 'edu.gpa', 'Please list your GPA');
+  assert.equal(matcher.formatForText(gpa, desc('GPA', { inputType: 'number' })), '');
+  p.education[0].gpa = '3.8/4.0';
+  assert.equal(matcher.formatForText(ask(p, 'edu.gpa', 'GPA'), desc('GPA', { inputType: 'number' })), '3.8');
+  p.contact = { phoneCountryCode: '+44', phone: '7700 900123' };
+  const phone = ask(p, 'phone', 'Phone Number');
+  assert.equal(matcher.formatForText(phone, desc('Phone', { inputType: 'number' })), '447700900123');
+
+  // "Top 3 programming languages" lists programming languages, not every skill.
+  p.skills = 'Python, Excel, SQL, Financial modelling, Bloomberg, C++, R';
+  assert.equal(ask(p, 'skills', 'Top 3 programming languages', { kind: 'textarea' }).text, 'Python, SQL, C++');
+  assert.equal(ask(p, 'skills', 'Skills', { kind: 'textarea' }).items.length, 7);
+});
+
+test('round 3: new questions get their own profile answers', () => {
+  const type = (q, kind = 'select', o = ['Yes', 'No']) =>
+    (matcher.classify(desc(q, { kind, options: o ? opts(...o) : null })) || {}).type || null;
+  assert.equal(type('Are you willing to work in the office 5 days a week?'), 'job.onsite');
+  assert.equal(type('Are you able to work from our NYC office at least three days per week?'), 'job.onsite');
+  assert.equal(type('Are you able to commute into our London office?'), null);
+  assert.equal(
+    type('Have you applied to Marshall Wace before?', 'select', ['Yes - in a previous year', 'Yes- this year', 'No']),
+    'compliance.previouslyApplied',
+  );
+  assert.equal(type('Do you have any upcoming offer deadlines?'), 'job.otherOffers');
+  assert.equal(type('First and Last Name', 'text', null), 'name.full');
+  assert.equal(type('Do you speak English at a Fluent or Native level?'), 'languages');
+  assert.equal(type('If yes, please list each company and its corresponding deadline.', 'textarea', null), null);
+  assert.equal(type("Tell us something about yourself that we can't find on your resume.", 'textarea', null), null);
+  assert.equal(type('Please upload a copy of your most recent transcript.', 'file', null), 'file.transcript');
+  const p = student();
+  p.job.onsite = 'Yes';
+  p.compliance.previouslyApplied = 'No';
+  const choices = opts('Yes - in a previous year', 'Yes- this year', 'No');
+  assert.equal(matcher.matchOption(choices, ask(p, 'compliance.previouslyApplied', 'Have you applied before?')), 2);
+  assert.equal(ask(p, 'job.onsite', 'Are you willing to work in the office 5 days a week?').text, 'Yes');
+});
+
+test('round 3: "If yes" yes/no questions, citizenship-status lists, agreements with past employers', () => {
+  const p = student();
+  p.personal.nationality = 'British';
+  Object.assign(p.address, { country: 'United Kingdom' });
+  p.job.authorized = 'Yes';
+  p.job.sponsorship = 'No';
+  p.job.nonCompete = 'No';
+  const yn = opts('Yes', 'No');
+  // A yes/no question after "If yes" takes a No; a details box after "If yes" doesn't.
+  const q = 'If yes, will you now or in the future require Appian to file a petition for employment-based visa status?';
+  const sel = ask(p, 'job.sponsorship', q, { kind: 'select' });
+  assert.equal(yn[matcher.matchOption(yn, sel)].text, 'No');
+  assert.equal(
+    ask(p, 'job.sponsorship', 'If yes, please give details of the visa you need', { kind: 'textarea' }),
+    null,
+  );
+  // A US citizenship-status list for a British applicant: "Other (please explain)".
+  const status = opts(
+    '1) U.S. citizen or national of the United States',
+    '2) U.S. lawful permanent resident (green card holder)',
+    '3) Refugee under 8 U.S.C 1157',
+    '6) Other (please explain)',
+  );
+  assert.equal(matcher.matchOption(status, ask(p, 'nationality', 'Citizenship Status')), 3);
+  assert.equal(matcher.matchOption(opts('France', 'United Kingdom', 'Other'), ask(p, 'nationality', 'Nationality')), 1);
+  // "Do you have any agreements with prior employers (for example, non-compete…)?"
+  const agreements = desc(
+    'Do you have any agreements with prior employers or other entities (for example, non-compete, non-solicitation, or confidentiality agreements) that may restrict your ability to work for us?',
+    { kind: 'select', options: opts('Yes', 'No', 'Not Known') },
+  );
+  assert.equal(matcher.classify(agreements).type, 'job.nonCompete');
 });

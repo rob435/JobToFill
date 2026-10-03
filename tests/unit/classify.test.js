@@ -262,7 +262,7 @@ test('uploads: an "Attach" button takes its meaning from its group, id or name',
   assert.equal(file({ label: 'Attach', question: 'Resume/CV', id: 'resume' }), 'file.resume');
   assert.equal(file({ label: 'Attach', question: 'Cover Letter', id: 'cover_letter' }), 'file.coverLetter');
   assert.equal(file({ label: 'Attach', id: 'cover_letter' }), 'file.coverLetter');
-  assert.equal(file({ label: 'Upload', name: 'transcript' }), null);
+  assert.equal(file({ label: 'Upload', name: 'transcript' }), 'file.transcript');
   assert.equal(file({ label: 'Attach' }), 'file.resume');
 });
 
@@ -433,14 +433,16 @@ test('real screening questions from graduate application forms', () => {
     ask(
       'If you require any support or adjustments during the recruitment process for any reason including those related to a disability, please indicate here and we will be in contact. This does NOT include questions related to visa sponsorship or our recruitment timelines.',
     ),
-    null,
+    'job.adjustments',
   );
   assert.equal(
     ask(
       'Do you require any reasonable adjustments or accommodations to participate in the recruitment process? (i.e extra time on assessments, relocation of interview venue)',
     ),
-    null,
+    'job.adjustments',
   );
+  assert.equal(ask('Are you willing to work in the office 5-days a week?'), 'job.onsite');
+  assert.equal(ask('Are you comfortable being onsite 5 days a week at our Needham, MA Headquarters?'), null);
   assert.equal(
     ask(
       'We have several job paths as part of our QTA program. To help us understand which path(s) is/are best for you, which of these statements best describes your interest in CTC?',
@@ -1037,7 +1039,7 @@ test('conflicts of interest: government officials and PEPs, relatives, worked he
   );
   assert.equal(ask('Have you previously worked at Man?'), 'compliance.previouslyEmployed');
   assert.equal(ask('Have you ever been employed by William Blair?'), 'compliance.previouslyEmployed');
-  assert.equal(ask('Have you previously applied to Point72?'), null);
+  assert.equal(ask('Have you previously applied to Point72?'), 'compliance.previouslyApplied');
   assert.equal(ask('Are you currently, or have you ever been, employed by Deloitte in any capacity?'), null);
 });
 

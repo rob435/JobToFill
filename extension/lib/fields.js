@@ -56,6 +56,11 @@
         referralSource: '',
         locations: '',
         otherOffers: '',
+        // Countries you have the right to work in (blank: your nationality, and where you live if authorised).
+        workCountries: '',
+        // Happy to work in the office / on site full time; need adjustments in the recruitment process.
+        onsite: '',
+        adjustments: '',
         // Security clearance (defence / engineering): the level you hold, and whether you could get one.
         clearance: '',
         clearanceEligible: '',
@@ -84,6 +89,7 @@
       // Conflicts of interest (banks and law firms ask these)
       compliance: {
         previouslyEmployed: '',
+        previouslyApplied: '',
         relatives: '',
         relativesDetails: '',
         governmentOfficial: '',
@@ -295,6 +301,61 @@
     const weeks = none ? 0 : m ? (words[m[1]] || parseFloat(m[1])) * { day: 1 / 7, week: 1, month: 4.345 }[m[2]] : null;
     const extra = none ? ['None', 'Immediately', 'Immediate', 'Immediately available', 'No notice period', '0'] : [];
     return val(text, { kind: 'notice', weeks, candidates: [String(text).trim(), ...extra] });
+  }
+
+  /**
+   * The countries you have the right to work in (ISO codes): as listed, else your nationality and, when you said
+   * you're authorised, the country you live in. Without a nationality it isn't known: then nothing (your answers
+   * stand for wherever you apply, as before).
+   */
+  function workCountries(p) {
+    const listed = String(p.job.workCountries || '')
+      .split(/\s*[,;\n]\s*|\s+(?:and|&)\s+/)
+      .map((c) => JTF.geo.findCountry(c.trim()))
+      .filter(Boolean)
+      .map((row) => row[0]);
+    if (listed.length) return listed;
+    const out = [];
+    const nation = JTF.geo.findCountry(p.personal.nationality);
+    if (!nation) return [];
+    out.push(nation[0]);
+    const home = JTF.geo.findCountry(p.address.country);
+    if (home && JTF.matcher && JTF.matcher.canonicalOf(p.job.authorized) === 'yes') out.push(home[0]);
+    return [...new Set(out)];
+  }
+
+  /**
+   * A work-authorisation question about a country you have no right to work in ("Are you authorized to work in
+   * the United States?" for a British student): the country it names, else null.
+   */
+  function noRightIn(p, ctx) {
+    const asked = JTF.geo.countriesNamed(ctx.question || '');
+    if (!asked.length) return null;
+    const mine = workCountries(p);
+    if (!mine.length) return null;
+    const rights = JTF.geo.workRights(mine);
+    const either = /\bor\b/.test(ctx.question || '');
+    const ok = either ? asked.some((c) => rights.has(c)) : asked.every((c) => rights.has(c));
+    if (ok) return null;
+    const code = asked.find((c) => !rights.has(c));
+    const row = code === 'EU' ? null : JTF.geo.COUNTRIES.find((r) => r[0] === code);
+    return {
+      code,
+      name: code === 'EU' ? 'the EU' : row ? (code === 'US' || code === 'GB' ? 'the ' : '') + row[2] : 'that country',
+    };
+  }
+
+  /** Not authorised there, so sponsorship needed: for options like "No, I will require sponsorship" too. */
+  function elsewhere(p, ctx, which) {
+    const where = noRightIn(p, ctx);
+    if (!where) return null;
+    if (
+      LONG_TEXT.includes(ctx.kind) &&
+      !/^(do|does|are|is|will|would|have|has|can|could|shall)\b/.test(ctx.question || '')
+    )
+      return val(`I don’t have the right to work in ${where.name} and would need visa sponsorship.`);
+    const v = val(which === 'authorized' ? 'No' : 'Yes');
+    return Object.assign(v, { sponsor: 'yes', authorized: 'no', citizen: [] });
   }
 
   /**
@@ -801,6 +862,57 @@
     return [...new Set(String(question || '').match(LANGUAGE_RE) || [])];
   }
 
+  // Where people hear about jobs, and the broader options forms offer for each.
+  const JOB_SITE = [
+    'Job board',
+    'Online job board',
+    'Job site',
+    'Jobs board',
+    'Job website',
+    'Job boards',
+    'Online job site',
+    'Graduate job website',
+    'Job posting',
+    'Job advert',
+  ];
+  // A job site is never the university's or the employer's own board ("School job board", "Acme Website").
+  const NOT_A_JOB_SITE =
+    /\b(school|campus|universit\w*|college|careers? (service|centre|center|office|fair)|society|club|forum|reddit|employee|website|careers? (site|page)|handshake|12 ?twenty|target ?connect|global)\b/;
+  const SOURCE_KINDS = [
+    [
+      /\b(trackr|bright ?network|gradcracker|rate ?my ?(placement|apprenticeship)|targetjobs|target ?connect|prospects|milkround|handshake|indeed|glassdoor|monster|reed|totaljobs|efinancialcareers|otta|welcome to the jungle|wellfound|angel ?list|simplyhired|ziprecruiter|built ?in|the student room|gradireland|jobteaser|unitemps|careerjet|job ?board|job ?site)\b/,
+      JOB_SITE,
+    ],
+    [/\blinked ?in\b/, ['Social media', 'Social network', 'Social networking', ...JOB_SITE]],
+    [/\b(instagram|facebook|tiktok|twitter|x|youtube|reddit)\b/, ['Social media', 'Social network', 'Online']],
+    [
+      /\b(google|bing|search)\b/,
+      ['Search engine', 'Internet search', 'Web search', 'Online search', 'Internet', 'Online'],
+    ],
+    [
+      /\b(careers? fair|job fair|campus|university|society|event)\b/,
+      [
+        'Careers fair',
+        'Career fair',
+        'Campus event',
+        'University event',
+        'University careers service',
+        'University',
+        'Event',
+      ],
+    ],
+    [
+      /\b(friend|referr|colleague|employee|word of mouth|family)\b/,
+      ['Referral', 'Employee referral', 'Friend', 'Word of mouth', 'Personal network'],
+    ],
+    [/\b(company|careers?) (website|site|page)\b/, ['Company website', 'Careers website', 'Careers page', 'Website']],
+  ];
+
+  // Programming languages, for "Which programming languages…?" when the skills list mixes them with other tools.
+  const PROGRAMMING =
+    /^(python|java|javascript|js|typescript|ts|c|c\+\+|cpp|c#|c sharp|go|golang|rust|scala|kotlin|swift|objective c|ruby|php|perl|r|matlab|julia|haskell|ocaml|f#|sql|t sql|pl sql|bash|shell|powershell|vba|sas|stata|lua|dart|elixir|erlang|clojure|fortran|cobol|assembly|solidity|q|kdb\+?|q kdb|verilog|vhdl|html|css|lisp|scheme|prolog|groovy|zig|nim|crystal)$/;
+  const PROGRAMMING_QUESTION = /\b(programming|coding|scripting|computer|software) languages?\b/;
+
   /* -------------------------------------------------------------- definitions */
 
   const at = (path, wrap) => (p) => (wrap || val)(U.getPath(p, path));
@@ -907,6 +1019,8 @@
         // Lists of nationalities ("American", "British") as well as of countries.
         const v = countryVal(p.personal.nationality);
         if (v && v.iso2) v.candidates = [...new Set([...v.candidates, ...JTF.geo.demonyms(v.iso2)])];
+        // A US citizenship-status list ("U.S. citizen / green card holder / … / Other (please explain)").
+        if (v) v.fallback = ['Other', 'Other (please explain)', 'Other (please specify)', 'None of the above'];
         return v;
       },
     },
@@ -1053,16 +1167,21 @@
     },
     'job.yearsExperience': simple('Years of experience', 'job.yearsExperience', numberVal),
     // Both carry whether you need sponsorship, for options like "Yes, will require sponsorship".
+    // A question naming a country you can't work in gets "No" / "Yes, I'd need sponsorship", whatever you said for home.
     'job.authorized': {
       label: 'Authorized to work',
       path: 'job.authorized',
-      get: (p, ctx) => workStatus(p, ctx) || sponsorAware(val(p.job.authorized), p),
+      get: (p, ctx) => elsewhere(p, ctx, 'authorized') || workStatus(p, ctx) || sponsorAware(val(p.job.authorized), p),
     },
     'job.sponsorship': {
       label: 'Requires sponsorship',
       path: 'job.sponsorship',
-      get: (p, ctx) => workStatus(p, ctx) || sponsorAware(val(p.job.sponsorship), p),
+      get: (p, ctx) =>
+        elsewhere(p, ctx, 'sponsorship') || workStatus(p, ctx) || sponsorAware(val(p.job.sponsorship), p),
     },
+    'job.onsite': simple('Happy to work in the office / on site', 'job.onsite'),
+    'job.adjustments': simple('Adjustments needed in the recruitment process', 'job.adjustments'),
+    'compliance.previouslyApplied': simple('Applied here before', 'compliance.previouslyApplied'),
     'job.relocate': simple('Willing to relocate', 'job.relocate'),
     'job.over18': simple('Over 18', 'job.over18'),
     'job.salary': simple('Salary expectation', 'job.salary', numberVal),
@@ -1108,7 +1227,20 @@
       path: 'job.startDate',
       get: (p, ctx) => availableAnswer(p.job.startDate, ctx.question) || dateVal(p.job.startDate, ctx.part, 9),
     },
-    'job.referralSource': simple('How you heard about the job', 'job.referralSource'),
+    // A job site the form doesn't list ("Trackr") still picks its kind ("Online job board"), else "Other".
+    'job.referralSource': {
+      label: 'How you heard about the job',
+      path: 'job.referralSource',
+      get(p) {
+        const v = val(p.job.referralSource);
+        if (!v) return v;
+        const kind = SOURCE_KINDS.find(([re]) => re.test(U.normalize(v.text)));
+        v.candidates = [v.text, ...(kind ? kind[1] : [])];
+        if (kind && kind[1] === JOB_SITE) v.avoid = NOT_A_JOB_SITE;
+        v.fallback = ['Other', 'Other (please specify)', 'Others', 'Something else'];
+        return v;
+      },
+    },
 
     'eeo.gender': simple('Gender', 'eeo.gender'),
     'eeo.race': { label: 'Race / ethnicity', path: 'eeo.race', get: (p) => ethnicityVal(p.eeo.race) },
@@ -1261,7 +1393,15 @@
       label: 'Skills',
       path: 'skills',
       // A list, so a checklist or multi-select ("Which of these do you know?") takes the skills one by one.
-      get: (p) => listVal(p.skills),
+      // "Top 3 programming languages" in a text box gets three programming languages, not Excel and Bloomberg.
+      get(p, ctx) {
+        const v = listVal(p.skills);
+        if (!v || !PROGRAMMING_QUESTION.test(ctx.question || '') || !LONG_TEXT.includes(ctx.kind)) return v;
+        let items = v.items.filter((i) => PROGRAMMING.test(U.normalize(i).replace(/\s*\(.*\)$/, '')));
+        const top = (ctx.question || '').match(/\btop (\d|two|three|four|five)\b/);
+        if (top) items = items.slice(0, { two: 2, three: 3, four: 4, five: 5 }[top[1]] || +top[1]);
+        return items.length ? listVal(items.join(', ')) : null;
+      },
     },
     languages: {
       label: 'Languages',
@@ -1297,6 +1437,7 @@
 
     'file.resume': { label: 'Resume file', file: 'resume', get: () => null },
     'file.coverLetter': { label: 'Cover letter file', file: 'coverLetter', get: () => null },
+    'file.transcript': { label: 'Transcript file', file: 'transcript', get: () => null },
 
     'account.username': {
       label: 'Username',
@@ -1459,6 +1600,14 @@
       /cover ?letter|motivation(al)? letter|letter of motivation|anschreiben|lettre de motivation/,
       { kinds: ['file'], not: /\b(resume|cv|curriculum|lebenslauf)\b/ },
     ),
+    R(
+      'file.transcript',
+      /transcript|academic record|grade (report|sheet)|mark ?sheet|record of (marks|grades)|notenspiegel|releve de notes/,
+      {
+        kinds: ['file'],
+        not: /\b(resume|cv)\b.*\b(and|&|or)\b.*\btranscript|\bcover ?letter\b/,
+      },
+    ),
     R('file.resume', /resume|\bcv\b|curriculum|lebenslauf|attach|upload|document|\bfile\b/, {
       kinds: ['file'],
       // "Autofill from resume" / "Apply with resume" read the file and rewrite the form: not the resume upload.
@@ -1532,7 +1681,7 @@
     ),
     R(
       'job.sponsorship',
-      /sponsor|visa (status|support|required|transfer|requirement)|\bh ?1 ?b\b|immigration (support|sponsorship|assistance)|require (a )?(work )?visa/,
+      /sponsor|visa (status|support|required|transfer|requirement)|\bh ?1 ?b\b|immigration (support|sponsorship|assistance)|require (a )?(work )?visa|\b(require|need)\b.{0,30}\b(work )?authori[sz]ation\b/,
       {
         not: /adjustments?\b|accommodat/,
         // "Do you have the right to work in the region? … Sponsorship is not available" and "This position does not
@@ -1546,6 +1695,8 @@
     R(
       'job.authorized',
       /\b(authori[sz]ed|eligible|entitled|permitted|allowed) to (lawfully |legally )?work|work (authori[sz]ation|permit|eligibility)|employment (authori[sz]ation|eligibility)|eligib(le|ility) (for|to) (employment|work)|authori[sz]ation to work|right to work|legal right to|legally (work|employed)/,
+      // "Will you in the future require authorization to work in the US?" asks whether you need sponsoring.
+      { not: /\b(require|need)\b.{0,30}\b(work )?authori[sz]ation\b/ },
     ),
     // "Are you able to work in the UK?" is about permission; "able to work on-site 5 days a week" is not.
     R('job.authorized', /\bable to (lawfully |legally )?work\b/, {
@@ -1573,14 +1724,44 @@
         test: (desc) => !looksLikeMoneyUnits(desc.options),
       },
     ),
-    R('job.nonCompete', /non ?compete|non ?solicit|restrictive (covenant|agreement|clause)|garden leave/),
+    R(
+      'job.nonCompete',
+      /non ?compete|non ?solicit|restrictive (covenant|agreement|clause)|garden leave|\bagreements? with (any )?(prior|previous|former|current|past) employers?\b|\b(may |might |could |that )?restrict (your|my) ability to (work|join)\b/,
+    ),
     R(
       'job.noticePeriod',
       /notice ?period|notice (required|do you need)|how much notice|weeks notice|kundigungsfrist|\bpreavis\b|\bpreavviso\b/,
     ),
     R(
       'job.otherOffers',
-      /\b(other|competing|outstanding|existing|pending) (job |internship |employment )?offers?\b|\boffers? (from|at|with) (other|another|any other) (firms?|compan|employers?|organi)|\boffers? (and|or|&) deadlines?|\bdeadlines? (we|that we) should\b|\bany (other )?(offers|deadlines)\b|\bexploding offer/,
+      /\b(other|competing|outstanding|existing|pending) (job |internship |employment )?offers?\b|\boffers? (from|at|with) (other|another|any other) (firms?|compan|employers?|organi)|\boffers? (and|or|&) deadlines?|\bdeadlines? (we|that we) should\b|\bany (other )?(offers|deadlines)\b|\bexploding offer|\b(upcoming|pending|current|any) (offer )?deadlines?\b|\boffer deadlines?\b|\bdecision (deadlines?|timelines?)\b|\baccepted an? (\w+ ){0,3}offer\b|\b(holding|hold) any (\w+ )?offers?\b/,
+      { not: /\bif (yes|so)\b|\bwhich (firm|company)\b|\bwhat (firm|company)\b/ },
+    ),
+    // "Have you applied to Marshall Wace before?"
+    R(
+      'compliance.previouslyApplied',
+      /\b(previously|ever|already) applied\b|\bapplied (to|for|with|at)\b.{0,60}\b(before|previously|in the past|last year|this year)\b|\bhave you applied (to|for|with)\b/,
+      { kinds: CHOICE.concat(LONG_TEXT), not: /\bif (yes|so)\b|\bwhen and\b/ },
+    ),
+    // "Do you require any reasonable adjustments to participate in the recruitment process?"
+    R(
+      'job.adjustments',
+      /\breasonable adjustments?\b|\b(require|need|request)\b.{0,40}\b(adjustments?|accommodations?|support)\b.{0,60}\b(recruitment|application|interview|assessment|selection|hiring)\b|\badjustments? (to|during|in|for) (the |our )?(recruitment|application|interview|assessment|selection)/,
+      {
+        kinds: CHOICE,
+        not: /essential functions|housing|\bif (yes|so)\b|please (provide|give|tell)/,
+      },
+    ),
+    // "Are you willing to work in the office 5 days a week?" (where it is is the AI's to weigh up)
+    R(
+      'job.onsite',
+      /\b(\d|two|three|four|five) days (a|per|each) week\b|\bfully in ?person\b|\bin (the )?office (full ?time|every day|daily)\b|\b(willing|able|happy|comfortable|open) to (work|be) (on ?site|onsite|in (the |our )?office|in person)\b|\bhybrid (work(ing)? )?(model|policy|arrangement)\b/,
+      // An office somewhere in particular ("at our Jupiter, FL office", "onsite in San Francisco") depends on where
+      // you live: left for the AI, which weighs it against your location and relocation answer.
+      {
+        kinds: CHOICE,
+        not: /\bcommut|\bremote(ly)? only\b|\b(at|in) (our|the) (?!office\b|offices\b)[a-z]+( [a-z]+){0,2} (office|offices|headquarters|hq|campus|location)\b|\bon ?site (in|at) (?!(the|our) office\b)[a-z]/,
+      },
     ),
     R(
       'job.startDate',
@@ -1844,6 +2025,7 @@
         not: /first|company|school|card|preferred|employer|father|mother|spouse|emergency|reference|referr|manager|maiden|previous|former|other|\bvor(name)? (und|&) nachname|\bnombre y apellido|\bprenom (et|&) nom\b|\bnom (et|&) prenom|\bnome (e|&) cognome/,
       },
     ),
+    R('name.full', /\b(first|given) (name )?(and|&|\/) (last|sur|family) ?names?\b|\bfull legal name\b/),
     R(
       'name.full',
       /\bfull ?name|\byour name\b|\blegal name\b|\bname\b|\bnom complet|\bnombre completo|\bvoller name|\bvor(name)? (und|&) nachname|\bnombre y apellido|\bprenom (et|&) nom\b|\bnom (et|&) prenom|\bnome (e|&) cognome/,
@@ -1991,7 +2173,7 @@
       'exp.company',
       /\bcompany\b|employer|organi[sz]ation|\bfirm\b|business name|workplace|unternehmen|\bempresa\b|entreprise/,
       {
-        not: /current|present|most recent|size|industry|website|\btype\b|e ?mail|phone|address|why|how|referr|recruit|agency|\burl\b|linked ?in|do you|have you|are you|did you|related|know anyone|anyone at|family|relative|this company|our company|the company|interest/,
+        not: /current|present|most recent|size|industry|website|\btype\b|e ?mail|phone|address|why|how|referr|recruit|agency|\burl\b|linked ?in|do you|have you|are you|did you|related|know anyone|anyone at|family|relative|this company|our company|the company|interest|^if (yes|so|you)\b|deadlines?|\boffers?\b/,
       },
     ),
     R(
@@ -2018,7 +2200,8 @@
       'summary',
       /\bsummary\b|about (you|yourself|me)\b|tell (us|me) (a (little|bit) )?about yourself|introduce yourself|\bbio\b|biography|personal statement|professional (profile|summary)|career (objective|summary)|\bobjective\b/,
       {
-        not: /linked ?in|url|link|git|photo|picture|image|\bname\b|role summary|job summary/,
+        // "Tell us something about yourself that we can't find on your resume" wants something new.
+        not: /linked ?in|url|link|git|photo|picture|image|\bname\b|role summary|job summary|(not|can t|cannot|won t|isn t|wouldn t) (\w+ ){0,3}(on|in|from) (your |the )?(cv|resume)|\bbeyond (your |the )?(cv|resume)/,
         kinds: LONG_TEXT,
       },
     ),
@@ -2035,7 +2218,7 @@
     }),
     R(
       'languages',
-      /languages? (spoken|you speak|proficienc|known|fluency)|which languages?\b|spoken languages|^languages?$|language skill|languages do you speak|\blanguages?\b.*\b(fluent|speak|proficient)\b|\bfluent in\b|\b(additional|other|foreign) languages?\b/,
+      /languages? (spoken|you speak|proficienc|known|fluency)|which languages?\b|spoken languages|^languages?$|language skill|languages do you speak|\blanguages?\b.*\b(fluent|speak|proficient)\b|\bfluent in\b|\b(additional|other|foreign) languages?\b|\b(do|can) you speak\b|\bspeak (\w+ )?(at a |to a )?(fluent|native|business|professional)\b/,
       { not: /programming|coding|scripting|computer|software/ },
     ),
   ];
@@ -2061,6 +2244,14 @@
   // "If yes, please tell us more": only answered when the answer to the question before was yes.
   const FOLLOW_UP = /^if (yes|so|you (said|answered|selected|chose|checked|ticked) yes)\b/;
 
+  /**
+   * Does an "If yes, …" question take this answer? A yes always; a no only as the answer to a yes/no choice ("If
+   * yes, will you require Appian to file a visa petition? Yes / No"), never as the details a box asks for.
+   */
+  function followUpAnswer(v, kind) {
+    return !!v && (v.canonical === 'yes' || (v.canonical === 'no' && CHOICE.includes(kind)));
+  }
+
   /** Resolve a field type to a value object (or null when the profile has nothing for it). */
   function resolve(type, profile, ctx) {
     ctx = ctx || {};
@@ -2069,7 +2260,7 @@
     if (!def || !profile) return null;
     try {
       const v = def.get(profile, ctx) || null;
-      return v && FOLLOW_UP.test(ctx.question || '') && v.canonical !== 'yes' ? null : v;
+      return v && FOLLOW_UP.test(ctx.question || '') && !followUpAnswer(v, ctx.kind) ? null : v;
     } catch (err) {
       return null;
     }
@@ -2093,6 +2284,8 @@
     KINDS: { TEXTISH, CHOICE, DEFAULT_KINDS },
     resolve,
     labelOf,
+    workCountries,
+    followUpAnswer,
     eduLevelOf,
     languagesNamed,
     isAcknowledgement,

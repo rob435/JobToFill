@@ -912,6 +912,11 @@
       const hit = opts.find((o) => o.n === c && !o.signed) || opts.find((o) => o.nv === c && !o.signed);
       if (hit) return hit.i;
     }
+    // Options this value only takes when they name it exactly ("Campus job board" for another job site).
+    if (v.avoid) {
+      for (let k = opts.length - 1; k >= 0; k--) if (v.avoid.test(opts[k].n)) opts.splice(k, 1);
+      if (!opts.length) return -1;
+    }
 
     if ((v.kind === 'date' || v.kind === 'year') && v.date) {
       // Terms and periods ("Spring/Summer 2027", "Q2 2027"): when the options are dates, never guess by text.
@@ -975,7 +980,14 @@
     }
 
     const best = bestText(opts, cands, v);
-    return best && best.score >= 45 ? best.i : -1;
+    if (best && best.score >= 45) return best.i;
+    // Nothing fits: the value's own fallback ("Other" for a job site the list doesn't name).
+    if (v.fallback && v.fallback.length)
+      return matchOption(
+        options,
+        Object.assign({}, v, { candidates: v.fallback, fallback: null, kind: 'text', canonical: null }),
+      );
+    return -1;
   }
 
   /* --------------------------------------------------------------- formatting */
@@ -1075,8 +1087,13 @@
     else if (v.kind === 'region' && max && out.length > max && v.code) out = v.code;
     else if (v.kind === 'phone' && max && out.length > max) out = v.national;
     if (desc.inputType === 'number') {
-      const n = v.number != null ? v.number : parseFloat(String(out).replace(/[^\d.]/g, ''));
-      out = Number.isFinite(n) ? String(n) : '';
+      // One number ("£45,000", "3.8", "3.8/4.0"), never digits run together from "2:1" or "06/2027".
+      // A phone number in a number box is its digits.
+      const plain = String(out).replace(/(\d),(\d{3})\b/g, '$1$2');
+      const m = plain.match(/^[^\d-]*(-?\d+(?:\.\d+)?)(?:\s*\/\s*\d+(?:\.\d+)?)?[^\d:/]*$/);
+      const n = v.number != null ? v.number : m ? parseFloat(m[1]) : NaN;
+      if (v.kind === 'phone') out = String(out).replace(/\D/g, '');
+      else out = Number.isFinite(n) ? String(n) : '';
     }
     if (max && out.length > max) out = out.slice(0, max);
     return out;

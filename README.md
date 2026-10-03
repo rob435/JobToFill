@@ -9,14 +9,16 @@ Save your details once: name, contact info, address, links, education, work hist
 **Job applications**
 
 - **Smart field detection.** Each field is scored using its `autocomplete` attribute, `<label>`, `aria-label`, placeholder, `name`/`id`, the legend of the group it sits in, ATS attributes (Workday `data-automation-id`, Lever `urls[LinkedIn]`, Greenhouse `job_application[...]`) and nearby text. Tested against Greenhouse (classic and the new job boards, with the real react-select), Ashby, Lever, Workday-style pages, and dozens of live graduate and internship forms listed on Trackr.
-- **Screening questions.** Answers "Are you legally authorized to work…?", "Will you require sponsorship…?", relocation, over-18, salary, notice period, non-competes, "Do you have offers from other firms or deadlines?", start date and "How did you hear about us?". UK forms too: right to work, degree classes (2:1 matches "Upper Second Class"), "Will you graduate between December 2026 and July 2027?" answered from your dates, and year-of-study lists. It knows the trap where _"authorized to work… without sponsorship?"_ needs a **Yes**, and leaves "If you said yes above…" boxes empty when your answer was No.
+- **Screening questions.** Answers "Are you legally authorized to work…?", "Will you require sponsorship…?", relocation, over-18, salary, notice period, non-competes, "Do you have offers from other firms or deadlines?", start date, "Are you willing to work in the office 5 days a week?", "Do you need adjustments for the recruitment process?", "Have you applied to us before?" and "How did you hear about us?". UK forms too: right to work, degree classes (2:1 matches "Upper Second Class"), "Will you graduate between December 2026 and July 2027?" answered from your dates, and year-of-study lists. It knows the trap where _"authorized to work… without sponsorship?"_ needs a **Yes**, and leaves "If you said yes above…" boxes empty when your answer was No.
+- **Right to work, country by country.** A question that names a country you can't work in (_"Are you authorized to work in the United States?"_ for a British student) is answered **No, sponsorship needed**, while UK questions still get Yes. It goes by the countries you list, or else your nationality: EU citizens count for the whole EU/EEA, and British and Irish citizens for both countries.
+- **Where you found the job.** A job site the form doesn't list (Trackr, Bright Network…) picks the matching kind of option ("Online job board", "Job Board (Indeed, LinkedIn…)"), never a campus board or the employer's own website, and otherwise "Other".
 - **Dropdowns, radios and checkboxes.** "USA" matches "United States of America" or an option with value `US`, and "CA" matches "California". "No" matches "I am not a protected veteran", "BSc" matches "Bachelor’s", and 6 years matches the "5–10" range.
 - **Dates against terms.** A May 2027 graduation picks "Spring/Summer 2027", "Spring 2027", "Q2 2027" or "Class of 2027", whichever the list offers; December picks "Fall". A year on its own counts as a June graduation.
 - **Lists.** Your preferred locations tick every matching office checkbox ("Which other locations would you relocate to?"), and a single "Preferred location" dropdown gets the first one it offers. Skills checklists ("Which programming languages do you use?") work the same way.
 - **Custom dropdowns.** Opens react-select (single and multi), Workday listboxes and async search boxes (school pickers), reads every option, picks the best match and checks the site registered it. If nothing fits it leaves the box empty instead of half-typed.
 - **Custom buttons and toggles.** Yes/No toggle buttons (Ashby), `role="radio"` / `role="checkbox"` widgets (Radix, Headless UI) and switches, not just native inputs.
 - **Multiple education and job entries.** When a form repeats its _School_ or _Job title_ section, each copy gets the next entry from your profile. "From", "To" and "Location" boxes take their meaning from the section they sit in, and split month/year boxes are handled.
-- **Resume and cover letter upload.** Your files are attached to the right upload fields, even when every button just says "Attach" (Jobvite, Gem and Ashby's "autofill from resume" included). A cover-letter upload never gets your resume. Files go in first, and if the site reads your CV and clears the form (Breezy, Lever), the answers are put back.
+- **Resume, cover letter and transcript upload.** Your files are attached to the right upload fields, even when every button just says "Attach" (Jobvite, Gem and Ashby's "autofill from resume" included). A cover-letter upload never gets your resume. Files go in first, and if the site reads your CV and clears the form (Breezy, Lever), the answers are put back.
 - **Custom answers.** Rules like "_why do you want to work_" → your answer. You can match with plain phrases, `a | b` alternatives or `/regex/`.
 - **Learn from this page.** After you type answers into an unusual form, one click saves them, either as profile values or as custom answers for next time.
 - **Acknowledgement boxes** ("I have read the privacy notice", "Acknowledge/Confirm"). Left for you by default, with a one-click _Always tick these_ in the popup. Marketing and talent-pool opt-ins are never ticked.
@@ -25,6 +27,19 @@ Save your details once: name, contact info, address, links, education, work hist
 - **Questions that appear as you answer** (the ethnic background once the group is picked, "if yes" boxes, follow-ups) are filled in the same go.
 - **Application log.** Every job application you fill is recorded, and the log can be exported as CSV.
 - **Multiple profiles.** For example "Software engineer", "Data analyst" and "Personal shopping", each with its own resume.
+
+**Answers to questions it has never seen (AI)**
+
+- **Every question the rules leave empty is answered by AI as part of the same fill:** open questions (_"Why do you want to join Figma?"_, _"Describe how Belvedere Trading makes money"_, _"In 150 words, why Real Estate Asset Management?"_), firm-specific choices (_"Which desk interests you most?"_, _"Rank your top areas of finance"_, _"Which engineering work at Figma? First choice"_) and yes/no questions your material settles (_"Do you have practical Python experience?"_, _"Did you take the SAT?"_, _"Are you a member of a university society?"_).
+- **Written for this job.** It uses the job's real description, found the same way as for cover letters: the page, the job site's listing, the letter you wrote for this application, or Trackr's company note. It also uses your CV, profile and notes, plus your answer guidance. The earlier answers you gave for other employers are reused as your own words, never with the other firm's name.
+- **Checked like the letters.**
+  - A choice must be one of the options.
+  - Written answers keep to the limit the question states (words, characters, sentences or the box's own limit).
+  - Every number, tool and employer must come from your material or the posting, with no placeholders or stock phrases.
+  - A second pass fact-checks written answers against your CV.
+  - Anything that fails goes back to the model once; anything that still fails is left for you.
+- **What it never does.** Diversity questions, declarations and consent boxes, and ID numbers never leave the page. Criminal, regulatory and health questions are only answered from what you wrote in _Answer guidance_ (e.g. "I have no convictions"). Facts it can't find (a referrer's name, a past application, a test score) are skipped, not guessed.
+- **You stay in charge.** AI answers are outlined in dashed orange; the popup lists each one, plus what it left and why. Undo takes them back with the rest of the fill. They're remembered per application, so the next page or a refill doesn't ask again. Switch it off under Settings › _Cover letters & AI_, or use _Answer them with AI_ in the popup for one page.
 
 **Cover letters and tailored CVs (AI)**
 
@@ -114,6 +129,7 @@ In both browsers the settings page opens on install. Fill in your profile and pi
 | New password on a sign-up form | Right-click the password box → _Generate strong password_ (or just fill the page)           |
 | Undo a fill                    | _Undo_ in the popup or in the on-page toast                                                 |
 | Write a cover letter           | Toolbar → _Write cover letter_ on the application page (set up a key under _Cover letters_) |
+| Answer the questions left      | Automatic with an AI key; or the popup's _Answer them with AI_                              |
 
 To change the shortcut, open `chrome://extensions/shortcuts` in Chromium browsers, or in Firefox go to `about:addons`, click ⚙, then **Manage Extension Shortcuts**. The settings page links there too.
 
@@ -128,8 +144,9 @@ The demo includes Greenhouse-, Workday- and Lever-style applications, searchable
 
 ## Privacy and security
 
-- **Nothing leaves your browser** unless you use the cover letter writer. There are no servers or analytics. The profile lives in the extension's local storage, plus the backup file in your own Downloads folder.
-- **The cover letter writer** sends the job description, your CV's text, your profile, notes and example letters to the AI provider you chose, with your own API key, and only when you ask for a letter. In Firefox it asks for your permission first. Your API keys stay in this browser and in your own backup file, so they come back if JobToFill is reinstalled; switch off _Keep my API keys in the backup file_ to leave them out (they are never sent anywhere but to the provider). Job descriptions are fetched from the job sites directly, without your cookies. Browsing history is only searched if you switch that on; it is searched locally, and only the matching job pages are opened. To find the job behind an application, JobToFill remembers the last few job-related pages each tab showed (at most 12, for 3 hours) in the browser's session memory; they are never written to disk or sent anywhere, and are gone when the browser closes. If you came from a Trackr list, its public programme list is fetched to confirm which job it is.
+- **Nothing leaves your browser** unless you use the AI features (cover letters, and answers to the questions a fill leaves empty). There are no servers or analytics. The profile lives in the extension's local storage, plus the backup file in your own Downloads folder.
+- **The cover letter writer** sends the job description, your CV's text, your profile, notes and example letters to the AI provider you chose, with your own API key, and only when you ask for a letter.
+- **AI answers** run only once you've added an API key, and only on job applications (never on checkout or sign-up pages). They send the empty questions (with their options), the job description, your CV's text, your profile, notes, answer guidance and your earlier written answers to the same provider. Diversity questions, declarations and ID numbers are never sent. Switch it off under Settings › _Cover letters & AI_. In Firefox it asks for your permission first. Your API keys stay in this browser and in your own backup file, so they come back if JobToFill is reinstalled; switch off _Keep my API keys in the backup file_ to leave them out (they are never sent anywhere but to the provider). Job descriptions are fetched from the job sites directly, without your cookies. Browsing history is only searched if you switch that on; it is searched locally, and only the matching job pages are opened. To find the job behind an application, JobToFill remembers the last few job-related pages each tab showed (at most 12, for 3 hours) in the browser's session memory; they are never written to disk or sent anywhere, and are gone when the browser closes. If you came from a Trackr list, its public programme list is fetched to confirm which job it is.
 - **Nothing runs until you ask.** The fill code is injected into a page only when you press the shortcut or a button. It is not loaded on every site you visit.
 - **The backup file is yours.** It is written only to your Downloads folder and contains your profile as plain JSON (the vault stays encrypted). Turn it off under _Backup & restore_ if you'd rather not keep one.
 - **The vault is encrypted** with AES-256-GCM. The key is derived from your master password (PBKDF2-SHA256, 600,000 iterations) and is kept only in memory (`storage.session`) while unlocked. Content scripts can't read it. The vault auto-locks after inactivity (30 minutes by default) and always locks when the browser closes. Backups contain the vault still encrypted.
@@ -159,7 +176,7 @@ Implemented ✅ · Ideas for later 💡
 - ✅ Encrypted vault: per-site generated passwords for ATS sign-ups, cards for checkout
 - ✅ Inspect overlay, undo, application log, multiple profiles, backup/restore
 - ✅ One codebase for Chromium browsers and Firefox, tested end-to-end in both
-- 💡 **AI-drafted answers** for open questions ("Why us?") using your summary, the job description on the page and a model API key you provide
+- ✅ **AI answers** for every question the rules can't answer ("Why us?", firm-specific choices, yes/no questions your CV settles), checked against your material and the posting
 - 💡 **Cover-letter templates** with `{company}` / `{role}` filled from the job posting
 - 💡 **Workday "Add another"**: click _Add_ for each extra education/job entry automatically
 - 💡 **Auto-advance** multi-step applications (fill, then _Next_, then fill again), always stopping before _Submit_
@@ -176,7 +193,8 @@ Implemented ✅ · Ideas for later 💡
 - "Enter manually" cover-letter boxes that only appear after a click aren't opened for you.
 - Sections that only appear after clicking _Add another_ aren't added automatically yet.
 - It can't fill CAPTCHAs or closed shadow roots, and won't run on browser pages or extension stores.
-- The cover letter writer needs an AI provider account (OpenRouter, DeepSeek or similar). Its checks catch invented numbers, skills, names and claims, but read the letter before you send it: the AI can still describe something more strongly than you would.
+- The cover letter writer and AI answers need an AI provider account (OpenRouter, DeepSeek or similar). Their checks catch invented numbers, skills, names and claims, but read the letter and every orange-outlined answer before you submit: the AI can still describe something more strongly than you would, or pick a preference you wouldn't.
+- AI answers read a custom dropdown's options by opening it. Searchable lists (schools, cities) are answered by typing, so an unusual option may not be found.
 - The job description is found and checked for 97% of the live postings tested (236 graduate and internship roles from Trackr's UK, US, Hong Kong, French and German trackers, across 25+ job sites) when you open the application from the job's page, and for 86% when you land on the application directly. No posting for another job was ever accepted as the same job. Some employers (SuccessFactors career sites, Amazon, law firm portals) send _Apply_ to a sign-in page that drops the job's ID: start from the job's page, switch on the browsing-history search, or paste the description.
 - CV text is read from text-based PDFs and Word files. Scanned (image-only) PDFs have no text to read.
 
@@ -195,10 +213,12 @@ extension/
     util.js            text normalization, dates, and JTF.api (browser.* in Firefox, chrome.* elsewhere)
     ai.js              OpenAI-compatible chat client (OpenRouter, DeepSeek, custom): JSON mode, retries, errors
     letter.js          cover letter and CV prompts, and the checks every draft must pass
+    answers.js         AI answers to the questions a fill leaves empty: what may be sent, limits, prompt, checks
     jobpage.js         job postings: extraction, ATS APIs, finding the description, same-job validation
     doctext.js         text from PDF and Word files (your CV, example letters), no dependencies
     pdfdoc.js          PDF writer: TeX-style line breaking, embedded fonts, the letter and CV layouts
   fonts/               Latin Modern (GUST font licence) as TrueType subsets, and English hyphenation patterns
+  offscreen/           Chromium only: reads job pages' HTML for the background (its service worker has no DOMParser)
   content/             injected on demand into every frame
     dom.js             finds controls (incl. shadow DOM), labels, radio groups
     fill.js            sets values the way frameworks notice, custom dropdowns, files, undo
@@ -210,6 +230,7 @@ extension/
 tests/
   unit/                node:test, no browser
   e2e/                 the real extension in Chromium (Playwright) or Firefox (Puppeteer + remote debugging)
+  live/                surveys of live application forms listed on Trackr (not run by npm test, see below)
   fixtures/            the demo/test forms; src/*.jsx are pages built with real React widgets
                        (react-select), bundled on request by serve.mjs; docs/ CVs in many PDF/Word
                        flavours (make.mjs rebuilds them), jobs/ trimmed real job pages and ATS API
@@ -232,3 +253,17 @@ npm run sign:firefox  # a signed .xpi for a permanent Firefox install (needs AMO
 ```
 
 Adding support for a new kind of field usually means adding a rule to `RULES` and a definition to `DEFS` in `extension/lib/fields.js`, plus a case in `tests/unit/classify.test.js`.
+
+### Surveying live application forms
+
+`tests/live/` measures JobToFill against the forms people actually apply through. It reads the programmes that are open now from Trackr's public tracker lists, then reads each form's questions through its job board's public API: Greenhouse, Ashby, and Lever's server-rendered form. No browser is needed, and nothing is ever submitted. Every question goes through the same classification, value resolution and option matching as a real fill, and the questions left unanswered are printed, most common first.
+
+```bash
+node tests/live/survey-api.mjs --limit 150                 # fetch and report (writes tests/live/survey-api-report.json)
+node tests/live/survey-api.mjs --from report.json          # re-run the rules on forms fetched before
+OPENROUTER_API_KEY=sk-or-… node tests/live/survey-api.mjs --from report.json --ai --forms 10
+                                                           # also answer what's left with the AI, and print it
+node tests/live/survey.mjs --limit 20                      # the real extension in Chromium on live forms (HEADED=1 to watch)
+```
+
+The first survey (117 live forms, 2,408 questions on Trackr's UK and US finance and tech trackers) is what the country-by-country right to work, job-site mapping, on-site and adjustments answers, and AI answers were built from. The rules now fill 1,546 of those questions (64%, up from 60%; about a third of the gain is the new profile answers, the rest is new and corrected rules), and about 30 right-to-work answers that were wrong for a British applicant on US forms are now right. Most of the 461 questions they still don't recognise are firm-specific, and those go to the AI.
