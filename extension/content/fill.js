@@ -208,6 +208,9 @@
   const OPEN_WAIT = 600;
   const SEARCH_WAIT = 2500;
 
+  const LISTBOX_LIKE =
+    '[role="listbox"], ul[class*="listbox" i], ul[class*="result" i], ul[class*="option" i], ul[class*="dropdown" i], ul[class*="suggest" i], ul[class*="autocomplete" i], [class*="listbox-results" i], [class*="listbox-drop" i], [class*="dropdown-menu" i], [class*="select-menu" i], [class*="cx-select" i][class*="list" i], [class*="select__menu" i]';
+
   function listboxFor(el) {
     const rootNode = el.getRootNode();
     const doc = el.ownerDocument;
@@ -220,9 +223,20 @@
       const lb = (rootNode.getElementById && rootNode.getElementById(id)) || doc.getElementById(id);
       if (lb && dom().isVisible(lb)) return lb;
     }
-    const all = Array.from(rootNode.querySelectorAll('[role="listbox"]'));
-    if (rootNode !== doc) all.push(...doc.querySelectorAll('[role="listbox"]'));
-    const visible = all.filter((lb) => dom().isVisible(lb) && !lb.closest('[data-jtf-ui]'));
+    const comboLike =
+      el.getAttribute('role') === 'combobox' ||
+      el.hasAttribute('aria-haspopup') ||
+      el.hasAttribute('aria-autocomplete') ||
+      el.getAttribute('aria-expanded') === 'true' ||
+      !!el.closest(
+        '[role="combobox"], [class*="select" i], [class*="combobox" i], [class*="dropdown" i], [class*="listbox" i]',
+      );
+    const selector = comboLike ? LISTBOX_LIKE : '[role="listbox"]';
+    const all = Array.from(rootNode.querySelectorAll(selector));
+    if (rootNode !== doc) all.push(...doc.querySelectorAll(selector));
+    // Nested matches (ul inside div.oj-listbox-drop): keep the outermost.
+    const cands = all.filter((lb) => dom().isVisible(lb) && !lb.closest('[data-jtf-ui]') && !lb.contains(el));
+    const visible = cands.filter((lb) => !cands.some((o) => o !== lb && o.contains(lb)));
     if (!visible.length) return null;
     for (let a = el.parentElement, i = 0; a && i < 6; a = a.parentElement, i++) {
       const near = visible.find((lb) => a.contains(lb));
@@ -231,9 +245,38 @@
     return visible[visible.length - 1]; // portals are usually appended last
   }
 
+  const OPTION_ROLES = '[role="option"]';
+  const MENUITEM_ROLES = '[role="menuitem"], [role="menuitemradio"], [role="treeitem"]';
+  const OPTION_CLASSES =
+    '[class*="option" i], [class*="result" i], [class*="item" i], [class*="suggest" i], [class*="cx-select" i]';
+  const NO_RESULTS =
+    /^(no (results?|matches|options|items|data)( found)?|nothing found|loading|searching|type to search)/i;
+
+  /** The rows of a list, however the widget marks them up (ARIA roles first, then <li>, then class names). */
+  function optionsIn(lb) {
+    const usable = (nodes) =>
+      nodes.filter((o) => {
+        const t = (dom().textOf(o) || o.getAttribute('aria-label') || '').trim();
+        return t && !NO_RESULTS.test(t);
+      });
+    for (const sel of [OPTION_ROLES, MENUITEM_ROLES]) {
+      const found = Array.from(lb.querySelectorAll(sel));
+      if (found.length) return usable(found);
+    }
+    const lis = usable(Array.from(lb.querySelectorAll('li')));
+    if (lis.length) return lis;
+    const classed = Array.from(lb.querySelectorAll(OPTION_CLASSES)).filter(
+      (o) => !/group|header|title|label-text/i.test(o.className),
+    );
+    // Innermost rows only: "oj-listbox-result" wraps "oj-listbox-result-label".
+    const leaves = usable(classed.filter((o) => !classed.some((x) => x !== o && o.contains(x))));
+    if (leaves.length) return leaves;
+    return usable(Array.from(lb.children).filter((c) => !c.querySelector('input, textarea')));
+  }
+
   function currentOptions(el) {
     const lb = listboxFor(el);
-    let opts = lb ? Array.from(lb.querySelectorAll('[role="option"]')) : [];
+    let opts = lb ? optionsIn(lb) : [];
     if (!opts.length) {
       // react-select without ARIA roles: its ids share a prefix ("react-select-3-input", "-listbox",
       // "-placeholder") even when the site gives the input its own id -> #react-select-3-option-0…
@@ -331,7 +374,11 @@
     return opts;
   }
 
-  /** Words to type into a searchable dropdown, best first: "University of Glasgow", then "Glasgow". */
+  /**
+   * Words to type into a searchable dropdown, best first: "University of Glasgow", then "Glasgow". Countries
+   * also try their short spellings ("UK"). `narrow` is a last-resort single word, only worth typing when the
+   * full queries showed no options at all.
+   */
   function searchQueries(v) {
     const out = [];
     const add = (q) => {
@@ -341,40 +388,85 @@
     if (v.kind === 'list') (v.items || []).slice(0, 3).forEach(add);
     add(v.search);
     add(v.text.length <= 60 ? v.text : '');
+    if (v.kind === 'country') {
+      for (const c of v.candidates || [])
+        if (c.length >= 2 && c.length <= 24 && !/[.,]/.test(c) && !/^[A-Z]{3}$/.test(c)) add(c);
+      return { full: out.slice(0, 4), narrow: null };
+    }
     const words = JTF.util
       .tokens(v.search || v.text)
       .filter((w) => w.length > 3 && !/^(university|college|school|institute|of|the)$/.test(w));
-    if (words.length > 1) add(words.sort((a, b) => b.length - a.length)[0]);
-    return out.slice(0, 3);
+    return { full: out.slice(0, 3), narrow: words.length > 1 ? words.sort((a, b) => b.length - a.length)[0] : null };
   }
 
   /** Did picking `text` register: a chip, the input's own value, or a closed menu showing it? */
-  function selectionShows(el, text) {
+  function selectionShows(el, text, typed) {
     const want = JTF.util.normalize(text);
     if (!want) return true;
-    if (JTF.util.normalize(el.value) === want) return true;
+    const have = JTF.util.normalize(el.value);
+    if (have === want) return true;
+    // Widgets that show a shorter form of the option ("United Kingdom" for "United Kingdom (GB)").
+    if (have.length >= 3 && have !== JTF.util.normalize(typed || '') && (want.includes(have) || have.includes(want)))
+      return true;
     if (chipsOf(el).some((c) => JTF.util.normalize(dom().textOf(c)).includes(want))) return true;
     const own = el.localName === 'input' ? '' : JTF.util.normalize(dom().textOf(el));
     return !!own && own.includes(want);
   }
 
+  const ACTIVE_ROW =
+    /\b(active|highlight(ed)?|focus(ed)?|hover(ed)?|selected|current)\b|--(active|focused|highlighted)/i;
+  function isActiveRow(el, option) {
+    const id = el.getAttribute('aria-activedescendant');
+    if (id && option.id === id) return true;
+    for (let n = option, i = 0; n && i < 3; n = n.parentElement, i++) {
+      if (n.getAttribute('aria-selected') === 'true' || ACTIVE_ROW.test(String(n.className || ''))) return true;
+    }
+    return false;
+  }
+
+  /** Walk the highlight down with ArrowDown until `option` is the active row, then press Enter. */
+  async function chooseByKeyboard(el, option) {
+    const list = currentOptions(el);
+    const idx = list.indexOf(option);
+    if (idx < 0) return;
+    el.focus({ preventScroll: true });
+    key(el, 'ArrowDown');
+    await sleep(30);
+    if (!list.some((o) => isActiveRow(el, o))) {
+      // No visible highlight to follow: the first press lands on the first row.
+      for (let i = 0; i < idx; i++) key(el, 'ArrowDown');
+    } else {
+      for (let i = 0; i < list.length && !isActiveRow(el, option); i++) {
+        key(el, 'ArrowDown');
+        await sleep(20);
+      }
+    }
+    await sleep(20);
+    key(el, 'Enter');
+    await sleep(40);
+  }
+
   async function choose(el, option) {
     const text = dom().textOf(option);
+    const typed = el.localName === 'input' ? el.value : '';
     if (option.scrollIntoView) option.scrollIntoView({ block: 'nearest' });
-    option.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, composed: true }));
-    option.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, composed: true }));
+    for (const type of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove']) {
+      const Ctor = type.startsWith('pointer') ? PointerEvent : MouseEvent;
+      option.dispatchEvent(new Ctor(type, { bubbles: true, composed: true }));
+    }
     pointerClick(option);
     // Registered once the value shows, or the menu closes behind the click (slow re-renders included).
     for (let waited = 0; waited < 300; waited += 30) {
       await sleep(30);
-      if (selectionShows(el, text) || !listboxFor(el)) return text;
+      if (selectionShows(el, text, typed) || !listboxFor(el)) return text;
     }
     // Some widgets only take the keyboard: highlight the option, then press Enter.
     if (option.isConnected && el.localName === 'input') {
-      option.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, composed: true }));
-      key(el, 'Enter');
-      await sleep(30);
-      if (selectionShows(el, text)) return text;
+      await chooseByKeyboard(el, option);
+      for (let waited = 0; waited < 150; waited += 30) {
+        if (selectionShows(el, text, typed) || !listboxFor(el)) return text;
+        await sleep(30);
+      }
     }
     return null;
   }
@@ -398,10 +490,16 @@
     };
     let idx = pick();
     if (idx < 0 && searchable) {
-      for (const query of searchQueries(v)) {
+      const { full, narrow } = searchQueries(v);
+      let sawAny = false;
+      for (const query of narrow ? [...full, narrow] : full) {
+        // A single word is a last resort: when the full spelling already listed options, they were all
+        // judged above, and a vaguer query would only invite the wrong pick.
+        if (query === narrow && sawAny) break;
         const before = optionsKey(opts);
         typeQuery(el, query);
         opts = await waitForOptions(el, SEARCH_WAIT, before);
+        if (opts.length) sawAny = true;
         idx = pick();
         if (idx >= 0) break;
         if (!opts.length && !listboxFor(el)) break; // no suggestions at all: not a dropdown

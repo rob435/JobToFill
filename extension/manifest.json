@@ -32,6 +32,8 @@
       "lib/matcher.js",
       "lib/vault.js",
       "lib/store.js",
+      "lib/ai.js",
+      "lib/assist.js",
       "background.js"
     ]
   },

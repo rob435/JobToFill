@@ -96,6 +96,13 @@ function renderResult(r) {
     ),
     r.missing.length ? resultLine('Missing from your profile:', r.missing) : null,
     r.unmatched.length ? resultLine('No matching option:', r.unmatched) : null,
+    r.ai && r.ai.filled
+      ? resultLine(
+          `AI filled ${r.ai.filled} — check ${r.ai.filled === 1 ? 'it' : 'them'}:`,
+          r.ai.items.map((i) => `${i.label} → ${i.answer}`),
+        )
+      : null,
+    r.ai && r.ai.error ? el('p', { className: 'result-list', textContent: 'AI help: ' + r.ai.error }) : null,
     r.consents ? consentLine(r.consents) : null,
     r.letter
       ? el('p', {
@@ -276,6 +283,9 @@ async function init() {
   }
 
   $('#fill').addEventListener('click', fill);
+  const assistBox = $('#ai-assist');
+  assistBox.checked = (await store.getSettings()).aiAssist !== false;
+  assistBox.addEventListener('change', () => store.saveSettings({ aiAssist: assistBox.checked }));
   $('#write-letter').addEventListener('click', writeLetter);
   $('#inspect').addEventListener('click', inspect);
   $('#learn').addEventListener('click', learn);

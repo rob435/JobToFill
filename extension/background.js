@@ -7,10 +7,19 @@
  */
 // Chromium loads the libraries here; Firefox lists them in manifest.json "background.scripts".
 if (typeof importScripts === 'function') {
-  importScripts('lib/util.js', 'lib/geo.js', 'lib/fields.js', 'lib/matcher.js', 'lib/vault.js', 'lib/store.js');
+  importScripts(
+    'lib/util.js',
+    'lib/geo.js',
+    'lib/fields.js',
+    'lib/matcher.js',
+    'lib/vault.js',
+    'lib/store.js',
+    'lib/ai.js',
+    'lib/assist.js',
+  );
 }
 
-const { store, vault, util, fields } = globalThis.JTF;
+const { store, vault, util, fields, ai: aiClient, assist } = globalThis.JTF;
 const api = globalThis.JTF.api;
 
 const CONTENT_FILES = [
@@ -21,6 +30,8 @@ const CONTENT_FILES = [
   'content/dom.js',
   'content/fill.js',
   'content/main.js',
+  'lib/assist.js',
+  'content/assist.js',
 ];
 
 // Right-click → "Insert from profile" entries.
@@ -126,7 +137,7 @@ async function fillPayload(tabId) {
 }
 
 async function fillTab(tabId, options) {
-  const opts = { toast: false, ...options };
+  const opts = { toast: false, assist: true, ...options };
   const { payload, letter } = await fillPayload(tabId);
   const { profile, settings } = payload;
   if (opts.only) Object.assign(payload, { only: opts.only, force: true });
@@ -152,6 +163,11 @@ async function fillTab(tabId, options) {
       filled: summary.filled,
       profile: profile.name,
     });
+  }
+  // Leftover questions the rules couldn't answer: the AI may answer them from the profile and extra details.
+  if (opts.assist && !opts.only && summary.detected) {
+    summary.ai = await assistFill(tabId, { payload, undoable: summary.undoable });
+    summary.undoable = summary.undoable || !!(summary.ai && summary.ai.filled);
   }
   if (opts.toast && settings.toast !== false) await showToast(tabId, summaryText(summary), { undo: summary.undoable });
   return summary;
@@ -197,9 +213,68 @@ function summaryText(s) {
   const lines = [`Filled ${s.filled} field${s.filled === 1 ? '' : 's'}.`];
   if (s.missing.length)
     lines.push(`Add to your profile: ${s.missing.slice(0, 5).join(', ')}${s.missing.length > 5 ? '…' : ''}`);
+  if (s.ai && s.ai.filled) lines.push(`AI filled ${s.ai.filled}: check ${s.ai.filled === 1 ? 'it' : 'them'}.`);
   if (s.consents) lines.push(consentText(s.consents));
   lines.push(...s.notes.slice(0, 2));
   return lines.join('\n');
+}
+
+/* ------------------------------------------------------------ AI assist */
+
+// Firefox asks before an add-on sends personal data anywhere (same permission the cover letter writer asks for).
+async function aiConsentGiven() {
+  if (!util.isFirefox()) return true;
+  try {
+    return await api.permissions.contains({ data_collection: ['personallyIdentifyingInfo', 'websiteContent'] });
+  } catch (err) {
+    return true;
+  }
+}
+
+/**
+ * After a normal fill: ask the AI to answer the fields left empty, from the profile and its extra details only,
+ * then write the answers into the page (undoable together with the fill). Needs an API key, consent and
+ * settings.aiAssist (on unless switched off). Never throws: returns { filled, items, asked, skipped?, error? }.
+ */
+async function assistFill(tabId, options) {
+  const result = { filled: 0, items: [], asked: 0 };
+  try {
+    const payload = (options && options.payload) || (await fillPayload(tabId)).payload;
+    if (payload.settings.aiAssist === false) return { ...result, skipped: 'off' };
+    const config = await store.aiConfig();
+    if (aiClient.problem(config)) return { ...result, skipped: 'no key' };
+    if (!(await aiConsentGiven())) return { ...result, skipped: 'no consent' };
+
+    const frames = await callFrames(tabId, 'collectUnfilled', [{ profile: payload.profile }]);
+    const fieldsByFrame = new Map();
+    const flat = [];
+    for (const f of frames) {
+      for (const field of f.fields || []) {
+        if (flat.length >= assist.MAX_FIELDS) break;
+        const id = `${f.frameId}:${field.id}`;
+        fieldsByFrame.set(id, f.frameId);
+        flat.push({ ...field, id });
+      }
+    }
+    if (!flat.length) return { ...result, skipped: 'nothing to answer' };
+
+    const run = await assist.run({ fields: flat, profile: payload.profile, config });
+    result.asked = run.asked;
+    const perFrame = new Map();
+    for (const [id, entry] of Object.entries(run.answers)) {
+      const frameId = fieldsByFrame.get(id);
+      if (!perFrame.has(frameId)) perFrame.set(frameId, {});
+      perFrame.get(frameId)[id.slice(id.indexOf(':') + 1)] = entry;
+    }
+    for (const [frameId, answers] of perFrame) {
+      const [r] = await callFrames(tabId, 'applyAnswers', [answers, payload.settings], [frameId]);
+      result.filled += (r && r.filled) || 0;
+      result.items.push(...((r && r.items) || []));
+    }
+    return result;
+  } catch (err) {
+    return { ...result, error: String((err && err.message) || err) };
+  }
 }
 
 async function showToast(tabId, message, opts, frameIds) {
@@ -559,6 +634,7 @@ const sum = (frames, key) => frames.reduce((n, f) => n + (f[key] || 0), 0);
 const HANDLERS = {
   // From the popup and settings page.
   'jtf:fill': (msg) => fillTab(msg.tabId, { toast: !!msg.toast }),
+  'jtf:assist': (msg) => assistFill(msg.tabId),
   'jtf:undo': async (msg) => ({ undone: sum(await callFrames(msg.tabId, 'undo'), 'undone') }),
   'jtf:inspect': async (msg) => {
     const { profile, settings } = await store.getActive();
@@ -689,6 +765,7 @@ api.runtime.onStartup.addListener(async () => {
 // For debugging from the background console, and for the end-to-end tests.
 globalThis.JTFBackground = {
   fillTab,
+  assistFill,
   callFrames,
   ensureInjected,
   handleMenuClick,

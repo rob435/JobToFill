@@ -169,7 +169,7 @@ test('value resolution', () => {
   const p = sample();
   const ctx = (extra) => Object.assign({ jobContext: true, index: 0 }, extra);
   assert.equal(fields.resolve('name.full', p).text, 'Ada Lovelace');
-  assert.equal(fields.resolve('name.preferred', p).text, 'Ada', 'falls back to first name');
+  assert.equal(fields.resolve('name.preferred', p).text, 'Ada Lovelace', 'full legal name by default');
   assert.equal(fields.resolve('phone', p, ctx()).text, '+44 20 7946 0958');
   assert.equal(fields.resolve('phone', p, ctx({ hasCountryCodeField: true })).text, '20 7946 0958');
   assert.equal(fields.resolve('location', p).text, 'London, United Kingdom');
@@ -1466,4 +1466,16 @@ test('enrolment status from your education dates (SpaceX, Cloover)', () => {
     ).type,
     'edu.end',
   );
+});
+
+test('nickname-style boxes always get the legal name, never the profile preferredName', () => {
+  const p = sample();
+  p.personal.preferredName = 'Countess';
+  const name = (question) => fields.resolve('name.preferred', p, { question: util.normalize(question) }).text;
+  assert.equal(name('Preferred name'), 'Ada Lovelace');
+  assert.equal(name('Preferred full name'), 'Ada Lovelace');
+  assert.equal(name('Display name'), 'Ada Lovelace');
+  assert.equal(name('Preferred first name'), 'Ada');
+  assert.equal(name('Nickname'), 'Ada');
+  assert.equal(name('Name you go by (first name)'), 'Ada');
 });

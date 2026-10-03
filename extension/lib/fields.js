@@ -880,10 +880,18 @@
     'name.first': simple('First name', 'personal.firstName'),
     'name.middle': simple('Middle name', 'personal.middleName'),
     'name.last': simple('Last name', 'personal.lastName'),
+    // Nickname-style boxes ("Preferred name", "Known as", "Display name") always get the LEGAL name: the first
+    // name when the label says first / given / short / nick, otherwise the full legal name. The profile's
+    // preferredName is never filled into forms.
     'name.preferred': {
       label: 'Preferred name',
-      path: 'personal.preferredName',
-      get: (p) => val(p.personal.preferredName || p.personal.firstName),
+      get(p, ctx) {
+        const q = U.normalize((ctx && ctx.question) || '');
+        const full =
+          /\b(full|legal|complete|whole|entire|surname|passport|official|nom complet|nombre completo)\b/.test(q);
+        const first = /\b(first|given|short|nick ?name|forename|prenom|vorname|nombre|nome)\b/.test(q);
+        return val(first && !full ? p.personal.firstName : fullName(p));
+      },
     },
     'name.prefix': simple('Title (Mr/Ms)', 'personal.prefix'),
     pronouns: simple('Pronouns', 'personal.pronouns'),
@@ -1824,7 +1832,10 @@
     }),
     R(
       'name.preferred',
-      /preferred (first |given )?name|nick ?name|\bgoes by\b|known as|chosen name|name you (go by|prefer)|\benglish (first |given )?name\b/,
+      /\bpreferred (first |given |full |legal |short )?(name|forename)|\bpref(erred)? name|nick ?name|\bgoes by\b|\bgo by\b|\bknown as\b|\bchosen (first |full )?name|\bname you (go by|prefer|are known by|use|would like|like to (be called|go by))|\b(what|how) (should|do|can|may) (we|i) call you|\bcall you\b|\b(display|screen|short|common|informal|alias) name\b|\balias\b|\benglish (first |given |full )?name\b|\bspitzname|\brufname|\bbevorzugter (vor)?name|\bnom (d usage|usuel)|\bprenom usuel|\bsurnom\b|\bapodo\b|\bnombre (preferido|social)|\bsoprannome\b|\bnome (preferito|social)/,
+      {
+        not: /user ?name|company|employer|school|business|card|organi|contact|\breferences?\b|\breferr|emergency|manager|screen ?name ?(on|in)/,
+      },
     ),
     R(
       'name.first',

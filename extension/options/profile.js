@@ -230,6 +230,19 @@ const FORMS = {
     intro: 'Longer answers for summary, skills and cover letter boxes.',
     groups: [
       {
+        title: 'Extra details for the AI',
+        fields: [
+          f('extraDetails', 'Extra details', {
+            type: 'textarea',
+            rows: 5,
+            wide: true,
+            placeholder:
+              'I have no involvement with any government or political office, and no relatives who do. No criminal convictions. Happy to relocate. Notice period: none.',
+            hint: 'Anything an application might ask that isn’t in the boxes above, in your own words. When you fill a page, the AI (if you’ve added a key under Cover letters) answers leftover questions from this and your profile only, and says nothing it can’t find here. Only the questions and these details are sent, never passwords or cards.',
+          }),
+        ],
+      },
+      {
         title: 'Text',
         fields: [
           f('skills', 'Skills', {
