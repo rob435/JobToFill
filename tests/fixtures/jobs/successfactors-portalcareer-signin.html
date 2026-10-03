@@ -1,0 +1,138 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html lang="en"><head>
+<!-- Trimmed from an SAP SuccessFactors classic career site, Moody's (2026-10-03): what "Apply" on
+     successfactors-portalcareer-job.html shows. The form posts to its action, so the address is a session token alone,
+     career8.successfactors.com/portalcareer?_s.crb=…, and stays that one through signing in, creating an account and
+     the application itself. Only the form's hidden fields still name the job (career_job_req_id) and the tenant
+     (career_company, company), as on every step of these sites. Stylesheets and scripts removed; requestParams and the
+     session token shortened. -->
+<as:ajaxinclude include="genericObjectAutoCompleteController" legacyMode="false"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, minimum-scale=1.0" />
+<div id='rmkContent'>
+<title>Let's begin! Sign in to apply at Moody's </title></head>
+<body class="careerSite mobileApplyCtr" onload="">
+<form id="careerform" name="careerform" action="/portalcareer?_s.crb=Ivkrj5Brox8p4iWEFY0bBxDJ%252bUPoD%252bRKBcR8mh%252bgkdE%253d" method="POST" accept-charset="UTF-8" autocomplete="off" >
+  <input type="hidden" id="career_company" name="career_company" value="MoodysProd">
+  <input type="hidden" id="site" name="site"
+    value="">
+<input type="hidden" id="isInternalUser" name="isInternalUser" value=""/>
+<input type="hidden" id="jobPipeline" name="jobPipeline" value="">
+<input type="hidden" id="referral_key" name="referral_key" value="">
+<input type="hidden" id="career_job_req_id" name="career_job_req_id" value="14588">
+<input type="hidden" id="clientId" name="clientId" value="">
+<input type="hidden" id="socialApply" name="socialApply" value=""/>
+<input type="hidden" id="newCandidate" name="newCandidate" value=""/>
+<input type="hidden" id="career_email_url" name="career_email_url" value="">
+<input type="hidden" id="jlsummary_sort_col" name="jlsummary_sort_col" value="0">
+<input type="hidden" id="jlsummary_sort_dir" name="jlsummary_sort_dir" value="0">
+    <div id="overlayMask" class="transparent_mask" style="position:absolute; display: block; top: 0px; left: 0px; width:100%; height:100%;  z-index: 11000;">
+        <noscript>
+            <div class="loading_indicator_layout_static"><strong><h2>JavaScript is turned off in your web browser. Turn it on to take full advantage of this site, then refresh the page.</h2></strong></div>
+        </noscript>
+        <div class="loading_indicator_layout_static"><strong class="icon_loading">Loading...</strong></div>
+    </div>
+        <!--hidden fields of navigation-->
+        <input id="navBarLevel" name="navBarLevel" type="hidden" value="JOB_SEARCH" />
+        <input id="subNavBarLevel" name="subNavBarLevel" type="hidden" /><input id="navBarLevelParam" type="hidden" name="navBarLevelParam" value="JOB_SEARCH" /><input id="subNavBarLevelParam" type="hidden" name="subNavBarLevelParam" value="" />
+        <!--Hidden fields for Language dropdown-->
+        <input type="hidden" name="rcm_site_locale" id="rcm_site_locale" value="" />
+        <input type="hidden" id="selected_lang" name="selected_lang" value="" />
+        <div id="renderCareerTopNav" class="responsiveTopNav"></div>
+      <span id='skipContent' role="region" aria-label="Skip to Main Content" tabindex="-1"></span>
+<div id="page" class="globalRoundedCorners v12PageCtr responsivePage globalHumanistText">
+            <div id="extCareerSubNav"></div>
+            <div id="page_content" class=''>
+<input type="hidden" id="login_ns" name="login_ns">
+<input type="hidden" name="requestParams" value="6xLhn1Q7xeGy39iOyUaI8AA0ccl42oVV3XIbNRRWf0LTtKRN02kZmA5XufWsrf3z9ALSNGkDSROS">
+<div  id="msgContainer">
+<div id="uiErrorContainer_2" style="display:none" class="round sysmsg error" role="alert" tabindex="-1">
+    <dl>
+        <dd class="msg">
+            <strong><span id="uiErrorMsg" class='warningMsgText'></span></strong>
+            <div id="dynamicErrorMessages" >
+                <!-- Dynamic errors will be added here via JavaScript -->
+            </div>
+        </dd>
+    </dl>
+</div>
+</div>
+<div role="region" aria-label="Let's begin!Sign in to apply at Moody's ">
+<div class="modal">
+  <!-- BEGIN panel -->
+  <div class="sfpanel_wrapper">
+    <div class="page_title page_accessible_title" id="signInTitleContainer">
+      <h1>Let's begin! Sign in to apply at Moody's</h1>
+    </div>
+    <div class="round sfpanel">
+      <div class="bd">
+        <div class="content extLoginFormContent">
+          <input type="hidden" id="fbcs_keyword" name="fbcs_keyword" value="">
+          <input type="hidden" id="career_ns" name="career_ns" value="job_save">
+          <input type="hidden" id="career_os" name="career_os" value="job_listing">
+		      <input type="hidden" id="loginFlowRequired" name="loginFlowRequired" value="true">
+          <div class="bottomLink">
+            <h2 class="haveAnAccount">Already have an account?</h2>
+            <p>Enter your email address and password (Credentials are case sensitive).</p>
+            <div class="requiredMessage"><span class="required requiredAccessible">*</span>indicates a required field.</div>
+          </div>
+          <table role="presentation" class="axial noborder bottomspace table table-condensed">
+            <tr>
+              <td class="com-sm-4 trHeader"><label for="username" title="Required">Email Address:<span class="required requiredAccessible" aria-hidden="true">*</span></label></td>
+              <td><input type="text" name="username" id="username"  value=""  size="30"
+                         onblur="validateEmail(event);" onpaste="SFDOMEvent.preventDefault(event);" aria-label="Email Address:" aria-invalid="false" aria-describedby="signIn_EmailError" aria-required="true" maxlength="99" autocomplete="username">
+               <span id="signIn_EmailError" class="rcmValidationMsgArea" style="display:none" aria-live="assertive"></span>
+               </td>
+            </tr>
+            <tr>
+              <td class="com-sm-4 trHeader"><label for="password" title="Required">Password:<span class="required requiredAccessible" aria-hidden="true" >*</span></label> </td>
+              <td>
+              <div style="display:flex">
+                 <input type="password" name="password" id="password" onblur="validatePassword(event);" aria-label="Password:"
+                    aria-describedby="signIn_PasswordError" aria-invalid="false" size="30" aria-required="true" maxlength="99" autocomplete="current-password">
+                  <input type="button" title="Show Password"
+                    style="margin-left:5px" name="show_button" value="Show"
+                    id="show_button" onclick="togglePassword('password','show_button');">
+              </div>
+               </td>
+            </tr>
+          <tr>
+            <td></td>
+            <td class="button_row mobileApplyButtonRow">
+              <span class="aquabtn active"><span><button onclick="return validateFields();">
+                Sign in to apply at Moody's
+              </button></span></span>
+              <span>
+                <a href="/portalcareer?company=MoodysProd&site=&lang=en_US&requestParams=6xLhn1Q7xeGy39iOyUaI8AA0ccl42oVV3XIbNRRWf0LTtKRN02kZmA5XufWsrf3z9A&login_ns=forgot_pwd&career_ns=job%5fsave&career_os=job%5flisting&career_job_req_id=14588&jlsummary_sort_col=0&jlsummary_sort_dir=0&navBarLevel=JOB%5fSEARCH&_s.crb=Ivkrj5Brox8p4iWEFY0bBxDJ%2bUPoD%2bRKBcR8mh%2bgkdE%3d">
+                  Forgot your password?
+                </a>
+              </span>
+            </td>
+          </tr>
+        </table>
+          <p>
+            <h2 class="haveAnAccount">Not registered yet?</h2>
+            <div class="bottomLink">
+              <a href="/portalcareer?company=MoodysProd&site=&lang=en_US&requestParams=6xLhn1Q7xeGy39iOyUaI8AA0ccl42oVV3XIbNRRWf0LTtKRN02kZmA5XufWsrf3z9A&login_ns=register&career_ns=job%5fsave&career_os=job%5flisting&career_job_req_id=14588&navBarLevel=JOB%5fSEARCH&_s.crb=Ivkrj5Brox8p4iWEFY0bBxDJ%2bUPoD%2bRKBcR8mh%2bgkdE%3d">
+              Create your account </a>
+              <span></span>
+          </p>
+        </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- END panel -->
+</div>
+</div>
+</div>
+            </div>
+</div>
+  <input type="hidden" id="brandUrl" name="brandUrl"
+    value="">
+        <input type="hidden" id="career_ns" name="career_ns" value="job_save">
+        <input type="hidden" id="company" name="company" value="MoodysProd">
+</form>
+</body>
+       </div>
+</html>
