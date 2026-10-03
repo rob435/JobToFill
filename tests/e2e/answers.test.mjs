@@ -177,6 +177,8 @@ test('the popup shows the AI step as it runs, then what it answered and what it 
   const page = await h.open('ai-questions.html');
   const tabId = await h.tabId(page);
   const popup = await h.extPage(`popup/popup.html?tab=${tabId}`);
+  // The page is reachable before its script has run: wait for the popup to start.
+  await until(popup.call, () => document.querySelector('#version').textContent);
   await popup.call(() => document.querySelector('#fill').click());
   const text = await until(
     popup.call,

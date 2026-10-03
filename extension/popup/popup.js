@@ -15,6 +15,8 @@ import {
 const { store, vault, util, ai } = globalThis.JTF;
 
 let tab = null;
+// The tab the popup is for, once init has looked it up (a click on Fill can come before that).
+let tabFound = null;
 let suggestions = [];
 
 const send = (message) => api.runtime.sendMessage({ tabId: tab.id, ...message });
@@ -316,6 +318,7 @@ async function fill() {
   button.disabled = true;
   label.textContent = 'Filling…';
   try {
+    tab = tab || (await tabFound);
     renderResult(await send({ type: 'jtf:fill' }));
   } catch (err) {
     renderResult({ error: String(err.message || err) });
@@ -508,7 +511,12 @@ async function allowAccess() {
 async function init() {
   // popup.html?tab=<id> targets a specific tab (useful when the popup is opened as a page for debugging).
   const forced = new URLSearchParams(location.search).get('tab');
-  tab = forced ? await api.tabs.get(+forced) : (await api.tabs.query({ active: true, currentWindow: true }))[0];
+  tabFound = forced
+    ? api.tabs.get(+forced)
+    : api.tabs.query({ active: true, currentWindow: true }).then((tabs) => tabs[0]);
+  // Ready at once: a Fill pressed while the popup is still starting waits for the tab instead of doing nothing.
+  $('#fill').addEventListener('click', fill);
+  tab = await tabFound;
 
   $('#version').textContent = 'v' + api.runtime.getManifest().version;
   const shortcut = await fillShortcut();
@@ -520,7 +528,6 @@ async function init() {
     $('#page-note').hidden = false;
   }
 
-  $('#fill').addEventListener('click', fill);
   $('#write-letter').addEventListener('click', writeLetter);
   $('#quick-apply').addEventListener('click', () => quickApply().catch((err) => showQuickError(err)));
   $('#quick-last').addEventListener('click', openLastQuick);
