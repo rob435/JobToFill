@@ -331,8 +331,9 @@ test('student and graduate-scheme questions', () => {
   assert.equal(ask('When does your course finish?'), 'edu.end');
   assert.equal(ask('When are you graduating?'), 'edu.end');
   assert.equal(ask('Did you graduate?', 'radio', ['Yes', 'No']), null);
-  assert.equal(ask('High school graduation year'), null, 'school leaving year is not your degree');
-  assert.equal(ask('A level completion year'), null);
+  // A school-leaving year is a date too, answered from a school entry (eduLevelOf), never the degree's.
+  assert.equal(ask('High school graduation year'), 'edu.end');
+  assert.equal(ask('A level completion year'), 'edu.end');
   assert.equal(ask('What year of study are you in?', 'select', years), 'edu.year');
   assert.equal(ask('Current year of study', 'select', years), 'edu.year');
   assert.equal(ask('Class standing', 'select', ['Freshman', 'Sophomore', 'Junior', 'Senior']), 'edu.year');
@@ -443,7 +444,7 @@ test('real screening questions from graduate application forms', () => {
     'not a school',
   );
   assert.equal(ask('Have you attended a university?'), null);
-  assert.equal(ask('Please specify the grading scale used by your current school.'), null);
+  assert.equal(ask('Please specify the grading scale used by your current school.'), 'edu.gpaScale', 'not the school');
   // Not a sponsorship, relocation or salary question just because a word appears.
   assert.equal(
     ask(
@@ -530,10 +531,14 @@ test('education questions from graduate application forms', () => {
     ask('What is your graduation year (class of 2030 and 2031 undergraduate degrees will not be considered)?'),
     'edu.end:year',
   );
-  assert.equal(ask('Are you an undergraduate student?', 'select', ['Yes', 'No']), null);
+  assert.equal(ask('Are you an undergraduate student?', 'select', ['Yes', 'No']), 'edu.enrolled', 'at that level');
   assert.equal(ask('What year do you plan on finishing your university studies?'), 'edu.end:year');
   assert.equal(ask('In which year will you/ did you leave academia?'), 'edu.end:year');
-  assert.equal(ask('Please indicate the maximum possible score/GPA at your institution, if applicable.', 'text'), null);
+  assert.equal(
+    ask('Please indicate the maximum possible score/GPA at your institution, if applicable.', 'text'),
+    'edu.gpaScale',
+    'what a GPA is out of, never the GPA',
+  );
   assert.equal(
     ask('What are you on track to receive/ did you receive in your Undergraduate degree?', 'select', [
       'First Class',
@@ -1314,5 +1319,79 @@ test('live survey (British student in Glasgow): residence, commuting, UK visa an
       null,
     ),
     'job.sponsorship',
+  );
+});
+
+test('live survey (Glasgow undergraduate): what each education and background question asks', () => {
+  const ask = (label, kind, options) =>
+    typeOf(desc({ label }, { kind: kind || 'text', options: options ? opts(...options) : null }));
+  const yn = ['Yes', 'No'];
+  const cases = [
+    // A box for what the list didn't have (IMC), never another answer.
+    ['If your year of graduation is not listed, please specify.', null],
+    ['If latest field of study is not listed, please specify.', null],
+    ['If current year of studies is not listed, please specify.', null],
+    ['If residing in another country, please specify.', null],
+    // School-level questions (answered from a school entry).
+    ['What grades did you achieve in your secondary education?', 'edu.gpa'],
+    ['What A Level grades (or International Equivalent) did you achieve?', 'edu.gpa'],
+    ['Highers / Advanced Highers results', 'edu.gpa'],
+    ['Name of secondary school', 'edu.school'],
+    ['What year did you graduate from high school?', 'edu.end:year'],
+    ['Year of completion of A-levels', 'edu.end:year'],
+    ['UCAS points', null],
+    // Workday's education dates.
+    ['From (Actual)', 'gen.start'],
+    ['To (Actual or Expected)', 'gen.end'],
+    ['End Date (or expected)', 'gen.end'],
+    ['GPA Scale', 'edu.gpaScale'],
+    ["If you are in your first year of studies and yet to receive your results, please type 'N/A'", null],
+    ['Current city', 'location'],
+    ['Which city are you based in?', 'location'],
+    [
+      'Please disclose below whether AI tools were used to generate all or a significant portion of the submitted code sample.',
+      null,
+    ],
+  ];
+  for (const [label, want] of cases) assert.equal(ask(label), want, label);
+  const choices = [
+    ['Are you currently an undergraduate student?', yn, 'edu.enrolled'],
+    ['Are you a final year student?', yn, 'edu.year'],
+    ['Are you a penultimate year student?', yn, 'edu.year'],
+    ['Do you have a 2:1 or above (or equivalent)?', yn, 'edu.classAtLeast'],
+    ['Are you predicted at least a 2:1?', yn, 'edu.classAtLeast'],
+    ['Have you achieved or are you on track for a First or 2:1?', yn, 'edu.classAtLeast'],
+    ['Minimum 2:1 required — do you meet this?', yn, 'edu.classAtLeast'],
+    ['Do you expect to graduate with honours?', yn, 'edu.classAtLeast'],
+    ['When did you graduate from High School?', ['2021', '2022', '2023'], 'edu.end:year'],
+    [
+      'Please specify the grading scale used by your current school.',
+      ['4.0 Scale', 'UK Grading System'],
+      'edu.gpaScale',
+    ],
+    [
+      'Which socio-economic background do you identify with?',
+      ['Professional', 'Intermediate', 'Working class'],
+      'eeo.socioEconomic',
+    ],
+    ['State (If N/A, Select Other)', ['AL', 'AK', 'AZ', 'Other'], 'address.state'],
+    [
+      'This role requires that you are willing to relocate to one of the following locations New York, NY, USA or San Francisco, CA, USA. Please confirm that you are willing to relocate for this role?',
+      yn,
+      'job.relocate',
+    ],
+    [
+      'Are you in your penultimate year of your master’s or bachelor’s degree, and graduating in 2028?',
+      yn,
+      'edu.end:year',
+    ],
+  ];
+  for (const [label, options, want] of choices) assert.equal(ask(label, 'select', options), want, label);
+  assert.equal(
+    ask(
+      'If you would like to share a file of your code sample, please upload here. You can upload your sample as a .zip file.',
+      'file',
+    ),
+    null,
   );
 });

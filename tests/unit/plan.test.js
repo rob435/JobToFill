@@ -2247,3 +2247,505 @@ test('geo: places in sentences and job locations', () => {
   assert.equal(geo.whereIs({ city: 'Cambridge', country: 'UK' }).metro, 'cambridge');
   assert.equal(geo.whereIs({ city: 'Greenwich', country: 'United Kingdom' }).metro, '');
 });
+
+/* --------------------------- live survey: a Glasgow Computing Science student with a Scottish school entry */
+
+/** The survey's applicant: University of Glasgow BSc Computing Science (2:1 expected, June 2027), then Hillhead High. */
+function computingScientist() {
+  const p = glaswegian();
+  p.education = [
+    Object.assign(fields.blankEducation(), {
+      school: 'University of Glasgow',
+      degree: 'BSc',
+      field: 'Computing Science',
+      gpa: '2:1',
+      location: 'Glasgow, UK',
+      startDate: '2023-09',
+      endDate: '2027-06',
+    }),
+    Object.assign(fields.blankEducation(), {
+      school: 'Hillhead High School',
+      degree: 'Advanced Highers',
+      field: 'Mathematics, Physics, Computing Science',
+      gpa: 'AAB',
+      location: 'Glasgow, UK',
+      startDate: '2017-08',
+      endDate: '2023-06',
+    }),
+  ];
+  return p;
+}
+
+/** What a fill puts in each box of a page: the option picked, the text typed, or null. */
+function fillPage(page, p) {
+  const { results, context } = matcher.plan(page, p);
+  return page.map((d, i) => {
+    const r = results[i];
+    if (!r || !r.type) return null;
+    const v = fields.resolve(r.type, p, {
+      ...context,
+      index: r.index || 0,
+      part: r.part,
+      kind: d.kind,
+      question: util.normalize(matcher.questionText(d)),
+      options: d.options,
+      today: TODAY,
+    });
+    if (!v) return null;
+    if (!d.options) return matcher.formatForText(v, d);
+    const k = matcher.matchOption(d.options, v);
+    return k < 0 ? null : d.options[k].text;
+  });
+}
+
+test('IMC: "If … is not listed, please specify." boxes are for answers the list lacks, never a second entry', () => {
+  const p = computingScientist();
+  const select = (label, ...options) => desc({ label }, { kind: 'select', options: opts(...options) });
+  const years = select('When is your expected year of graduation?', '2023', '2024', '2025', '2026', '2027', '2028');
+  const page = [
+    years,
+    desc('If your year of graduation is not listed, please specify.'),
+    select('When is your expected graduation month?', 'January', 'February', 'May', 'June', 'July', 'December'),
+    select(
+      'What is your latest field of study?',
+      'Mathematics',
+      'Statistics',
+      'Computer Science',
+      'Economics',
+      'Natural Science',
+      'Physics',
+      'Engineering (various disciplines)',
+      'Informatics/Information Technology',
+      'Other',
+    ),
+    desc('If latest field of study is not listed, please specify.'),
+    select(
+      'What is the current year of your studies?',
+      "3rd year undergraduate (Bachelor's)",
+      "4th year undergraduate (Bachelor's)",
+      "1st year postgraduate (Master's)",
+      'Other',
+    ),
+    desc('If current year of studies is not listed, please specify.'),
+    select(
+      'What is your current academic performance rating?',
+      '90–100% | 9.0–10.0 average | First Class',
+      '80–89% | 8.0–8.9 average | First Class',
+      '70–79% | 7.0–7.9 average | First Class',
+      '60–69% | 6.0–6.9 average | Upper Second',
+      '50–59% | 5.0–5.9 average | Lower Second',
+      '40–49% | 4.0–4.9 average | Third Class',
+      'Below 40% | Below 4.0 average | Fail',
+    ),
+    desc('If residing in another country, please specify.'),
+  ];
+  assert.deepEqual(types(matcher.plan(page, p)), [
+    'edu.end#0:year',
+    null,
+    'edu.end#0:month',
+    'edu.field#0',
+    null,
+    'edu.year',
+    null,
+    'edu.classification#0',
+    null,
+  ]);
+  assert.deepEqual(fillPage(page, p), [
+    '2027',
+    null,
+    'June',
+    'Computer Science',
+    null,
+    "4th year undergraduate (Bachelor's)",
+    null,
+    '60–69% | 6.0–6.9 average | Upper Second',
+    null,
+  ]);
+  // Asked again in other words right after the list (a native select, or Greenhouse's react-select), it is still the
+  // list's "other" box; a second block of the same fields is the second entry.
+  assert.deepEqual(types(matcher.plan([years, desc('Graduation year')], p)), ['edu.end#0:year', null]);
+  const search = desc({ label: 'When is your expected year of graduation?' }, { kind: 'combobox' });
+  assert.deepEqual(types(matcher.plan([search, desc('Graduation year')], p)), ['edu.end#0:year', null]);
+  const block = [desc('School'), years];
+  assert.deepEqual(types(matcher.plan(block.concat(block), p)), [
+    'edu.school#0',
+    'edu.end#0:year',
+    'edu.school#1',
+    'edu.end#1:year',
+  ]);
+  for (const label of [
+    'If your university does not appear in the above options, please select one of the "Other" options and enter it here.',
+    'If your subject isn’t listed, please type it here',
+    'If your degree is not in the list, please enter it',
+  ])
+    assert.equal(matcher.classify(desc(label)), null, label);
+});
+
+test('degree subjects: "Computing Science" is "Computer Science", never "Science"; categories by what they list', () => {
+  const p = computingScientist();
+  const subject = (question, ...options) => choose(p, 'edu.field', question, options);
+  const rothesay = [
+    'Biology',
+    'Business',
+    'Chemistry',
+    'Computer Science',
+    'Economics',
+    'Engineering',
+    'Mathematics',
+    'Physical Sciences',
+    'Physics',
+    'Science',
+    'Social Sciences',
+    'Other',
+  ];
+  assert.equal(subject('What is your Degree discipline?', ...rothesay), 'Computer Science');
+  const maven = [
+    'Accounting',
+    'Business & Management Studies',
+    'Computer Science',
+    'Data Science',
+    'Engineering',
+    'Mathematics & Statistics',
+    'Physics & Astronomy',
+    'Software Engineering',
+    'Other',
+  ];
+  assert.equal(
+    subject('Which degree subject are you currently studying/have most recently studied?', ...maven),
+    'Computer Science',
+  );
+  const talos = [
+    'STEM (Science, Technology/Computer Science, Engineering, Mathematics)',
+    'Finance (Accounting, Risk, Investment, Corporate Finance, Banking)',
+    'Economics ',
+    'Humanities (History, Geography, Religious Education (RE), English Literature and Language, Philosophy, Classics, and Modern Languages)',
+    'Law ',
+    'Business',
+    'Other',
+    'Not Applicable/I do not hold an undergraduate degree',
+  ];
+  assert.equal(subject('Field of Study in your Undergraduate degree', ...talos), talos[0]);
+  assert.equal(subject('Field of Study in your Postgraduate degree', ...talos), null, 'no postgraduate entry');
+  assert.equal(
+    subject('What is your major?', 'Business/Finance', 'Economics', 'Mathematics', 'Computer Science', 'Engineering'),
+    'Computer Science',
+  );
+  // Other names both ways, and the catch-all only when nothing more telling is offered.
+  const pick = (field, ...options) => {
+    p.education[0].field = field;
+    return subject('Degree subject', ...options);
+  };
+  assert.equal(pick('Maths', 'Mathematics & Statistics', 'Economics'), 'Mathematics & Statistics');
+  assert.equal(pick('Mathematics', 'Maths', 'Physics'), 'Maths');
+  assert.equal(pick('Econ', 'Econometrics', 'Economics'), 'Economics');
+  assert.equal(pick('PPE', 'Politics, Philosophy and Economics', 'Philosophy'), 'Politics, Philosophy and Economics');
+  assert.equal(pick('Philosophy, Politics and Economics', 'PPE', 'Economics'), 'PPE');
+  assert.equal(pick('LLB Law', 'Accounting', 'Law (LLB)', 'Linguistics'), 'Law (LLB)');
+  assert.equal(pick('Natural Sciences', 'Natural Science', 'Science'), 'Natural Science');
+  assert.equal(pick('Business Management', 'Business', 'Management Science'), 'Business');
+  assert.equal(
+    pick('Electrical and Electronic Engineering', 'Electrical Engineering', 'Engineering'),
+    'Electrical Engineering',
+  );
+  assert.equal(pick('Mechanical Engineering', 'Science', 'Engineering', 'Arts'), 'Engineering');
+  const stem = 'STEM (Science, Technology, Engineering, Maths)';
+  assert.equal(pick('Physics', stem, 'Humanities', 'Business'), stem);
+  assert.equal(pick('Computer Science', 'Science', 'Computer Engineering', 'Arts'), 'Science', 'only a catch-all fits');
+  assert.equal(pick('History', 'Mathematics', 'Science', 'Other'), null, 'never "Other" or a wrong subject');
+  // A text box gets the subject as written.
+  p.education[0].field = 'Computing Science';
+  assert.equal(ask(p, 'edu.field', 'Degree subject', { kind: 'text' }).text, 'Computing Science');
+});
+
+test('Scottish school qualifications: secondary-school questions answer from the Advanced Highers entry', () => {
+  const p = computingScientist();
+  const text = (type, question) => {
+    const v = ask(p, type, question, { kind: 'text', today: TODAY });
+    return v && v.text;
+  };
+  assert.equal(text('edu.gpa', 'What grades did you achieve in your secondary education?'), 'AAB');
+  assert.equal(text('edu.gpa', 'What A Level grades (or International Equivalent) did you achieve?'), 'AAB');
+  assert.equal(text('edu.gpa', 'Scottish Highers grades'), 'AAB');
+  assert.equal(text('edu.gpa', 'Highers / Advanced Highers results'), 'AAB');
+  assert.equal(text('edu.school', 'Name of secondary school'), 'Hillhead High School');
+  assert.equal(text('edu.gpa', 'Maths GCSE grade'), null, 'GCSE grades are not Advanced Highers');
+  assert.equal(text('edu.gpa', 'A-level grades'), null, 'nor A-levels, unless the question takes an equivalent');
+  assert.equal(text('edu.school', 'Name of post-secondary institution'), 'University of Glasgow');
+  for (const degree of ['Advanced Highers', 'Scottish Highers', 'IB Diploma', 'International Baccalaureate', 'BTEC'])
+    assert.equal(matcher.degreeGroup(util.normalize(degree)), 'highschool', degree);
+  assert.equal(matcher.degreeGroup(util.normalize('Baccalaureate degree')), null, 'a US bachelor’s, not a school');
+});
+
+test('high-school graduation years come from the school entry, never the degree', () => {
+  const p = computingScientist();
+  const select = (label, ...options) => desc({ label }, { kind: 'select', options: opts(...options) });
+  const page = [
+    desc('What year did you graduate from high school?'),
+    select('What year did you graduate high school?', '2022', '2023', '2024'),
+    select('When did you graduate from High School?', '2021', '2023', '2025'),
+    desc('Year of completion of A-levels'),
+    desc('Year you finished secondary school'),
+    select('Expected graduation year', '2026', '2027', '2028'),
+  ];
+  assert.deepEqual(fillPage(page, p), ['2023', '2023', '2023', '2023', '2023', '2027']);
+  assert.deepEqual(types(matcher.plan(page, p)).slice(-1), ['edu.end#0:year'], 'not a second entry');
+  p.education.pop();
+  assert.deepEqual(fillPage(page, p), [null, null, null, null, null, '2027']);
+  assert.equal(matcher.classify(select('Are you a high school graduate?', 'Yes', 'No')), null);
+});
+
+test('Workday education dates: "From (Actual)", "To (Actual or Expected)", "End Date (or expected)"', () => {
+  const p = computingScientist();
+  const month = (label) => desc({ label, placeholder: 'MM/YYYY' });
+  const page = [
+    desc('School or University'),
+    desc('Degree'),
+    month('From (Actual)'),
+    month('To (Actual or Expected)'),
+    desc('Overall Result (GPA)'),
+    desc({ label: 'GPA Scale' }, { kind: 'select', options: opts('4.0', '5.0', '10', 'UK degree classification') }),
+    desc('Employer'),
+    month('From'),
+    month('End Date (or expected)'),
+  ];
+  assert.deepEqual(types(matcher.plan(page, p)), [
+    'edu.school#0',
+    'edu.degree#0',
+    'edu.start#0',
+    'edu.end#0',
+    'edu.gpa#0',
+    'edu.gpaScale#0',
+    'exp.company#0',
+    'exp.start#0',
+    'exp.end#0',
+  ]);
+  assert.deepEqual(fillPage(page, p).slice(2, 6), ['09/2023', '06/2027', '2:1', 'UK degree classification']);
+  assert.equal(matcher.classify(desc('Expected start date')).type, 'job.startDate', 'still the job’s start');
+});
+
+test('a parent’s highest qualification: only an option your answer settles', () => {
+  const p = computingScientist();
+  const talos = [
+    'Primary school or below',
+    'Secondary school (High school)',
+    'Vocational, technical, or professional certificate',
+    "Bachelor's degree (University undergraduate degree)",
+    "Master's, doctoral, or professional degree (e.g., PhD, MD, JD)",
+    "Don't know",
+    'Prefer not to say',
+  ];
+  const q = 'What is the highest level of education completed by either of your parents or guardians?';
+  const pick = (answer, list) => {
+    p.eeo.parentsDegree = answer;
+    return choose(p, 'eeo.parentsDegree', q, list);
+  };
+  // "Yes" doesn't say bachelor's or master's; "No" doesn't say which school level (and is never "Don't know").
+  assert.equal(pick('Yes', talos), null);
+  assert.equal(pick('No', talos), null);
+  const orHigher = "Bachelor's degree or higher";
+  assert.equal(pick('Yes', ['Below degree level', orHigher, 'Prefer not to say']), orHigher);
+  assert.equal(pick('Yes', ['GCSEs or equivalent', 'A-levels or equivalent', "Master's degree or above"]), null);
+  assert.equal(pick('No', ['Degree or above', 'Below degree level', 'No formal qualifications']), 'Below degree level');
+  assert.equal(pick('No', ['Yes', 'No', "Don't know"]), 'No');
+  const atLeastOne = 'Yes, at least one has a bachelor’s degree';
+  assert.equal(pick('Yes', [atLeastOne, 'No']), atLeastOne);
+});
+
+test('undergraduate, final-year and penultimate-year questions; Netcraft’s results box is not your year', () => {
+  const p = computingScientist(); // 4th year of 4 on 3 October 2026
+  const yn = ['Yes', 'No'];
+  const yes = (label) => {
+    const r = matcher.classify(desc({ label }, { kind: 'select', options: opts(...yn) }));
+    assert.ok(r, label);
+    return choose(p, r.type, label, yn, { today: TODAY });
+  };
+  assert.equal(yes('Are you currently an undergraduate student?'), 'Yes');
+  assert.equal(yes('Are you a postgraduate student?'), 'No');
+  assert.equal(yes('Are you a final year student?'), 'Yes');
+  assert.equal(yes('Are you a penultimate year student?'), 'No');
+  assert.equal(yes('Are you in your first year?'), 'No');
+  assert.equal(
+    yes("Are you in your penultimate year of your master's or bachelor's degree, and graduating in 2028?"),
+    'No',
+    'Man Group: a graduation date question',
+  );
+  p.education[0].degree = 'MSc';
+  assert.equal(yes('Are you currently an undergraduate student?'), 'No');
+  assert.equal(
+    matcher.classify(
+      desc("If you are in your first year of studies and yet to receive your results, please type 'N/A'"),
+    ),
+    null,
+  );
+});
+
+test('GPA lists and scales for a UK class: never "2:1" where a number or a scale is asked for', () => {
+  const p = computingScientist();
+  const gpa = (question, ...options) => choose(p, 'edu.gpa', question, options, { today: TODAY });
+  assert.equal(gpa('What is your GPA?', '>4.0', '4.0+', '3.7+', '3.5+', '3.2+', '3.0+', '<3.0'), null);
+  assert.equal(
+    gpa('What is your current cumulative GPA on a 4.0 scale?', '3.7 or Higher', '3.5 - 3.6', '3.0 - 3.4', '2.5 - 2.9'),
+    null,
+  );
+  const scale = (question, ...options) => choose(p, 'edu.gpaScale', question, options, { today: TODAY });
+  const fiveRings = 'Please specify the grading scale used by your current school.';
+  assert.equal(scale('GPA Scale', '4.0', '5.0', '10', 'UK degree classification'), 'UK degree classification');
+  assert.equal(scale(fiveRings, '4.0 Scale', '5.0 Scale', 'UK Grading System', 'Other'), 'UK Grading System');
+  assert.equal(scale('GPA Scale', '4.0', '5.0', '10'), null);
+  assert.equal(ask(p, 'edu.gpaScale', 'GPA Scale', { kind: 'text' }), null);
+  // A GPA out of 4.0 gives its scale.
+  p.education[0].gpa = '3.8/4.0';
+  assert.equal(scale('GPA Scale', '4.0', '5.0', '10'), '4.0');
+  assert.equal(scale(fiveRings, '4.0 Scale', '5.0 Scale'), '4.0 Scale');
+});
+
+test('"Do you have a 2:1 or above?" and "Do you expect to graduate with honours?" are answered from your class', () => {
+  const p = computingScientist();
+  const yn = ['Yes', 'No'];
+  const yesNo = (label) => desc({ label }, { kind: 'select', options: opts(...yn) });
+  const yes = (label) => {
+    const r = matcher.classify(yesNo(label));
+    assert.equal(r && r.type, 'edu.classAtLeast', label);
+    return choose(p, r.type, label, yn, { today: TODAY });
+  };
+  const questions = [
+    'Do you have a 2:1 or above (or equivalent)?',
+    'Are you predicted at least a 2:1?',
+    'Have you achieved or are you on track for a First or 2:1?',
+    'Minimum 2:1 required — do you meet this?',
+    'Do you have a 2:1 or above in a relevant undergraduate or master’s degree?',
+  ];
+  for (const q of questions) assert.equal(yes(q), 'Yes', q);
+  assert.equal(yes('Are you predicted a First?'), 'No');
+  assert.equal(yes('Do you expect to graduate with honours?'), 'Yes');
+  p.education[0].gpa = '2:2';
+  for (const q of questions) assert.equal(yes(q), 'No', q);
+  assert.equal(yes('Do you have a 2:2 or above?'), 'Yes');
+  p.education[0].gpa = 'Distinction';
+  assert.equal(yes('Are you predicted at least a 2:1?'), 'Yes', 'a master’s Distinction');
+  p.education[0].gpa = '3.7';
+  assert.equal(yes('Do you have a 2:1 or above (or equivalent)?'), null, 'a GPA is never converted');
+  assert.equal(matcher.classify(yesNo('Have you completed a first aid course?')), null);
+  assert.equal(matcher.classify(yesNo('Are you 21 or older?')), null);
+});
+
+test('school short names: UCL, LSE, KCL, UC Berkeley, MIT, NYU, UofG — and never the other Glasgow', () => {
+  const p = computingScientist();
+  const pick = (school, ...options) => {
+    p.education[0].school = school;
+    return choose(p, 'edu.school', 'University', options);
+  };
+  const lse = 'London School of Economics and Political Science';
+  const berkeley = 'University of California, Berkeley';
+  const mit = 'Massachusetts Institute of Technology';
+  assert.equal(pick('UCL', 'King’s College London', 'University College London'), 'University College London');
+  assert.equal(pick('University College London', 'UCL', 'KCL', 'LSE'), 'UCL');
+  assert.equal(pick('LSE', 'London Business School', lse), lse);
+  assert.equal(pick('KCL', 'Imperial College London', "King's College London"), "King's College London");
+  assert.equal(pick('Imperial', 'University College London', 'Imperial College London'), 'Imperial College London');
+  assert.equal(pick('Oxford', 'Oxford Brookes University', 'University of Oxford'), 'University of Oxford');
+  assert.equal(pick('University of Cambridge', 'Anglia Ruskin University', 'Cambridge'), 'Cambridge');
+  assert.equal(pick('UC Berkeley', 'Berkeley College', berkeley), berkeley);
+  assert.equal(pick(berkeley, 'UCLA', 'UC Berkeley'), 'UC Berkeley');
+  assert.equal(pick('MIT', 'Harvard University', mit), mit);
+  assert.equal(pick('NYU', 'Columbia University', 'New York University'), 'New York University');
+  assert.equal(pick('University of Glasgow', 'Glasgow Caledonian University', 'UofG'), 'UofG');
+  assert.equal(pick('University of Glasgow', 'Glasgow Caledonian University', 'GU'), 'GU');
+  assert.equal(pick('UofG', 'Glasgow Caledonian University', 'University of Glasgow'), 'University of Glasgow');
+  assert.equal(pick('Glasgow', 'Glasgow Caledonian University', 'Glasgow School of Art'), null);
+  // "GU" is Glasgow and Georgetown: written in a profile, it picks neither by that name alone.
+  assert.equal(pick('GU', 'University of Glasgow', 'Georgetown University'), null);
+});
+
+test('"Perth, WA" is Western Australia; "Seattle, WA" is still Washington', () => {
+  const { geo } = globalThis.JTF;
+  assert.equal(fields.placeCountry('Perth, WA')[0], 'AU');
+  assert.equal(fields.placeCountry('Darwin, NT')[0], 'AU');
+  assert.equal(fields.placeCountry('Seattle, WA')[0], 'US');
+  assert.equal(fields.placeCountry('Spokane, WA')[0], 'US');
+  assert.equal(fields.placeCountry('Yellowknife, NT')[0], 'CA');
+  assert.deepEqual(geo.countriesIn('Perth, WA'), ['AU']);
+  assert.deepEqual(geo.countriesIn('Seattle, WA'), ['US']);
+  const p = computingScientist();
+  Object.assign(p.address, { city: 'Perth', state: 'WA', country: '' });
+  assert.equal(ask(p, 'address.state', 'State').search, 'Western Australia');
+  assert.ok(ask(p, 'location', 'Location').candidates.includes('Perth, Western Australia'));
+  Object.assign(p.address, { city: 'Seattle' });
+  assert.equal(ask(p, 'address.state', 'State').search, 'Washington');
+});
+
+test('round-up from the survey: code samples, AI disclosures, ranked lists, relocation, background, city, US states', () => {
+  const p = computingScientist();
+  Object.assign(p.job, { locations: 'London, Glasgow, Edinburgh' });
+  const type = (label, kind, options) => {
+    const r = matcher.classify(desc({ label }, { kind: kind || 'text', options: options ? opts(...options) : null }));
+    return r && r.type;
+  };
+  // Not the skills list, not the CV.
+  assert.equal(
+    type(
+      'Please disclose below whether AI tools were used to generate all or a significant portion of the submitted code sample.',
+    ),
+    null,
+  );
+  assert.equal(
+    type(
+      "We have multiple technology teams hiring, and your responses to the following questions will help determine which teams may be the best fit based on your skill set and interests. Please feel free to use this space if there is anything else you'd like to note in terms of your interests that this form does not cover.",
+      'textarea',
+    ),
+    null,
+  );
+  assert.equal(type('Which tools do you use?'), 'skills', 'a real skills question still is one');
+  for (const label of [
+    'If you would like to share a file of your code sample, please upload here. You can upload your sample as a .zip file. Please do not submit code samples in pdf or docs files.',
+    'Application Requirement: Write a program in C++ that takes in a file as input and reverses every line and puts it in a different file. Try to do this with as little memory footprint as possible and as fast as possible. Attach the file as a .txt below.',
+  ])
+    assert.equal(type(label, 'file'), null, label);
+  assert.equal(type('Please upload your CV and, optionally, a code sample', 'file'), 'file.resume');
+  // A text box that names its own places: only the ones you prefer, else nothing.
+  const rank =
+    'Please rank your location preference in order of most to least preferred: Austin, Chicago, Greenwich, Houston, New York. If you are not open to a location, do not rank it.';
+  assert.equal(type(rank, 'textarea'), 'job.locations');
+  assert.equal(ask(p, 'job.locations', rank, { kind: 'textarea' }), null);
+  p.job.locations = 'London, NYC, Chicago';
+  assert.equal(ask(p, 'job.locations', rank, { kind: 'textarea' }).text, 'NYC, Chicago');
+  assert.equal(ask(p, 'job.locations', 'Preferred locations', { kind: 'textarea' }).text, 'London, NYC, Chicago');
+  // Notion: relocating to the listed offices is a relocation question.
+  const notion =
+    'This role requires that you are willing to relocate to one of the following locations New York, NY, USA or San Francisco, CA, USA. Please confirm that you are willing to relocate for this role?';
+  assert.equal(type(notion, 'radio', ['Yes', 'No']), 'job.relocate');
+  // Socio-economic background from the household earner's job, opt-in like the rest.
+  const classes = ['Professional', 'Intermediate', 'Working class', 'Prefer not to say'];
+  const ynp = ['Yes', 'No', 'Prefer not to say'];
+  const lower =
+    'Compared to people in general, would you describe yourself as coming from a lower socio-economic background?';
+  const which = 'Which socio-economic background do you identify with?';
+  assert.equal(type(which, 'select', classes), 'eeo.socioEconomic');
+  assert.equal(type(lower, 'select', ynp), 'eeo.socioEconomic');
+  assert.equal(choose(p, 'eeo.socioEconomic', which, classes), null, 'blank: never filled');
+  p.eeo.parentOccupation = 'Manager / administrator';
+  assert.equal(choose(p, 'eeo.socioEconomic', which, classes), 'Professional');
+  assert.equal(choose(p, 'eeo.socioEconomic', lower, ynp), 'No');
+  p.eeo.parentOccupation = 'Routine / semi-routine';
+  assert.equal(choose(p, 'eeo.socioEconomic', which, classes), 'Working class');
+  assert.equal(choose(p, 'eeo.socioEconomic', lower, ynp), 'Yes');
+  p.eeo.parentOccupation = 'Clerical / intermediate';
+  assert.equal(choose(p, 'eeo.socioEconomic', which, classes), 'Intermediate');
+  assert.equal(choose(p, 'eeo.socioEconomic', lower, ynp), null, 'neither, so left');
+  p.eeo.parentOccupation = 'Decline to answer';
+  assert.equal(choose(p, 'eeo.socioEconomic', which, classes), 'Prefer not to say');
+  // The city alone where only the city is asked.
+  for (const label of ['Current city', 'Which city are you based in?'])
+    assert.equal(ask(p, type(label), label, { kind: 'text' }).text, 'Glasgow', label);
+  assert.equal(ask(p, 'location', 'Current location', { kind: 'text' }).text, 'Glasgow, Scotland');
+  // "State (If N/A, Select Other)" on a US list for someone in Scotland.
+  const states = ['AL', 'AK', 'AZ', 'CA', 'NY', 'TX', 'WA', 'Other'];
+  const na = 'State (If N/A, Select Other)';
+  assert.equal(type(na, 'select', states), 'address.state');
+  assert.equal(choose(p, 'address.state', na, states), 'Other');
+  assert.equal(choose(p, 'address.state', 'Region', ['Lanarkshire', 'Glasgow City', 'Other']), null);
+  p.address.state = '';
+  assert.equal(choose(p, 'address.state', na, states), 'Other');
+  Object.assign(p.address, { city: 'Austin', state: 'TX', country: 'United States' });
+  assert.equal(choose(p, 'address.state', na, states), 'TX');
+});

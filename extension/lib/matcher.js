@@ -53,10 +53,11 @@
   const EXPLAIN =
     /\b(outline|describe|explain|provide (details|information|more)|give (details|more)|tell us (about|more)|elaborate)\b/;
   const LINK_KINDS = ['text', 'url', 'textarea'];
-  // "Please specify if you selected Other", "University (Other)", "School name (if not listed)": the box for an answer
-  // the list didn't have.
+  // "Please specify if you selected Other", "University (Other)", "School name (if not listed)", "If your year of
+  // graduation is not listed, please specify.", "If latest field of study is not listed…" (IMC), "If residing in
+  // another country, please specify.": the box for an answer the list didn't have.
   const OTHER_FOLLOW_UP =
-    /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|^(if|when) you (have )?(selected|chose|picked|ticked|checked) (?!yes\b)|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b|\bif (it|yours|your \w+( \w+)?) (is|was) not (listed|shown|in the list|found|available)\b|\bnot listed (above|below)\b.*\b(specify|enter|type|provide|state)\b|\bif not (listed|shown|in the list|found|available)\b|^(any )?other (university|school|college|institution|degree|subject|major|course)\b|\b(university|school|college|institution|degree|subject|major|course) (name )?other$/;
+    /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|^(if|when) you (have )?(selected|chose|picked|ticked|checked) (?!yes\b)|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b|\bif (it|yours|your \w+( \w+)?) (is|was) not (listed|shown|in the list|found|available)\b|\bif (\w+ ){1,6}?(is|are|was|were) not (listed|shown|in (the|this|our) (list|options|dropdown))\b|\bif (\w+ ){1,6}?(isn t|aren t|wasn t|weren t) (listed|shown|in (the|this) list)\b|\bif (\w+ ){1,6}?(does not|doesn t|do not|don t) (appear|show up)\b|\bif (\w+ ){1,6}?not in (the|this) list\b|\bif (residing|living|based|located|studying) (in |at )?(another|a different) \w+\b|\bnot listed (above|below)\b.*\b(specify|enter|type|provide|state)\b|\bif not (listed|shown|in the list|found|available)\b|^(any )?other (university|school|college|institution|degree|subject|major|course)\b|\b(university|school|college|institution|degree|subject|major|course) (name )?other$/;
   const EMAIL_TYPES = new Set(['email', 'account.username']);
   // Field types a lone checkbox can answer: "I am authorized to work in the US", "I have read the
   // privacy notice", or one option of a checklist ("London" under "Which offices…?").
@@ -208,7 +209,7 @@
 
   // UK degree classes and their usual spellings.
   const DEGREE_CLASS =
-    /^(first|1st|upper second|lower second|second|2 ?[1i]|2 ?2|2 ?ii|third|3rd|distinction|merit|pass)\b|\b(first|second|third) class\b|\bclass honours\b/;
+    /^(first|1st|upper second|lower second|second|2 ?[1i]|2 ?2|2 ?ii|third|3rd|distinction|merit|pass)\b|\b(first|second|third) class\b|\bclass honours\b|\b(upper|lower) second$/;
 
   function looksLikeDegreeClasses(options) {
     const opts = (options || []).filter((o) => !isPlaceholder(norm(o.text)));
@@ -333,7 +334,7 @@
 
   function groupOf(type) {
     if (!type) return null;
-    if (type.startsWith('edu.') && type !== 'edu.level' && type !== 'edu.year') return 'edu';
+    if (type.startsWith('edu.') && !['edu.level', 'edu.year', 'edu.classAtLeast'].includes(type)) return 'edu';
     if (type.startsWith('exp.')) return 'exp';
     return null;
   }
@@ -343,6 +344,8 @@
     'compliance.relatives': 'compliance.relativesDetails',
   };
   const PLACE_TYPES = ['location', 'address.city'];
+  // Controls that offer a list (a react-select search box too).
+  const LIST_KINDS = ['select', 'radio', 'combo', 'combobox', 'checkboxes'];
   const ABOUT_YOU_TYPES = ['location', 'address.city', 'address.state', 'address.country', 'address.postalCode'];
   const ABOUT_YOU = /\b(you|your|yourself|reside|resident|residence|live|living|home|currently|current)\b/;
   const SECTION_ONLY = ['address.state', 'address.country', 'address.postalCode'];
@@ -514,6 +517,20 @@
       }
       const st = state[g];
       const key = r.type + ':' + (r.part || '');
+      // "When is your expected year of graduation? [2023 … 2032]" then a box asking the same thing: the box is for an
+      // answer the list didn't have, never the next entry.
+      const before = results[i - 1];
+      if (
+        st.seen.has(key) &&
+        before &&
+        before.type === r.type &&
+        LIST_KINDS.includes(descs[i - 1].kind) &&
+        ['text', 'textarea'].includes(descs[i].kind)
+      ) {
+        r.dropped = r.type;
+        r.type = null;
+        continue;
+      }
       if (prev !== g) {
         detached = null;
         st.run = new Set(); // what this stretch of the section has had
@@ -635,7 +652,11 @@
       /\bbachelor|\bb ?sc?\b|\bb ?a\b|\bb ?eng\b|\bb ?tech\b|\bbba\b|\bb ?com\b|\bllb\b|\bbfa\b|undergraduate|\bab\b/,
     ],
     ['associate', /\bassociate|\baas\b/],
-    ['highschool', /high school|secondary|\bged\b|a levels?|gcse/],
+    // "Advanced Highers", "IB Diploma", "BTEC", "Leaving Certificate", "Abitur": school-leaving qualifications.
+    [
+      'highschool',
+      /high school|(?<!\bpost )secondary|\bged\b|\ba ?levels?\b|\bas levels?\b|\b(i ?)?gcses?\b|\b(advanced )?highers\b|\bib( diploma)?\b|\b(international|european) baccalaureate\b|\bbaccalaureat\b|\bbtecs?\b|\bleaving cert\w*|\babitur\b|\bmatura\b|\bpre ?u\b/,
+    ],
   ];
 
   function degreeGroup(n) {
@@ -947,6 +968,35 @@
 
   const wordPrefix = (a, b) => (' ' + b + ' ').startsWith(' ' + a + ' ');
 
+  // Short names of one institution ("UCL" is University College London, "UofG" the University of Glasgow). A short name
+  // two of them share ("GU") is taken from a list for the school you wrote, never from your profile.
+  // prettier-ignore
+  const SCHOOL_ALIASES = [
+    ['University College London', 'UCL'],
+    ['London School of Economics and Political Science', 'London School of Economics', 'LSE'],
+    ["King's College London", 'KCL'],
+    ['Imperial College London', 'Imperial College', 'Imperial', 'ICL'],
+    ['London Business School', 'LBS'],
+    ['University of Oxford', 'Oxford University', 'Oxford'],
+    ['University of Cambridge', 'Cambridge University', 'Cambridge'],
+    ['University of Glasgow', 'Glasgow University', 'UofG', 'GU'],
+    ['Georgetown University', 'GU'],
+    ['University of California, Berkeley', 'UC Berkeley', 'Berkeley'],
+    ['University of California, Los Angeles', 'UCLA'],
+    ['Massachusetts Institute of Technology', 'MIT'],
+    ['New York University', 'NYU'],
+    ['Carnegie Mellon University', 'CMU'],
+    ['California Institute of Technology', 'Caltech'],
+  ];
+  let aliasKeys = null;
+
+  /** The keys (schoolKey) a school also goes by: its row of SCHOOL_ALIASES when only one row has it. */
+  function schoolAliases(key) {
+    if (!aliasKeys) aliasKeys = SCHOOL_ALIASES.map((row) => row.map(schoolKey));
+    const rows = aliasKeys.filter((row) => row.includes(key));
+    return new Set(rows.length === 1 ? rows[0] : [key]);
+  }
+
   /**
    * A school from a list of schools. Names that differ only in the words every name shares ("The University of
    * Glasgow", "Glasgow, University of", "University of Glasgow (UofG)", "Glasgow University") are the same school. A
@@ -954,13 +1004,15 @@
    * "University of London" for Queen Mary), unless it only adds to the end ("Imperial College" for "Imperial College
    * London"). A bracket that names an institution is another name for it ("UWE Bristol (University of the West of
    * England)"); one holding a place or initials is not ("University of Strathclyde (Glasgow)"), except the initials
-   * you wrote ("UCL"). Returns an index, -1, or null when your school has no telling words (generic matching).
+   * you wrote ("UCL"), and short names it is known by ("LSE", "UC Berkeley", "UofG": SCHOOL_ALIASES). Returns an
+   * index, -1, or null when your school has no telling words (generic matching).
    */
   function bestSchool(opts, v, cands) {
     const mine = norm(v.text.replace(/\([^)]*\)/g, ' '));
     const want = schoolKey(mine);
     if (!want) return null;
     const wanted = want.split(' ');
+    const aliases = schoolAliases(want);
     const initials = /^[A-Z][A-Za-z&]*[A-Z][A-Za-z]*$/.test(v.text.trim()) ? norm(v.text) : null;
     const same = [];
     const open = [];
@@ -971,7 +1023,7 @@
         if (INSTITUTION.test(m[1])) keys.push(schoolKey(m[1]));
         else if (initials && norm(m[1]) === initials) keys.push(want);
       }
-      if (keys.includes(want)) {
+      if (keys.some((k) => aliases.has(k))) {
         same.push(o);
         continue;
       }
@@ -979,12 +1031,44 @@
       if (!words.length) continue; // "University", "Other": no school in particular
       const shared = words.filter((w) => wanted.includes(w)).length;
       const nested = shared && (shared === words.length || shared === wanted.length);
-      if (nested && !wordPrefix(main, mine) && !wordPrefix(mine, main)) continue;
+      // A school with known short names is only ever one of them: "Oxford" is never Oxford Brookes.
+      if (nested && (aliases.size > 1 || (!wordPrefix(main, mine) && !wordPrefix(mine, main)))) continue;
       open.push(Object.assign({}, o, { n: main, nv: '' }));
     }
     if (same.length) return bestText(same, cands, v).i;
     const best = open.length ? bestText(open, cands, v) : null;
     return best && best.score >= 45 ? best.i : -1;
+  }
+
+  // One-word catch-alls in subject lists ("Science", "Engineering", "Other"): only when nothing more telling fits.
+  const GENERIC_SUBJECT =
+    /^(science|sciences|engineering|arts|humanities|studies|general studies|other|others|discipline unknown)$/;
+
+  /**
+   * A degree subject from a list (its other names were tried exactly already): an option holding it ("Mathematics &
+   * Statistics" for Mathematics), a category listing it or, for a STEM subject, a STEM category ("STEM (Science,
+   * Technology/Computer Science, Engineering, Mathematics)"); a catch-all such as "Science" only when nothing more
+   * telling fits, so "Computing Science" is never "Science" next to "Computer Science". -1 when nothing fits.
+   */
+  function bestSubject(opts, v, cands) {
+    const primary = U.tokens(cands[0] || '');
+    let best = null;
+    let generic = null;
+    for (const o of opts) {
+      let score = 0;
+      for (const c of cands) score = Math.max(score, textScore(o, c));
+      for (const m of o.text.matchAll(/\(([^)]+)\)/g))
+        if (m[1].split(/\s*[,;/&]\s*|\s+and\s+/).some((part) => cands.includes(norm(part))))
+          score = Math.max(score, 75);
+      if (v.stem && /^stem\b/.test(o.n)) score = Math.max(score, 65);
+      if (score < 45) continue;
+      score += jaccard(U.tokens(o.n), primary) * 5;
+      const pick = { i: o.i, score };
+      if (GENERIC_SUBJECT.test(o.n)) {
+        if (!generic || score > generic.score) generic = pick;
+      } else if (!best || score > best.score) best = pick;
+    }
+    return (best || generic || { i: -1 }).i;
   }
 
   /** Every option a list value ("London, New York") picks, in the list's order. */
@@ -1102,9 +1186,11 @@
       const hit = opts.find((o) => o.n === c && !o.signed) || opts.find((o) => o.nv === c && !o.signed);
       if (hit) return hit.i;
     }
-    // Options this value only takes when they name it exactly ("Campus job board" for another job site).
+    // Options this value only takes when they name it exactly ("Campus job board" for another job site; a test of
+    // the option itself for a parent's degree).
     if (v.avoid) {
-      for (let k = opts.length - 1; k >= 0; k--) if (v.avoid.test(opts[k].n)) opts.splice(k, 1);
+      const avoid = typeof v.avoid === 'function' ? v.avoid : (o) => v.avoid.test(o.n);
+      for (let k = opts.length - 1; k >= 0; k--) if (avoid(opts[k])) opts.splice(k, 1);
       if (!opts.length) return -1;
     }
 
@@ -1114,6 +1200,7 @@
       const r = bestSchool(opts, v, cands);
       if (r !== null) return r;
     }
+    if (v.kind === 'subject') return bestSubject(opts, v, cands);
 
     if (v.kind === 'country' && v.iso2) {
       const r = bestCountry(opts, v, cands);

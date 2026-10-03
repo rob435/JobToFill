@@ -186,10 +186,22 @@
     return null;
   }
 
-  /** The country (ISO alpha-2) whose state or province this is: "MA" or "Massachusetts" -> "US", "Ontario" -> "CA". */
-  function regionCountry(value) {
+  // Codes two countries use: "WA" is Washington, but Western Australia after Perth; "NT" the Northern Territory after
+  // Darwin.
+  const AU_TOWNS = {
+    wa: /^(perth|fremantle|joondalup|mandurah|rockingham|bunbury|geraldton|kalgoorlie|broome|albany)$/,
+    nt: /^(darwin|alice springs|palmerston|katherine)$/,
+  };
+  const australianRegion = (value, town) => !!AU_TOWNS[norm(value)] && AU_TOWNS[norm(value)].test(norm(town));
+
+  /**
+   * The country (ISO alpha-2) whose state or province this is: "MA" or "Massachusetts" -> "US", "Ontario" -> "CA";
+   * "WA" -> "US", except after an Australian town (`town`: "Perth, WA").
+   */
+  function regionCountry(value, town) {
     const key = norm(value);
     if (!key) return null;
+    if (australianRegion(value, town)) return 'AU';
     for (const [code, table] of Object.entries(REGIONS))
       if (table.some((region) => region.some((r) => norm(r) === key))) return code;
     return null;
@@ -395,8 +407,15 @@
   function countriesIn(location) {
     const named = placesNamed(location);
     const out = new Set(named.map((p) => p.country));
-    for (const part of String(location || '').split(/[,;/|()\n]|\s[-–—]\s/)) {
-      const s = part.trim();
+    const parts = String(location || '')
+      .split(/[,;/|()\n]|\s[-–—]\s/)
+      .map((part) => part.trim());
+    for (const [k, s] of parts.entries()) {
+      // "Perth, WA" is Western Australia; "Seattle, WA" Washington.
+      if (k > 0 && australianRegion(s, parts[k - 1])) {
+        out.add('AU');
+        continue;
+      }
       const state = /^[A-Z]{2}$/.test(s) && REGIONS.US.some((r) => r[0] === s && !/^Armed Forces/.test(r[1]));
       const row = /^[A-Z]{2,3}$/.test(s) ? findCountry(s) : null;
       // "Chicago, IL" and "Indianapolis, IN" are US states; "Berlin, DE" and "Mumbai, IN" are countries.
