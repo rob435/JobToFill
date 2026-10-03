@@ -579,23 +579,21 @@ test('right-click “Insert from profile” fills the focused field', async () =
   await page.close();
 });
 
-test('vault locked or missing: passwords and cards are skipped with a note', async () => {
+test('no card saved: the card fields are left with a note', async () => {
   const page = await h.open('checkout.html');
   const r = await h.fill(page);
   assert.equal(await value(page, '#fn'), 'Ada');
   assert.equal(await value(page, '#ccnum'), '');
   assert.ok(
-    r.notes.some((n) => /vault/i.test(n)),
+    r.notes.some((n) => /No card saved/.test(n)),
     JSON.stringify(r.notes),
   );
   await page.close();
 });
 
-test('checkout: address with codes, company stays empty, card from the vault', async () => {
-  await h.bg(async () => {
-    const { vault } = globalThis.JTF;
-    await vault.setup('correct horse battery', { iterations: 2000 });
-    await vault.update((d) => {
+test('checkout: address with codes, company stays empty, the saved card', async () => {
+  await h.bg(() =>
+    globalThis.JTF.passwords.update((d) => {
       d.cards.push({
         id: 'k1',
         label: 'Visa',
@@ -606,8 +604,8 @@ test('checkout: address with codes, company stays empty, card from the vault', a
         cvc: '123',
       });
       d.defaultCardId = 'k1';
-    });
-  });
+    }),
+  );
   const page = await h.open('checkout.html');
   await h.fill(page);
   assert.equal(await value(page, '#email'), 'ada@example.com');
@@ -671,7 +669,7 @@ test('sign-up generates and saves a password; login fills it back', async () => 
     JSON.stringify(r.notes),
   );
   const saved = await h.bg(async () =>
-    (await globalThis.JTF.vault.read()).credentials.map((c) => [c.host, c.username, c.password]),
+    (await globalThis.JTF.passwords.read()).credentials.map((c) => [c.host, c.username, c.password]),
   );
   assert.deepEqual(saved, [['localhost', 'ada@example.com', password]]);
 
@@ -689,7 +687,7 @@ test('sign-up generates and saves a password; login fills it back', async () => 
 
 test('the default password is only used when that strategy is chosen', async () => {
   await h.bg(() =>
-    globalThis.JTF.vault.update((d) => {
+    globalThis.JTF.passwords.update((d) => {
       d.defaultPassword = 'Default-Pass-123!';
     }),
   );
@@ -722,7 +720,7 @@ test('passwords are not handed to insecure origins', async () => {
 
 test('right-click “Generate strong password” fills and saves it', async () => {
   await h.bg(() =>
-    globalThis.JTF.vault.update((d) => {
+    globalThis.JTF.passwords.update((d) => {
       d.credentials = [];
     }),
   );
@@ -732,7 +730,7 @@ test('right-click “Generate strong password” fills and saves it', async () =
   const password = await value(page, '#password');
   assert.equal(password.length, 20);
   assert.equal(await value(page, '#password2'), password);
-  const saved = await h.bg(async () => (await globalThis.JTF.vault.read()).credentials.map((c) => c.password));
+  const saved = await h.bg(async () => (await globalThis.JTF.passwords.read()).credentials.map((c) => c.password));
   assert.deepEqual(saved, [password]);
   await page.close();
 });

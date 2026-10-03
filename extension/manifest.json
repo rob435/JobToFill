@@ -31,7 +31,7 @@
       "lib/fields.js",
       "lib/matcher.js",
       "lib/account.js",
-      "lib/vault.js",
+      "lib/passwords.js",
       "lib/store.js",
       "lib/ai.js",
       "lib/letter.js",

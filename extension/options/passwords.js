@@ -2,11 +2,11 @@
 import { el } from '../ui/common.js';
 import { grid, group, sectionHead, secretInput, table } from './controls.js';
 
-const { store, vault, util, fields } = globalThis.JTF;
+const { store, passwords, util, fields } = globalThis.JTF;
 
 const INTRO =
-  'An encrypted vault (AES-256-GCM, key derived from your master password with PBKDF2). ' +
-  'Secrets are only filled on HTTPS pages, only into visible fields, and only when you start a fill.';
+  'Kept in this browser’s extension storage and in your backup file, unencrypted, like your AI keys. ' +
+  'They are only filled on HTTPS pages, only into visible fields, and only when you start a fill.';
 
 const labelled = (label, ...controls) =>
   el('label', { className: 'field' }, el('span', { textContent: label }), ...controls);
@@ -15,94 +15,51 @@ const masked = (number) => {
   return digits ? '•••• ' + digits.slice(-4) : '';
 };
 
-async function confirmReset(refresh) {
-  if (!confirm('Delete every saved password and card? This cannot be undone.')) return;
-  await vault.reset();
-  refresh();
-}
-
-/* ------------------------------------------------------------ not set up */
-
-function setupForm(refresh) {
-  const pw = el('input', { type: 'password', name: 'master', autocomplete: 'new-password' });
-  const pw2 = el('input', { type: 'password', name: 'master2', autocomplete: 'new-password' });
+/** Passwords an older version kept in its encrypted vault: moved over once, with that vault's master password. */
+function legacyGroup(refresh) {
+  const pw = el('input', { type: 'password', name: 'legacyMaster', autocomplete: 'current-password' });
   const error = el('p', { className: 'error' });
+  const move = el('button', { className: 'primary', type: 'submit', textContent: 'Move them over' });
   const submit = async (e) => {
     e.preventDefault();
     error.textContent = '';
-    if (pw.value !== pw2.value) {
-      error.textContent = 'The passwords don’t match.';
-      return;
-    }
+    move.disabled = true;
     try {
-      await vault.setup(pw.value);
-      refresh();
-    } catch (err) {
-      error.textContent = err.message;
-    }
-  };
-  const form = el(
-    'form',
-    { className: 'stack', onsubmit: submit },
-    grid(labelled('Master password', pw), labelled('Repeat master password', pw2)),
-    error,
-    el(
-      'div',
-      { className: 'row' },
-      el('button', { className: 'primary', type: 'submit', textContent: 'Create vault' }),
-    ),
-  );
-  return group(
-    'Create your vault',
-    'Pick something long that you don’t use anywhere else. It can’t be recovered: if you forget it you can only reset the vault and start again.',
-    form,
-  );
-}
-
-/* ---------------------------------------------------------------- locked */
-
-function unlockForm(refresh) {
-  const pw = el('input', { type: 'password', name: 'master', autocomplete: 'current-password' });
-  const error = el('p', { className: 'error' });
-  const submit = async (e) => {
-    e.preventDefault();
-    try {
-      await vault.unlock(pw.value);
-      // A fill that skipped passwords for the locked vault carries on now.
-      globalThis.JTF.api.runtime.sendMessage({ type: 'jtf:vault-unlocked' }).catch(() => {});
+      await passwords.importLegacy(pw.value);
       refresh();
     } catch (err) {
       error.textContent = err.message;
       pw.select();
+    } finally {
+      move.disabled = false;
     }
   };
-  setTimeout(() => pw.focus(), 0);
+  const discard = async () => {
+    if (!confirm('Delete the old vault and every password and card still in it? This cannot be undone.')) return;
+    await passwords.discardLegacy();
+    refresh();
+  };
   return group(
-    'Vault locked',
+    null,
     null,
     el(
       'form',
-      { className: 'inline-form', onsubmit: submit },
-      labelled('Master password', pw),
-      el('button', { className: 'primary', type: 'submit', textContent: 'Unlock' }),
-    ),
-    error,
-    el(
-      'p',
-      { className: 'muted' },
-      'Forgot it? ',
-      el('button', {
-        type: 'button',
-        className: 'link',
-        textContent: 'Reset the vault',
-        onclick: () => confirmReset(refresh),
+      { className: 'callout warn stack', onsubmit: submit },
+      el('span', {
+        textContent:
+          'Your passwords are still in the old encrypted vault. Enter its master password once to move them over.',
       }),
-      ' (deletes all saved passwords and cards).',
+      el(
+        'div',
+        { className: 'inline-form' },
+        labelled('Master password', pw),
+        move,
+        el('button', { type: 'button', textContent: 'Discard old vault', onclick: discard }),
+      ),
+      error,
     ),
   );
 }
-
-/* -------------------------------------------------------------- unlocked */
 
 function signupGroup(data, settings, save) {
   const strategies = [
@@ -133,7 +90,7 @@ function signupGroup(data, settings, save) {
   let typing = null;
   fallback.input.addEventListener('input', () => {
     clearTimeout(typing);
-    typing = setTimeout(() => vault.update((d) => (d.defaultPassword = fallback.input.value)).catch(() => {}), 500);
+    typing = setTimeout(() => passwords.update((d) => (d.defaultPassword = fallback.input.value)).catch(() => {}), 500);
   });
   fallback.row.append(
     el('button', {
@@ -141,7 +98,7 @@ function signupGroup(data, settings, save) {
       className: 'small',
       textContent: 'Generate',
       onclick: () => {
-        fallback.input.value = vault.generatePassword();
+        fallback.input.value = passwords.generatePassword();
         fallback.input.type = 'text';
         fallback.input.dispatchEvent(new Event('change'));
       },
@@ -166,12 +123,18 @@ function loginsGroup(data, profile, save) {
     .slice()
     .sort((a, b) => a.host.localeCompare(b.host))
     .map((c) => {
-      const secret = secretInput(c.password, (v) =>
+      const edit = (patch) =>
         save((d) => {
           const target = d.credentials.find((x) => x.id === c.id);
-          if (target) Object.assign(target, { password: v, updatedAt: Date.now() });
-        }),
-      );
+          if (target) Object.assign(target, patch, { updatedAt: Date.now() });
+        });
+      const secret = secretInput(c.password, (password) => edit({ password }));
+      const user = el('input', {
+        value: c.username || '',
+        autocomplete: 'off',
+        attrs: { 'aria-label': `Username for ${c.host}` },
+        onchange: () => edit({ username: user.value.trim() }),
+      });
       const remove = () => {
         if (confirm(`Delete the saved password for ${c.host}?`))
           save((d) => (d.credentials = d.credentials.filter((x) => x.id !== c.id)));
@@ -180,7 +143,7 @@ function loginsGroup(data, profile, save) {
         'tr',
         {},
         el('td', { className: 'mono', textContent: c.host }),
-        el('td', { textContent: c.username || '—' }),
+        el('td', {}, user),
         el('td', {}, secret.row),
         el(
           'td',
@@ -199,7 +162,7 @@ function loginsGroup(data, profile, save) {
       className: 'small',
       textContent: 'Generate',
       onclick: () => {
-        pass.input.value = vault.generatePassword();
+        pass.input.value = passwords.generatePassword();
         pass.input.type = 'text';
       },
     }),
@@ -334,66 +297,18 @@ function cardsGroup(data, profile, save) {
   );
 }
 
-function manageGroup(refresh) {
-  const next = el('input', { type: 'password', name: 'newMaster', autocomplete: 'new-password' });
-  const message = el('span');
-  const change = async (e) => {
-    e.preventDefault();
-    try {
-      await vault.changePassword(next.value);
-      next.value = '';
-      message.className = 'success';
-      message.textContent = 'Master password changed.';
-    } catch (err) {
-      message.className = 'error';
-      message.textContent = err.message;
-    }
-  };
-  const lock = async () => {
-    await vault.lock();
-    refresh();
-  };
-  return group(
-    'Vault',
-    null,
-    el(
-      'div',
-      { className: 'row' },
-      el('button', { type: 'button', textContent: 'Lock now', onclick: lock }),
-      el('button', {
-        type: 'button',
-        className: 'danger',
-        textContent: 'Reset vault',
-        onclick: () => confirmReset(refresh),
-      }),
-    ),
-    el(
-      'form',
-      { className: 'inline-form spaced', onsubmit: change },
-      labelled('New master password', next),
-      el('button', { type: 'submit', textContent: 'Change' }),
-      message,
-    ),
-  );
-}
-
-export async function renderVault({ state, refresh }) {
-  const head = sectionHead('Passwords & cards', INTRO);
-  const status = await vault.status();
-  if (status === 'none') return [head, setupForm(refresh)];
-  if (status === 'locked') return [head, unlockForm(refresh)];
-
-  const data = await vault.read();
+export async function renderPasswords({ state, refresh }) {
+  const data = await passwords.read();
   const settings = await store.getSettings();
   const save = async (fn) => {
-    await vault.update(fn);
+    await passwords.update(fn);
     refresh();
   };
   return [
-    head,
+    sectionHead('Passwords & cards', INTRO),
+    (await passwords.legacy()) ? legacyGroup(refresh) : null,
     signupGroup(data, settings, save),
     loginsGroup(data, state.profile, save),
     cardsGroup(data, state.profile, save),
-    manageGroup(refresh),
   ];
 }

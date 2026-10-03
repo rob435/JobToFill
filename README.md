@@ -2,7 +2,7 @@
 
 A browser extension for **Chrome, Edge, Brave and Firefox** that fills out job applications for you, and works as a general autofill for sign-ups and checkouts too.
 
-Save your details once: name, contact info, address, links, education, work history, resume, answers to common screening questions, plus (optionally) passwords and payment cards in an encrypted vault. Then press **Alt+Shift+F** (or click the toolbar button) on any application page and JobToFill fills in everything it recognizes. It never submits an application; you review the form and press Submit yourself. On a job portal's own sign-in and sign-up pages it can sign you in and create the account for you (a setting, on by default; see [Job-portal accounts](#job-portal-accounts)).
+Save your details once: name, contact info, address, links, education, work history, resume, answers to common screening questions, plus (optionally) passwords and payment cards. Then press **Alt+Shift+F** (or click the toolbar button) on any application page and JobToFill fills in everything it recognizes. It never submits an application; you review the form and press Submit yourself. On a job portal's own sign-in and sign-up pages it can sign you in and create the account for you (a setting, on by default; see [Job-portal accounts](#job-portal-accounts)).
 
 ## Features
 
@@ -84,11 +84,10 @@ Save your details once: name, contact info, address, links, education, work hist
 **General autofill**
 
 - Checkout and shipping forms, including country/state codes, phone numbers and split names. A "Company (optional)" box on a shipping form is _not_ filled with your employer.
-- **Encrypted vault** for passwords and cards (AES-256-GCM with a PBKDF2 key from your master password, auto-lock).
+- **Passwords and cards** (Settings › _Passwords & cards_), filled straight away on every fill, Quick apply and sign-in step.
   - Sign-up pages: a unique strong password is generated for "Create password" + "Confirm password" ("Choose Password" / "Retype Password", "Verify New Password"…) and saved for that site, so a Workday account for every employer is no longer painful. Choosing a single default password instead is also an option.
   - **Passwords that fit the page.** The rules a sign-up page states ("at least 8 characters", "not longer than 18", "one upper case and one lower case letter", "a number or punctuation character", "no spaces", the special characters it lists or bans, and the box's own `minlength` / `maxlength` / `pattern`) are read, and a generated password always meets them. When your default password wouldn't, it isn't submitted to be refused: a fitting one is made, saved for that site, and the fill says so.
   - Login pages: the saved password for that site is filled, or your default password when you chose it and nothing is saved for the site. Employers that share one host (every SuccessFactors company on `career8.successfactors.com`) each get their own login.
-  - **A locked vault asks to be unlocked.** A fill that needs a password while the vault is locked says so with an _Unlock_ button; once you unlock it (there, in the toolbar popup or in settings), the page's passwords go in and signing in carries on by itself.
   - Checkout pages: the selected card is filled, including inside payment-provider iframes such as Stripe.
 - **Right-click menu.** _Fill this page_, _Insert from profile → Email / LinkedIn / …_ into any box, _Generate strong password_ and _Insert verification code from email_.
 
@@ -193,21 +192,20 @@ The demo includes Greenhouse-, Workday- and Lever-style applications, searchable
 - **AI answers** run only once you've added an API key, and only on job applications (never on checkout or sign-up pages). They send the empty questions (with their options), the job description, your CV's text, your profile, notes, answer guidance and your earlier written answers to the same provider. Diversity questions, declarations and ID numbers are never sent. Switch it off under Settings › _Cover letters & AI_. In Firefox it asks for your permission first. Your API keys stay in this browser and in your own backup file, so they come back if JobToFill is reinstalled; switch off _Keep my API keys in the backup file_ to leave them out (they are never sent anywhere but to the provider). Job descriptions are fetched from the job sites directly, without your cookies. Browsing history is only searched if you switch that on; it is searched locally, and only the matching job pages are opened. To find the job behind an application, JobToFill remembers the last few job-related pages each tab showed (at most 12, for 3 hours) in the browser's session memory; they are never written to disk or sent anywhere, and are gone when the browser closes. If you came from a Trackr list, its public programme list is fetched to confirm which job it is.
 - **Email codes** are read through Nylas with your own API key: JobToFill asks Nylas for the last few messages of the inbox you connected, received in the last minutes, and picks the code in your browser. It never sends, deletes or marks mail, and no page content goes to Nylas. The key is kept like the AI keys (this browser and your backup file).
 - **Nothing runs until you ask.** The fill code is injected into a page only when you press the shortcut or a button. It is not loaded on every site you visit. The one exception is opt-in: once you connect your inbox, a small watcher that only looks for verification-code boxes goes into each secure page as it loads (switch _Fill codes by themselves_ off to stop that).
-- **The backup file is yours.** It is written only to your Downloads folder and contains your profile as plain JSON (the vault stays encrypted). Turn it off under _Backup & restore_ if you'd rather not keep one.
-- **The vault is encrypted** with AES-256-GCM. The key is derived from your master password (PBKDF2-SHA256, 600,000 iterations) and is kept only in memory (`storage.session`) while unlocked. Content scripts can't read it. The vault auto-locks after inactivity (30 minutes by default) and always locks when the browser closes. Backups contain the vault still encrypted.
+- **The backup file is yours.** It is written only to your Downloads folder and contains your profile as plain JSON, passwords and cards included. Turn it off under _Backup & restore_ if you'd rather not keep one, or untick _Include passwords and cards_ when you export one by hand.
+- **Passwords and cards are kept as they are**, like the API keys: in this browser's extension storage and in your backup file, unencrypted, so a fill puts them in straight away. Anyone who can open your browser profile or the backup file can read them; web pages can't.
 - **Secrets are guarded:**
   - Passwords and cards are only handed out during a fill you started.
   - They are only filled on HTTPS pages (or `localhost`).
   - They only go into visible fields: off-screen "honeypot" and hidden fields are skipped.
   - Saved passwords only go to the site they belong to.
-  - Your master password is only ever typed into JobToFill's own popup or settings page, never into a page's toast.
   - Cards only go to the top page, the same site, or known payment processors' frames, never to an arbitrary third-party iframe.
 - **Never submits an application.** Acknowledgement and terms checkboxes are left for you unless you turn on _Tick acknowledgement boxes_ or use Quick apply (which ticks them and tells you); marketing, newsletter and talent-pool opt-ins are never ticked. Beyond filling (which opens dropdowns, menus and upload tiles, never Dropbox or Google sign-ins), the one thing it clicks for you, with _Sign in and create job-portal accounts for me_ on, is a job portal's own sign-in or create-account button (and the _Continue_ after an emailed code) on a pure sign-in or sign-up page, as listed under [Job-portal accounts](#job-portal-accounts); on such a sign-up page it also ticks the form's own terms box, since creating the account means accepting them. Switch the setting off and it only fills.
 - **CAPTCHAs are never touched.** Nothing is filled or clicked inside a CAPTCHA, and its frames (Google reCAPTCHA, hCaptcha, Cloudflare, Arkose) are skipped entirely.
 - **Works under strict Content-Security-Policies.** The on-page toast and labels are styled through the DOM, so a site's CSP can't block them, and no page script ever sees the extension's code.
 - The extension needs access to all sites so it can fill application forms embedded from other domains (iframes). It only touches a page when you trigger it.
 
-A dedicated password manager is still the stronger choice for your important accounts. The vault is aimed at the dozens of throwaway job-portal accounts.
+A dedicated password manager is still the stronger choice for your important accounts. JobToFill's passwords are aimed at the dozens of throwaway job-portal accounts.
 
 ## Brainstorm: what an application autofiller should do
 
@@ -220,7 +218,7 @@ Implemented ✅ · Ideas for later 💡
 - ✅ React/Vue/Angular-safe value setting; custom dropdown automation; iframes and shadow DOM
 - ✅ Resume/cover letter auto-attach; per-profile documents
 - ✅ Custom Q&A rules and _Learn from this page_
-- ✅ Encrypted vault: per-site generated passwords for ATS sign-ups, cards for checkout
+- ✅ Passwords and cards: per-site generated passwords for ATS sign-ups, cards for checkout
 - ✅ Inspect overlay, undo, application log, multiple profiles, backup/restore
 - ✅ One codebase for Chromium browsers and Firefox, tested end-to-end in both
 - ✅ **AI answers** for every question the rules can't answer ("Why us?", firm-specific choices, yes/no questions your CV settles), checked against your material and the posting
@@ -251,13 +249,13 @@ Implemented ✅ · Ideas for later 💡
 ```
 extension/
   manifest.json        Manifest V3, shared by Chromium (service worker) and Firefox (background scripts)
-  background.js        injection, fill orchestration, vault access, menus, shortcut
+  background.js        injection, fill orchestration, passwords and cards for the page, menus, shortcut
   lib/                 classic scripts shared by every context (and the Node unit tests)
     fields.js          profile schema, field types, detection rules, value resolution
     matcher.js         classification, section/entry planning, option matching, formatting
     account.js         job-portal accounts: the click allow/deny-list, "already exists" messages, shared-host employers
     geo.js             countries (ISO codes + aliases) and US/CA/AU regions
-    vault.js           encryption, password generator and page password rules, lock/unlock
+    passwords.js       saved logins and cards, password generator and page password rules
     store.js           profiles, settings, documents, history, backups, cover letter material and letters
     util.js            text normalization, dates, and JTF.api (browser.* in Firefox, chrome.* elsewhere)
     discover.js        Discover: registry search, Trackr dedupe, careers crawl, job boards, verification, watchlist checks
@@ -279,7 +277,7 @@ extension/
   studio/              the cover letter page: find the job, write, check, preview, attach, tailor the CV
   discover/            Discover internships page: search, careers checks, watchlist
   data/firms.json      the registry Discover searches (built by scripts/firms.mjs)
-  options/             settings page: main.js (shell), profile.js, vault.js, app.js, controls.js
+  options/             settings page: main.js (shell), profile.js, passwords.js, app.js, controls.js
 tests/
   unit/                node:test, no browser
   e2e/                 the real extension in Chromium (Playwright) or Firefox (Puppeteer + remote debugging)

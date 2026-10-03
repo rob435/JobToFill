@@ -12,7 +12,7 @@ import {
   requestSiteAccess,
 } from '../ui/common.js';
 
-const { store, vault, util, ai } = globalThis.JTF;
+const { store, util, ai } = globalThis.JTF;
 
 let tab = null;
 let suggestions = [];
@@ -462,36 +462,6 @@ async function saveLearned() {
   $('#learn-empty').textContent = `Saved ${plural(picked.length, 'item')} to “${profile.name}”.`;
 }
 
-/* ---------------------------------------------------------------- vault */
-
-async function renderVault() {
-  const status = await vault.status();
-  for (const row of $$('#vault [data-state]')) row.hidden = row.dataset.state !== status;
-  $('#vault-error').hidden = true;
-}
-
-async function unlock(e) {
-  e.preventDefault();
-  const input = $('#vault-password');
-  const button = e.target.querySelector('button');
-  button.disabled = true;
-  try {
-    await vault.unlock(input.value);
-    input.value = '';
-    await renderVault();
-    // A fill that skipped passwords for the locked vault carries on now.
-    await api.runtime.sendMessage({ type: 'jtf:vault-unlocked' }).catch(() => {});
-    // Opened from the page's "Unlock" button as a small window: done.
-    if (new URLSearchParams(location.search).get('unlock')) window.close();
-  } catch (err) {
-    $('#vault-error').textContent = err.message;
-    $('#vault-error').hidden = false;
-    input.select();
-  } finally {
-    button.disabled = false;
-  }
-}
-
 /* --------------------------------------------------------------- access */
 
 async function renderAccess() {
@@ -533,9 +503,6 @@ async function init() {
   $('#learn-save').addEventListener('click', saveLearned);
   $('#learn-close').addEventListener('click', () => ($('#learn-panel').hidden = true));
   $('#open-options').addEventListener('click', () => openOptions());
-  $('#vault-setup').addEventListener('click', () => openOptions('vault'));
-  $('#vault-lock').addEventListener('click', async () => (await vault.lock(), renderVault()));
-  $('#vault [data-state="locked"]').addEventListener('submit', unlock);
   $('#access-allow').addEventListener('click', allowAccess);
   $('#restore-open').addEventListener('click', () => openOptions('backup'));
   $('#profile').addEventListener('change', async (e) => {
@@ -556,8 +523,7 @@ async function init() {
     if (run && (run.status === 'running' || Date.now() - (run.finishedAt || run.startedAt) < 15 * 60000)) renderAi(run);
   }
 
-  await Promise.all([renderProfiles(), renderVault(), renderAccess(), renderQuick(), renderWatchNews()]);
-  if (new URLSearchParams(location.search).get('unlock')) $('#vault-password').focus();
+  await Promise.all([renderProfiles(), renderAccess(), renderQuick(), renderWatchNews()]);
 }
 
 init();

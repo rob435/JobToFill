@@ -110,13 +110,10 @@ test('resume upload is stored per profile', async () => {
   await page.close();
 });
 
-test('vault: create, add a card and a login, lock and unlock from the settings page', async () => {
-  const page = await openExt('options/options.html#vault');
-  await page.fill('input[name=master]', 'my long master password');
-  await page.fill('input[name=master2]', 'my long master password');
-  await page.click('text=Create vault');
+test('passwords & cards: add a card and a login, edit and delete them from the settings page', async () => {
+  const page = await openExt('options/options.html#passwords');
   await page.waitForSelector('text=Saved logins (0)');
-  assert.equal(await h.bg(() => globalThis.JTF.vault.status()), 'unlocked');
+  assert.equal(await page.$('[name=legacyMaster]'), null, 'nothing to set up or unlock');
 
   await page.fill('input[name=cardNumber]', '4242 4242 4242 4242');
   await page.fill('input[name=cardExpMonth]', '7');
@@ -129,20 +126,26 @@ test('vault: create, add a card and a login, lock and unlock from the settings p
   await page.click('text=Add login');
   await page.waitForSelector('text=acme.wd5.myworkdayjobs.com');
 
-  const data = await h.bg(() => globalThis.JTF.vault.read());
+  const data = await h.bg(() => globalThis.JTF.passwords.read());
   assert.equal(data.cards[0].number, '4242424242424242');
   assert.equal(data.cards[0].expMonth, 7);
   assert.equal(data.credentials[0].host, 'acme.wd5.myworkdayjobs.com');
   assert.equal(data.credentials[0].username, 'grace@example.com');
 
-  await page.click('text=Lock now');
-  await page.waitForSelector('text=Vault locked');
-  await page.fill('input[name=master]', 'wrong password');
-  await page.click('button:has-text("Unlock")');
-  await page.waitForSelector('text=Wrong master password.');
-  await page.fill('input[name=master]', 'my long master password');
-  await page.click('button:has-text("Unlock")');
-  await page.waitForSelector('text=Saved logins (1)');
+  // Edited in place, then deleted.
+  const row = 'tbody tr:has(td:text-is("acme.wd5.myworkdayjobs.com"))';
+  await page.fill(`${row} input[aria-label^="Username"]`, 'grace.h@example.com');
+  await page.press(`${row} input[aria-label^="Username"]`, 'Tab');
+  await page.waitForTimeout(300);
+  await page.fill(`${row} .secret input`, 'N3w-pass!');
+  await page.press(`${row} .secret input`, 'Tab');
+  await page.waitForTimeout(300);
+  const login = await h.bg(async () => (await globalThis.JTF.passwords.read()).credentials[0]);
+  assert.equal(login.username, 'grace.h@example.com');
+  assert.equal(login.password, 'N3w-pass!');
+  page.once('dialog', (d) => d.accept());
+  await page.click(`${row} button:has-text("Delete")`);
+  await page.waitForSelector('text=Saved logins (0)');
   assert.deepEqual(errors, []);
   await page.close();
 });
@@ -150,23 +153,25 @@ test('vault: create, add a card and a login, lock and unlock from the settings p
 test('settings toggles persist', async () => {
   const page = await openExt('options/options.html#settings');
   await page.check('input[name=overwrite]');
-  await page.selectOption('select[name=autoLockMinutes]', '5');
   await page.waitForTimeout(200);
   const s = await h.bg(() => globalThis.JTF.store.getSettings());
   assert.equal(s.overwrite, true);
-  assert.equal(s.autoLockMinutes, 5);
   await page.uncheck('input[name=overwrite]');
   await page.close();
 });
 
-test('backup downloads a JobToFill JSON file', async () => {
+test('backup downloads a JobToFill JSON file, with passwords and cards unless left out', async () => {
+  const { readFile } = await import('node:fs/promises');
   const page = await openExt('options/options.html#backup');
-  const [download] = await Promise.all([page.waitForEvent('download'), page.click('text=Download backup')]);
-  const file = await download.path();
-  const data = JSON.parse(await (await import('node:fs/promises')).readFile(file, 'utf8'));
+  const backup = async () => {
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('text=Download backup')]);
+    return JSON.parse(await readFile(await download.path(), 'utf8'));
+  };
+  const data = await backup();
   assert.equal(data.app, 'JobToFill');
-  assert.ok(data.vault && data.vault.data.ct, 'vault is included, encrypted');
-  assert.ok(!JSON.stringify(data).includes('4242424242424242'), 'no plain-text card number in the backup');
+  assert.equal(data.passwords.cards[0].number, '4242424242424242', 'as they are, like the API keys');
+  await page.uncheck('text=Include passwords and cards');
+  assert.equal((await backup()).passwords, undefined);
   await page.close();
 });
 
@@ -174,7 +179,7 @@ test('popup fills the page it points at and shows a summary', async () => {
   const form = await h.open('greenhouse.html');
   const tabId = await h.tabId(form);
   const popup = await openExt(`popup/popup.html?tab=${tabId}`);
-  await popup.waitForSelector('#vault-lock');
+  await popup.waitForSelector('#profile option', { state: 'attached' });
   await popup.click('#fill');
   await popup.waitForSelector('#result .count');
   // This profile only has a name and email, so the summary should also list what is missing.
@@ -195,9 +200,6 @@ test('popup fills the page it points at and shows a summary', async () => {
   await popup.waitForSelector('text=/Saved \\d+ item/');
   const p = await profile();
   assert.ok(p.customAnswers.some((a) => a.answer === 'Because of the mission.'));
-
-  await popup.click('#vault-lock');
-  await popup.waitForSelector('#vault-password');
   assert.deepEqual(errors, []);
   await Promise.all([form.close(), popup.close()]);
 });
