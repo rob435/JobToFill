@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply for Summer Analyst 2027 – Careers</title>
+    <style>
+      body {
+        font: 15px/1.4 Arial, Helvetica, sans-serif;
+        margin: 24px auto 320px;
+        max-width: 720px;
+        color: #222;
+      }
+      h1 {
+        font-size: 24px;
+      }
+      h2 {
+        font-size: 18px;
+        border-bottom: 1px solid #ddd;
+        padding-bottom: 4px;
+        margin-top: 28px;
+      }
+      .form-group {
+        margin: 14px 0;
+      }
+      .form-group > label {
+        display: block;
+        font-weight: bold;
+        margin-bottom: 4px;
+      }
+      .form-group > label .req {
+        color: #c00;
+      }
+      .form-control {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 6px 8px;
+        font: inherit;
+      }
+      select.form-control {
+        width: 100%;
+      }
+      .help-block {
+        color: #777;
+        font-size: 13px;
+      }
+      #state {
+        background: #f4f4f4;
+        padding: 8px;
+        font-size: 11px;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Apply for Summer Analyst 2027</h1>
+    <p>Global Banking &amp; Markets · London · Internship</p>
+    <form id="application" action="#" method="post" novalidate>
+      <h2>Personal information</h2>
+      <div class="form-group">
+        <label for="first_name">First name <span class="req">*</span></label>
+        <input class="form-control" type="text" id="first_name" name="first_name" required />
+      </div>
+      <div class="form-group">
+        <label for="last_name">Last name <span class="req">*</span></label>
+        <input class="form-control" type="text" id="last_name" name="last_name" required />
+      </div>
+      <div class="form-group">
+        <label for="email">Email <span class="req">*</span></label>
+        <input class="form-control" type="email" id="email" name="email" required />
+      </div>
+      <div class="form-group">
+        <label for="phone">Phone <span class="req">*</span></label>
+        <input class="form-control" type="tel" id="phone" name="phone" required />
+      </div>
+      <div class="form-group">
+        <label for="mobile_us">Mobile (US format)</label>
+        <input class="form-control" type="text" id="mobile_us" name="mobile_us" />
+      </div>
+      <div class="form-group">
+        <label for="dob">Date of birth (DD/MM/YYYY)</label>
+        <input class="form-control" type="text" id="dob" name="dob" />
+      </div>
+      <div class="form-group">
+        <label for="country">Country <span class="req">*</span></label>
+        <select class="form-control" id="country" name="country" required></select>
+      </div>
+      <div class="form-group">
+        <label for="city">City <span class="req">*</span></label>
+        <input class="form-control" type="text" id="city" name="city" required />
+      </div>
+
+      <h2>Education</h2>
+      <div class="form-group">
+        <label for="university">University <span class="req">*</span></label>
+        <select class="form-control" id="university" name="university" required></select>
+        <p class="help-block">Start typing to search for your university.</p>
+      </div>
+      <div class="form-group">
+        <label for="degree">Degree <span class="req">*</span></label>
+        <select class="form-control" id="degree" name="degree" data-placeholder="Select an Option" required></select>
+      </div>
+      <div class="form-group">
+        <label for="field_of_study">Field of study <span class="req">*</span></label>
+        <select id="field_of_study" name="field_of_study" placeholder="Select a field of study" required></select>
+      </div>
+
+      <h2>About you</h2>
+      <div class="form-group">
+        <label for="locations">Preferred locations</label>
+        <select class="form-control" id="locations" name="locations[]" multiple></select>
+      </div>
+      <div class="form-group">
+        <label for="teams">Which teams interest you?</label>
+        <select id="teams" name="teams[]" multiple></select>
+      </div>
+      <div class="form-group">
+        <label for="languages">Languages</label>
+        <select class="form-control" id="languages" name="languages[]" multiple data-placeholder="Select Some Options"></select>
+      </div>
+      <div class="form-group">
+        <label for="skills">Skills</label>
+        <select id="skills" name="skills[]" multiple placeholder="Add your skills"></select>
+      </div>
+      <div class="form-group">
+        <label for="source">How did you hear about us? <span class="req">*</span></label>
+        <select id="source" name="source" required></select>
+      </div>
+      <div class="form-group">
+        <label for="start_date">Earliest start date</label>
+        <input class="form-control" type="text" id="start_date" name="start_date" placeholder="mm/dd/yyyy" />
+      </div>
+
+      <p><button type="submit">Submit application</button></p>
+    </form>
+    <h2>What the page registered</h2>
+    <pre id="state">{}</pre>
+    <script src="build/lib-jquery.js"></script>
+  </body>
+</html>
