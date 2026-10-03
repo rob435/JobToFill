@@ -52,8 +52,10 @@ export function simulate(JTF, descs, profile, settings = {}) {
       kind: d.kind,
       answer: r.answer,
       question: q,
+      options: d.options,
       consents: !!settings.consents,
       today: settings.today,
+      jobLocation: settings.jobLocation,
     });
     if (v && r.type !== 'custom' && FOLLOW_UP.test(q) && !fields.followUpAnswer(v, d.kind))
       return { outcome: 'skipped', type: r.type };
@@ -231,7 +233,7 @@ async function main() {
   const empty = new Map();
   for (const f of forms) {
     if (!f.questions) continue;
-    const sim = simulate(JTF, f.questions, profile, { today: new Date('2026-10-02') });
+    const sim = simulate(JTF, f.questions, profile, { today: new Date('2026-10-02'), jobLocation: f.location });
     f.results = sim;
     sim.forEach((s, i) => {
       tally[s.outcome] = (tally[s.outcome] || 0) + 1;

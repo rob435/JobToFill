@@ -343,6 +343,172 @@
     return out;
   }
 
+  /** The countries a sentence names by name or nationality: "Are you a British citizen?", "Do you hold US citizenship?" */
+  function nationalitiesNamed(text) {
+    const t = ' ' + norm(text) + ' ';
+    const out = new Set(countriesNamed(text));
+    for (const entry of DEMONYMS.split(';')) {
+      const [code, names] = entry.split(':');
+      if (names.split(',').some((n) => t.includes(' ' + norm(n) + ' '))) out.add(code);
+    }
+    return [...out];
+  }
+
+  // Visas and immigration words that name their country ("H-1B", "Skilled Worker visa", "Blue Card"); "TN" alone
+  // only as a whole option.
+  const VISA_WORDS = [
+    [
+      'US',
+      /\bh ?1 ?b\d?\b|\bh ?4\b|\b(stem )?opt\b(?! (in|out)\b)|\bcpt\b|\b[fjlo] ?1\b|\be ?3\b|\btn (visa|status)\b|^tn$|\bgreen card\b|\buscis\b|\bead\b|\bi ?9\b|\be ?verify\b|\blawful permanent resident\b/,
+    ],
+    [
+      'GB',
+      /\bskilled worker\b|\btier ?[245]\b|\bgraduate (route|visa)\b|\bhigh potential individual\b|\bbrp\b|\bbiometric residence permit\b|\bshare code\b|\b(pre )?settled status\b|\bindefinite leave to remain\b|\bilt?r\b|\beu settlement scheme\b|\bukvi\b|\bcertificate of sponsorship\b|\bglobal talent visa\b|\byouth mobility\b/,
+    ],
+    ['EU', /\bblue card\b/],
+    ['IE', /\bstamp (1g|4)\b|\bcritical skills (employment )?permit\b/],
+    ['CA', /\bpgwp\b|\blmia\b/],
+    ['AU', /\bsubclass \d{3}\b|\btss visa\b/],
+    ['SG', /\bemployment pass\b|\bs pass\b|\bentrepass\b/],
+  ];
+
+  /** The countries a sentence's visa words imply: "(e.g. H-1B, OPT)" is about the US, "Tier 4" about the UK. */
+  function visaCountries(text) {
+    const t = norm(text);
+    return VISA_WORDS.filter(([, re]) => re.test(t)).map(([code]) => code);
+  }
+
+  // Cities employers name ("our London office", "New York, NY"), each with the places around it within a daily
+  // commute: [ISO country, region (UK nation, US state…), city, ...the rest of its metro area].
+  // prettier-ignore
+  const METROS = [
+    ['GB', 'England', 'London', 'Greater London', 'City of London', 'Canary Wharf', 'Westminster', 'Croydon', 'Camden',
+      'Islington', 'Hackney', 'Southwark', 'Lambeth', 'Wandsworth', 'Stratford', 'Wimbledon', 'Ealing', 'Harrow', 'Barnet',
+      'Bromley', 'Hammersmith', 'Kensington', 'Shoreditch', 'Richmond upon Thames', 'Kingston upon Thames'],
+    ['GB', 'England', 'Manchester', 'Greater Manchester', 'Salford', 'Stockport', 'Trafford', 'Oldham', 'Bolton'],
+    ['GB', 'England', 'Birmingham', 'Solihull', 'Wolverhampton'], ['GB', 'England', 'Leeds', 'Bradford', 'Wakefield'],
+    ['GB', 'England', 'Bristol', 'Bath'], ['GB', 'England', 'Newcastle', 'Newcastle upon Tyne', 'Gateshead'],
+    ['GB', 'England', 'Liverpool'], ['GB', 'England', 'Sheffield'], ['GB', 'England', 'Nottingham'],
+    ['GB', 'England', 'Leicester'], ['GB', 'England', 'Coventry'], ['GB', 'England', 'Cambridge'],
+    ['GB', 'England', 'Oxford'], ['GB', 'England', 'Reading'], ['GB', 'England', 'Cheltenham', 'Gloucester'],
+    ['GB', 'England', 'Southampton'], ['GB', 'England', 'Brighton'], ['GB', 'England', 'Milton Keynes'],
+    ['GB', 'England', 'York'], ['GB', 'Scotland', 'Glasgow', 'Paisley', 'East Kilbride', 'Clydebank'],
+    ['GB', 'Scotland', 'Edinburgh', 'Leith'], ['GB', 'Scotland', 'Aberdeen'], ['GB', 'Scotland', 'Dundee'],
+    ['GB', 'Wales', 'Cardiff'], ['GB', 'Wales', 'Swansea'], ['GB', 'Northern Ireland', 'Belfast'],
+    ['US', 'NY', 'New York', 'New York City', 'NYC', 'Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island',
+      'Jersey City', 'Hoboken', 'Newark', 'Stamford', 'Greenwich', 'Rowayton', 'Norwalk', 'White Plains', 'Westchester',
+      'Long Island'],
+    ['US', 'IL', 'Chicago', 'Evanston'],
+    ['US', 'CA', 'San Francisco', 'SF', 'the Bay Area', 'SF Bay Area', 'San Francisco Bay Area', 'Silicon Valley', 'Oakland',
+      'Berkeley', 'San Jose', 'Palo Alto', 'Mountain View', 'Menlo Park', 'Sunnyvale', 'Redwood City', 'San Mateo',
+      'Cupertino', 'Santa Clara'],
+    ['US', 'CA', 'Los Angeles', 'LA', 'Santa Monica', 'Pasadena', 'Culver City', 'El Segundo', 'Torrance', 'Hawthorne',
+      'Long Beach', 'Burbank', 'Playa Vista'],
+    ['US', 'MA', 'Boston', 'Cambridge', 'Somerville', 'Waltham'], ['US', 'WA', 'Seattle', 'Bellevue', 'Redmond', 'Kirkland'],
+    ['US', 'TX', 'Austin'], ['US', 'TX', 'Houston'], ['US', 'TX', 'Dallas', 'Fort Worth', 'Plano', 'Irving'],
+    ['US', 'FL', 'Miami', 'Miami Beach', 'Fort Lauderdale'], ['US', 'FL', 'Jupiter', 'West Palm Beach', 'Palm Beach'],
+    ['US', 'DC', 'Washington DC', 'Washington D.C.', 'Arlington', 'Alexandria', 'Bethesda', 'McLean', 'Reston'],
+    ['US', 'PA', 'Philadelphia'], ['US', 'PA', 'Pittsburgh'], ['US', 'GA', 'Atlanta'], ['US', 'CO', 'Denver', 'Boulder'],
+    ['US', 'UT', 'Salt Lake City'], ['US', 'MN', 'Minneapolis', 'Saint Paul', 'St Paul'], ['US', 'NC', 'Charlotte'],
+    ['US', 'NC', 'Raleigh', 'Durham', 'Chapel Hill'], ['US', 'AZ', 'Phoenix', 'Scottsdale', 'Tempe'],
+    ['US', 'CA', 'San Diego'], ['US', 'NJ', 'Princeton'], ['US', 'MI', 'Detroit'], ['US', 'MD', 'Baltimore'],
+    ['US', 'TN', 'Nashville'], ['US', 'OH', 'Columbus'], ['US', 'MO', 'St Louis', 'Saint Louis'],
+    ['IE', '', 'Dublin'], ['IE', '', 'Cork'], ['FR', '', 'Paris', 'La Défense'], ['NL', '', 'Amsterdam'],
+    ['DE', '', 'Berlin'], ['DE', '', 'Frankfurt', 'Frankfurt am Main'], ['DE', '', 'Munich', 'München'],
+    ['DE', '', 'Hamburg'], ['CH', '', 'Zurich', 'Zürich'], ['CH', '', 'Geneva', 'Genève'], ['ES', '', 'Madrid'],
+    ['ES', '', 'Barcelona'], ['IT', '', 'Milan', 'Milano'], ['IT', '', 'Rome'], ['SE', '', 'Stockholm'],
+    ['DK', '', 'Copenhagen'], ['BE', '', 'Brussels'], ['PL', '', 'Warsaw'], ['AT', '', 'Vienna'], ['PT', '', 'Lisbon'],
+    ['NO', '', 'Oslo'], ['FI', '', 'Helsinki'], ['CZ', '', 'Prague'], ['JP', '', 'Tokyo'], ['KR', '', 'Seoul'],
+    ['CN', '', 'Shanghai'], ['CN', '', 'Beijing'], ['CN', '', 'Shenzhen'], ['AU', 'NSW', 'Sydney'],
+    ['AU', 'VIC', 'Melbourne'], ['CA', 'ON', 'Toronto'], ['CA', 'QC', 'Montreal', 'Montréal'], ['CA', 'BC', 'Vancouver'],
+    ['IN', '', 'Bangalore', 'Bengaluru'], ['IN', '', 'Mumbai'], ['IN', '', 'Hyderabad'], ['IN', '', 'Gurgaon', 'Gurugram'],
+    ['IN', '', 'New Delhi', 'Delhi'], ['AE', '', 'Dubai'], ['AE', '', 'Abu Dhabi'], ['IL', '', 'Tel Aviv'],
+    ['BR', '', 'São Paulo'],
+  ];
+  const UK_NATIONS = ['England', 'Scotland', 'Wales', 'Northern Ireland'];
+
+  let placeIndex = null;
+  /** [name, [place…]] for every city, metro area and region a sentence can name, longest name first. */
+  function places() {
+    if (placeIndex) return placeIndex;
+    const byName = new Map();
+    const add = (name, place) => byName.set(norm(name), [...(byName.get(norm(name)) || []), place]);
+    for (const [country, region, ...names] of METROS)
+      for (const n of names) add(n, { type: 'metro', country, region, metro: norm(names[0]) });
+    for (const n of UK_NATIONS) add(n, { type: 'region', country: 'GB', region: n });
+    for (const [country, table] of Object.entries(REGIONS))
+      for (const [code, name] of table)
+        if (!/^Armed Forces/.test(name)) add(name, { type: 'region', country, region: code });
+    placeIndex = [...byName].sort((a, b) => b[0].length - a[0].length);
+    return placeIndex;
+  }
+
+  /**
+   * The places a sentence names, as { type: metro | region | country, country, region, metro }: "our London office"
+   * (London's metro area), "based in Scotland" (a UK nation), "anywhere in the UK"; "Cambridge" both Cambridges. A
+   * longer name wins: "New York" is never York, nor "Northern Ireland" Ireland.
+   */
+  function placesNamed(text) {
+    let t = ' ' + norm(text) + ' ';
+    const out = [];
+    for (const [key, list] of places()) {
+      if (!t.includes(' ' + key + ' ')) continue;
+      out.push(...list);
+      // Every time it's named: "New York, New York" is never York.
+      for (let at = t.indexOf(' ' + key + ' '); at >= 0; at = t.indexOf(' ' + key + ' '))
+        t = t.slice(0, at + 1) + ' '.repeat(key.length) + t.slice(at + 1 + key.length);
+    }
+    for (const country of countriesNamed(t)) out.push({ type: 'country', country });
+    return out;
+  }
+
+  /** The countries a job's location names: "New York, NY" and "Remote - US" the US, "London" the UK. */
+  function countriesIn(location) {
+    const named = placesNamed(location);
+    const out = new Set(named.map((p) => p.country));
+    for (const part of String(location || '').split(/[,;/|()\n]|\s[-–—]\s/)) {
+      const s = part.trim();
+      const state = /^[A-Z]{2}$/.test(s) && REGIONS.US.some((r) => r[0] === s && !/^Armed Forces/.test(r[1]));
+      const row = /^[A-Z]{2,3}$/.test(s) ? findCountry(s) : null;
+      // "Chicago, IL" and "Indianapolis, IN" are US states; "Berlin, DE" and "Mumbai, IN" are countries.
+      if (state && (out.has('US') || !row || !named.length)) out.add('US');
+      else if (row) out.add(row[0]);
+    }
+    return [...out];
+  }
+
+  /** Where a profile's address is: { country, region, metro } (ISO code, UK nation or state code, metro area). */
+  function whereIs(address) {
+    const a = address || {};
+    const row = findCountry(a.country);
+    let country = row ? row[0] : '';
+    const city = norm(a.city);
+    // "Croydon" is in London's metro area; "Greenwich" in the UK is not the one in Connecticut.
+    const fits = (p) => p.type === 'metro' && (!country || p.country === country);
+    const named = city ? places().find(([key]) => key === city) : null;
+    const metro = (named && named[1].find(fits)) || (city && placesNamed(a.city).find(fits)) || null;
+    if (!country && metro) country = metro.country;
+    const state = findRegion(a.state, a.country);
+    const nation = UK_NATIONS.find((n) => norm(n) === norm(a.state));
+    let region = metro ? metro.region : '';
+    if (country === 'GB' && nation) region = nation;
+    else if (state && REGIONS[country] && REGIONS[country].includes(state)) region = state[0];
+    return { country, region, metro: metro ? metro.metro : '' };
+  }
+
+  /**
+   * Is someone at `home` (whereIs) in `place` (placesNamed)? true, false, or null when it can't be told (a town that
+   * isn't listed might still be in London's metro area; a UK address without a nation might be in Scotland).
+   */
+  function within(place, home) {
+    if (!home || !home.country) return null;
+    if (place.country === 'EU') return EUROPEAN.has(home.country);
+    if (place.country !== home.country) return false;
+    if (place.type === 'country') return true;
+    if (place.type === 'region') return home.region ? home.region === place.region : null;
+    return home.metro ? home.metro === place.metro : null;
+  }
+
   /**
    * Where someone with the right to work in `countries` (ISO codes) may work: the EU / EEA and Switzerland's free
    * movement, and the UK and Ireland's Common Travel Area.
@@ -364,6 +530,12 @@
   const geo = {
     COUNTRIES,
     countriesNamed,
+    nationalitiesNamed,
+    visaCountries,
+    placesNamed,
+    countriesIn,
+    whereIs,
+    within,
     workRights,
     REGIONS,
     findCountry,

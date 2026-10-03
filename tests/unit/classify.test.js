@@ -1279,3 +1279,84 @@ test('where a school or employer is: country and city questions inside an entry 
   assert.equal(ask('Expected or Completed Graduation'), 'edu.end');
   assert.equal(ask('School (Please use the full name, for example, University of Connecticut)'), 'edu.school');
 });
+
+test('live survey (British student in Glasgow): residence, commuting, UK visa and citizenship questions', () => {
+  const yn = ['Yes', 'No'];
+  const ask = (q, kind = 'select', o = yn) => typeOf(desc(q, { kind, options: o ? opts(...o) : null }));
+  // Where you live: "located / based / living in" a place.
+  assert.equal(ask('Are you located in London?'), 'location.in');
+  assert.equal(ask('Are you based in the UK?'), 'location.in');
+  assert.equal(ask('Are you currently living in the UK?'), 'location.in');
+  assert.equal(ask('Do you currently reside in the United Kingdom?'), 'location.in');
+  assert.equal(ask('Are you based in the UK?', 'text', null), 'location.in', 'a yes/no question, not your location');
+  assert.equal(ask('Where are you currently based?', 'text', null), 'location');
+  assert.equal(ask('Have you been continually resident in the UK for the last 5 years?'), null);
+  // Commuting, and willingness to work somewhere in particular.
+  assert.equal(ask('Are you able to commute into our London office?'), 'location.commute');
+  assert.equal(ask('Do you live within commuting distance of our London office?'), 'location.commute');
+  assert.equal(ask('Are you able to commute into our Rowayton, CT and/or New York, NY offices?'), 'location.commute');
+  assert.equal(
+    ask(
+      'Confirm that you will be able to commute to and from our HQ in the South Bay Area of Los Angeles through your full internship duration.',
+    ),
+    'location.commute',
+  );
+  assert.equal(ask('Willing to work in London?'), 'job.workIn');
+  assert.equal(ask('Are you willing to work in London?'), 'job.workIn');
+  assert.equal(ask('Would you be willing to be based in our London office?'), 'job.workIn');
+  assert.equal(ask('Are you willing to work onsite at our Chicago office 5 days a week?'), 'job.workIn');
+  // Unchanged: the office in general, relocation, and permission.
+  assert.equal(ask('Are you willing to work in the office 5 days a week?'), 'job.onsite');
+  assert.equal(ask('Are you willing to work in-person for 12 weeks during the internship?'), 'job.onsite');
+  assert.equal(
+    ask('Are you currently based in the Los Angeles area or willing to relocate to the Los Angeles area?'),
+    'job.relocate',
+  );
+  assert.equal(
+    ask(
+      'This role is based onsite at our Cheltenham office. Please confirm you are happy to relocate or commute to this location?',
+      'radio',
+    ),
+    'job.relocate',
+  );
+  assert.equal(ask('Are you able to work in London?'), 'job.authorized');
+  // UK visas and citizenship.
+  assert.equal(ask('Do you hold a valid UK visa?'), 'job.visa');
+  assert.equal(
+    ask('Do you currently hold a UK visa?', 'select', ['Yes', 'No', 'Not applicable – British/Irish citizen']),
+    'job.visa',
+  );
+  assert.equal(ask('Do you hold a visa that allows you to work in the UK?'), null, 'that asks for your right to work');
+  assert.equal(ask('Visa type (if applicable)', 'text', null), null);
+  assert.equal(
+    ask('What is your immigration status in the UK?', 'select', [
+      'British citizen',
+      'Settled status',
+      'Skilled Worker visa',
+    ]),
+    'job.authorized',
+  );
+  assert.equal(ask('Do you hold British citizenship?'), 'citizen');
+  assert.equal(ask('Do you have a British passport?'), 'citizen');
+  assert.equal(ask('Do you hold any other citizenships?'), null);
+  // The sanctions questions are not citizenship yes/no questions.
+  assert.equal(
+    ask(
+      'Do you hold citizenship or permanent residency in any of the following countries: Cuba, Iran, North Korea, Syria?',
+    ),
+    null,
+  );
+  assert.equal(
+    ask('Citizen or permanent resident of Cuba, Iran, North Korea, Syria, or the Crimea region', 'checkboxes', yn),
+    null,
+  );
+  // "Is there any other context…?" about sponsorship is still a sponsorship question.
+  assert.equal(
+    ask(
+      'Is there any other context you’d like to share about your U.S. Immigration sponsorship needs?',
+      'textarea',
+      null,
+    ),
+    'job.sponsorship',
+  );
+});

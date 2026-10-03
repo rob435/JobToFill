@@ -103,6 +103,7 @@ async function greenhouse(url, fetchJson) {
     ats: 'greenhouse',
     company: job.company_name,
     title: job.title,
+    location: (job.location && job.location.name) || '',
     description: clean(job.content).slice(0, 12000),
     questions: out,
   };
@@ -111,7 +112,7 @@ async function greenhouse(url, fetchJson) {
 /* ----------------------------------------------------------------- Ashby */
 
 const ASHBY_QUERY =
-  'query ApiJobPosting($organizationHostedJobsPageName: String!, $jobPostingId: String!) { jobPosting(organizationHostedJobsPageName: $organizationHostedJobsPageName, jobPostingId: $jobPostingId) { id title descriptionHtml applicationForm { sections { title fieldEntries { ... on FormFieldEntry { id field isRequired descriptionHtml isHidden } } } } surveyForms { sections { title fieldEntries { ... on FormFieldEntry { id field isRequired isHidden } } } } } }';
+  'query ApiJobPosting($organizationHostedJobsPageName: String!, $jobPostingId: String!) { jobPosting(organizationHostedJobsPageName: $organizationHostedJobsPageName, jobPostingId: $jobPostingId) { id title locationName secondaryLocationNames descriptionHtml applicationForm { sections { title fieldEntries { ... on FormFieldEntry { id field isRequired descriptionHtml isHidden } } } } surveyForms { sections { title fieldEntries { ... on FormFieldEntry { id field isRequired isHidden } } } } } }';
 
 const ASHBY_KIND = {
   String: 'text',
@@ -174,6 +175,7 @@ async function ashby(url, fetchJson) {
     ats: 'ashby',
     company: m[1],
     title: jp.title,
+    location: [jp.locationName, ...(jp.secondaryLocationNames || [])].filter(Boolean).join(' / '),
     description: clean(jp.descriptionHtml).slice(0, 12000),
     questions: out,
   };
@@ -214,10 +216,12 @@ async function lever(url, fetchText) {
     );
   }
   const title = clean((document.querySelector('.posting-headline h2') || {}).textContent);
+  const location = clean((document.querySelector('.posting-categories .location') || {}).textContent);
   const description = clean(
     (document.querySelector('.section-wrapper.page-full-width') || document.body || {}).textContent,
   );
-  return { ats: 'lever', company: path.split('/')[1], title, description: description.slice(0, 12000), questions: out };
+  const company = path.split('/')[1];
+  return { ats: 'lever', company, title, location, description: description.slice(0, 12000), questions: out };
 }
 
 /* ------------------------------------------------------------------ main */
