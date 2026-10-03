@@ -40,12 +40,19 @@ Save your details once: name, contact info, address, links, education, work hist
 
   A second AI pass reads the letter against your CV and flags any claim about you that isn't backed up. Whatever is still doubtful is listed for you to check.
 
+- **Quick apply.** The small **Quick apply** button next to _Write cover letter_ does all of it without asking: finds the job, writes and fits the letter, tailors your CV, then fills the whole form (letter, CV, your details and any AI-answered leftovers) and says so in a toast on the page. It works in a background tab beside the application and closes it when done; if the job's description can't be found it reads the application page itself. It never submits. A small **Last quick apply** tab then appears in the popup: it opens a page with the letter and CV (PDFs, plus the CV as `.tex`) for a look afterwards. Only the latest one is kept, in the browser's memory: it goes when you run another, press _Clear_ or close the browser, and it is never in the backup file. If the AI key, its permission or site access isn't set up yet, the normal studio opens to ask for it.
 - **Eligibility check.** If the posting has hard requirements (graduation year, right to work, clearance, degree), it tells you when your profile doesn't seem to meet them.
 - **Looks like a LaTeX letter.** The PDF is typeset like the classic LaTeX letter: Latin Modern (Computer Modern) fonts, TeX-style justified paragraphs with hyphenation, your name and a contact line with clickable links, and it always fits on one page. The text stays selectable, so applicant tracking systems can read it.
 - **Tailor my CV.** Rewords and reorders your CV around the job's keywords, using only facts already in it. It shows keyword coverage before → after and a list of every change. If you choose to, it uploads the tailored PDF instead of your usual CV for that application.
 - **Edit freely.** The letter is editable, the PDF preview updates as you type, and the checks re-run on your edits. Use "Rewrite" with an instruction such as "mention my chess" or "shorter".
 - **Pick up where you left off.** Coming back to a job you already wrote for offers that letter, with your edits, instead of writing a new one.
 - **Bring your own model.** DeepSeek V4.1 Flash through [OpenRouter](https://openrouter.ai) by default (about a tenth of a cent per letter, ~10 seconds), [DeepSeek's own API](https://platform.deepseek.com/api_keys) (`deepseek-chat`), or any OpenAI-compatible provider. Settings › _Cover letters_. Each provider keeps its own key and model, so you can switch back and forth. With keys for both OpenRouter and DeepSeek, the other one takes over when the one you chose is out of credit, rate-limited or down (you can switch that off).
+
+**Extra answers, from you and the AI**
+
+- **Extra details for the AI.** Settings › _Skills & writing_: anything an application might ask that isn't in the boxes, in your own words ("no relatives in public office, no convictions, happy to relocate"). It is used only to answer questions, and never leaves your browser except to your chosen AI provider.
+- **AI answers leftover questions.** After a normal fill, fields the rules couldn't answer (a yes/no conflict question, a short free-text one) are sent to the AI with your profile and extra details only, and it answers only what they clearly support, leaving the rest empty. The answers it filled are listed in the popup to check, and are undone with the rest by _Undo_. Needs an AI key; switch it off with the checkbox under _Fill this page_.
+- **Your CV as LaTeX.** Paste your CV's LaTeX in Settings › _Cover letters_. JobToFill reads its structure and tailors only the wording of bullets and the order of what it may touch; names, dates, places, titles and grades are always kept exactly. The tailored CV is drawn like your template as a PDF, and **Download .tex** gives LaTeX you can compile in Overleaf.
 
 **General autofill**
 
@@ -113,6 +120,7 @@ In both browsers the settings page opens on install. Fill in your profile and pi
 | Insert one value               | Right-click a box → _Insert from profile_                                                   |
 | New password on a sign-up form | Right-click the password box → _Generate strong password_ (or just fill the page)           |
 | Undo a fill                    | _Undo_ in the popup or in the on-page toast                                                 |
+| Letter, CV and form in one go  | Toolbar → _Quick apply_ (see the result later under _Last quick apply_)                     |
 | Write a cover letter           | Toolbar → _Write cover letter_ on the application page (set up a key under _Cover letters_) |
 
 To change the shortcut, open `chrome://extensions/shortcuts` in Chromium browsers, or in Firefox go to `about:addons`, click ⚙, then **Manage Extension Shortcuts**. The settings page links there too.

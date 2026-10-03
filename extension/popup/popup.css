@@ -60,6 +60,37 @@ button.letter svg {
   fill: currentColor;
 }
 
+.letter-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+.letter-row button.letter {
+  width: auto;
+  padding: 9px 12px;
+  gap: 6px;
+  white-space: nowrap;
+}
+.quick-status {
+  margin: -4px 0 0;
+}
+.quick-status.error {
+  color: var(--danger);
+}
+button.quick-last {
+  justify-self: center;
+  margin-top: -6px;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+  background: var(--surface-2);
+  text-decoration: none;
+}
+button.quick-last:hover {
+  color: var(--primary);
+}
+
 .note {
   margin: -4px 0 0;
   font-size: 12.5px;

@@ -627,6 +627,60 @@ async function attachLetter(tabId, letterId) {
   return { saved: true, filled: summary.filled, detected: summary.detected };
 }
 
+/* ------------------------------------------------------------ quick apply */
+
+const QUICK_STALE = 15 * 60e3;
+
+/**
+ * "Quick apply": the whole letter, CV and form in one go. The AI work runs in the studio page (long calls
+ * die in the worker), opened here as a background tab next to the application with ?quick=1; it reports
+ * progress through store.setQuickStatus and asks for the fill with 'jtf:quick-fill'.
+ */
+async function quickStart(tabId) {
+  const tab = await api.tabs.get(tabId).catch(() => null);
+  if (!tab || !/^(https?|file):/.test(tab.url || '')) return { error: CANT_RUN };
+  const status = await store.getQuickStatus();
+  if (status && status.state === 'running') {
+    const fresh = Date.now() - status.at;
+    const alive =
+      status.studioTabId == null ? fresh < 60e3 : !!(await api.tabs.get(status.studioTabId).catch(() => null));
+    if (alive && fresh < QUICK_STALE) return { error: 'Quick apply is already running.' };
+  }
+  await store.clearQuickApply(); // the previous result goes as soon as a new one is requested
+  await store.setQuickStatus({ state: 'running', message: 'starting…', tabId, studioTabId: null });
+  const url = api.runtime.getURL('studio/studio.html') + `?tab=${tabId}&quick=1`;
+  const studio = await api.tabs.create({ url, active: false, windowId: tab.windowId, index: tab.index + 1 });
+  const now = await store.getQuickStatus();
+  if (now && now.state === 'running' && now.studioTabId == null)
+    await store.setQuickStatus({ ...now, studioTabId: studio.id });
+  return { ok: true, studioTabId: studio.id };
+}
+
+/** The studio finished writing: attach its letter (and CV) to this tab, fill the whole form, say so on the page. */
+async function quickFill(tabId, letterId, options) {
+  const tab = await api.tabs.get(tabId).catch(() => null);
+  if (!tab) return { error: 'The application tab was closed.' };
+  const letter = (await store.getLetters()).find((l) => l.id === letterId);
+  if (!letter) return { error: 'The letter could not be found.' };
+  await store.saveLetter({ id: letterId, tabId, attachedAt: Date.now(), url: tab.url });
+  const summary = await fillTab(tabId, { toast: false });
+  if (summary.error) return { error: summary.error };
+  const withCv = !!(options && options.cv);
+  const lines = [
+    `Quick apply done — letter${withCv ? ', CV' : ''} and form filled${withCv ? '' : ' (CV not tailored)'}. Review before submitting.`,
+  ];
+  if (summary.ai && summary.ai.filled)
+    lines.push(`AI filled ${summary.ai.filled}: check ${summary.ai.filled === 1 ? 'it' : 'them'}.`);
+  await showToast(tabId, lines.join('\n'), { undo: summary.undoable, duration: 10000 });
+  return { filled: summary.filled, detected: summary.detected, ai: summary.ai && summary.ai.filled };
+}
+
+api.tabs.onRemoved.addListener(async (tabId) => {
+  const status = await store.getQuickStatus().catch(() => null);
+  if (status && status.state === 'running' && status.studioTabId === tabId)
+    await store.setQuickStatus({ ...status, state: 'error', message: 'Quick apply stopped: its tab was closed.' });
+});
+
 /* -------------------------------------------------------------- messages */
 
 const sum = (frames, key) => frames.reduce((n, f) => n + (f[key] || 0), 0);
@@ -647,6 +701,12 @@ const HANDLERS = {
   'jtf:job-context': (msg) => jobContext(msg.tabId),
   'jtf:scrape': (msg) => scrapeInTab(msg.url),
   'jtf:attach': (msg) => attachLetter(msg.tabId, msg.letterId),
+  'jtf:quick-start': (msg) => quickStart(msg.tabId),
+  'jtf:quick-fill': (msg) => quickFill(msg.tabId, msg.letterId, msg),
+  'jtf:toast': async (msg) => (
+    await showToast(msg.tabId, String(msg.message || ''), { duration: 10000 }),
+    { ok: true }
+  ),
   'jtf:learn': async (msg) => {
     const { profile } = await store.getActive();
     const frames = await callFrames(msg.tabId, 'learn', [{ profile }]);
@@ -758,6 +818,7 @@ api.runtime.onInstalled.addListener(async (details) => {
 });
 
 api.runtime.onStartup.addListener(async () => {
+  await store.clearQuickApply().catch(() => {}); // a quick apply result only lasts until the browser closes
   await createMenus();
   await ensureAlarm();
 });
@@ -765,6 +826,7 @@ api.runtime.onStartup.addListener(async () => {
 // For debugging from the background console, and for the end-to-end tests.
 globalThis.JTFBackground = {
   fillTab,
+  quickStart,
   assistFill,
   callFrames,
   ensureInjected,

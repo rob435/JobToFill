@@ -1,7 +1,18 @@
 /* JobToFill — toolbar popup. */
-import { $, $$, api, el, fillShortcut, hasSiteAccess, plural, requestSiteAccess } from '../ui/common.js';
+import {
+  $,
+  $$,
+  api,
+  el,
+  fillShortcut,
+  hasAiConsent,
+  hasSiteAccess,
+  plural,
+  requestAiConsent,
+  requestSiteAccess,
+} from '../ui/common.js';
 
-const { store, vault, util } = globalThis.JTF;
+const { store, vault, util, ai } = globalThis.JTF;
 
 let tab = null;
 let suggestions = [];
@@ -168,6 +179,60 @@ function writeLetter() {
   window.close();
 }
 
+/* ---------------------------------------------------------- quick apply */
+
+const QUICK_STALE = 15 * 60e3;
+
+/** The status line under the buttons, and the small "Last quick apply" tab when a result is kept. */
+async function renderQuick() {
+  const [status, record] = await Promise.all([store.getQuickStatus(), store.getQuickApply()]);
+  $('#quick-last').hidden = !record;
+  const line = $('#quick-status');
+  const mine = status && tab && status.tabId === tab.id && Date.now() - status.at < QUICK_STALE;
+  line.hidden = !mine;
+  line.classList.toggle('error', !!mine && status.state === 'error');
+  if (mine)
+    line.textContent =
+      status.state === 'running'
+        ? `Quick apply: ${status.message}`
+        : status.state === 'done'
+          ? `Quick apply ${status.message}. Review before submitting.`
+          : status.message;
+  $('#quick-apply').disabled = !!mine && status.state === 'running';
+}
+
+/**
+ * Quick apply: everything the application needs, without stopping to ask. The AI work runs in a background
+ * tab (the studio page) that the background opens. If the AI key, its consent or site access is missing, the
+ * normal studio opens instead so its setup cards can ask. The consent prompt must come straight from the click.
+ */
+async function quickApply() {
+  const consent = requestAiConsent();
+  const line = $('#quick-status');
+  line.hidden = false;
+  line.classList.remove('error');
+  line.textContent = 'Quick apply: starting…';
+  const [granted, access, config] = await Promise.all([consent, hasSiteAccess(), store.aiConfig()]);
+  if (!granted || !access || ai.problem(config) || !(await hasAiConsent())) return writeLetter();
+  const r = await send({ type: 'jtf:quick-start' });
+  if (r && r.error) {
+    line.classList.add('error');
+    line.textContent = r.error;
+  } else await renderQuick();
+}
+
+function showQuickError(err) {
+  const line = $('#quick-status');
+  line.hidden = false;
+  line.classList.add('error');
+  line.textContent = String((err && err.message) || err);
+}
+
+function openLastQuick() {
+  api.tabs.create({ url: api.runtime.getURL('quick/quick.html') });
+  window.close();
+}
+
 async function undo() {
   const r = await send({ type: 'jtf:undo' });
   showResult(el('p', { className: 'result-list', textContent: r.error || `Restored ${plural(r.undone, 'field')}.` }));
@@ -278,7 +343,7 @@ async function init() {
   $('#shortcut').hidden = !shortcut;
 
   if (!tab || !/^(https?|file):/.test(tab.url || '')) {
-    for (const id of ['#fill', '#inspect', '#learn', '#write-letter']) $(id).disabled = true;
+    for (const id of ['#fill', '#inspect', '#learn', '#write-letter', '#quick-apply']) $(id).disabled = true;
     $('#page-note').hidden = false;
   }
 
@@ -287,6 +352,10 @@ async function init() {
   assistBox.checked = (await store.getSettings()).aiAssist !== false;
   assistBox.addEventListener('change', () => store.saveSettings({ aiAssist: assistBox.checked }));
   $('#write-letter').addEventListener('click', writeLetter);
+  $('#quick-apply').addEventListener('click', () => quickApply().catch((err) => showQuickError(err)));
+  $('#quick-last').addEventListener('click', openLastQuick);
+  const onStorage = (changes) => (changes.quickStatus || changes.quickApply) && renderQuick();
+  api.storage.onChanged.addListener(onStorage);
   $('#inspect').addEventListener('click', inspect);
   $('#learn').addEventListener('click', learn);
   $('#learn-save').addEventListener('click', saveLearned);
@@ -305,7 +374,7 @@ async function init() {
   // After a re-add, the background found the old backup file and is waiting for a restore.
   $('#restore').hidden = !(await store.getBackupInfo()).paused;
 
-  await Promise.all([renderProfiles(), renderVault(), renderAccess()]);
+  await Promise.all([renderProfiles(), renderVault(), renderAccess(), renderQuick()]);
 }
 
 init();

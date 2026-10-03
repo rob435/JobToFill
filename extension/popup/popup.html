@@ -38,11 +38,36 @@
       </label>
       <p id="page-note" class="note" hidden>Open a job application or checkout page to fill it.</p>
 
-      <button id="write-letter" class="letter" type="button" title="Find this job’s description and write a cover letter for it">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 2v.5l8 5 8-5V6H4Zm16 2.9-8 5-8-5V18h16V8.9Z" />
-        </svg>
-        <span>Write cover letter</span>
+      <div class="letter-row">
+        <button id="write-letter" class="letter" type="button" title="Find this job’s description and write a cover letter for it">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 2v.5l8 5 8-5V6H4Zm16 2.9-8 5-8-5V18h16V8.9Z"
+            />
+          </svg>
+          <span>Write cover letter</span>
+        </button>
+        <button
+          id="quick-apply"
+          class="letter"
+          type="button"
+          title="Writes the cover letter, tailors your CV and fills the whole form in one go, without asking. You still review it and press Submit."
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" />
+          </svg>
+          <span>Quick apply</span>
+        </button>
+      </div>
+      <p id="quick-status" class="note quick-status" hidden aria-live="polite"></p>
+      <button
+        id="quick-last"
+        class="link small quick-last"
+        type="button"
+        hidden
+        title="See the letter and CV from your last Quick apply. They are kept only until the next one or until the browser closes."
+      >
+        Last quick apply
       </button>
 
       <section id="result" class="card" hidden aria-live="polite"></section>
@@ -115,6 +140,7 @@
     <script src="../lib/matcher.js"></script>
     <script src="../lib/vault.js"></script>
     <script src="../lib/store.js"></script>
+    <script src="../lib/ai.js"></script>
     <script type="module" src="popup.js"></script>
   </body>
 </html>

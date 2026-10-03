@@ -353,3 +353,57 @@ test('geo and util helpers', () => {
   assert.ok(util.hostMatches('boards.greenhouse.io', 'greenhouse.io'));
   assert.ok(!util.hostMatches('evilgreenhouse.io', 'greenhouse.io'));
 });
+
+test('store: quick apply keeps one temporary result, replaced each time, in session memory, never in a backup', async () => {
+  assert.equal(await store.getQuickApply(), null);
+  await store.saveQuickApply({
+    company: 'Acme',
+    letter: { text: 'one', pdf: 'data:application/pdf;base64,AA==', name: 'a.pdf' },
+  });
+  await store.saveQuickApply({
+    company: 'Globex',
+    letter: { text: 'two', pdf: 'data:application/pdf;base64,AA==', name: 'b.pdf' },
+    cv: null,
+  });
+  const got = await store.getQuickApply();
+  assert.equal(got.company, 'Globex', 'the second replaced the first');
+  assert.equal(got.letter.text, 'two');
+  assert.ok(got.createdAt > 0);
+  assert.ok('quickApply' in chrome.storage.session._dump());
+  assert.ok(!('quickApply' in chrome.storage.local._dump()), 'not written to disk');
+
+  await store.setQuickStatus({ state: 'running', message: 'writing letter' });
+  assert.equal((await store.getQuickStatus()).state, 'running');
+
+  // A profile with data, so there is something to export.
+  const { profile } = await store.getActive();
+  profile.personal.firstName = 'Ada';
+  await store.saveProfile(profile);
+  const backup = JSON.stringify(await store.exportData());
+  assert.ok(!backup.includes('Globex') && !backup.includes('quickApply') && !backup.includes('quickStatus'));
+
+  // Clearing removes the record, the progress and the letter kept only for the form.
+  await store.saveLetter({ id: 'q1', quick: true, text: 'x' });
+  await store.saveLetter({ id: 'keep', text: 'mine' });
+  await store.clearQuickApply();
+  assert.equal(await store.getQuickApply(), null);
+  assert.equal(await store.getQuickStatus(), null);
+  assert.deepEqual(
+    (await store.getLetters()).map((l) => l.id),
+    ['keep'],
+  );
+});
+
+test('store: quick apply falls back to local storage without session storage', async () => {
+  const session = chrome.storage.session;
+  delete chrome.storage.session;
+  try {
+    await store.saveQuickApply({ company: 'Acme' });
+    await store.saveQuickApply({ company: 'Initech' });
+    assert.equal((await store.getQuickApply()).company, 'Initech');
+    await store.clearQuickApply();
+    assert.equal(await store.getQuickApply(), null);
+  } finally {
+    chrome.storage.session = session;
+  }
+});
