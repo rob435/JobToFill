@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Career Opportunities: Application - AVP-Business Analysis (15437)</title>
+    <style>
+      body { font: 14px Arial, sans-serif; margin: 0; }
+      .page { max-width: 760px; margin: 20px auto; }
+      table td { padding: 6px; vertical-align: top; }
+      .required { color: #c00; }
+      .attachRow { display: flex; gap: 16px; align-items: center; margin: 8px 0; }
+      .attachRow .label { width: 260px; }
+      .tile { position: relative; border: 1px dashed #888; padding: 14px 18px; min-width: 220px; }
+      .sourceMenu { position: absolute; top: 100%; left: 0; background: #fff; border: 1px solid #333; display: flex; flex-direction: column; padding: 6px; z-index: 5; }
+      .sourceMenu a { padding: 4px 8px; }
+    </style>
+  </head>
+  <body>
+    <!-- A SuccessFactors application after sign-in (career_ns=job_application), modelled on Moody's: document tiles
+         that ask where the file comes from ("Upload from Device / Upload from Dropbox / Sign in with Google"),
+         an "Additional Documents" tile that must not get the resume, the usual questions, and the Apply button
+         that only the candidate presses. -->
+    <form id="careerform" name="careerform" action="successfactors-apply.html" method="POST" autocomplete="off" onsubmit="sessionStorage.setItem('applied', 'submitted'); return false;">
+      <input type="hidden" id="career_company" name="career_company" value="MoodysProd" />
+      <div class="page">
+        <h1>AVP-Business Analysis (15437)</h1>
+        <h2>My Documents</h2>
+        <div class="attachmentSection">
+          <p>Accepted file types: DOCX, PDF, Image and Text (MSG, PPT and XLS file types are not accepted for resume or cover letters)</p>
+          <div class="attachRow" id="resumeRow">
+            <span class="label"><span class="required">*</span> Resume</span>
+            <div class="tile"><a href="javascript:void(0)" id="47:_attachIcon" role="button" aria-haspopup="menu">Upload a Resume</a></div>
+          </div>
+          <div class="attachRow" id="otherRow">
+            <span class="label">Additional Documents (References, Work Examples, etc.)</span>
+            <div class="tile"><a href="javascript:void(0)" id="49:_attachIcon" role="button" aria-haspopup="menu">Upload a Document</a></div>
+          </div>
+        </div>
+        <h2>Candidate Profile</h2>
+        <table role="presentation" class="axial noborder">
+          <tr>
+            <td><label for="13:_input" title="Required">First Name:<span class="required">*</span></label></td>
+            <td><input type="text" id="13:_input" name="13:_input" aria-required="true" /></td>
+          </tr>
+          <tr>
+            <td><label for="14:_input" title="Required">Last Name:<span class="required">*</span></label></td>
+            <td><input type="text" id="14:_input" name="14:_input" aria-required="true" /></td>
+          </tr>
+          <tr>
+            <td><label for="15:_input">Email Address:</label></td>
+            <td><input type="text" id="15:_input" name="15:_input" /></td>
+          </tr>
+          <tr>
+            <td><label for="16:_input">How did you hear about us?</label></td>
+            <td>
+              <select id="16:_input" name="16:_input">
+                <option value="">No Selection</option>
+                <option>LinkedIn</option>
+                <option>Indeed</option>
+                <option>Referral</option>
+              </select>
+            </td>
+          </tr>
+          <tr>
+            <td><label for="17:_input">Why are you interested in Moody's?</label></td>
+            <td><textarea id="17:_input" name="17:_input" rows="4" cols="40"></textarea></td>
+          </tr>
+        </table>
+        <p>
+          <button id="apply" type="submit">Apply</button>
+          <button id="save" type="button" onclick="sessionStorage.setItem('applied', 'saved')">Save Draft</button>
+          <button id="withdraw" type="button" onclick="sessionStorage.setItem('applied', 'withdrawn')">Withdraw</button>
+        </p>
+      </div>
+    </form>
+    <script src="successfactors.js"></script>
+    <script>
+      for (const link of document.querySelectorAll('[id$=":_attachIcon"]'))
+        SF.tile(link, (file) => sessionStorage.setItem(`uploaded:${link.id}`, file.name));
+    </script>
+  </body>
+</html>

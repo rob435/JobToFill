@@ -50,6 +50,11 @@ export default [
     languageOptions: { sourceType: 'commonjs', globals: { ...globals.node, chrome: 'writable' } },
   },
   {
+    // Scripts the fixture pages load (tests/fixtures/successfactors.js).
+    files: ['tests/fixtures/*.js'],
+    languageOptions: { sourceType: 'script', globals: globals.browser },
+  },
+  {
     rules: {
       'no-unused-vars': ['error', { args: 'none', caughtErrors: 'none' }],
       eqeqeq: ['error', 'smart'],

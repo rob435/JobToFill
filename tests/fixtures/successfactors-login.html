@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Career Opportunities: Sign In</title>
+    <style>
+      body { font: 14px Arial, sans-serif; margin: 0; }
+      .header { display: flex; justify-content: space-between; padding: 10px 20px; background: #0a2e5c; color: #fff; }
+      .header a, .header button { color: #fff; }
+      .sfpanel_wrapper { max-width: 760px; margin: 20px auto; }
+      table td { padding: 6px; vertical-align: top; }
+      .required { color: #c00; }
+      .hide { display: none; }
+      .sysmsg.error { border: 1px solid #c00; background: #fee; padding: 8px; margin: 10px auto; max-width: 760px; }
+      #captchaImg { min-height: 20px; }
+      .g-recaptcha { display: inline-flex; gap: 8px; align-items: center; border: 1px solid #ccc; padding: 10px 14px; background: #f9f9f9; }
+      .recaptcha-checkbox { width: 24px; height: 24px; border: 2px solid #999; background: #fff; cursor: pointer; }
+      .recaptcha-checkbox[aria-checked='true'] { background: #4caf50; }
+    </style>
+  </head>
+  <body>
+    <!-- Reduced from the real SAP SuccessFactors career site sign-in page (career8.successfactors.com, Moody's,
+         reached from the job page's Apply button): one form around the whole page, a presentation table with
+         <label for>, "Confirm you are not a robot" rendered by SFreCAPTCHA (Google reCAPTCHA v2) into #captchaImg
+         with the answer copied to #recaptcha_response_field. The reCAPTCHA here is a stand-in: only a real
+         (trusted) click solves it. -->
+    <div class="header">
+      <span>Moody's Careers</span>
+      <span>
+        <button type="button" id="sso" onclick="sessionStorage.setItem('sso', 'clicked')">Sign in with Google</button>
+        <a href="#" onclick="sessionStorage.setItem('linkedin', 'clicked'); return false;">Apply with LinkedIn</a>
+      </span>
+    </div>
+    <form id="careerform" name="careerform" action="successfactors-login.html" method="POST" accept-charset="UTF-8" autocomplete="off">
+      <input type="hidden" id="career_company" name="career_company" value="MoodysProd" />
+      <input type="hidden" id="career_ns" name="career_ns" value="job_save" />
+      <input type="hidden" id="loginFlowRequired" name="loginFlowRequired" value="true" />
+      <div id="msgContainer">
+        <div id="uiErrorContainer_2" style="display: none" class="round sysmsg error" role="alert" tabindex="-1">
+          <strong><span id="uiErrorMsg" class="warningMsgText"></span></strong>
+        </div>
+      </div>
+      <div role="region" aria-label="Let's begin!Sign in to apply at Moody's ">
+        <div class="sfpanel_wrapper">
+          <div class="page_title page_accessible_title" id="signInTitleContainer">
+            <h1>Let's begin! Sign in to apply at Moody's</h1>
+          </div>
+          <div class="content extLoginFormContent">
+            <div class="bottomLink">
+              <h2 class="haveAnAccount">Already have an account?</h2>
+              <p>Enter your email address and password (Credentials are case sensitive).</p>
+              <div class="requiredMessage"><span class="required requiredAccessible">*</span>indicates a required field.</div>
+            </div>
+            <table role="presentation" class="axial noborder bottomspace table table-condensed">
+              <tr>
+                <td class="com-sm-4 trHeader"><label for="username" title="Required">Email Address:<span class="required requiredAccessible" aria-hidden="true">*</span></label></td>
+                <td>
+                  <input type="text" name="username" id="username" value="" size="30" onpaste="event.preventDefault();" aria-label="Email Address:" aria-invalid="false" aria-describedby="signIn_EmailError" aria-required="true" maxlength="99" autocomplete="username" />
+                  <span id="signIn_EmailError" class="rcmValidationMsgArea" style="display: none" aria-live="assertive"></span>
+                </td>
+              </tr>
+              <tr>
+                <td class="com-sm-4 trHeader"><label for="password" title="Required">Password:<span class="required requiredAccessible" aria-hidden="true">*</span></label></td>
+                <td>
+                  <div style="display: flex">
+                    <input type="password" name="password" id="password" aria-label="Password:" aria-describedby="signIn_PasswordError" aria-invalid="false" size="30" aria-required="true" maxlength="99" autocomplete="current-password" />
+                    <input type="button" title="Show Password" style="margin-left: 5px" name="show_button" value="Show" id="show_button" />
+                  </div>
+                  <span id="signIn_PasswordError" class="rcmValidationMsgArea" style="display: none" aria-live="assertive"></span>
+                </td>
+              </tr>
+              <tr id="captchaRow">
+                <td style="vertical-align: top"><label for="recaptcha_field" title="Required">Confirm you are not a robot:<span class="required requiredAccessible" aria-hidden="true">*</span></label></td>
+                <td>
+                  <input type="hidden" id="recaptcha_response_field" name="recaptcha_response_field" value="" />
+                  <span class="recapBorderAccessible">
+                    <div id="captchaImg" class="recapBorderAccessible" aria-required="true" aria-label="Confirm you are not a robot:"></div>
+                  </span>
+                  <div aria-live="assertive" class="rcmValidationMsgArea hide" id="recaptcha_response_field_error"></div>
+                </td>
+              </tr>
+              <tr>
+                <td></td>
+                <td class="button_row mobileApplyButtonRow">
+                  <span class="aquabtn active"><span><button id="signIn" onclick="return validateFields();">Sign in to apply at Moody's</button></span></span>
+                  <span><a id="forgot" href="#forgot_pwd" onclick="sessionStorage.setItem('forgot', 'clicked'); return false;">Forgot your password?</a></span>
+                </td>
+              </tr>
+            </table>
+            <h2 class="haveAnAccount">Not registered yet?</h2>
+            <div class="bottomLink">
+              <a id="register" href="">Create your account </a>
+              <span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </form>
+    <script src="successfactors.js"></script>
+    <script>
+      const params = new URLSearchParams(location.search);
+      document.getElementById('register').href =
+        'successfactors-signup.html?company=MoodysProd&site=&lang=en_US&login_ns=register&career_ns=job_save';
+      // ?captcha=0: a tenant with the CAPTCHA switched off.
+      if (params.get('captcha') === '0') document.getElementById('captchaRow').remove();
+      else SF.fakeRecaptcha(document.getElementById('captchaImg'), 'recaptcha_response_field');
+
+      function validateFields() {
+        const missing = [];
+        if (!document.getElementById('username').value.trim()) missing.push('Email Address');
+        if (!document.getElementById('password').value) missing.push('Password');
+        const captcha = document.getElementById('recaptcha_response_field');
+        if (captcha && !captcha.value) missing.push('Confirm you are not a robot');
+        if (missing.length) SF.error(`Please fill in: ${missing.join(', ')}`);
+        else if (params.get('badlogin')) SF.error('Invalid username or password. Please try again.');
+        else {
+          sessionStorage.setItem('signedIn', JSON.stringify({ username: document.getElementById('username').value, password: document.getElementById('password').value }));
+          location.href = 'successfactors-apply.html?company=MoodysProd&career_ns=job_application';
+        }
+        return false;
+      }
+    </script>
+  </body>
+</html>

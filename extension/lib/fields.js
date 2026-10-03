@@ -840,6 +840,17 @@
     return digits ? '+' + digits : '';
   }
 
+  /**
+   * The number without its dialling code, for a form that asks for the code in a box of its own:
+   * "+44 7700 900123" -> "7700 900123". A number written without a code stays as it is.
+   */
+  function nationalNumber(num, cc) {
+    const split = JTF.geo.splitPhone(num);
+    if (!split) return num;
+    const want = String(cc || '').replace(/\D/g, '');
+    return !want || split.code === want ? split.national || num : num;
+  }
+
   function cardExp(card) {
     if (!card || !card.expMonth || !card.expYear) return null;
     const year = String(card.expYear).length === 2 ? '20' + card.expYear : String(card.expYear);
@@ -1056,23 +1067,36 @@
         if (!num) return null;
         const cc = phoneCode(p);
         const international = cc && !num.startsWith('+') ? `${cc} ${num}` : num;
-        const full = ctx.hasCountryCodeField ? num : international;
-        return val(full, { kind: 'phone', national: num, international });
+        // "Country/Region Code" in a box of its own: the number goes in without it.
+        const national = nationalNumber(num, cc);
+        const full = ctx.hasCountryCodeField ? national : international;
+        return val(full, { kind: 'phone', national, international });
       },
     },
-    'phone.national': simple('Phone (national)', 'contact.phone'),
+    'phone.national': {
+      label: 'Phone (national)',
+      path: 'contact.phone',
+      get: (p) => val(nationalNumber(String(p.contact.phone || '').trim(), phoneCode(p))),
+    },
     'phone.countryCode': {
       label: 'Phone country code',
       path: 'contact.phoneCountryCode',
       get(p) {
-        const code = phoneCode(p);
+        // The code you gave, else the one your number starts with, else your country's.
+        const split = JTF.geo.splitPhone(p.contact.phone);
+        const code = phoneCode(p).slice(1) || (split && split.code) || JTF.geo.dialCode(p.address.country);
         if (!code) return null;
-        const country = JTF.geo.findCountry(p.address.country);
-        return val(code, {
+        // The country the code is for: where you live when its code is this one ("+1" in Canada is Canada),
+        // else the country the code usually means ("+44" is the United Kingdom, not Jersey).
+        const home = JTF.geo.findCountry(p.address.country);
+        const iso2 = home && JTF.geo.dialCode(home[0]) === code ? home[0] : JTF.geo.countryOfDial(code);
+        const row = iso2 ? JTF.geo.findCountry(iso2) : null;
+        return val('+' + code, {
           kind: 'phoneCode',
-          code: code.slice(1),
-          countries: country ? JTF.geo.countryCandidates(p.address.country) : [],
-          search: country ? country[2] : code,
+          code,
+          iso2,
+          countries: row ? JTF.geo.countryCandidates(row[2]) : [],
+          search: row ? row[2] : '+' + code,
         });
       },
     },
@@ -1465,6 +1489,10 @@
       get: (p, ctx) =>
         val(ctx.secrets && ctx.secrets.credential && ctx.secrets.credential.password, { sensitive: true }),
     },
+    // "Passcode", "Verification code": the code a site emails you. The code watcher (content/otp.js) types it in.
+    otp: { label: 'Verification code', secret: 'otp', get: () => null },
+    // A plain "I'm not a robot" checkbox (no CAPTCHA behind it): ticked like a person would.
+    human: { label: 'I’m not a robot', get: () => val('Yes') },
 
     'cc.name': {
       label: 'Name on card',
@@ -1626,7 +1654,15 @@
         /^(?!.*\b(resume|cv|curriculum)\b).*(cover ?letter|motivation(al)? letter|letter of motivation|anschreiben|lettre de motivation|\b(portfolio|work samples?)\b|\b(other|additional|supporting|further) (documents?|files?|attachments?|materials?)\b)|transcript|writing sample|headshot|photo|passport/,
     }),
 
-    // Passwords
+    // Passwords. "Passcode" and "One-time password" are the emailed code, not your password.
+    R(
+      'otp',
+      /\b(one ?time|verification|confirmation|access|auth\w*|e ?mail(ed)?|sms|login|sign ?in) (pass ?)?(code|pin|passcode|password)\b|\bpass ?code\b|\botp\b|\b\d digit (code|pin)\b|\benter (the |your )?(code|pin)\b/,
+      {
+        kinds: ['text', 'tel', 'number', 'password'],
+        not: /promo|coupon|discount|voucher|gift|referral|invit|postal|zip|area code|country|card|cvv|cvc|tax/,
+      },
+    ),
     R(
       'account.passwordConfirm',
       /confirm|re ?enter|re ?type|repeat|again|verify|verification|password ?(2|two)|pass ?2|wiederholen|confirmation/,
@@ -1804,6 +1840,13 @@
       notAny: OPT_IN,
       yieldsTo: ['edu.end'],
     }),
+    // "I'm not a robot" as a plain <input type="checkbox">. A CAPTCHA widget's own box (role="checkbox" inside
+    // reCAPTCHA's frame) is never one: those are left for you.
+    R(
+      'human',
+      /\b(i m |i am )?not a (ro ?bot|bot)\b|\bi am (a )?human\b|\b(confirm|verify|prove) (that )?(you are|you re|i am|i m) (a )?human\b|\bhuman verification\b/,
+      { kinds: ['checkbox'], test: (desc) => desc.inputType === 'checkbox' },
+    ),
 
     // Conflicts of interest: government officials / PEPs (you, your family), relatives here, worked here before.
     // EEO notices ("Government officials engaged in enforcing laws…") are not questions.
@@ -2062,7 +2105,8 @@
     }),
     R(
       'phone.countryCode',
-      /country ?(phone )?(calling )?code|dial(l)?(ing)? ?code|calling ?code|phone.*country|country.*phone|\bisd\b|(phone|tel|mobile) ?prefix|country ?prefix|international code|\bindicatif\b|\b(lander)?vorwahl\b|\bprefijo\b|\bprefisso\b/,
+      // SuccessFactors: "Country/Region Code:" next to "Phone Number:".
+      /country ?(phone )?(calling )?code|\bcountr(y|ies) (or |and )?(region|territory) (phone |calling |dial(l)?(ing)? )?code\b|dial(l)?(ing)? ?code|calling ?code|phone.*country|country.*phone|\bisd\b|(phone|tel|mobile) ?prefix|country ?prefix|international code|\bindicatif\b|\b(lander)?vorwahl\b|\bprefijo\b|\bprefisso\b/,
       // "Mobile number (including country code)" is the whole number.
       {
         not: /\b(start|begin)s? with|\b(including|include|incl|with|plus|then|followed by) (the |your |a )?(country|dial(l)?ing|international) code\b/,
@@ -2122,7 +2166,8 @@
       'address.state',
       /\bstate\b|\bprovince\b|\bregion\b|\bcounty\b|\bterritory\b|prefecture|bundesland|\bestado\b|\bprovincia\b|address level 1/,
       {
-        not: /united states|marital|\b(please|you|to) state\b|\bstate (your|which|whether|if|why|how|what|the|any)\b/,
+        // "Country/Region of Residence" and "Country / Territory" are countries (Workday's "countryRegion" id is not).
+        not: /united states|marital|\b(please|you|to) state\b|\bstate (your|which|whether|if|why|how|what|the|any)\b|(?<!\bsection )\bcountr(y|ies) (or |and )?(region|territory|area)\b|\b(region|territory) (or |and )?countr(y|ies)\b/,
         yieldsTo: ['exp.location'], // "Employer Location (City, State, Zip)"
       },
     ),
@@ -2141,7 +2186,7 @@
       { not: /other (countr|nationalit|citizenship)|\bdual\b|previous|\bformer|second (nationality|citizenship)/ },
     ),
     R('address.country', /\bcountr(y|ies)\b|\bnation\b|\bland\b|\bpais\b|\bpays\b/, {
-      not: /code|phone|dial|calling|region|citizen|nationality|birth|issu|passport|origin|visa|other than|which countries|\btax\b/,
+      not: /code|phone|dial|calling|(?<!\bcountr(y|ies) (or |and )?)\bregion\b|citizen|nationality|birth|issu|passport|origin|visa|other than|which countries|\btax\b/,
     }),
 
     // Work experience (gen.* become edu.* / exp.* from the surrounding section)

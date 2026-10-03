@@ -68,6 +68,8 @@ function unlockForm(refresh) {
     e.preventDefault();
     try {
       await vault.unlock(pw.value);
+      // A fill that skipped passwords for the locked vault carries on now.
+      globalThis.JTF.api.runtime.sendMessage({ type: 'jtf:vault-unlocked' }).catch(() => {});
       refresh();
     } catch (err) {
       error.textContent = err.message;

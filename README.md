@@ -2,7 +2,7 @@
 
 A browser extension for **Chrome, Edge, Brave and Firefox** that fills out job applications for you, and works as a general autofill for sign-ups and checkouts too.
 
-Save your details once: name, contact info, address, links, education, work history, resume, answers to common screening questions, plus (optionally) passwords and payment cards in an encrypted vault. Then press **Alt+Shift+F** (or click the toolbar button) on any application page and JobToFill fills in everything it recognizes. It never submits anything; you review the form and press Submit yourself.
+Save your details once: name, contact info, address, links, education, work history, resume, answers to common screening questions, plus (optionally) passwords and payment cards in an encrypted vault. Then press **Alt+Shift+F** (or click the toolbar button) on any application page and JobToFill fills in everything it recognizes. It never submits an application; you review the form and press Submit yourself. On a job portal's own sign-in and sign-up pages it can sign you in and create the account for you (a setting, on by default; see [Job-portal accounts](#job-portal-accounts)).
 
 ## Features
 
@@ -18,7 +18,7 @@ Save your details once: name, contact info, address, links, education, work hist
 - **Custom dropdowns.** Opens react-select (single and multi), Workday listboxes and async search boxes (school pickers), reads every option, picks the best match and checks the site registered it. If nothing fits it leaves the box empty instead of half-typed.
 - **Custom buttons and toggles.** Yes/No toggle buttons (Ashby), `role="radio"` / `role="checkbox"` widgets (Radix, Headless UI) and switches, not just native inputs.
 - **Multiple education and job entries.** When a form repeats its _School_ or _Job title_ section, each copy gets the next entry from your profile. "From", "To" and "Location" boxes take their meaning from the section they sit in, and split month/year boxes are handled.
-- **Resume, cover letter and transcript upload.** Your files are attached to the right upload fields, even when every button just says "Attach" (Jobvite, Gem and Ashby's "autofill from resume" included). A cover-letter upload never gets your resume. Files go in first, and if the site reads your CV and clears the form (Breezy, Lever), the answers are put back.
+- **Resume, cover letter and transcript upload.** Your files are attached to the right upload fields, even when every button just says "Attach" (Jobvite, Gem and Ashby's "autofill from resume" included). A cover-letter upload never gets your resume. Files go in first, and if the site reads your CV and clears the form (Breezy, Lever), the answers are put back. Upload tiles that first ask where the file comes from (SuccessFactors' "Upload a Resume" → _Upload from Device / Upload from Dropbox / Sign in with Google_) get it through _Upload from Device_, without a file dialog; Dropbox, Google and other services are never chosen, and an "Additional Documents" tile never gets your resume.
 - **Custom answers.** Rules like "_why do you want to work_" → your answer. You can match with plain phrases, `a | b` alternatives or `/regex/`.
 - **Learn from this page.** After you type answers into an unusual form, one click saves them, either as profile values or as custom answers for next time.
 - **Acknowledgement boxes** ("I have read the privacy notice", "Acknowledge/Confirm"). Left for you by default, with a one-click _Always tick these_ in the popup; Quick apply always ticks them and says how many. Marketing and talent-pool opt-ins are never ticked.
@@ -82,10 +82,25 @@ Save your details once: name, contact info, address, links, education, work hist
 
 - Checkout and shipping forms, including country/state codes, phone numbers and split names. A "Company (optional)" box on a shipping form is _not_ filled with your employer.
 - **Encrypted vault** for passwords and cards (AES-256-GCM with a PBKDF2 key from your master password, auto-lock).
-  - Sign-up pages: a unique strong password is generated for "Create password" + "Confirm password" and saved for that site, so a Workday account for every employer is no longer painful. Choosing a single default password instead is also an option.
-  - Login pages: the saved password for that site is filled.
+  - Sign-up pages: a unique strong password is generated for "Create password" + "Confirm password" ("Choose Password" / "Retype Password", "Verify New Password"…) and saved for that site, so a Workday account for every employer is no longer painful. Choosing a single default password instead is also an option.
+  - **Passwords that fit the page.** The rules a sign-up page states ("at least 8 characters", "not longer than 18", "one upper case and one lower case letter", "a number or punctuation character", "no spaces", the special characters it lists or bans, and the box's own `minlength` / `maxlength` / `pattern`) are read, and a generated password always meets them. When your default password wouldn't, it isn't submitted to be refused: a fitting one is made, saved for that site, and the fill says so.
+  - Login pages: the saved password for that site is filled, or your default password when you chose it and nothing is saved for the site. Employers that share one host (every SuccessFactors company on `career8.successfactors.com`) each get their own login.
+  - **A locked vault asks to be unlocked.** A fill that needs a password while the vault is locked says so with an _Unlock_ button; once you unlock it (there, in the toolbar popup or in settings), the page's passwords go in and signing in carries on by itself.
   - Checkout pages: the selected card is filled, including inside payment-provider iframes such as Stripe.
 - **Right-click menu.** _Fill this page_, _Insert from profile → Email / LinkedIn / …_ into any box, _Generate strong password_ and _Insert verification code from email_.
+
+**Job-portal accounts**
+
+- **Signs in and creates portal accounts for you** (Settings › _Sign in and create job-portal accounts for me_, on by default). When you fill (button, shortcut, right-click or Quick apply) a secure page that is only a sign-in or sign-up form, with no job questions or uploads on it:
+  - a sign-in page for a site with a saved login gets it, and its _Sign in_ button is clicked;
+  - a sign-in page for a site with no known account gets its _Create account_ / _Register_ / _New user?_ link clicked, and the sign-up page that opens in the tab is filled by itself;
+  - a sign-up page is filled (your default or a fitting new password, the sign-up form's own terms box ticked, never marketing) and its _Create account_ button clicked;
+  - the code the site then emails is typed in from your inbox (with Nylas connected), and that step's _Continue_ / _Verify_ clicked;
+  - "An account with this email already exists" goes back to sign in with the saved or default password;
+  - the application page it lands on is filled as usual, and the toast lists every button it clicked.
+- **CAPTCHAs are yours.** A plain "I'm not a robot" checkbox is ticked like any other box. A real CAPTCHA (reCAPTCHA, hCaptcha, Turnstile, Arkose, an image CAPTCHA) is never clicked, solved or bypassed: the toast asks you to complete it (and to accept a "Terms of Use" statement that opens in a dialog), and JobToFill carries on as soon as you have, for up to five minutes.
+- **Strict about what it clicks.** Only buttons and links whose wording says sign in, log in, create account, register, sign up, "New user?", "Already have an account? Sign in", or _Continue_ / _Verify_ on an emailed-code step; a bare _Submit_ / _Next_ only when it is the one submit of a pure sign-in or sign-up form. Never anything that says apply, application, submit application, send, withdraw, delete, pay, review and submit, forgot or reset password, upload, cancel, or signs in with another service (Google, LinkedIn, Microsoft, Indeed…). Never on a page with job-application questions, never while a required box is empty or an error is showing, never on `http://` pages, and only what is on top at the button's spot (nothing hidden under a banner). Each tab's run lasts ten minutes at most, takes at most six clicks, stays on the same site (and employer), and stops when you go elsewhere.
+- **Dropdowns on account pages.** SuccessFactors' "Country/Region Code" gets "UNITED KINGDOM (+44)" (not the Isle of Man or Jersey, and "+1" is the United States unless you live in Canada), the phone number then goes in without its code, and "Country/Region of Residence" gets your country, not your state.
 
 **Verification codes from email**
 
@@ -155,6 +170,7 @@ In both browsers the settings page opens on install. Fill in your profile and pi
 | Write a cover letter           | Toolbar → _Write cover letter_ on the application page (set up a key under _Cover letters_) |
 | Answer the questions left      | Automatic with an AI key; or the popup's _Answer them with AI_                              |
 | Emailed sign-in codes          | Automatic once your inbox is connected under _Email codes_; or right-click the box          |
+| Sign in / create an account    | Fill the portal's sign-in or sign-up page: it clicks _Sign in_ / _Create account_ for you   |
 
 To change the shortcut, open `chrome://extensions/shortcuts` in Chromium browsers, or in Firefox go to `about:addons`, click ⚙, then **Manage Extension Shortcuts**. The settings page links there too.
 
@@ -181,8 +197,10 @@ The demo includes Greenhouse-, Workday- and Lever-style applications, searchable
   - They are only filled on HTTPS pages (or `localhost`).
   - They only go into visible fields: off-screen "honeypot" and hidden fields are skipped.
   - Saved passwords only go to the site they belong to.
+  - Your master password is only ever typed into JobToFill's own popup or settings page, never into a page's toast.
   - Cards only go to the top page, the same site, or known payment processors' frames, never to an arbitrary third-party iframe.
-- **Never submits.** Acknowledgement and terms checkboxes are left for you unless you turn on _Tick acknowledgement boxes_ or use Quick apply (which ticks them and tells you); marketing, newsletter and talent-pool opt-ins are never ticked.
+- **Never submits an application.** Acknowledgement and terms checkboxes are left for you unless you turn on _Tick acknowledgement boxes_ or use Quick apply (which ticks them and tells you); marketing, newsletter and talent-pool opt-ins are never ticked. The one thing it clicks for you, with _Sign in and create job-portal accounts for me_ on, is a job portal's own sign-in or create-account button (and the _Continue_ after an emailed code) on a pure sign-in or sign-up page, as listed under [Job-portal accounts](#job-portal-accounts); on such a sign-up page it also ticks the form's own terms box, since creating the account means accepting them. Switch the setting off and it only fills.
+- **CAPTCHAs are never touched.** Nothing is filled or clicked inside a CAPTCHA, and its frames (Google reCAPTCHA, hCaptcha, Cloudflare, Arkose) are skipped entirely.
 - **Works under strict Content-Security-Policies.** The on-page toast and labels are styled through the DOM, so a site's CSP can't block them, and no page script ever sees the extension's code.
 - The extension needs access to all sites so it can fill application forms embedded from other domains (iframes). It only touches a page when you trigger it.
 
@@ -218,7 +236,8 @@ Implemented ✅ · Ideas for later 💡
 - Undo can't clear a dropdown that has no clear (×) button, or remove a file once the site has replaced its upload box.
 - "Enter manually" cover-letter boxes that only appear after a click aren't opened for you.
 - Sections that only appear after clicking _Add another_ aren't added automatically yet.
-- It can't fill CAPTCHAs or closed shadow roots, and won't run on browser pages or extension stores.
+- It never solves CAPTCHAs (it waits for you), can't fill closed shadow roots, and won't run on browser pages or extension stores.
+- Signing in for you covers sign-in and sign-up forms with a password box. Email-first sign-ins (Oracle Recruiting Cloud's "Email address → Next → PIN", iCIMS's "Next", Eightfold's "Continue with email") are filled but their _Next_ is left for you; the PIN or code that follows is still typed in from your inbox. Sign-up forms with security questions (some Taleo sites) stop and say what's left to fill. SuccessFactors' older "Choose File → Upload" document dialog isn't driven; attach the file there by hand.
 - The cover letter writer and AI answers need an AI provider account (OpenRouter, DeepSeek or similar). Their checks catch invented numbers, skills, names and claims, but read the letter and every orange-outlined answer before you submit: the AI can still describe something more strongly than you would, or pick a preference you wouldn't.
 - AI answers read a custom dropdown's options by opening it. Searchable lists (schools, cities) are answered by typing, so an unusual option may not be found.
 - The job description is found and checked for 97% of the live postings tested (236 graduate and internship roles from Trackr's UK, US, Hong Kong, French and German trackers, across 25+ job sites) when you open the application from the job's page, and for 86% when you land on the application directly. No posting for another job was ever accepted as the same job. Some employers (SuccessFactors career sites, Amazon, law firm portals) send _Apply_ to a sign-in page that drops the job's ID: start from the job's page, switch on the browsing-history search, or paste the description.
@@ -233,8 +252,9 @@ extension/
   lib/                 classic scripts shared by every context (and the Node unit tests)
     fields.js          profile schema, field types, detection rules, value resolution
     matcher.js         classification, section/entry planning, option matching, formatting
+    account.js         job-portal accounts: the click allow/deny-list, "already exists" messages, shared-host employers
     geo.js             countries (ISO codes + aliases) and US/CA/AU regions
-    vault.js           encryption, password generator, lock/unlock
+    vault.js           encryption, password generator and page password rules, lock/unlock
     store.js           profiles, settings, documents, history, backups, cover letter material and letters
     util.js            text normalization, dates, and JTF.api (browser.* in Firefox, chrome.* elsewhere)
     discover.js        Discover: registry search, Trackr dedupe, careers crawl, job boards, verification, watchlist checks
@@ -248,7 +268,8 @@ extension/
   offscreen/           Chromium only: reads job pages' HTML for the background (its service worker has no DOMParser)
   content/             injected on demand into every frame
     dom.js             finds controls (incl. shadow DOM), labels, radio groups
-    fill.js            sets values the way frameworks notice, custom dropdowns, files, undo
+    fill.js            sets values the way frameworks notice, custom dropdowns, files and upload tiles, undo
+    account.js         sign-in / sign-up / code pages: what blocks the submit, CAPTCHAs, the allowed clicks
     main.js            in-page API: fill / learn / inspect / undo / toast
   ui/                  shared styles and helpers for the popup and settings page (ES modules)
   popup/               toolbar popup

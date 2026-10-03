@@ -634,6 +634,137 @@
     fire(el, 'change');
   }
 
+  /* ------------------------------------------------------ upload menus */
+
+  // Upload tiles whose file box only exists once you choose where the file comes from: SuccessFactors' "Upload a
+  // Resume" (its N:_attachIcon) opens "Upload from Device / Upload from Dropbox / Sign in with Google", and only
+  // the box that "Upload from Device" makes uploads anything (a file put straight into an earlier one stays
+  // "Uploading…" for ever). Phenom, iCIMS and others have the same kind of menu.
+  const UPLOAD_TRIGGER =
+    /^(upload|attach|add|choose|select|browse|import)( a| an| your| my| new)? (resume|cv|curriculum vitae|cover letter|letter|document|file|attachment|transcript)s?\b/;
+  const DEVICE_OPTION =
+    /^(upload|select|choose|browse|pick|attach|add)?( a)?( file)?( from)?( my| this| your| the| local)? ?(device|computer|desktop|pc|mac|local (drive|disk|files?)|files?|hard drive)$|^(choose|select|browse for) (a )?files?$|\bvon (meinem |diesem )?gerat\b|\bdepuis (l |mon |votre )?(appareil|ordinateur)\b|\bdesde (el |mi |su )?(dispositivo|equipo|ordenador)\b/;
+  // Never chosen: anything that signs in to or fetches from another service.
+  const CLOUD_OPTION =
+    /dropbox|google|drive|one ?drive|\bbox\b|icloud|linked ?in|indeed|seek|\burl\b|\blink\b|paste|sign ?in|log ?in|cloud|camera|photo|scan/;
+  const TRIGGERS = 'button, a, [role="button"], [role="link"], [id$=":_attachIcon"], [tabindex]:not([tabindex="-1"])';
+  const MENU_ITEMS = '[role="menuitem"], [role="option"], [role="button"], button, a, li, label';
+
+  const triggerText = (el) =>
+    JTF.util.normalize(dom().textOf(el) || el.getAttribute('aria-label') || el.getAttribute('title') || '');
+
+  /**
+   * The upload tiles on a page that have no file box yet: [{ el, box, desc }], `desc` being what to classify it
+   * by (its own wording and the label of its row: "* Resume", "Additional Documents (References…)").
+   */
+  function uploadTriggers(doc) {
+    const found = Array.from(doc.querySelectorAll(TRIGGERS)).filter((el) => {
+      if (!dom().isVisible(el) || el.closest('[data-jtf-ui]') || el.disabled) return false;
+      // Never a link that leaves the page or a button that submits its form.
+      if (el.localName === 'a' && !/^(#|javascript:|$)/i.test((el.getAttribute('href') || '').trim())) return false;
+      if (el.form && el.matches('button:not([type="button"]):not([type="reset"]), input[type="submit"]')) return false;
+      return /:_attachIcon$/.test(el.id) || UPLOAD_TRIGGER.test(triggerText(el));
+    });
+    // The innermost of nested candidates (a link inside a focusable tile).
+    const list = found.filter((el) => !found.some((o) => o !== el && el.contains(o)));
+    const out = [];
+    for (const el of list) {
+      let box = el;
+      for (let a = el.parentElement; a && a !== doc.body; a = a.parentElement) {
+        if (list.some((o) => o !== el && a.contains(o))) break;
+        if (a.querySelector('input:not([type="hidden"]):not([type="file"]), select, textarea')) break;
+        box = a;
+      }
+      // A box that already has its file input is filled like any other, unless it is SuccessFactors' own, which
+      // only uploads once "Upload from Device" has made it.
+      const input = box.querySelector('input[type="file"]');
+      if (input && !/:_file$/.test(input.id)) continue;
+      const own = JTF.util.cleanLabel(dom().textOf(el) || el.getAttribute('aria-label') || '', 120);
+      let row = JTF.util.cleanLabel(dom().textOf(box), 300);
+      if (own && row.startsWith(own)) row = row.slice(own.length).trim();
+      else if (own) row = row.replace(own, ' ').trim();
+      const desc = {
+        kind: 'file',
+        inputType: 'file',
+        autocomplete: '',
+        maxLength: 0,
+        placeholderRaw: '',
+        options: null,
+        signals: { label: own, question: row, id: el.id || '', title: el.getAttribute('title') || '' },
+      };
+      out.push({ el, box, desc });
+    }
+    return out;
+  }
+
+  /** The "Upload from Device" choice a tile's menu or dialog just showed (never Dropbox, Google…). */
+  function deviceOption(doc, trigger, before) {
+    return (
+      Array.from(doc.querySelectorAll(MENU_ITEMS)).find((el) => {
+        if (before.has(el) || trigger.contains(el) || el.closest('[data-jtf-ui]') || !dom().isVisible(el)) return false;
+        const t = triggerText(el);
+        return t.length <= 60 && DEVICE_OPTION.test(t) && !CLOUD_OPTION.test(t);
+      }) || null
+    );
+  }
+
+  /**
+   * Put `doc` into an upload tile: click the tile, choose "Upload from Device" if it asks where the file comes
+   * from, and give the file box that makes the file. The page's own click on that box (which would open the file
+   * picker) is caught and cancelled, so no dialog opens. Returns { status: 'filled', confirmed } once the file is
+   * in (confirmed: the tile shows its name), or { status: 'nomatch' } when no file box turned up.
+   */
+  async function attachVia(trigger, doc, opts) {
+    const page = trigger.el.ownerDocument;
+    const visibleItems = new Set(Array.from(page.querySelectorAll(MENU_ITEMS)).filter((el) => dom().isVisible(el)));
+    const earlier = new Set(page.querySelectorAll('input[type="file"]'));
+    let input = null;
+    const catchPicker = (e) => {
+      const t = e.composedPath ? e.composedPath()[0] : e.target;
+      if (t && t.localName === 'input' && t.type === 'file') {
+        input = t;
+        e.preventDefault(); // the file picker stays shut
+      }
+    };
+    page.addEventListener('click', catchPicker, true);
+    let chose = null;
+    try {
+      pointerClick(trigger.el);
+      for (let waited = 0; waited < 2500 && !input; waited += 50) {
+        await sleep(50);
+        if (chose) continue;
+        chose = deviceOption(page, trigger.el, visibleItems);
+        if (chose) pointerClick(chose);
+      }
+      // A file box made but never clicked.
+      if (!input && chose) {
+        const fresh = Array.from(page.querySelectorAll('input[type="file"]')).filter((el) => !earlier.has(el));
+        input = fresh[fresh.length - 1] || null;
+      }
+    } finally {
+      page.removeEventListener('click', catchPicker, true);
+    }
+    if (!input) {
+      // Close a menu that offered nothing usable.
+      if (Array.from(page.querySelectorAll(MENU_ITEMS)).some((el) => !visibleItems.has(el) && dom().isVisible(el)))
+        key(page.activeElement || page.body, 'Escape');
+      return { status: 'nomatch' };
+    }
+    opts.history.push({ el: input, kind: 'file', prev: input.files });
+    setFile(input, doc);
+    // The tile shows the file's name (or says it uploaded) once it has.
+    const name = JTF.util.normalize(doc.name.replace(/\.[a-z0-9]+$/i, ''));
+    const shows = () => {
+      const text = JTF.util.normalize(trigger.box.isConnected ? trigger.box.textContent : page.body.textContent);
+      return (
+        (!!name && text.includes(name)) ||
+        /\b(uploaded|upload (complete|successful)|erfolgreich hochgeladen)\b/.test(text)
+      );
+    };
+    for (let waited = 0; waited < 8000 && !shows(); waited += 200) await sleep(200);
+    return { status: 'filled', confirmed: shows(), target: trigger.box };
+  }
+
   /* ------------------------------------------------------------- apply */
 
   /**
@@ -817,5 +948,16 @@
     while (highlighted.length) clearOne(highlighted[0].target);
   }
 
-  JTF.fill = { apply, undo, hasValue, currentValue, highlight, clearHighlights, typeValue, peekOptions };
+  JTF.fill = {
+    apply,
+    undo,
+    hasValue,
+    currentValue,
+    highlight,
+    clearHighlights,
+    typeValue,
+    peekOptions,
+    uploadTriggers,
+    attachVia,
+  };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

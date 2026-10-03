@@ -30,6 +30,7 @@
       "lib/geo.js",
       "lib/fields.js",
       "lib/matcher.js",
+      "lib/account.js",
       "lib/vault.js",
       "lib/store.js",
       "lib/ai.js",

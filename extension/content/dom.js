@@ -392,6 +392,8 @@
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
     if (el.closest('fieldset[disabled]')) return false;
     if (el.closest('[data-jtf-ui]')) return false;
+    // A CAPTCHA (its "I'm not a robot" box, an image CAPTCHA's answer) is never filled.
+    if (JTF.flow && JTF.flow.inCaptcha(el)) return false;
     if (kind === 'file') return true;
     if (kind === 'radio' || kind === 'checkbox') {
       // The hidden input behind an ARIA widget (Radix, Ashby's Yes/No) is a shim: use the widget.

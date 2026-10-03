@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8" />
+    <title>Create Account - Workday</title>
+    <style>
+      body { font: 14px system-ui; max-width: 480px; margin: 24px auto; }
+      label { display: block; margin: 12px 0 4px; }
+      input[type='text'], input[type='password'] { display: block; width: 100%; }
+      .button-wrap { position: relative; display: inline-block; margin-top: 16px; }
+      .button-wrap button { padding: 8px 20px; }
+      [data-automation-id='click_filter'] { position: absolute; inset: 0; cursor: pointer; }
+      .error { color: #b00; }
+    </style>
+  </head>
+  <body>
+    <!-- Modelled on Workday's "Create Account" step (myworkdayjobs.com, from memory of its markup): React inputs
+         with data-automation-id, "Verify New Password", the "I agree" checkbox, and buttons covered by an invisible
+         data-automation-id="click_filter" div that takes the click (clicking the button underneath does nothing).
+         Password rules only show once a password has been typed. -->
+    <div data-automation-id="createAccountPage">
+      <h2>Create Account</h2>
+      <label for="input-4">Email Address<abbr title="required">*</abbr></label>
+      <input type="text" id="input-4" data-automation-id="email" aria-required="true" />
+      <label for="input-5">Password<abbr title="required">*</abbr></label>
+      <input type="password" id="input-5" data-automation-id="password" aria-required="true" />
+      <label for="input-6">Verify New Password<abbr title="required">*</abbr></label>
+      <input type="password" id="input-6" data-automation-id="verifyPassword" aria-required="true" />
+      <div>
+        <input type="checkbox" id="input-7" data-automation-id="createAccountCheckbox" aria-required="true" />
+        <label for="input-7" style="display: inline">Yes, I have read and consent to the Terms and Conditions</label>
+      </div>
+      <p class="error" id="problem" hidden></p>
+      <div class="button-wrap">
+        <button type="button" data-automation-id="createAccountSubmitButton" tabindex="-1">Create Account</button>
+        <div role="button" tabindex="0" aria-label="Create Account" data-automation-id="click_filter"></div>
+      </div>
+      <p>Already have an account? <button type="button" data-automation-id="signInLink">Sign In</button></p>
+    </div>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      document.querySelector('[data-automation-id="createAccountSubmitButton"]').addEventListener('click', () =>
+        sessionStorage.setItem('underneath', 'clicked'),
+      );
+      document.querySelector('[data-automation-id="click_filter"]').addEventListener('click', () => {
+        const pw = $('input-5').value;
+        const ok =
+          /@/.test($('input-4').value) && pw && pw === $('input-6').value && pw.length >= 8 && /[A-Z]/.test(pw) && /[a-z]/.test(pw) && /\d/.test(pw) && /[^A-Za-z0-9]/.test(pw) && $('input-7').checked;
+        if (!ok) {
+          $('problem').hidden = false;
+          $('problem').textContent = 'Error: please check the highlighted fields.';
+          return;
+        }
+        sessionStorage.setItem('created', JSON.stringify({ email: $('input-4').value, password: pw }));
+      });
+    </script>
+  </body>
+</html>

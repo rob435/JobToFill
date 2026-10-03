@@ -1614,3 +1614,93 @@ test('nickname-style boxes always get the legal name, never the profile preferre
   assert.equal(name('Nickname'), 'Ada');
   assert.equal(name('Name you go by (first name)'), 'Ada');
 });
+
+test('phone numbers and dialling codes for a separate "Country/Region Code" list', () => {
+  const p = sample();
+  const code = (profile, list) => {
+    const options = opts(...list);
+    const i = matcher.matchOption(options, fields.resolve('phone.countryCode', profile, {}));
+    return i < 0 ? null : options[i].text;
+  };
+  // SuccessFactors: "UNITED KINGDOM (+44)" with ISO values, beside the Isle of Man, Jersey and Guernsey.
+  const sf = [
+    ['- Select -', ''],
+    ['CANADA (+1)', 'CA'],
+    ['GUERNSEY (+44)', 'GG'],
+    ['ISLE OF MAN (+44)', 'IM'],
+    ['JERSEY (+44)', 'JE'],
+    ['UNITED KINGDOM (+44)', 'GB'],
+    ['UNITED STATES (+1)', 'US'],
+    ['UNITED STATES MINOR OUTLYING ISLANDS (+340)', 'UM'],
+    ['VIRGIN ISLANDS, U.S. (+1)', 'VI'],
+  ];
+  assert.equal(code(p, sf), 'UNITED KINGDOM (+44)');
+  const us = sample();
+  Object.assign(us.contact, { phoneCountryCode: '+1', phone: '415 555 0100' });
+  us.address.country = 'United States';
+  assert.equal(code(us, sf), 'UNITED STATES (+1)', 'not Canada or the US Virgin Islands');
+  us.address.country = 'Canada';
+  assert.equal(code(us, sf), 'CANADA (+1)', '+1 in Canada is Canada');
+  us.address.country = 'United Kingdom';
+  assert.equal(code(us, sf), 'UNITED STATES (+1)', 'a US number held by someone in the UK');
+  p.address.country = '';
+  assert.equal(code(p, sf), 'UNITED KINGDOM (+44)', '+44 alone is the UK');
+  // Other spellings of the same list.
+  for (const list of [
+    ['+33 France', '+44 United Kingdom', '+1 United States'],
+    ['FR +33', 'GB +44', 'US +1'],
+    ['33', '44', '1'],
+    [
+      ['France', '33'],
+      ['United Kingdom', '44'],
+    ],
+  ])
+    assert.match(code(sample(), list), /44|United Kingdom/, JSON.stringify(list));
+  // No code in the profile: the one the number starts with, else the country's.
+  const bare = sample();
+  Object.assign(bare.contact, { phoneCountryCode: '', phone: '+44 7700 900123' });
+  assert.equal(code(bare, sf), 'UNITED KINGDOM (+44)');
+  assert.equal(fields.resolve('phone', bare, { hasCountryCodeField: true }).text, '7700 900123');
+  assert.equal(fields.resolve('phone', bare, {}).text, '+44 7700 900123');
+  bare.contact.phone = '07700 900123';
+  assert.equal(code(bare, sf), 'UNITED KINGDOM (+44)', 'from the country you live in');
+  // A number written with its code drops it when the code has a box of its own.
+  const both = sample();
+  Object.assign(both.contact, { phoneCountryCode: '+44', phone: '+44 (0)20 7946 0958' });
+  assert.equal(fields.resolve('phone', both, { hasCountryCodeField: true }).text, '20 7946 0958');
+});
+
+test('a SuccessFactors sign-up page is a sign-up page with a country-code box', () => {
+  const page = [
+    desc('Email Address:*'),
+    desc('Retype Email Address:*'),
+    desc('Choose Password:*', { kind: 'password', inputType: 'password' }),
+    desc('Retype Password:*', { kind: 'password', inputType: 'password' }),
+    desc('First Name:*'),
+    desc('Last Name:*'),
+    desc('Country/Region Code:*', { kind: 'select', options: opts('- Select -', ['UNITED KINGDOM (+44)', 'GB']) }),
+    desc({ label: 'Phone Number:*', title: 'Please enter phone number' }),
+    desc('Country/Region of Residence:*', { kind: 'select', options: opts('- Select -', ['UNITED KINGDOM', 'GB']) }),
+  ];
+  const { results, context } = matcher.plan(page, sample());
+  assert.deepEqual(
+    results.map((r) => r && r.type),
+    [
+      'email',
+      'email',
+      'account.password',
+      'account.passwordConfirm',
+      'name.first',
+      'name.last',
+      'phone.countryCode',
+      'phone',
+      'address.country',
+    ],
+  );
+  assert.equal(context.signup, true);
+  assert.equal(context.hasCountryCodeField, true);
+  assert.equal(context.jobContext, false);
+  const p = sample();
+  assert.equal(fields.resolve('phone', p, context).text, '20 7946 0958', 'the national number');
+  assert.equal(matcher.matchOption(page[8].options, fields.resolve('address.country', p, context)), 1);
+});

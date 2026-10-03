@@ -49,6 +49,9 @@
     // Verification codes from email (Nylas): auto: watch pages for code boxes and fill them by themselves;
     // links: open the "verify your email" link when a page says one was sent.
     otp: { auto: true, links: true },
+    // On a sign-in or sign-up page you fill: click its own "Sign in" / "Create account" (never an application's
+    // submit), wait for you to solve any CAPTCHA, and carry on to the next page (background.js accountStep).
+    accountFlow: true,
   };
 
   // answerNotes: the candidate's own rules for answers ("I have never applied to any of these firms").

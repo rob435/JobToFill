@@ -70,6 +70,7 @@
     'job.locations',
     'skills',
     'languages',
+    'human', // a plain "I'm not a robot" box
   ]);
 
   // "…outside of the classroom? For example: student clubs, partner organisations…": the examples don't say
@@ -278,7 +279,8 @@
     )
       r.type = 'phone.countryCode';
     if (desc.kind === 'email' && !EMAIL_TYPES.has(r.type)) r.type = 'email';
-    if (desc.kind === 'password' && !r.type.startsWith('account.pass')) r.type = 'account.password';
+    // A "Passcode" box is often type="password" (SuccessFactors): the emailed code, not your password.
+    if (desc.kind === 'password' && !r.type.startsWith('account.pass') && r.type !== 'otp') r.type = 'account.password';
     return r;
   }
 
@@ -652,6 +654,12 @@
     return best ? best.i : -1;
   }
 
+  /**
+   * A dialling code from a list: "UNITED KINGDOM (+44)", "+44 United Kingdom", "GB +44", "44", or a country list
+   * whose values are codes. Many countries share a code (+1: the US, Canada, Jamaica…; +44: the UK, Jersey, the
+   * Isle of Man), so the option must also be the country the code is for (v.iso2): "UNITED STATES (+1)", never
+   * "CANADA (+1)" or "VIRGIN ISLANDS, U.S. (+1)".
+   */
   function bestPhoneCode(opts, v) {
     const re = new RegExp('(^|[^\\d])\\+?\\s?' + v.code + '(?!\\d)');
     const countries = (v.countries || []).map(norm).filter(Boolean);
@@ -659,8 +667,13 @@
     for (const o of opts) {
       let s = 0;
       if (re.test(o.text) || re.test(o.value)) s += 60;
-      const hay = ' ' + o.n + ' ' + o.nv + ' ';
-      if (countries.some((c) => hay.includes(' ' + c + ' '))) s += 40;
+      const row = countryOfOption(o.text) || (/^[A-Za-z]{2,3}$/.test(o.value) ? countryOfOption(o.value) : null);
+      if (row && v.iso2) {
+        if (row[0] === v.iso2) s += 45;
+      } else {
+        const hay = ' ' + o.n + ' ' + o.nv + ' ';
+        if (countries.some((c) => hay.includes(' ' + c + ' '))) s += 40;
+      }
       if (!best || s > best.s) best = { i: o.i, s };
     }
     return best && best.s >= 40 ? best.i : -1;

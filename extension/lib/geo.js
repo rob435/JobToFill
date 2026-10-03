@@ -135,7 +135,78 @@
     'AU:Australian;NZ:New Zealander;CA:Canadian;MX:Mexican;BR:Brazilian;AR:Argentine,Argentinian;CL:Chilean;' +
     'CO:Colombian;PE:Peruvian;IR:Iranian;GE:Georgian;AM:Armenian;JM:Jamaican';
 
+  // International dialling codes (ITU), so a "Country/Region Code" list gets the right "United Kingdom (+44)".
+  // prettier-ignore
+  const DIAL =
+    'AF93 AX358 AL355 DZ213 AS1 AD376 AO244 AI1 AQ672 AG1 AR54 AM374 AW297 AU61 AT43 AZ994 BS1 BH973 BD880 BB1 BY375 ' +
+    'BE32 BZ501 BJ229 BM1 BT975 BO591 BQ599 BA387 BW267 BV47 BR55 IO246 BN673 BG359 BF226 BI257 CV238 KH855 CM237 CA1 ' +
+    'KY1 CF236 TD235 CL56 CN86 CX61 CC61 CO57 KM269 CG242 CD243 CK682 CR506 CI225 HR385 CU53 CW599 CY357 CZ420 DK45 ' +
+    'DJ253 DM1 DO1 EC593 EG20 SV503 GQ240 ER291 EE372 SZ268 ET251 FK500 FO298 FJ679 FI358 FR33 GF594 PF689 TF262 GA241 ' +
+    'GM220 GE995 DE49 GH233 GI350 GR30 GL299 GD1 GP590 GU1 GT502 GG44 GN224 GW245 GY592 HT509 HM672 VA39 HN504 HK852 ' +
+    'HU36 IS354 IN91 ID62 IR98 IQ964 IE353 IM44 IL972 IT39 JM1 JP81 JE44 JO962 KZ7 KE254 KI686 KP850 KR82 KW965 KG996 ' +
+    'LA856 LV371 LB961 LS266 LR231 LY218 LI423 LT370 LU352 MO853 MG261 MW265 MY60 MV960 ML223 MT356 MH692 MQ596 MR222 ' +
+    'MU230 YT262 MX52 FM691 MD373 MC377 MN976 ME382 MS1 MA212 MZ258 MM95 NA264 NR674 NP977 NL31 NC687 NZ64 NI505 NE227 ' +
+    'NG234 NU683 NF672 MK389 MP1 NO47 OM968 PK92 PW680 PS970 PA507 PG675 PY595 PE51 PH63 PN64 PL48 PT351 PR1 QA974 ' +
+    'RE262 RO40 RU7 RW250 BL590 SH290 KN1 LC1 MF590 PM508 VC1 WS685 SM378 ST239 SA966 SN221 RS381 SC248 SL232 SG65 SX1 ' +
+    'SK421 SI386 SB677 SO252 ZA27 GS500 SS211 ES34 LK94 SD249 SR597 SJ47 SE46 CH41 SY963 TW886 TJ992 TZ255 TH66 TL670 ' +
+    'TG228 TK690 TO676 TT1 TN216 TR90 TM993 TC1 TV688 UG256 UA380 AE971 GB44 US1 UM1 UY598 UZ998 VU678 VE58 VN84 VG1 ' +
+    'VI1 WF681 EH212 YE967 ZM260 ZW263 XK383';
+  // The country a shared code stands for when nothing else says: +1 is the US, not Canada; +44 the UK, not Jersey.
+  const DIAL_HOME = 'US RU GB NO AU IT FI RE GP CW MA NF FK NZ'.split(' ');
+
   const norm = (s) => JTF.util.normalize(s);
+
+  let dialIndex = null;
+  function dials() {
+    if (dialIndex) return dialIndex;
+    dialIndex = { byCountry: new Map(), byCode: new Map() };
+    for (const entry of DIAL.split(' ')) {
+      const iso2 = entry.slice(0, 2);
+      const code = entry.slice(2);
+      dialIndex.byCountry.set(iso2, code);
+      if (!dialIndex.byCode.has(code)) dialIndex.byCode.set(code, []);
+      dialIndex.byCode.get(code).push(iso2);
+    }
+    return dialIndex;
+  }
+
+  /** The dialling code of a country (name, alias or code), without the "+": "United Kingdom" -> "44". */
+  function dialCode(country) {
+    const row = findCountry(country);
+    return (row && dials().byCountry.get(row[0])) || '';
+  }
+
+  /** The country (ISO alpha-2) a dialling code stands for on its own: "1" -> "US", "44" -> "GB". */
+  function countryOfDial(code) {
+    const list = dials().byCode.get(String(code || '').replace(/\D/g, '')) || [];
+    return list.find((c) => DIAL_HOME.includes(c)) || list[0] || '';
+  }
+
+  /** "+44 7700 900123" or "0044 7700…" -> { code: "44", national: "7700 900123" }; null for a national number. */
+  function splitPhone(number) {
+    const m = String(number || '')
+      .trim()
+      .match(/^(?:\+|00)\s*(\d[\d\s().-]*)$/);
+    if (!m) return null;
+    const digits = m[1].replace(/\D/g, '');
+    for (let n = 3; n >= 1; n--) {
+      const code = digits.slice(0, n);
+      if (!dials().byCode.has(code)) continue;
+      // Drop the code (and what separates it) from the number as written.
+      let seen = 0;
+      let i = 0;
+      const rest = m[1];
+      while (i < rest.length && seen < n) if (/\d/.test(rest[i++])) seen++;
+      // "+44 (0)7700 900123": the trunk zero in brackets is not dialled from abroad.
+      const national = rest
+        .slice(i)
+        .replace(/^[\s.-]*\(0\)/, '')
+        .replace(/^[\s().-]+/, '')
+        .trim();
+      return { code, national };
+    }
+    return null;
+  }
 
   let countryIndex = null;
   function index() {
@@ -292,6 +363,9 @@
     citizenWords,
     findRegion,
     regionCandidates,
+    dialCode,
+    countryOfDial,
+    splitPhone,
   };
   JTF.geo = geo;
   if (typeof module === 'object' && module.exports) module.exports = geo;

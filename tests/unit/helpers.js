@@ -38,7 +38,7 @@ function installChrome() {
 
 function load() {
   if (!globalThis.chrome) installChrome();
-  for (const f of ['util', 'geo', 'fields', 'matcher', 'vault', 'store']) require(path.join(LIB, f + '.js'));
+  for (const f of ['util', 'geo', 'fields', 'matcher', 'account', 'vault', 'store']) require(path.join(LIB, f + '.js'));
   return globalThis.JTF;
 }
 

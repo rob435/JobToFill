@@ -13,6 +13,7 @@ if (typeof importScripts === 'function') {
     'lib/geo.js',
     'lib/fields.js',
     'lib/matcher.js',
+    'lib/account.js',
     'lib/vault.js',
     'lib/store.js',
     'lib/ai.js',
@@ -35,8 +36,10 @@ const CONTENT_FILES = [
   'lib/geo.js',
   'lib/fields.js',
   'lib/matcher.js',
+  'lib/account.js',
   'content/dom.js',
   'content/fill.js',
+  'content/account.js',
   'content/main.js',
 ];
 
@@ -52,12 +55,12 @@ const INSERT_TYPES = [
 
 /* ---------------------------------------------------------- active fills */
 
-// tabId -> { count, expires, email, letter }. Secrets and documents are only served while a fill runs.
+// tabId -> { count, expires, email, names, letter }. Secrets and documents are only served while a fill runs.
 const activeFills = new Map();
 
-function beginFill(tabId, email, letter) {
+function beginFill(tabId, email, letter, names) {
   const current = activeFills.get(tabId) || { count: 0 };
-  activeFills.set(tabId, { count: current.count + 1, expires: Date.now() + 120000, email, letter });
+  activeFills.set(tabId, { count: current.count + 1, expires: Date.now() + 120000, email, letter, names: names || [] });
 }
 
 function endFill(tabId) {
@@ -147,7 +150,8 @@ async function fillPayload(tabId) {
  * replacing what is there unless force: false), hold (leave these types alone), replace (overwrite these
  * types even when they hold something), consents (tick acknowledgements whatever the setting says), ai
  * (false: no AI answers), aiToast (say on the page when the AI answers are in), waitAi, quick (a fill
- * Quick apply makes itself).
+ * Quick apply makes itself), flow (a fill the person started: on a sign-in or sign-up page it may sign in or
+ * create the account, see accountStep).
  */
 async function fillTab(tabId, options) {
   const opts = { toast: false, ...options };
@@ -168,9 +172,11 @@ async function fillTab(tabId, options) {
   // With AI answers on, the page opens custom dropdowns it left empty to read their options for the model.
   const aiReady = opts.only || opts.ai === false ? { ok: false, reason: 'off' } : await aiAvailable(settings);
   payload.ai = aiReady.ok;
+  payload.accountFlow = !!opts.flow && !opts.only && settings.accountFlow !== false;
 
   let frames;
-  beginFill(tabId, profile.contact.email, letter && letter.id);
+  const names = [profile.personal.firstName, profile.personal.lastName, profile.personal.preferredName];
+  beginFill(tabId, profile.contact.email, letter && letter.id, names);
   try {
     frames = await callFrames(tabId, 'fill', [payload]);
   } catch (err) {
@@ -211,11 +217,31 @@ async function fillTab(tabId, options) {
       if (opts.waitAi) summary.ai = await run;
     } else summary.ai = { status: aiReady.reason, asked: pending.length };
   }
+  // Signing in and creating job-portal accounts (Settings › "Sign in and create job-portal accounts for me").
+  const account = await accountStep(tabId, frames, settings, opts).catch((err) => ({
+    lines: [`JobToFill couldn’t continue signing you in: ${String((err && err.message) || err)}`],
+    end: true,
+  }));
+  const flowLines = (account && account.lines) || [];
+  summary.account = account ? { lines: flowLines, clicked: account.clicked || [] } : null;
+  // A locked vault: offer to unlock it, and fill the passwords (and carry on) once it is.
+  const actions = [];
+  if (summary.vaultNeeded === 'locked' && top && top.url) {
+    waitForVault(tabId, top.url, opts);
+    actions.push({ label: 'Unlock', action: 'unlock' });
+  } else if (summary.vaultNeeded === 'none') actions.push({ label: 'Set up', action: 'setup-vault' });
   if (opts.toast && settings.toast !== false)
-    await showToast(tabId, summaryText(summary), {
+    await showToast(tabId, [summaryText(summary), ...flowLines].join('\n'), {
       undo: summary.undoable,
-      duration: summary.ai && summary.ai.status === 'running' ? 120000 : undefined,
+      actions,
+      duration:
+        summary.ai && summary.ai.status === 'running' ? 120000 : flowLines.length || actions.length ? 20000 : undefined,
     });
+  else if (flowLines.length && settings.toast !== false)
+    await showToast(tabId, flowLines.join('\n'), { actions, duration: 20000 });
+  summary.notes.push(...flowLines);
+  // The click (or the wait for a CAPTCHA) comes after the toast that announces it.
+  if (account && account.act) await account.act().catch(() => {});
   return summary;
 }
 
@@ -237,6 +263,8 @@ function mergeReports(frames) {
     wantsLetter: false,
     ticked: 0,
     held: 0,
+    vaultNeeded: null,
+    passwordSource: null,
     // Upload fields by type: 'filled' when any frame put the document in, else how it went.
     docs: {},
   };
@@ -251,6 +279,8 @@ function mergeReports(frames) {
     summary.undoable = summary.undoable || !!f.undoable;
     summary.jobContext = summary.jobContext || (f.jobContext && f.filled > 0);
     summary.wantsLetter = summary.wantsLetter || !!f.wantsLetter;
+    summary.vaultNeeded = summary.vaultNeeded || f.vaultNeeded || null;
+    summary.passwordSource = summary.passwordSource || f.passwordSource || null;
   }
   for (const key of ['missing', 'missingTypes', 'unmatched', 'notes']) summary[key] = [...new Set(summary[key])];
   return summary;
@@ -326,11 +356,44 @@ function cardAllowedIn(sender) {
   return PAYMENT_HOSTS.some((h) => util.hostMatches(frameHost, h));
 }
 
-function newCredential(host, username, password) {
+function newCredential(host, username, password, portal, note) {
   const now = Date.now();
-  return { id: util.uid(), host, username, password, createdAt: now, updatedAt: now, note: 'Generated by JobToFill' };
+  const cred = {
+    id: util.uid(),
+    host,
+    username,
+    password,
+    createdAt: now,
+    updatedAt: now,
+    note: note || 'Generated by JobToFill',
+  };
+  if (portal) cred.portal = portal;
+  return cred;
 }
 
+// tabId -> where the last password filled in that tab came from ({ source, host, portal, username }), so an account
+// created with your default password can be remembered. Never the password itself.
+const lastSecrets = new Map();
+
+/** The password rules a sign-up page sent (its help text and attributes), as vault.parseRules reads them. */
+function rulesFrom(msg) {
+  const r = msg && msg.rules;
+  if (!r || typeof r !== 'object') return null;
+  return vault.parseRules({
+    text: String(r.text || '').slice(0, 4000),
+    minLength: +r.minLength || 0,
+    maxLength: +r.maxLength || 0,
+    pattern: String(r.pattern || '').slice(0, 500),
+  });
+}
+
+/**
+ * Passwords and cards for the frame being filled. A sign-up page gets the password saved for the site, else your
+ * default password (strategy "default"), else a new one saved for the site; anything it hands a sign-up page fits
+ * the rules the page states (length, kinds of character, banned characters, pattern). Your default password, when
+ * the page wouldn't take it, is replaced by a fitting one saved for that site, and the fill says so. A login page
+ * gets the saved password, else your default one (strategy "default").
+ */
 async function secretsFor(msg, sender) {
   const fill = fillInProgress(sender);
   if (!fill) return { error: 'No fill in progress.' };
@@ -343,20 +406,48 @@ async function secretsFor(msg, sender) {
   const data = await vault.read();
   const settings = await store.getSettings();
   const out = { notes: [] };
+  const host = url.hostname;
+  // Which employer on a shared portal host (SuccessFactors' "company:moodysprod"); passwords stay keyed to the host.
+  const portal = typeof msg.portal === 'string' ? msg.portal.slice(0, 120) : '';
 
   if (msg.password) {
-    let cred = vault.findCredential(data, url.hostname);
-    if (!cred && msg.password === 'signup' && settings.passwordStrategy === 'generate') {
-      cred = newCredential(url.hostname, fill.email || '', vault.generatePassword());
-      data.credentials.push(cred);
-      await vault.write(data);
-      out.notes.push(`Generated a new password for ${url.hostname} and saved it in your vault.`);
+    const signup = msg.password === 'signup';
+    const rules = signup ? rulesFrom(msg) : null;
+    const personal = { email: fill.email, names: fill.names };
+    const problems = (pw) => (rules ? vault.checkPassword(pw, rules, personal) : []);
+    const fallback = settings.passwordStrategy === 'default' ? data.defaultPassword || '' : '';
+    let cred = vault.findCredential(data, host, portal);
+    let source = cred ? 'saved' : null;
+    // A login saved for this host that this sign-up page wouldn't take (made for another employer here): a new one.
+    if (cred && signup && problems(cred.password).length && cred.portal !== portal) cred = source = null;
+    if (!cred && signup) {
+      if (fallback && !problems(fallback).length) {
+        cred = { username: fill.email || '', password: fallback };
+        source = 'default';
+      } else {
+        cred = newCredential(host, fill.email || '', vault.generatePassword({ rules }), portal);
+        data.credentials.push(cred);
+        await vault.write(data);
+        source = 'generated';
+        if (fallback)
+          out.notes.push(
+            `Your default password doesn’t meet ${host}’s rules (${problems(fallback).join(', ')}), so JobToFill made one that does and saved it for this site.`,
+          );
+        else if (settings.passwordStrategy === 'default')
+          out.notes.push(
+            `No default password is set, so JobToFill made a password for ${host} and saved it in your vault.`,
+          );
+        else out.notes.push(`Generated a new password for ${host} and saved it in your vault.`);
+      }
     }
-    if (!cred && settings.passwordStrategy === 'default' && data.defaultPassword) {
-      cred = { username: fill.email || '', password: data.defaultPassword };
+    if (!cred && fallback) {
+      cred = { username: fill.email || '', password: fallback };
+      source = 'default';
     }
-    if (cred) out.credential = { username: cred.username || fill.email || '', password: cred.password };
-    else out.notes.push(`No saved password for ${url.hostname}.`);
+    if (cred) out.credential = { username: cred.username || fill.email || '', password: cred.password, source };
+    else out.notes.push(`No saved password for ${host}.`);
+    if (source && sender.tab)
+      lastSecrets.set(sender.tab.id, { source, host, portal, username: (cred && cred.username) || fill.email || '' });
   }
 
   if (msg.card) {
@@ -1146,7 +1237,7 @@ async function quickStart(tabId) {
 async function quickFirstFill(tabId) {
   let summary;
   try {
-    summary = await fillTab(tabId, { quick: true, hold: QUICK_DOCS, consents: true, aiToast: false });
+    summary = await fillTab(tabId, { quick: true, hold: QUICK_DOCS, consents: true, aiToast: false, flow: true });
   } catch (err) {
     return { error: String((err && err.message) || err) };
   }
@@ -1158,6 +1249,7 @@ async function quickFirstFill(tabId) {
   if (!(await quickRunningFor(tabId))) return summary;
   const lines = [];
   if (summary.filled) lines.push(`Quick apply: your details are in (${plural(summary.filled, 'field')}).`);
+  if (summary.account && summary.account.lines.length) lines.push(...summary.account.lines);
   lines.push(
     summary.detected || summary.held
       ? 'Now writing your cover letter and tailoring your CV: they go in by themselves when ready (a minute or two), no need to press Fill.'
@@ -1411,6 +1503,467 @@ async function insertOtp(tab, info, frameIds) {
   await showToast(tab.id, `Inserted the code from ${found.from || 'your inbox'}.`, {}, frameIds);
 }
 
+/* ------------------------------------------------------ portal accounts */
+
+/*
+ * Signing in and creating job-portal accounts (Settings › "Sign in and create job-portal accounts for me", on by
+ * default). After a fill the person started (button, shortcut, menu, Quick apply), on a secure page that is only
+ * a sign-in or sign-up form (no job-application questions or uploads):
+ *   - sign-in page, a login saved for this site (and employer): click its sign-in button;
+ *   - sign-in page, no known account: click its "Create account" link, and fill the sign-up page that opens;
+ *   - sign-up page: once everything is in and any CAPTCHA is solved by the person, click "Create account"; the
+ *     code it emails is typed in by the code watcher, which then confirms that step;
+ *   - "An account with this email already exists": go back to sign in, with the saved or default password.
+ * One flow per tab, kept for minutes in session storage, at most FLOW_CLICKS clicks, only on the same site (and
+ * employer), ended when the tab goes elsewhere. The page side (content/account.js) only clicks controls whose
+ * wording passes JTF.accounts.intent(), and re-checks the page before each click.
+ */
+const FLOW_TTL = 10 * 60e3;
+const FLOW_CLICKS = 6;
+const FLOW_WAIT = 5 * 60e3; // how long a CAPTCHA or the terms are waited for
+const flowKey = (tabId) => `flow:${tabId}`;
+
+async function getFlow(tabId) {
+  if (tabId == null) return null;
+  const flow = await sessionGet(flowKey(tabId), null);
+  if (flow && flow.expires < Date.now()) {
+    await endFlow(tabId);
+    return null;
+  }
+  return flow;
+}
+
+async function putFlow(flow) {
+  await sessionArea()
+    .set({ [flowKey(flow.tabId)]: flow })
+    .catch(() => {});
+}
+
+async function endFlow(tabId) {
+  await sessionArea()
+    .remove(flowKey(tabId))
+    .catch(() => {});
+}
+
+function flowPlace(url) {
+  const host = hostOf(url);
+  return { site: host ? siteOf(host) : '', family: (host && otp.familyOf(otp.site(host))) || '' };
+}
+
+/** Is `url` still the flow's site (or its tracking system) and employer? */
+function sameFlowSite(flow, url, portal) {
+  const place = flowPlace(url);
+  if (!place.site || !(place.site === flow.site || (place.family && place.family === flow.family))) return false;
+  return !(portal && flow.portal && portal !== flow.portal);
+}
+
+const quote = (list) => list.map((x) => `“${x}”`).join(', ');
+
+function joinList(items) {
+  return items.length > 1 ? `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}` : items[0] || '';
+}
+
+/** "Complete the “I’m not a robot” check and accept the Terms of Use". */
+function waitText(waits) {
+  const parts = [];
+  if (waits.some((b) => b.kind === 'captcha')) parts.push('complete the “I’m not a robot” check');
+  if (waits.some((b) => b.kind === 'robot')) parts.push('tick “I’m not a robot”');
+  const terms = waits.filter((b) => b.kind === 'terms').map((b) => b.label);
+  if (terms.length) parts.push(`accept ${joinList(terms.map((t) => `“${t}”`))}`);
+  const text = joinList(parts);
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** Is there an account at this site (and employer) as far as the vault knows? */
+async function accountKnown(page) {
+  if ((await vault.status()) !== 'unlocked') return false;
+  return !!vault.findCredential(await vault.read(), page.host, page.portal, true);
+}
+
+/**
+ * An account created with your default password: remember it in the vault, so later sign-ins know it exists.
+ * Returns the new login's id (taken back if the site then says the account already existed).
+ */
+async function rememberDefault(tabId, page) {
+  const last = lastSecrets.get(tabId);
+  if (!last || last.source !== 'default' || last.host !== page.host) return null;
+  if ((await vault.status()) !== 'unlocked') return null;
+  let id = null;
+  await vault.update((data) => {
+    if (!data.defaultPassword || vault.findCredential(data, page.host, last.portal, true)) return;
+    const cred = newCredential(
+      page.host,
+      last.username,
+      data.defaultPassword,
+      last.portal,
+      'Created with your default password',
+    );
+    data.credentials.push(cred);
+    id = cred.id;
+  });
+  return id;
+}
+
+/** The site said the account already existed: it wasn't made with your default password after all. */
+async function forgetRemembered(flow) {
+  if (!flow.remembered || (await vault.status()) !== 'unlocked') return;
+  const id = flow.remembered;
+  flow.remembered = null;
+  await vault.update((data) => (data.credentials = data.credentials.filter((c) => c.id !== id)));
+}
+
+/** Click one of the page's account controls (after the toast): record it, or end the flow and say why not. */
+function clickStep(tabId, flow, page, which, line, after) {
+  flow.clicks.push({
+    which,
+    label: which === 'to-signup' ? page.toSignup : which === 'to-signin' ? page.toSignin : page.submit,
+    kind: page.kind,
+    url: page.url,
+    at: Date.now(),
+  });
+  if (after) Object.assign(flow, after);
+  return {
+    lines: [line],
+    clicked: flow.clicks.map((c) => c.label),
+    act: async () => {
+      // The code it emails: watched for in this tab, whatever "Fill codes by themselves" says.
+      if (which === 'submit' && page.kind === 'signup' && (await otpReady())) await watchOtp(tabId).catch(() => {});
+      const { profile } = await store.getActive();
+      const [res] = await callFrames(tabId, 'accountClick', [which, { profile }], [page.frameId]).catch(() => [null]);
+      if (res && res.clicked) {
+        if (which === 'submit' && page.kind === 'signup') {
+          flow.remembered = await rememberDefault(tabId, page).catch(() => null);
+          if (flow.remembered) await putFlow(flow);
+        }
+        return;
+      }
+      await endFlow(tabId);
+      const why = { 'not ready': 'the page isn’t ready', covered: 'something covers it' }[res && res.refused];
+      await showToast(
+        tabId,
+        `JobToFill didn’t click “${flow.clicks[flow.clicks.length - 1].label}”${why ? `: ${why}` : ''}. Finish here yourself.`,
+        { duration: 12000 },
+      );
+    },
+  };
+}
+
+/** The next step on a sign-in, sign-up or code page: { lines, act?, end? }. */
+async function flowDecide(tabId, flow, page) {
+  const host = page.host;
+  const stop = (line) => ({ lines: [line], end: true, clicked: flow.clicks.map((c) => c.label) });
+  if (page.kind === 'verify') {
+    flow.stage = 'verify';
+    if (await otpReady()) {
+      await watchOtp(tabId).catch(() => {});
+      return { lines: ['Waiting for the code emailed to you: JobToFill types it in and carries on.'] };
+    }
+    return stop(
+      'Enter the code emailed to you (connect your inbox under JobToFill › Email codes to have it typed in).',
+    );
+  }
+  if (flow.clicks.length >= FLOW_CLICKS)
+    return stop(`JobToFill stopped after ${FLOW_CLICKS} steps: finish here yourself.`);
+  if (page.kind === 'signup' && page.exists) {
+    flow.accountExists = true;
+    await forgetRemembered(flow).catch(() => {});
+    if (page.toSignin)
+      return clickStep(
+        tabId,
+        flow,
+        page,
+        'to-signin',
+        `An account with your email already exists on ${host}: going to “${page.toSignin}”…`,
+        { stage: 'to-signin' },
+      );
+    return stop(`An account with your email already exists on ${host}: sign in with your password.`);
+  }
+  if (page.kind === 'login' && page.badLogin)
+    return stop(
+      `Signing in to ${host} didn’t work. Check the password saved for it under JobToFill › Passwords & cards, or reset it on the site.`,
+    );
+  if (page.errors.length) return stop(`The page says: “${page.errors[0]}”. Fix that and press Fill again.`);
+  const locked = (await vault.status()) !== 'unlocked';
+  if (page.kind === 'login' && !locked && !flow.accountExists && !(await accountKnown(page))) {
+    if (page.toSignup && flow.stage !== 'to-signin') {
+      flow.stage = 'to-signup';
+      return clickStep(
+        tabId,
+        flow,
+        page,
+        'to-signup',
+        `No account for ${host} in JobToFill yet: opening “${page.toSignup}” to create one…`,
+      );
+    }
+    if (!page.passwordFilled)
+      return stop(`No login for ${host} saved in JobToFill: sign in yourself, or create an account.`);
+  }
+  if (!page.passwordFilled) {
+    if (locked) return { lines: ['Unlock JobToFill: it then fills your password and carries on.'] };
+    return stop(
+      page.kind === 'signup'
+        ? 'No password to create the account with: fill one in and press Fill again.'
+        : `No password for ${host}: sign in yourself.`,
+    );
+  }
+  const doing = page.kind === 'signup' ? 'creates the account' : 'signs you in';
+  const typed = page.blockers.filter((b) => !b.wait);
+  if (typed.length)
+    return stop(`Fill in ${joinList(typed.map((b) => `“${b.label}”`))} and press Fill again: JobToFill then ${doing}.`);
+  const waits = page.blockers.filter((b) => b.wait);
+  if (waits.length) {
+    flow.waiting = { token: util.uid(), frameId: page.frameId, since: Date.now() };
+    flow.expires = Math.max(flow.expires, Date.now() + FLOW_WAIT + 60e3);
+    const token = flow.waiting.token;
+    return {
+      lines: [`${waitText(waits)}: JobToFill then ${doing}.`],
+      act: async () => {
+        const { profile } = await store.getActive();
+        await callFrames(tabId, 'accountWait', [token, { timeout: FLOW_WAIT, profile }], [page.frameId]).catch(
+          () => {},
+        );
+      },
+    };
+  }
+  if (!page.ready || !page.submit)
+    return stop(`JobToFill couldn’t find the button that ${doing}: finish here yourself.`);
+  if (page.kind === 'signup')
+    return clickStep(tabId, flow, page, 'submit', `Creating your account on ${host} (clicking “${page.submit}”)…`, {
+      stage: 'registered',
+      accountExists: true,
+    });
+  return clickStep(tabId, flow, page, 'submit', `Signing you in to ${host} (clicking “${page.submit}”)…`, {
+    stage: 'signin',
+  });
+}
+
+/**
+ * After a fill: start or continue the account flow for this tab. `frames` are the fill's frame reports, each
+ * with the page's account state. Returns { lines, act?, clicked } or null.
+ */
+async function accountStep(tabId, frames, settings, opts) {
+  if (opts.only) return null;
+  let flow = await getFlow(tabId);
+  if (settings.accountFlow === false) {
+    if (flow) await endFlow(tabId);
+    return null;
+  }
+  if (!opts.flow && !flow) return null;
+  const states = frames.filter((f) => f.account).map((f) => ({ ...f.account, frameId: f.frameId }));
+  const applying = states.some((s) => s.kind === 'application');
+  const pick = (kind) => states.find((s) => s.kind === kind && s.pure);
+  const page = applying ? null : pick('signup') || pick('login') || pick('verify');
+  if (!page) {
+    if (!flow) return null;
+    await endFlow(tabId);
+    // Landed on the application after signing in: say what was clicked on the way.
+    if (applying && flow.clicks.length)
+      return {
+        lines: [`Signed in: JobToFill clicked ${quote(flow.clicks.map((c) => c.label))} on the way here.`],
+        clicked: flow.clicks.map((c) => c.label),
+      };
+    return null;
+  }
+  let secure = false;
+  try {
+    secure = isSecureUrl(new URL(page.url));
+  } catch (err) {
+    /* not a web page */
+  }
+  if (!secure) return null;
+  if (flow && !sameFlowSite(flow, page.url, page.portal)) {
+    await endFlow(tabId);
+    flow = null;
+    if (!opts.flow) return null;
+  }
+  if (!flow)
+    flow = {
+      id: util.uid(),
+      tabId,
+      ...flowPlace(page.url),
+      portal: page.portal || '',
+      startedAt: Date.now(),
+      expires: Date.now() + FLOW_TTL,
+      clicks: [],
+      stage: 'start',
+      quick: !!opts.quick,
+    };
+  if (page.portal && !flow.portal) flow.portal = page.portal;
+  flow.waiting = null;
+  const step = await flowDecide(tabId, flow, page);
+  if (step.end) await endFlow(tabId);
+  else await putFlow(flow);
+  return step;
+}
+
+/** A page in the flow finished loading after one of its clicks: fill it, which takes the flow on. */
+const flowTimers = new Map();
+function scheduleFlow(tabId, delay) {
+  clearTimeout(flowTimers.get(tabId));
+  flowTimers.set(
+    tabId,
+    setTimeout(() => {
+      flowTimers.delete(tabId);
+      continueFlow(tabId).catch(() => {});
+    }, delay),
+  );
+}
+
+async function continueFlow(tabId) {
+  const flow = await getFlow(tabId);
+  if (!flow || !flow.clicks.length || flow.waiting) return;
+  // Pages built by scripts (Workday) show their form a moment after loading.
+  for (let i = 0; i < 4; i++) {
+    const summary = await fillTab(tabId, { toast: true, flow: true, consents: flow.quick || undefined, quick: false });
+    if (summary.error || summary.detected || summary.account) return;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    if (!(await getFlow(tabId))) return;
+  }
+}
+
+api.tabs.onUpdated.addListener(async (tabId, info, tab) => {
+  if (!info.url && info.status !== 'complete') return;
+  const flow = await getFlow(tabId).catch(() => null);
+  if (!flow) return;
+  // Gone to another site (or another employer on a shared portal): the flow ends.
+  const url = info.url || (tab && tab.url) || '';
+  let portal = '';
+  try {
+    portal = globalThis.JTF.accounts.portal(url);
+  } catch (err) {
+    /* not a web page */
+  }
+  if (url && !sameFlowSite(flow, url, portal)) {
+    await endFlow(tabId);
+    return;
+  }
+  if (info.status === 'complete') scheduleFlow(tabId, 700);
+  else if (info.url && tab && tab.status === 'complete') scheduleFlow(tabId, 1500); // a script-made page change
+});
+
+api.tabs.onRemoved.addListener((tabId) => {
+  endFlow(tabId);
+  lastSecrets.delete(tabId);
+  vaultWaits.delete(tabId);
+});
+
+/** The page's CAPTCHA was solved (or its terms accepted): check the page again and take the next step. */
+async function flowReady(msg, sender) {
+  const tabId = sender.tab && sender.tab.id;
+  const flow = await getFlow(tabId);
+  if (!flow || !flow.waiting || flow.waiting.token !== msg.token) return { ok: false };
+  flow.waiting = null;
+  await putFlow(flow);
+  const settings = await store.getSettings();
+  if (msg.timedOut || settings.accountFlow === false) {
+    await endFlow(tabId);
+    if (msg.timedOut)
+      await showToast(tabId, 'JobToFill stopped waiting: finish signing in here yourself.', { duration: 10000 });
+    return { ok: true };
+  }
+  const { profile } = await store.getActive();
+  const [state] = await callFrames(tabId, 'accountState', [{ profile }], [sender.frameId]).catch(() => [null]);
+  const page = state && { ...state, frameId: sender.frameId };
+  if (!page || !page.pure || !['login', 'signup', 'verify'].includes(page.kind)) {
+    await endFlow(tabId);
+    return { ok: false };
+  }
+  const step = await flowDecide(tabId, flow, page);
+  if (step.end) await endFlow(tabId);
+  else await putFlow(flow);
+  if (settings.toast !== false && step.lines.length) await showToast(tabId, step.lines.join('\n'), { duration: 15000 });
+  if (step.act) await step.act().catch(() => {});
+  return { ok: true };
+}
+
+/** The code watcher typed in the emailed code during a flow: confirm that step ("Continue", "Verify"). */
+async function otpFilled(msg, sender) {
+  const tabId = sender.tab && sender.tab.id;
+  const flow = await getFlow(tabId);
+  if (!flow || !['registered', 'signin', 'verify'].includes(flow.stage)) return { ok: false };
+  const settings = await store.getSettings();
+  if (settings.accountFlow === false) return { ok: false };
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  const { profile } = await store.getActive();
+  const [state] = await callFrames(tabId, 'accountState', [{ profile }], [sender.frameId]).catch(() => [null]);
+  if (!state || state.kind !== 'verify' || !state.pure || !state.ready || flow.clicks.length >= FLOW_CLICKS)
+    return { ok: false };
+  const page = { ...state, frameId: sender.frameId };
+  const step = clickStep(
+    tabId,
+    flow,
+    page,
+    'submit',
+    `Entered the code from your email and clicked “${page.submit}”.`,
+    { stage: 'verified' },
+  );
+  await putFlow(flow);
+  if (settings.toast !== false) await showToast(tabId, step.lines.join('\n'), { duration: 10000 });
+  await step.act();
+  return { ok: true };
+}
+
+/* ----------------------------------------------------------- vault prompts */
+
+// tabId -> a fill that skipped passwords because the vault was locked: { at, url, flow, quick }. When the vault is
+// unlocked (from the toast's "Unlock", the toolbar popup or settings) within a few minutes, that page is filled
+// again, which puts the passwords in and carries the account flow on.
+const vaultWaits = new Map();
+const VAULT_WAIT = 5 * 60e3;
+
+function waitForVault(tabId, url, opts) {
+  vaultWaits.set(tabId, { at: Date.now(), url: url.split('#')[0], flow: !!opts.flow, quick: !!opts.quick });
+}
+
+async function resumeAfterUnlock() {
+  const waits = [...vaultWaits.entries()];
+  vaultWaits.clear();
+  let resumed = 0;
+  for (const [tabId, w] of waits) {
+    if (Date.now() - w.at > VAULT_WAIT) continue;
+    const tab = await api.tabs.get(tabId).catch(() => null);
+    if (!tab || (tab.url || '').split('#')[0] !== w.url) continue;
+    resumed++;
+    fillTab(tabId, { toast: true, flow: w.flow, consents: w.quick || undefined }).catch(() => {});
+  }
+  return { resumed };
+}
+
+api.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'session' && changes.vaultKey && changes.vaultKey.newValue && vaultWaits.size)
+    resumeAfterUnlock().catch(() => {});
+});
+
+/**
+ * The toast's "Unlock": the toolbar popup where the browser lets an extension open it (Chrome), else the same
+ * page in a small window. The master password is only ever typed into JobToFill's own page, never the site's.
+ */
+async function openUnlock(tabId) {
+  const tab = tabId == null ? null : await api.tabs.get(tabId).catch(() => null);
+  try {
+    if (api.action && api.action.openPopup) {
+      await api.action.openPopup(tab ? { windowId: tab.windowId } : undefined);
+      return { ok: true };
+    }
+  } catch (err) {
+    /* needs a click on the browser's own UI (Firefox), or no focused window */
+  }
+  const url = api.runtime.getURL(`popup/popup.html?tab=${tabId}&unlock=1`);
+  await api.windows.create({ url, type: 'popup', width: 380, height: 620, focused: true });
+  return { ok: true };
+}
+
+/** A button on the page's toast (in the content script's closed shadow root). */
+async function toastAction(msg, sender) {
+  const tabId = sender.tab && sender.tab.id;
+  if (msg.action === 'unlock') return openUnlock(tabId);
+  if (msg.action === 'setup-vault') {
+    await api.tabs.create({ url: api.runtime.getURL('options/options.html#vault') });
+    return { ok: true };
+  }
+  return { error: 'Unknown action.' };
+}
+
 /* ------------------------------------------------------------- watchlist */
 
 // Firms on the Discover watchlist are re-checked a few times a day; anything new shows as a number on the
@@ -1467,7 +2020,8 @@ const sum = (frames, key) => frames.reduce((n, f) => n + (f[key] || 0), 0);
 
 const HANDLERS = {
   // From the popup and settings page.
-  'jtf:fill': (msg) => fillTab(msg.tabId, { toast: !!msg.toast }),
+  'jtf:fill': (msg) => fillTab(msg.tabId, { toast: !!msg.toast, flow: true }),
+  'jtf:vault-unlocked': () => resumeAfterUnlock(),
   'jtf:undo': async (msg) => ({ undone: sum(await callFrames(msg.tabId, 'undo'), 'undone') }),
   'jtf:inspect': async (msg) => {
     const { profile, settings } = await store.getActive();
@@ -1509,9 +2063,15 @@ const HANDLERS = {
   'jtf:document': documentFor,
   'jtf:otp': otpFor,
   'jtf:otp-claim': otpClaim,
+  'jtf:otp-filled': otpFilled,
+  'jtf:flow-ready': flowReady,
+  'jtf:toast-action': toastAction,
 };
 
-const CONTENT_ONLY = new Set(['jtf:secrets', 'jtf:document', 'jtf:otp', 'jtf:otp-claim']);
+// prettier-ignore
+const CONTENT_ONLY = new Set([
+  'jtf:secrets', 'jtf:document', 'jtf:otp', 'jtf:otp-claim', 'jtf:otp-filled', 'jtf:flow-ready', 'jtf:toast-action',
+]);
 const isExtensionPage = (sender) => !!sender.url && sender.url.startsWith(api.runtime.getURL(''));
 const isContentScript = (sender) => !!sender.tab && !isExtensionPage(sender);
 
@@ -1530,7 +2090,7 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 api.commands.onCommand.addListener(async (command) => {
   const tabId = await activeTabId();
-  if (tabId != null && command === 'fill-page') await fillTab(tabId, { toast: true });
+  if (tabId != null && command === 'fill-page') await fillTab(tabId, { toast: true, flow: true });
 });
 
 async function createMenus() {
@@ -1555,7 +2115,7 @@ async function handleMenuClick(info, tab) {
   const id = String(info.menuItemId);
 
   if (id === 'jtf-fill') {
-    await fillTab(tab.id, { toast: true });
+    await fillTab(tab.id, { toast: true, flow: true });
   } else if (id.startsWith('jtf-insert:')) {
     const { profile, settings } = await store.getActive();
     await callFrames(tab.id, 'fillActive', [id.slice('jtf-insert:'.length), { profile, settings }], frameIds);
@@ -1643,6 +2203,9 @@ globalThis.JTFBackground = {
   lookForPreviousBackup,
   otpFor,
   watchOtp,
+  getFlow,
+  endFlow,
+  resumeAfterUnlock,
   checkWatchlist,
   updateBadge,
   handlers: HANDLERS,

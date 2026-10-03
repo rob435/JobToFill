@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Career Opportunities: Create an Account</title>
+    <style>
+      body { font: 14px Arial, sans-serif; margin: 0; }
+      .sfpanel_wrapper { max-width: 760px; margin: 20px auto; }
+      table td { padding: 6px; vertical-align: top; }
+      .required { color: #c00; }
+      .hide { display: none; }
+      .alert-info { background: #eef6ff; border: 1px solid #9cc4ec; padding: 6px; font-size: 12px; }
+      .sysmsg.error { border: 1px solid #c00; background: #fee; padding: 8px; margin: 10px auto; max-width: 760px; }
+      .dialog { position: fixed; inset: 30% 30% auto; background: #fff; border: 1px solid #333; padding: 16px; }
+    </style>
+  </head>
+  <body>
+    <!-- Reduced from the real SuccessFactors "Create an Account" page (career8.successfactors.com, Moody's): the
+         fbclc_* fields in a presentation table, Country/Region Code options like "UNITED KINGDOM (+44)" with ISO
+         codes as values (and many other +1 / +44 countries), Country/Region of Residence, the password policy
+         loaded into #rcmPwdPolicyAnchor after the page, the "Terms of Use" data privacy statement (accepted in a
+         dialog, kept in a hidden input), and the emailed passcode step that replaces the form after
+         "Create Account". ?error=exists is the page the site returns when the email already has an account. -->
+    <form id="careerform" name="careerform" action="successfactors-signup.html" method="POST" accept-charset="UTF-8" autocomplete="off">
+      <input type="hidden" id="career_company" name="career_company" value="MoodysProd" />
+      <input type="hidden" id="otpPageIdentifier" name="otpPageIdentifier" value="RCM_CA" />
+      <div id="msgContainer">
+        <div id="uiErrorContainer_2" style="display: none" class="round sysmsg error" role="alert" tabindex="-1">
+          <strong><span id="uiErrorMsg" class="warningMsgText"></span></strong>
+        </div>
+      </div>
+      <div class="sfpanel_wrapper">
+        <div class="page_title"><h1>Create an Account</h1></div>
+        <div id="otpContainer"></div>
+        <table id="fieldsContainer" class="axial noborder bottomspace table table-condensed" role="presentation">
+          <tr>
+            <td class="col-sm-4"><label for="fbclc_userName" title="Required">Email Address: <span class="required requiredAccessible">*</span></label></td>
+            <td>
+              <input class="form-control" type="text" size="30" maxlength="99" autocomplete="off" id="fbclc_userName" name="fbclc_userName" value="" aria-describedby="fbclc_userName_error" aria-required="true" />
+              <div class="rcmValidationMsgArea hide" id="fbclc_userName_error"></div>
+            </td>
+          </tr>
+          <tr>
+            <td class="col-sm-4"><label for="fbclc_emailConf" title="Required">Retype Email Address: <span class="required requiredAccessible">*</span></label></td>
+            <td>
+              <input class="form-control" type="text" size="30" maxlength="99" autocomplete="off" id="fbclc_emailConf" name="fbclc_emailConf" title="Retype Email Address:" onpaste="event.preventDefault();" value="" aria-describedby="fbclc_emailConf_error" aria-required="true" />
+              <div class="rcmValidationMsgArea hide" id="fbclc_emailConf_error"></div>
+            </td>
+          </tr>
+          <tr class="">
+            <td class="col-sm-4"><label for="fbclc_pwd" title="Required">Choose Password: <span class="required requiredAccessible">*</span></label></td>
+            <td>
+              <div style="display: flex">
+                <input class="form-control" id="fbclc_pwd" type="password" size="30" autocomplete="off" maxlength="99" name="fbclc_pwd" value="" aria-describedby="fbclc_pwd_error rcmPwdPolicyProgressBar rcmPwdPolicyAnchor" aria-required="true" />
+                <input type="button" value="Show" style="margin-left: 5px" name="show_button" title="Show Password" id="show_button" />
+              </div>
+              <div id="rcmPwdPolicyProgressBar" class="mobileApplyPwdPolicyProgressbar rcmValidationMsgArea" style="display: none"></div>
+              <div id="rcmPwdPolicyAnchor" class="alert alert-info mobileApplyPwdPolicy"></div>
+              <div id="fbclc_pwd_error" class="rcmValidationMsgArea hide"></div>
+            </td>
+          </tr>
+          <tr class="">
+            <td class="col-sm-4"><label for="fbclc_pwdConf" title="Required">Retype Password: <span class="required requiredAccessible">*</span></label></td>
+            <td>
+              <div style="display: flex">
+                <input class="form-control" type="password" size="30" maxlength="99" autocomplete="off" id="fbclc_pwdConf" name="fbclc_pwdConf" value="" aria-describedby="fbclc_pwdConf_error pwdMatchOrMismatch" aria-required="true" />
+                <input type="button" value="Show" name="show_conf_button" style="margin-left: 5px" title="Show Password" id="show_conf_button" />
+              </div>
+              <div id="fbclc_pwdConf_error" class="rcmValidationMsgArea hide"></div>
+            </td>
+          </tr>
+          <tr>
+            <td class="col-sm-4"><label for="fbclc_fName" title="Required">First Name: <span class="required requiredAccessible">*</span></label></td>
+            <td><input class="form-control" type="text" size="30" maxlength="40" autocomplete="off" id="fbclc_fName" name="fbclc_fName" value="" aria-describedby="fbclc_fName_error" aria-required="true" /></td>
+          </tr>
+          <tr>
+            <td class="col-sm-4"><label for="fbclc_lName" title="Required">Last Name: <span class="required requiredAccessible">*</span></label></td>
+            <td><input class="form-control" type="text" size="30" maxlength="40" autocomplete="off" id="fbclc_lName" name="fbclc_lName" value="" aria-describedby="fbclc_lName_error" aria-required="true" /></td>
+          </tr>
+          <tr>
+            <td><span style="white-space: nowrap"><label for="fbclc_ituCode" title="Required">Country/Region Code:<span class="required requiredAccessible">*</span></label></span></td>
+            <td>
+              <select id="fbclc_ituCode" name="fbclc_ituCode" aria-required="true" autocomplete="off">
+                <option value="" role="menuitem">- Select -</option>
+                <option value="AS" role="menuitem">AMERICAN SAMOA (+1)</option>
+                <option value="AG" role="menuitem">ANTIGUA AND BARBUDA (+1)</option>
+                <option value="BS" role="menuitem">BAHAMAS (+1)</option>
+                <option value="CA" role="menuitem">CANADA (+1)</option>
+                <option value="FR" role="menuitem">FRANCE (+33)</option>
+                <option value="GG" role="menuitem">GUERNSEY (+44)</option>
+                <option value="IN" role="menuitem">INDIA (+91)</option>
+                <option value="IM" role="menuitem">ISLE OF MAN (+44)</option>
+                <option value="JM" role="menuitem">JAMAICA (+1)</option>
+                <option value="JE" role="menuitem">JERSEY (+44)</option>
+                <option value="PR" role="menuitem">PUERTO RICO (+1)</option>
+                <option value="TZ" role="menuitem">TANZANIA, UNITED REPUBLIC OF (+255)</option>
+                <option value="AE" role="menuitem">UNITED ARAB EMIRATES (+971)</option>
+                <option value="GB" role="menuitem">UNITED KINGDOM (+44)</option>
+                <option value="US" role="menuitem">UNITED STATES (+1)</option>
+                <option value="UM" role="menuitem">UNITED STATES MINOR OUTLYING ISLANDS (+340)</option>
+                <option value="VG" role="menuitem">VIRGIN ISLANDS, BRITISH (+1)</option>
+                <option value="VI" role="menuitem">VIRGIN ISLANDS, U.S. (+1)</option>
+              </select>
+              <div class="rcmValidationMsgArea hide" id="fbclc_ituCode_error" aria-live="assertive"></div>
+            </td>
+          </tr>
+          <tr>
+            <td style="vertical-align: top"><label for="fbclc_phoneNumber" title="Required">Phone Number:<span class="required requiredAccessible">*</span></label></td>
+            <td><input type="text" size="30" maxlength="99" autocomplete="off" id="fbclc_phoneNumber" title="Please enter phone number" name="fbclc_phoneNumber" value="" aria-describedby="fbclc_phoneNumber_error" aria-required="true" /></td>
+          </tr>
+          <tr>
+            <td class="col-sm-4"><label for="fbclc_country" style="white-space: normal"><span title="Required">Country/Region of Residence:<span class="required requiredAccessible">*</span></span></label></td>
+            <td>
+              <select aria-required="true" aria-label="Country/Region of Residence" autocomplete="off" id="fbclc_country" name="fbclc_country" aria-describedby="fbclc_country_error">
+                <option value="">- Select -</option>
+                <option value="AF">AFGHANISTAN</option>
+                <option value="CA">CANADA</option>
+                <option value="FR">FRANCE</option>
+                <option value="IM">ISLE OF MAN</option>
+                <option value="TZ">TANZANIA, UNITED REPUBLIC OF</option>
+                <option value="AE">UNITED ARAB EMIRATES</option>
+                <option value="GB">UNITED KINGDOM</option>
+                <option value="US">UNITED STATES</option>
+                <option value="UM">UNITED STATES MINOR OUTLYING ISLANDS</option>
+              </select>
+              <div id="fbclc_country_error" class="rcmValidationMsgArea hide"></div>
+            </td>
+          </tr>
+          <tr>
+            <td style="vertical-align: top"><label for="fbclc_emailEnabled" style="white-space: normal">Notification:</label></td>
+            <td class="notifications">
+              <input role="checkbox" class="checkboxSize" type="checkbox" id="fbclc_emailEnabled" aria-describedby="fbclc_emailEnabled_described" name="fbclc_emailEnabled" />
+              <span id="fbclc_emailEnabled_described">Receive new job posting notifications</span>
+            </td>
+          </tr>
+          <tr id="dpcsRow">
+            <td><label for="dataPrivacyId" style="white-space: normal">Terms of Use:<span class="required requiredAccessible">*</span></label></td>
+            <td class="dpcsHyperlink">
+              <span><a aria-label="Terms of Use Read and acknowledge the data privacy statement Required" id="dataPrivacyId" aria-haspopup="dialog" role="button" tabindex="0" style="cursor: pointer">Read and acknowledge the data privacy statement</a></span>
+              <div class="rcmValidationMsgArea hide" id="fbclc_dpcsId_error" aria-live="assertive"></div>
+              <input type="hidden" id="fbclc_dpcsId" name="fbclc_dpcsId" value="" />
+            </td>
+          </tr>
+          <tr>
+            <td></td>
+            <td class="button_cell mobileApplyButtonRow">
+              <span class="aquabtn active"><span><button id="fbclc_createAccountButton" name="fbclc_createAccountButton" onclick="return submitCreateAccount();">Create Account</button></span></span>
+            </td>
+          </tr>
+        </table>
+      </div>
+    </form>
+    <script src="successfactors.js"></script>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const $ = (id) => document.getElementById(id);
+      // ?dpcs=0: a tenant without the data privacy statement row.
+      if (params.get('dpcs') === '0') $('dpcsRow').remove();
+      // The site's answer to a sign-up with an email that already has an account.
+      if (params.get('error') === 'exists')
+        SF.error('An account with this email address already exists. <a id="toSignIn" href="successfactors-login.html?company=MoodysProd&captcha=0">Sign in</a>');
+      // Loaded after the page, like RCMPwdPolicyUtil.getDataAndShowResponsiveComment().
+      setTimeout(() => {
+        $('rcmPwdPolicyAnchor').innerHTML =
+          'Password must be at least 8 characters long.<br>Password must not be longer than 18 characters.<br>Password must contain at least one upper case and one lower case letter.<br>Password must contain at least one number or punctuation character.<br>Password must not contain space or unicode characters.';
+      }, 30);
+      $('dataPrivacyId').addEventListener('click', () => {
+        const dialog = document.createElement('div');
+        dialog.className = 'dialog';
+        dialog.setAttribute('role', 'dialog');
+        dialog.innerHTML = '<p>Data Privacy Statement…</p><button type="button" id="dpcsAccept">Accept</button> <button type="button" id="dpcsDecline">Decline</button>';
+        document.body.append(dialog);
+        $('dpcsAccept').addEventListener('click', (e) => {
+          if (e.isTrusted) $('fbclc_dpcsId').value = 'accepted';
+          dialog.remove();
+        });
+        $('dpcsDecline').addEventListener('click', () => dialog.remove());
+      });
+
+      function policy(pw) {
+        return pw.length >= 8 && pw.length <= 18 && /[A-Z]/.test(pw) && /[a-z]/.test(pw) && /[\d\p{P}\p{S}]/u.test(pw) && !/\s|[^\x00-\x7f]/.test(pw);
+      }
+
+      function submitCreateAccount() {
+        const problems = [];
+        for (const id of ['fbclc_userName', 'fbclc_emailConf', 'fbclc_pwd', 'fbclc_pwdConf', 'fbclc_fName', 'fbclc_lName', 'fbclc_ituCode', 'fbclc_phoneNumber', 'fbclc_country'])
+          if (!$(id).value.trim()) problems.push(id);
+        if ($('fbclc_dpcsId') && !$('fbclc_dpcsId').value) problems.push('Terms of Use');
+        if ($('fbclc_userName').value !== $('fbclc_emailConf').value) problems.push('emails differ');
+        if ($('fbclc_pwd').value !== $('fbclc_pwdConf').value) problems.push('passwords differ');
+        if (!policy($('fbclc_pwd').value)) problems.push('password policy');
+        if (problems.length) {
+          SF.error(`Please correct: ${problems.join(', ')}`);
+          sessionStorage.setItem('signupProblems', problems.join(','));
+          return false;
+        }
+        const account = { email: $('fbclc_userName').value, password: $('fbclc_pwd').value, code: $('fbclc_ituCode').value, phone: $('fbclc_phoneNumber').value, country: $('fbclc_country').value };
+        sessionStorage.setItem('createClicked', JSON.stringify(account));
+        // ?exists=1: the email already has an account; the site answers with the sign-up page and a message.
+        if (params.get('exists')) {
+          location.href = 'successfactors-signup.html?company=MoodysProd&dpcs=0&error=exists';
+          return false;
+        }
+        $('fieldsContainer').classList.add('hide');
+        SF.otpStep($('otpContainer'), account.email, '482913', () => {
+          sessionStorage.setItem('account', JSON.stringify(account));
+          location.href = 'successfactors-apply.html?company=MoodysProd&career_ns=job_application';
+        });
+        return false;
+      }
+    </script>
+  </body>
+</html>
