@@ -39,6 +39,7 @@
       "lib/doctext.js",
       "lib/otp.js",
       "lib/nylas.js",
+      "lib/discover.js",
       "background.js"
     ]
   },

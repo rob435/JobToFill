@@ -20,6 +20,10 @@
  *                 In storage.session where there is one (memory only), else storage.local; never in a backup.
  *   nylas         the Nylas connection for verification codes: { apiKey, region, grantId, email }; in backups
  *                 with the AI keys
+ *   watchlist     firms watched for new internships: [{ id, firm, boards, pages, emails, addedAt }] (Discover page)
+ *   watch:<id>    what the last checks of a watched firm found: { seen: [key], fresh: [item], checkedAt, status,
+ *                 roles, programmes } (written by the page and the background, so kept apart from the list)
+ *   discoverCache Trackr's company list and recent careers checks ({ trackr, careers: { [firmId]: { at, result } } })
  */
 (function (root) {
   'use strict';
@@ -64,6 +68,9 @@
   const DOC_TYPES = ['resume', 'coverLetter', 'transcript'];
   const HISTORY_LIMIT = 500;
   const LETTER_LIMIT = 25;
+  const WATCH_LIMIT = 200;
+  const SEEN_LIMIT = 1000;
+  const CAREERS_CACHE_LIMIT = 300;
   const area = () => JTF.api.storage.local;
 
   // Read-modify-write operations run one at a time within a context so they don't drop each other's changes.
@@ -604,6 +611,65 @@
     return (await area().get('backupInfo')).backupInfo || {};
   }
 
+  /* ------------------------------------------------------------ watchlist */
+
+  async function getWatchlist() {
+    return (await area().get('watchlist')).watchlist || [];
+  }
+
+  /** Add or update (by id) a watched firm: { id, firm, boards, pages, emails }. */
+  const saveWatch = exclusive(async function saveWatch(entry) {
+    const list = await getWatchlist();
+    const i = list.findIndex((w) => w.id === entry.id);
+    if (i >= 0) list[i] = Object.assign(list[i], entry);
+    else list.unshift(Object.assign({ addedAt: Date.now() }, entry));
+    await area().set({ watchlist: list.slice(0, WATCH_LIMIT) });
+    return i >= 0 ? list[i] : list[0];
+  });
+
+  const removeWatch = exclusive(async function removeWatch(id) {
+    await area().set({ watchlist: (await getWatchlist()).filter((w) => w.id !== id) });
+    await area().remove('watch:' + id);
+  });
+
+  async function getWatchState(id) {
+    const key = 'watch:' + id;
+    return (await area().get(key))[key] || null;
+  }
+
+  /** Every watched firm's state: { [id]: state }. */
+  async function getWatchStates(ids) {
+    const keys = ids.map((id) => 'watch:' + id);
+    const data = keys.length ? await area().get(keys) : {};
+    const out = {};
+    for (const id of ids) out[id] = data['watch:' + id] || null;
+    return out;
+  }
+
+  const setWatchState = exclusive(async function setWatchState(id, patch) {
+    const state = Object.assign({ seen: null, fresh: [] }, await getWatchState(id), patch);
+    if (Array.isArray(state.seen)) state.seen = state.seen.slice(-SEEN_LIMIT);
+    state.fresh = (state.fresh || []).slice(0, 30);
+    await area().set({ ['watch:' + id]: state });
+    return state;
+  });
+
+  async function getDiscoverCache() {
+    return (await area().get('discoverCache')).discoverCache || { trackr: null, careers: {} };
+  }
+
+  /** Remember a firm's careers check (the newest few hundred) or Trackr's list. */
+  const setDiscoverCache = exclusive(async function setDiscoverCache({ trackr, careers }) {
+    const cache = await getDiscoverCache();
+    if (trackr) cache.trackr = trackr;
+    if (careers) {
+      cache.careers = Object.assign(cache.careers || {}, careers);
+      const ids = Object.keys(cache.careers).sort((a, b) => cache.careers[b].at - cache.careers[a].at);
+      for (const id of ids.slice(CAREERS_CACHE_LIMIT)) delete cache.careers[id];
+    }
+    await area().set({ discoverCache: cache });
+  });
+
   const setBackupInfo = exclusive(async function setBackupInfo(patch) {
     const info = Object.assign(await getBackupInfo(), patch);
     await area().set({ backupInfo: info });
@@ -642,6 +708,8 @@
     if (opts.history) out.history = await getHistory();
     const answers = await getAnswers();
     if (answers.length) out.answers = answers;
+    const watchlist = await getWatchlist();
+    if (watchlist.length) out.watchlist = watchlist;
     // The API keys come back with everything else after a reinstall, unless that's switched off.
     const keys = opts.keys != null ? opts.keys : aiSettings(all.settings).backupKeys !== false;
     if (keys) {
@@ -661,6 +729,7 @@
     const set = { profiles, profileOrder: order, settings: Object.assign({}, DEFAULT_SETTINGS, data.settings || {}) };
     if (data.history) set.history = data.history;
     if (Array.isArray(data.answers)) set.answers = data.answers;
+    if (Array.isArray(data.watchlist)) set.watchlist = data.watchlist.filter((w) => w && w.id && w.firm);
     if (data.vault) set.vault = data.vault;
     for (const [key, doc] of Object.entries(data.documents || {})) {
       if (/^doc:[^:]+:(resume|coverLetter|transcript)$/.test(key)) set[key] = doc;
@@ -736,6 +805,14 @@
     getHistory,
     addHistory,
     clearHistory,
+    getWatchlist,
+    saveWatch,
+    removeWatch,
+    getWatchState,
+    getWatchStates,
+    setWatchState,
+    getDiscoverCache,
+    setDiscoverCache,
     exportData,
     importData,
     hasData,

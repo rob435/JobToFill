@@ -379,6 +379,23 @@ function openLastQuick() {
   window.close();
 }
 
+/** Discover: firms that keep a low profile, and the watchlist. */
+function openDiscover(hash) {
+  api.tabs.create({ url: api.runtime.getURL('discover/discover.html') + (hash || '') });
+  window.close();
+}
+
+/** New roles at watched firms (the number on the toolbar button). */
+async function renderWatchNews() {
+  const list = await store.getWatchlist();
+  if (!list.length) return;
+  const states = await store.getWatchStates(list.map((w) => w.id));
+  const fresh = Object.values(states).reduce((n, s) => n + ((s && s.fresh && s.fresh.length) || 0), 0);
+  if (!fresh) return;
+  $('#watch-news-text').textContent = `${fresh} new on your watchlist`;
+  $('#watch-news').hidden = false;
+}
+
 async function undo() {
   const r = await send({ type: 'jtf:undo' });
   showResult(el('p', { className: 'result-list', textContent: r.error || `Restored ${plural(r.undone, 'field')}.` }));
@@ -501,6 +518,8 @@ async function init() {
   api.storage.onChanged.addListener(onStorage);
   $('#inspect').addEventListener('click', inspect);
   $('#learn').addEventListener('click', learn);
+  $('#discover').addEventListener('click', () => openDiscover());
+  $('#watch-news-open').addEventListener('click', () => openDiscover('#watch'));
   $('#learn-save').addEventListener('click', saveLearned);
   $('#learn-close').addEventListener('click', () => ($('#learn-panel').hidden = true));
   $('#open-options').addEventListener('click', () => openOptions());
@@ -527,7 +546,7 @@ async function init() {
     if (run && (run.status === 'running' || Date.now() - (run.finishedAt || run.startedAt) < 15 * 60000)) renderAi(run);
   }
 
-  await Promise.all([renderProfiles(), renderVault(), renderAccess(), renderQuick()]);
+  await Promise.all([renderProfiles(), renderVault(), renderAccess(), renderQuick(), renderWatchNews()]);
 }
 
 init();
