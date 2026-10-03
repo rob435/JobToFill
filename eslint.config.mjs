@@ -23,6 +23,7 @@ export default [
       'extension/options/**/*.js',
       'extension/studio/**/*.js',
       'extension/quick/**/*.js',
+      'extension/discover/**/*.js',
     ],
     languageOptions: { sourceType: 'module', globals: extension },
   },
