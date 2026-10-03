@@ -322,6 +322,9 @@
       const def = JTF.fields.DEFS[r.type];
       const label = labelFor(field, r);
       const question = U.normalize(JTF.matcher.questionText(field.desc));
+      // "If applicable, please provide a recent transcript of your graduate studies.": not for a level you haven't
+      // studied at, and nothing missing from your profile either.
+      if (def && def.file && !JTF.fields.uploadApplies(r.type, profile, question)) return null;
       if (def && def.consent && !settings.consents && !accountTerms) {
         if (!JTF.fill.hasValue(field)) report.consents++;
         return null;
@@ -684,7 +687,7 @@
       if (def) {
         if (def.secret || JTF.fields.DATE_TYPES.has(r.type) || r.part) return;
         let path = def.path;
-        if (!path && def.list && (profile[def.list] || [])[r.index || 0] && def.key !== 'current')
+        if (!path && def.list && (profile[def.list] || [])[r.index || 0] && def.key !== 'current' && !def.derived)
           path = `${def.list}.${r.index || 0}.${def.key}`;
         if (!path || !U.isBlank(U.getPath(profile, path))) return;
         if (seen.has(path)) return;
@@ -723,7 +726,12 @@
       if (def) {
         detected++;
         text = labelFor(field, r) + (r.index ? ` #${r.index + 1}` : '') + (r.part ? ` (${r.part})` : '');
-        if (def.file) status = payload.docs && payload.docs[def.file] ? 'ok' : 'empty';
+        const question = U.normalize(JTF.matcher.questionText(field.desc));
+        if (def.file)
+          status =
+            payload.docs && payload.docs[def.file] && JTF.fields.uploadApplies(r.type, profile, question)
+              ? 'ok'
+              : 'empty';
         else if (def.secret) status = 'vault';
         else if (def.consent) status = payload.settings && payload.settings.consents ? 'ok' : 'unknown';
         else {
@@ -732,7 +740,7 @@
             part: r.part,
             kind: field.kind,
             answer: r.answer,
-            question: U.normalize(JTF.matcher.questionText(field.desc)),
+            question,
           });
           status = JTF.fields.resolve(r.type, profile, ctx) ? 'ok' : 'empty';
         }

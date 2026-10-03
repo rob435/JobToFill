@@ -257,6 +257,15 @@
     return null;
   }
 
+  /** The country (ISO alpha-2) whose state or province this is: "MA" or "Massachusetts" -> "US", "Ontario" -> "CA". */
+  function regionCountry(value) {
+    const key = norm(value);
+    if (!key) return null;
+    for (const [code, table] of Object.entries(REGIONS))
+      if (table.some((region) => region.some((r) => norm(r) === key))) return code;
+    return null;
+  }
+
   function regionCandidates(value, country) {
     const region = findRegion(value, country);
     if (!region) return value ? [String(value)] : [];
@@ -362,6 +371,7 @@
     demonyms,
     citizenWords,
     findRegion,
+    regionCountry,
     regionCandidates,
     dialCode,
     countryOfDial,

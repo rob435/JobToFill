@@ -102,6 +102,13 @@
 
   /* --------------------------------------------------------------- text */
 
+  // A screen-reader-only "Required" after a label ("University:*Required" on Teamtailor) is not part of the question.
+  const SR_ONLY = /\b(sr-only|visually-hidden|visuallyhidden|screen-reader-text|a11y-hidden)\b/;
+  const isRequiredMarker = (n) =>
+    SR_ONLY.test(n.getAttribute('class') || '') &&
+    !n.firstElementChild &&
+    /^\(?\s*(required|optional)\s*\)?[.:]?$/i.test(n.textContent.trim());
+
   function textOf(node, skip) {
     if (!node) return '';
     if (node.nodeType === 3) return node.nodeValue.replace(/\s+/g, ' ').trim();
@@ -114,6 +121,7 @@
           n.hidden ||
           n.getAttribute('aria-hidden') === 'true' ||
           (n.style && n.style.display === 'none') ||
+          isRequiredMarker(n) ||
           (skip && skip(n))
         )
           return NodeFilter.FILTER_REJECT;
@@ -123,6 +131,20 @@
     let out = '';
     for (let t = walker.nextNode(); t; t = walker.nextNode()) out += t.nodeValue + ' ';
     return out.replace(/\s+/g, ' ').trim();
+  }
+
+  /**
+   * The text a person sees: not what CSS hides ("Select an option" once a dropdown shows its choice) or keeps for
+   * screen readers only (a 1px clipped "Select an option").
+   */
+  function visibleText(node) {
+    const win = node.ownerDocument.defaultView;
+    return textOf(node, (n) => {
+      const style = win.getComputedStyle(n);
+      if (style.display === 'none' || style.visibility === 'hidden') return true;
+      const rect = n.getBoundingClientRect();
+      return rect.width <= 1 && rect.height <= 1 && style.overflow === 'hidden';
+    });
   }
 
   function byId(el, id) {
@@ -408,11 +430,27 @@
     return isVisible(el);
   }
 
+  /**
+   * A form's dropdown built as a menu button: "Select an option" opening role="menuitemradio" / "menuitemcheckbox"
+   * choices (Teamtailor's University and Degree Classification questions, whose real radios are hidden). A site's
+   * navigation or account menu is not one.
+   */
+  function isChoiceMenu(el) {
+    if (el.getAttribute('aria-haspopup') !== 'menu' || !el.closest('form, fieldset')) return false;
+    const ids = (el.getAttribute('aria-controls') || '').split(/\s+/).filter(Boolean);
+    const menu = ids.map((id) => byId(el, id)).find(Boolean) || el.nextElementSibling;
+    return (
+      !!menu &&
+      menu.matches('[role="menu"]') &&
+      !!menu.querySelector('[role="menuitemradio"], [role="menuitemcheckbox"]')
+    );
+  }
+
   function collectControls(rootNode, out) {
     const doc = rootNode.ownerDocument || rootNode;
     const walker = doc.createTreeWalker(rootNode, NodeFilter.SHOW_ELEMENT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-      if (n.matches(CONTROL_SELECTOR)) out.push(n);
+      if (n.matches(CONTROL_SELECTOR) || isChoiceMenu(n)) out.push(n);
       if (n.shadowRoot) collectControls(n.shadowRoot, out);
     }
     return out;
@@ -555,5 +593,5 @@
     return a;
   }
 
-  JTF.dom = { collect, describe, kindOf, isVisible, textOf, deepActiveElement };
+  JTF.dom = { collect, describe, kindOf, isVisible, textOf, visibleText, deepActiveElement };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

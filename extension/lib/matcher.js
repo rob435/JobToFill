@@ -39,10 +39,10 @@
   const ANCESTOR_ONLY = 0.4;
   // Types whose value is a short phrase, never the answer to an essay question.
   const SHORT_VALUE =
-    /^(name\.|edu\.(school|degree|field|gpa|location|start|end)|exp\.(company|title|location)|address\.|location$|email$|phone|links\.|nationality$|pronouns$|job\.(currentCompany|currentTitle|salary|yearsExperience|startDate|referralSource)$)/;
+    /^(name\.|edu\.(school|degree|field|gpa|classification|location|country|start|end)|exp\.(company|title|location|country)|address\.|location$|email$|phone|links\.|nationality$|pronouns$|job\.(currentCompany|currentTitle|salary|yearsExperience|startDate|referralSource)$)/;
   // Types a Yes/No question never asks for ("Has a bonding company ever denied you?" is not your employer).
   const NEVER_YES_NO =
-    /^(name\.|edu\.(school|degree|field|gpa|location)|exp\.(company|title|location)|address\.|location$|email$|phone|links\.|nationality$|pronouns$|account\.|job\.current(Company|Title)$)/;
+    /^(name\.|edu\.(school|degree|field|gpa|classification|location|country)|exp\.(company|title|location|country)|address\.|location$|email$|phone|links\.|nationality$|pronouns$|account\.|job\.current(Company|Title)$)/;
   // "Are you related to anyone working here? If yes, list their name": a yes/no question, whatever the box.
   // "Could you please provide your degree classification?" is a request, not a yes/no question.
   const YES_NO_QUESTION =
@@ -53,9 +53,10 @@
   const EXPLAIN =
     /\b(outline|describe|explain|provide (details|information|more)|give (details|more)|tell us (about|more)|elaborate)\b/;
   const LINK_KINDS = ['text', 'url', 'textarea'];
-  // "Please specify if you selected Other": the box for an answer you chose not to give.
+  // "Please specify if you selected Other", "University (Other)", "School name (if not listed)": the box for an answer
+  // the list didn't have.
   const OTHER_FOLLOW_UP =
-    /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|^(if|when) you (have )?(selected|chose|picked|ticked|checked) (?!yes\b)|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b|\bif (it|yours|your \w+( \w+)?) (is|was) not (listed|shown|in the list|found|available)\b|\bnot listed (above|below)\b.*\b(specify|enter|type|provide|state)\b/;
+    /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|^(if|when) you (have )?(selected|chose|picked|ticked|checked) (?!yes\b)|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b|\bif (it|yours|your \w+( \w+)?) (is|was) not (listed|shown|in the list|found|available)\b|\bnot listed (above|below)\b.*\b(specify|enter|type|provide|state)\b|\bif not (listed|shown|in the list|found|available)\b|^(any )?other (university|school|college|institution|degree|subject|major|course)\b|\b(university|school|college|institution|degree|subject|major|course) (name )?other$/;
   const EMAIL_TYPES = new Set(['email', 'account.username']);
   // Field types a lone checkbox can answer: "I am authorized to work in the US", "I have read the
   // privacy notice", or one option of a checklist ("London" under "Which offices…?").
@@ -189,9 +190,9 @@
     // A word in the help text or a wrapper's id alone ("…your university's policy…") is not enough.
     if (!best || best.score < MIN_SCORE || (best.score < ANCESTOR_ONLY && !F().DATE_TYPES.has(best.type)))
       return refine(fromOptions(desc) || fallback(desc), desc);
-    // "What did you receive in your undergraduate degree? First / Upper second / …" asks for the grade.
-    if ((best.type === 'edu.degree' || best.type === 'edu.level') && looksLikeDegreeClasses(desc.options))
-      return refine({ type: 'edu.gpa', part: null, score: best.score, source: 'options' }, desc);
+    // "What did you receive in your undergraduate degree? First / Upper second / …" asks for the class.
+    if (['edu.degree', 'edu.level', 'edu.gpa'].includes(best.type) && looksLikeDegreeClasses(desc.options))
+      return refine({ type: 'edu.classification', part: null, score: best.score, source: 'options' }, desc);
 
     // "Name" labels a first/last pair more often than a full-name box: let specifics win.
     if (best.rule.yieldsTo) {
@@ -226,7 +227,7 @@
     if (opts.length === 1 && canonicalOf(opts[0].text) === 'yes') return make('consent');
     const canon = opts.map((o) => canonicalOf(o.text));
     if (canon.includes('male') && canon.includes('female')) return make('eeo.gender');
-    if (looksLikeDegreeClasses(opts)) return make('edu.gpa');
+    if (looksLikeDegreeClasses(opts)) return make('edu.classification');
     return null;
   }
 
@@ -360,6 +361,37 @@
     return n;
   }
 
+  const SECTION_HEADINGS = {
+    edu: /\b(education|academic|school|universit\w*|college|qualifications?|degrees?|studies)\b/,
+    exp: /\b(work|employment|experience|career|jobs?|professional|employers?)\b/,
+  };
+
+  /**
+   * A generic date that starts a block ("From Date / Expected or Completed Graduation / School…" after the work
+   * history, SuccessFactors) belongs to the block it starts: the section of the next field that has one, when there
+   * is no section yet, when the section before already has this box (it would start another entry of it), when it
+   * pairs with that field ("From" then "Graduation") or when its heading names that section. Null: the section before.
+   */
+  function leadsInto(results, descs, i, prev, state) {
+    const r = results[i];
+    if (r.type !== 'gen.start' && r.type !== 'gen.end') return null;
+    let next = null;
+    let at = -1;
+    for (let j = i + 1; j < Math.min(results.length, i + 4); j++) {
+      const t = results[j] && results[j].type;
+      if (!t || t.startsWith('gen.') || PLACE_TYPES.includes(t) || SECTION_ONLY.includes(t)) continue;
+      next = groupOf(t);
+      at = j;
+      break;
+    }
+    if (!next || next === prev) return null;
+    if (!prev) return next;
+    if (state[prev].seen.has(prev + r.type.slice(3) + ':' + (r.part || ''))) return next;
+    if (r.type === 'gen.start' && at === i + 1 && results[at].type === next + '.end') return next;
+    const heading = norm((descs[i].signals || {}).section);
+    return SECTION_HEADINGS[next].test(heading) && !SECTION_HEADINGS[prev].test(heading) ? next : null;
+  }
+
   /**
    * Classify every control on a page, then use document order to decide which
    * education / work-history entry each box belongs to: a repeated type
@@ -404,7 +436,10 @@
       }
     });
 
-    const state = { edu: { index: -1, seen: new Set() }, exp: { index: -1, seen: new Set() } };
+    const state = {
+      edu: { index: -1, seen: new Set(), run: new Set() },
+      exp: { index: -1, seen: new Set(), run: new Set() },
+    };
     let prev = null;
     let detached = null; // the section of a run of one-off questions, all about the first entry
     for (let i = 0; i < results.length; i++) {
@@ -437,7 +472,18 @@
         }
       }
       if (r.type.startsWith('gen.')) {
-        const target = prev && (r.type !== 'gen.description' || prev === 'exp') ? prev + r.type.slice(3) : null;
+        const lead = leadsInto(results, descs, i, prev, state);
+        const into = lead || prev;
+        let target = into && (r.type !== 'gen.description' || into === 'exp') ? into + r.type.slice(3) : null;
+        // "Start Date" right after an entry's graduation date ("Year of Graduation, Degree Classification, Start Date"
+        // on Teamtailor) is not that entry's start: entries give their start first.
+        const run = into && !lead ? [...state[into].run] : [];
+        if (
+          r.type === 'gen.start' &&
+          run.some((k) => k.startsWith(into + '.end:')) &&
+          !run.some((k) => k.startsWith(into + '.start:'))
+        )
+          target = null;
         if (!target) {
           r.dropped = r.type;
           r.type = null;
@@ -451,7 +497,10 @@
         continue;
       } else if (prev && (r.type === 'location' || r.type === 'address.city')) {
         r.type = prev + '.location';
-      } else if (prev && ['address.state', 'address.country', 'address.postalCode'].includes(r.type)) {
+      } else if (prev && r.type === 'address.country') {
+        // "Country" in an education or job entry: the school's or employer's, from that entry's location.
+        r.type = prev + '.country';
+      } else if (prev && ['address.state', 'address.postalCode'].includes(r.type)) {
         // The school's or employer's state, not yours.
         r.dropped = r.type;
         r.type = null;
@@ -467,7 +516,11 @@
       }
       const st = state[g];
       const key = r.type + ':' + (r.part || '');
-      if (prev !== g) detached = null;
+      if (prev !== g) {
+        detached = null;
+        st.run = new Set(); // what this stretch of the section has had
+      }
+      st.run.add(key);
       // Back after other questions with something this section already had: a new entry only when
       // it starts the way the first one did and goes on for more than one field.
       // "Please re-confirm the university you currently attend" among the screening questions is about the same
@@ -489,6 +542,7 @@
       if (st.index < 0 || st.seen.has(key)) {
         st.index++;
         st.seen = new Set();
+        st.run = new Set([key]);
         if (st.index === 0) {
           st.lead = key;
           st.leadLabel = norm(questionText(descs[i]));
@@ -515,10 +569,13 @@
 
   /* ---------------------------------------------------------- option matching */
 
+  // "No Selection" is SuccessFactors' empty choice (never the answer "No").
   function isPlaceholder(n) {
     return (
       !n ||
-      /^(select|choose|please (select|choose|specify)|pick (one|an option)|none selected|click to select)\b/.test(n)
+      /^(select|choose|please (select|choose|specify)|pick (one|an option)|none selected|no selection|click to select)\b/.test(
+        n,
+      )
     );
   }
 
@@ -552,6 +609,10 @@
     return null;
   }
 
+  // An integrated master's (MEng, MSci, MPhys…) is a first degree as well as a master's.
+  const INTEGRATED_MASTERS = /\bintegrated master|\bm ?(eng|sci|phys|math|maths|chem|comp|bio|biol|pharm|geol)\b/;
+  const isIntegratedMasters = (n) => INTEGRATED_MASTERS.test(n);
+
   const DEGREE_GROUPS = [
     ['doctorate', /\bdoctor|\bph ?d\b|\bd ?phil\b|\bjd\b|\bmd\b|\bed ?d\b/],
     [
@@ -567,6 +628,8 @@
   ];
 
   function degreeGroup(n) {
+    // A Scottish "MA (Hons)" is a first degree.
+    if (/\bm ?a\b/.test(n) && /\bhons\b|\bhonours\b/.test(n) && !/\bmaster/.test(n)) return 'bachelor';
     for (const [name, re] of DEGREE_GROUPS) if (re.test(n)) return name;
     return null;
   }
@@ -610,6 +673,8 @@
       let score = 0;
       for (const c of cands) score = Math.max(score, textScore(o, c));
       if (wantDegree && degreeGroup(o.n) === wantDegree) score = Math.max(score, 75 + score * 0.2);
+      // "Integrated Masters Degree" for an MEng, "Masters Degree" for an MSc.
+      if (wantDegree === 'master' && /\bintegrated\b/.test(o.n) !== isIntegratedMasters(cands[0] || '')) score -= 10;
       // Break ties toward the option that shares the most words with the main spelling.
       if (score > 0) score += jaccard(U.tokens(o.n), primary) * 5;
       // "San Francisco, California" rather than "San Francisco, Cebu": the option names your state or country.
@@ -852,6 +917,76 @@
     return (broad ? 100 : 60) - (/\bpacific islander\b/.test(n) ? 5 : 0);
   }
 
+  /**
+   * The option naming your degree class ("Upper Second Class Honours (2:1)", "2(i)", "60-69% - Second class honours:
+   * Grade 1"), predicted or achieved as yours is when the list has both. -1 when the list doesn't name your class,
+   * whatever else it offers (GPA bands, "Other").
+   */
+  function bestClass(opts, v, cands) {
+    const same = opts.filter((o) => F().degreeClassOf(o.text) === v.cls);
+    if (!same.length) return -1;
+    const expected = (o) => /\b(predicted|expected|anticipated|projected|forecast|on track)\b/.test(o.n);
+    const achieved = (o) => /\b(achieved|awarded|obtained|actual|final|graduated)\b/.test(o.n);
+    const kept = same.filter((o) => (v.expected ? !achieved(o) : !expected(o)));
+    return bestText(kept.length ? kept : same, cands, v).i;
+  }
+
+  // Words most institution names share: they tell no two apart.
+  const SCHOOL_WORDS = new Set(['the', 'of', 'and', 'at', 'in', 'for', 'university', 'univ', 'uni']);
+  const INSTITUTION = /\b(universit|college|institut|school|academy|polytechnic|conservatoire)/i;
+
+  /** What tells an institution apart: "University of Glasgow", "Glasgow, University of" and "Glasgow University" -> "glasgow". */
+  function schoolKey(text) {
+    const words = norm(text)
+      .replace(/\b([a-z]+) s\b/g, '$1s') // "King's College" is "Kings College"
+      .replace(/\bsaint\b/g, 'st')
+      .split(' ')
+      .filter((w) => w && !SCHOOL_WORDS.has(w));
+    return [...new Set(words)].sort().join(' ');
+  }
+
+  const wordPrefix = (a, b) => (' ' + b + ' ').startsWith(' ' + a + ' ');
+
+  /**
+   * A school from a list of schools. Names that differ only in the words every name shares ("The University of
+   * Glasgow", "Glasgow, University of", "University of Glasgow (UofG)", "Glasgow University") are the same school. A
+   * name with more telling words, or fewer, is another one ("Glasgow Caledonian University", "Glasgow School of Art";
+   * "University of London" for Queen Mary), unless it only adds to the end ("Imperial College" for "Imperial College
+   * London"). A bracket that names an institution is another name for it ("UWE Bristol (University of the West of
+   * England)"); one holding a place or initials is not ("University of Strathclyde (Glasgow)"), except the initials
+   * you wrote ("UCL"). Returns an index, -1, or null when your school has no telling words (generic matching).
+   */
+  function bestSchool(opts, v, cands) {
+    const mine = norm(v.text.replace(/\([^)]*\)/g, ' '));
+    const want = schoolKey(mine);
+    if (!want) return null;
+    const wanted = want.split(' ');
+    const initials = /^[A-Z][A-Za-z&]*[A-Z][A-Za-z]*$/.test(v.text.trim()) ? norm(v.text) : null;
+    const same = [];
+    const open = [];
+    for (const o of opts) {
+      const main = norm(o.text.replace(/\([^)]*\)/g, ' '));
+      const keys = [schoolKey(main)];
+      for (const m of o.text.matchAll(/\(([^)]+)\)/g)) {
+        if (INSTITUTION.test(m[1])) keys.push(schoolKey(m[1]));
+        else if (initials && norm(m[1]) === initials) keys.push(want);
+      }
+      if (keys.includes(want)) {
+        same.push(o);
+        continue;
+      }
+      const words = keys[0].split(' ').filter(Boolean);
+      if (!words.length) continue; // "University", "Other": no school in particular
+      const shared = words.filter((w) => wanted.includes(w)).length;
+      const nested = shared && (shared === words.length || shared === wanted.length);
+      if (nested && !wordPrefix(main, mine) && !wordPrefix(mine, main)) continue;
+      open.push(Object.assign({}, o, { n: main, nv: '' }));
+    }
+    if (same.length) return bestText(same, cands, v).i;
+    const best = open.length ? bestText(open, cands, v) : null;
+    return best && best.score >= 45 ? best.i : -1;
+  }
+
   /** Every option a list value ("London, New York") picks, in the list's order. */
   /** Which country an option spells: "United Kingdom (GB)", "UK - United Kingdom", "United Kingdom +44", "GB". */
   function countryOfOption(text) {
@@ -971,6 +1106,13 @@
     if (v.avoid) {
       for (let k = opts.length - 1; k >= 0; k--) if (v.avoid.test(opts[k].n)) opts.splice(k, 1);
       if (!opts.length) return -1;
+    }
+
+    // A degree class against its spellings; a school never against a similarly named one.
+    if (v.kind === 'class' && v.cls) return bestClass(opts, v, cands);
+    if (v.kind === 'school') {
+      const r = bestSchool(opts, v, cands);
+      if (r !== null) return r;
     }
 
     if (v.kind === 'country' && v.iso2) {
@@ -1168,6 +1310,7 @@
     matchAll,
     optionSpan,
     degreeGroup,
+    isIntegratedMasters,
     formatForText,
     isPlaceholder,
   };
