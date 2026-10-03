@@ -374,6 +374,18 @@
     );
   }
 
+  // Picks a fill made that show only as chips without any class or role to know them by (Downshift's multiple
+  // selection): remembered per box, so a later look (the questions left for the AI, a second fill) still sees them.
+  const keptPicks = new WeakMap();
+
+  /** The remembered picks that still show beside `el`. */
+  function keptChips(el) {
+    const picks = keptPicks.get(el);
+    if (!picks || !picks.length) return [];
+    const box = boxText(el);
+    return picks.filter((t) => box.includes(' ' + JTF.util.normalize(t) + ' '));
+  }
+
   /** Does this control already hold something the user (or site) put there? */
   function hasValue(field) {
     const { el, kind, members } = field;
@@ -393,7 +405,7 @@
         return !!t && !M().isPlaceholder(JTF.util.normalize(t));
       }
       case 'combobox':
-        return !!el.value.trim() || chipsOf(el).length > 0;
+        return !!el.value.trim() || chipsOf(el).length > 0 || keptChips(el).length > 0;
       default: {
         // A bare scheme or a dial code the widget put there ("+33" in react-phone-number-input) is still empty.
         const v = textIn(el).trim();
@@ -445,7 +457,8 @@
           chipsOf(el)
             .map((c) => dom().textOf(c))
             .filter(Boolean)
-            .join(', ')
+            .join(', ') ||
+          keptChips(el).join(', ')
         );
       default:
         return textIn(el).trim();
@@ -710,8 +723,41 @@
     await sleep(40);
   }
 
-  /** A role="menuitemcheckbox" / "menuitemradio" that is ticked. */
-  const isTicked = (option) => option.isConnected && option.getAttribute('aria-checked') === 'true';
+  /**
+   * A role="menuitemcheckbox" / "menuitemradio" that is ticked, or an option a multi-select listbox has selected
+   * (Headless UI's Listbox `multiple`: aria-selected there is the choice, not the highlight; clicking it again would
+   * take it away).
+   */
+  const isTicked = (option) =>
+    option.isConnected &&
+    (option.getAttribute('aria-checked') === 'true' ||
+      (option.getAttribute('aria-selected') === 'true' &&
+        !!option.closest('[role="listbox"][aria-multiselectable="true"]')));
+
+  /**
+   * The text of a dropdown's own box (the largest wrapper holding no other field), its menu left out: where chips
+   * drawn without any class or role to know them by show what was picked (Downshift's multiple-selection recipe puts
+   * plain <span>s before its input).
+   */
+  function boxText(el) {
+    let box = null;
+    for (let a = el.parentElement, i = 0; a && i < 4 && a !== el.ownerDocument.body; a = a.parentElement, i++) {
+      const others = Array.from(a.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]'));
+      if (others.some((c) => c !== el && c.getAttribute('aria-hidden') !== 'true' && c.tabIndex >= 0)) break;
+      box = a;
+    }
+    if (!box) return '';
+    const lb = listboxFor(el);
+    const menu = (n) => n === lb || n.matches('[role="listbox"], [role="option"]');
+    return ' ' + JTF.util.normalize(dom().textOf(box, menu)) + ' ';
+  }
+
+  /** Does `text` show in the box (`after`) more often than it did (`before`): a new chip for it? */
+  function chipAdded(before, after, text) {
+    const want = ' ' + JTF.util.normalize(text) + ' ';
+    const count = (s) => s.split(want).length - 1;
+    return want.trim() !== '' && count(after) > count(before);
+  }
 
   async function choose(el, option) {
     const text = dom().textOf(option);
@@ -722,6 +768,7 @@
       option.dispatchEvent(new Ctor(type, { bubbles: true, composed: true }));
     }
     const before = currentOptions(el);
+    const box = boxText(el);
     pointerClick(option);
     // Registered once the value shows, or the menu closes behind the click (slow re-renders included). A category
     // that opens its own options instead (Workday's "Social Media" > "LinkedIn") says so.
@@ -729,6 +776,12 @@
       await sleep(30);
       // A menu that stays open ticks the item itself (Teamtailor shows "a, b, c, +2" once there are more than three).
       if (selectionShows(el, text, typed) || !listboxFor(el) || isTicked(option)) return text;
+      // A chip beside the box while the menu stays open for the next pick, the row gone from it: a multi-select
+      // (`kept`), though its list never said so.
+      if (chipAdded(box, boxText(el), text)) {
+        keptPicks.set(el, [...(keptPicks.get(el) || []), text]);
+        return { text, kept: true };
+      }
       const now = currentOptions(el);
       if (!option.isConnected && now.length && optionsKey(now) !== optionsKey(before)) return { drilled: true };
     }
@@ -743,10 +796,14 @@
     return null;
   }
 
-  function closeMenu(el) {
+  async function closeMenu(el) {
     if (!listboxFor(el)) return;
     key(el.localName === 'input' ? el : el.ownerDocument.activeElement || el, 'Escape');
-    if (el.localName !== 'input' && listboxFor(el)) pointerClick(el);
+    if (el.localName === 'input') return;
+    // The menu goes on the widget's next render (Radix Select): clicking its button before that would open it again,
+    // and an open Radix Select leaves the rest of the page aria-hidden and unclickable.
+    for (let waited = 0; waited < 150 && listboxFor(el); waited += 30) await sleep(30);
+    if (listboxFor(el)) pointerClick(el);
   }
 
   /**
@@ -758,6 +815,8 @@
     const straight = searchable && searchesOnEnter(el) && !v.many;
     if (straight) el.focus({ preventScroll: true });
     let opts = straight ? [] : await openMenu(el, searchable);
+    // The menu offered options when it opened, though a search may find none later.
+    const offered = opts.length > 0;
     const multi = isMulti(el);
     const pick = () => {
       const listed = describeOptions(opts);
@@ -792,7 +851,7 @@
         if (!opts.length && !listboxFor(el)) break; // no suggestions at all: not a dropdown
       }
     }
-    if (idx < 0) return { chosen: null, opts, multi };
+    if (idx < 0) return { chosen: null, opts, multi, offered };
     let chosen = await choose(el, opts[idx]);
     // A two-level list (Workday's "Social Media" > "LinkedIn"): the category opened its own options; pick from those.
     for (let depth = 0; chosen && chosen.drilled && depth < 2; depth++) {
@@ -800,7 +859,10 @@
       idx = pick();
       chosen = idx >= 0 ? await choose(el, opts[idx]) : null;
     }
-    return { chosen: chosen && chosen.drilled ? null : chosen, opts, multi };
+    // A multi-select that only showed itself by keeping its menu open beside the new chip.
+    const kept = !!(chosen && chosen.kept);
+    if (kept) chosen = chosen.text;
+    return { chosen: chosen && chosen.drilled ? null : chosen, opts, multi: multi || kept, offered };
   }
 
   async function fillCombo(field, v) {
@@ -818,9 +880,14 @@
     while (queue.length) {
       const value = queue.shift();
       const r = await pickOne(el, value, searchable, chosen);
-      if (r.opts.length || listboxFor(el)) sawOptions = true;
+      if (r.opts.length || r.offered || listboxFor(el)) sawOptions = true;
       if (r.chosen) chosen.push(r.chosen);
-      else if (isInput) clearQuery(el);
+      else if (isInput) {
+        clearQuery(el);
+        // Emptied, a filtering menu lists every option again on its next render, the first one highlighted (Downshift
+        // picks that one when the box loses focus): let it render, so it is closed below rather than blurred.
+        await sleep(30);
+      }
       // A multi-select only shows itself once open: then take every listed item, not just the first.
       if (!multi && r.multi && items) {
         multi = true;
@@ -844,7 +911,7 @@
       return { status: 'nomatch' };
     }
 
-    closeMenu(el);
+    await closeMenu(el);
     if (isInput) el.blur();
     return chosen.length ? { status: 'filled', value: chosen.join(', ') } : { status: 'nomatch' };
   }
@@ -867,7 +934,7 @@
         .filter((t) => t && !M().isPlaceholder(JTF.util.normalize(t)) && !/^no (options|results)/i.test(t));
       return { options: [...new Set(options)], multi };
     } finally {
-      closeMenu(el);
+      await closeMenu(el);
       if (isInput) el.blur();
     }
   }

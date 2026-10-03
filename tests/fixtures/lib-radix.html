@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply for Summer Analyst 2027 – Harbourline Partners</title>
+    <style>
+      /* shadcn/ui-like look, written out: the Radix primitives themselves are unstyled. */
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font: 15px/1.5 system-ui, sans-serif;
+        margin: 0;
+        background: #fff;
+        color: #09090b;
+      }
+      main {
+        max-width: 640px;
+        margin: 32px auto;
+        padding: 0 16px;
+      }
+      .field {
+        margin: 14px 0;
+      }
+      .label {
+        display: block;
+        font-weight: 500;
+        font-size: 14px;
+        margin-bottom: 6px;
+      }
+      .input,
+      .trigger {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
+        height: 40px;
+        padding: 8px 12px;
+        border: 1px solid #e4e4e7;
+        border-radius: 6px;
+        background: #fff;
+        font: inherit;
+        text-align: left;
+      }
+      .trigger[data-placeholder] {
+        color: #71717a;
+      }
+      .content {
+        overflow: hidden;
+        background: #fff;
+        border: 1px solid #e4e4e7;
+        border-radius: 6px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+        min-width: var(--radix-select-trigger-width);
+        z-index: 50;
+      }
+      .content[data-side] {
+        max-height: var(--radix-select-content-available-height);
+      }
+      .viewport {
+        padding: 4px;
+      }
+      .item {
+        position: relative;
+        display: flex;
+        align-items: center;
+        height: 32px;
+        padding: 0 8px 0 28px;
+        border-radius: 4px;
+        font-size: 14px;
+        cursor: default;
+        user-select: none;
+        outline: none;
+      }
+      .item[data-highlighted] {
+        background: #f4f4f5;
+      }
+      .indicator {
+        position: absolute;
+        left: 8px;
+      }
+      .scroll {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 24px;
+        cursor: default;
+      }
+      .radios {
+        display: flex;
+        gap: 20px;
+      }
+      .radio-row,
+      .check-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .radio,
+      .checkbox {
+        width: 18px;
+        height: 18px;
+        padding: 0;
+        border: 1px solid #18181b;
+        background: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .radio {
+        border-radius: 50%;
+      }
+      .checkbox {
+        border-radius: 4px;
+      }
+      .checkbox[data-state='checked'] {
+        background: #18181b;
+        color: #fff;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #18181b;
+      }
+      .tick {
+        font-size: 12px;
+        line-height: 1;
+      }
+      .submit {
+        margin-top: 20px;
+        height: 40px;
+        padding: 0 16px;
+        border: 0;
+        border-radius: 6px;
+        background: #18181b;
+        color: #fff;
+        font: inherit;
+      }
+      #state {
+        background: #f4f4f5;
+        padding: 8px;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Apply for Summer Analyst 2027</h1>
+      <p>Harbourline Partners · London · Internship</p>
+      <div id="root"></div>
+      <pre id="state"></pre>
+    </main>
+    <script src="build/lib-radix.js"></script>
+  </body>
+</html>
