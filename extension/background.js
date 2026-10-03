@@ -397,11 +397,10 @@ async function documentFor(msg, sender) {
 // Downloads/JobToFill, rewritten shortly after each change, and offered back when JobToFill
 // starts out empty.
 const BACKUP_FILE = 'JobToFill/jobtofill-backup.json';
-const BACKUP_KEYS = /^(profiles|profileOrder|settings|vault|aiKeys|answers|watchlist|doc:.+|kit:.+)$/;
 
 api.storage.onChanged.addListener((changes, areaName) => {
   // Re-created on every change, so the file is written once things have been quiet for half a minute.
-  if (areaName === 'local' && Object.keys(changes).some((k) => BACKUP_KEYS.test(k)))
+  if (areaName === 'local' && Object.keys(changes).some(store.backsUp))
     api.alarms.create('jtf-backup', { delayInMinutes: 0.5 });
 });
 

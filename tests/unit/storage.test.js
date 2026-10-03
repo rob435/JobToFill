@@ -149,6 +149,36 @@ test('store: hasData tells a fresh install from a filled-in one', async () => {
   installChrome();
   await chrome.storage.local.set({ vault: { version: 1 } });
   assert.equal(await store.hasData(), true, 'a vault');
+  installChrome();
+  await store.setAiKey('sk-only-a-key');
+  assert.equal(await store.hasData(), true, 'an AI key alone');
+});
+
+test('store: every part of the backup file rewrites it when it changes; temporary things never do', async () => {
+  installChrome();
+  const { profile } = await store.getActive();
+  profile.personal.firstName = 'Ada';
+  await store.saveProfile(profile);
+  await store.saveKit(profile.id, { notes: 'x' });
+  await store.setDoc(profile.id, 'resume', { name: 'cv.pdf', type: 'application/pdf', size: 3, dataUrl: 'data:,x' });
+  await store.setAiKey('sk-1');
+  await store.setNylas({ apiKey: 'nyk_1', grantId: 'g1' });
+  await chrome.storage.local.set({
+    vault: { version: 1 },
+    answers: [{ id: 'a' }],
+    watchlist: [{ id: 'w', firm: 'Acme' }],
+  });
+  const backup = await store.exportData();
+  const stored = Object.keys(await chrome.storage.local.get(null));
+  // Everything the file carries (other than the application log) schedules a rewrite when it changes…
+  for (const key of stored.filter((k) => k !== 'history'))
+    if (JSON.stringify(backup).includes(`"${key}"`) || /^(doc|kit):/.test(key))
+      assert.equal(store.backsUp(key), true, key);
+  for (const key of ['profiles', 'profileOrder', 'settings', 'vault', 'aiKeys', 'nylas', 'answers', 'watchlist'])
+    assert.equal(store.backsUp(key), true, key);
+  // …and nothing temporary does.
+  for (const key of ['letters', 'quickApply', 'quickStatus', 'discoverCache', 'backupInfo', 'history', 'watch:w'])
+    assert.equal(store.backsUp(key), false, key);
 });
 
 test('store: backup info merges, and backup downloads are recognised', async () => {
