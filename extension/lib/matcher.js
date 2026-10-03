@@ -316,8 +316,10 @@
   function refine(r, desc) {
     if (!r) return null;
     if (F().DATE_TYPES.has(r.type) && !r.part) r.part = detectPart(desc);
+    // A "prefix" picker beside the number under "Phone number" (Ant Design's docs name it "prefix") is the dial code,
+    // not a title like "Mr".
     if (
-      (r.type === 'address.country' || r.type === 'nationality') &&
+      (r.type === 'address.country' || r.type === 'nationality' || r.type === 'name.prefix') &&
       (looksLikePhoneCodes(desc.options) ||
         /\b(phone|mobile|tel|telephone|cell)\b/.test(norm((desc.signals || {}).group)))
     )

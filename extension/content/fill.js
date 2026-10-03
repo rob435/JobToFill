@@ -149,8 +149,9 @@
     return dom().visibleText(el) || '';
   }
 
+  // Ant Design's tags ("selection-item") carry no role or ARIA state: their class is the only sign of them.
   const CHIP =
-    '[class*="singleValue"], [class*="single-value"], [class*="selected-value"], [class*="multiValue"], [class*="multi-value"], [class*="MuiChip-root"], [data-automation-id="selectedItem"]';
+    '[class*="singleValue"], [class*="single-value"], [class*="selected-value"], [class*="multiValue"], [class*="multi-value"], [class*="MuiChip-root"], [class*="selection-item"], [data-automation-id="selectedItem"]';
 
   /**
    * The selected values ("chips") of a react-select style widget, looking only inside its own
@@ -182,6 +183,15 @@
     );
   }
 
+  /**
+   * The choice a dropdown shows as bare text beside its search input (Ant Design's "Italy"). Not a chip: picking
+   * another option replaces it, no clear button needed.
+   */
+  function besideText(el) {
+    const shown = dom().shownValue(el);
+    return shown ? shown.text : '';
+  }
+
   /** Does this control already hold something the user (or site) put there? */
   function hasValue(field) {
     const { el, kind, members } = field;
@@ -201,7 +211,7 @@
         return !!t && !M().isPlaceholder(JTF.util.normalize(t));
       }
       case 'combobox':
-        return !!el.value.trim() || chipsOf(el).length > 0;
+        return !!el.value.trim() || chipsOf(el).length > 0 || !!besideText(el);
       default: {
         // A bare scheme or a dial code the widget put there ("+33" in react-phone-number-input) is still empty.
         const v = (el.value || '').trim();
@@ -219,7 +229,11 @@
     if (kind === 'select') return M().matchOption(field.desc.options, v) === el.selectedIndex;
     if (kind !== 'combo' && kind !== 'combobox') return true;
     const shown =
-      kind === 'combo' ? [comboText(el)] : el.value.trim() ? [el.value] : chipsOf(el).map((c) => dom().textOf(c));
+      kind === 'combo'
+        ? [comboText(el)]
+        : el.value.trim()
+          ? [el.value]
+          : [...chipsOf(el).map((c) => dom().textOf(c)), besideText(el)];
     return shown.some((text) => text && M().matchOption([{ text, value: '' }], v) === 0);
   }
 
@@ -253,7 +267,8 @@
           chipsOf(el)
             .map((c) => dom().textOf(c))
             .filter(Boolean)
-            .join(', ')
+            .join(', ') ||
+          besideText(el)
         );
       default:
         return (el.value || '').trim();
@@ -275,6 +290,20 @@
   /** Workday's search prompts look up what was typed when Enter is pressed. */
   const searchesOnEnter = (el) => el.getAttribute('data-uxi-widget-type') === 'selectinput';
 
+  /**
+   * An open combobox whose listbox is a 0×0 box kept for screen readers (Ant Design's virtual lists name only the
+   * highlighted row and its neighbours there): the rows people see are in the popup around it. A listbox that is
+   * hidden (display: none) belongs to a closed menu.
+   */
+  function popupAround(lb, el) {
+    if (!lb.checkVisibility || !lb.checkVisibility({ checkVisibilityCSS: true })) return null;
+    for (let a = lb.parentElement, i = 0; a && i < 3 && a !== a.ownerDocument.body; a = a.parentElement, i++) {
+      if (a.contains(el)) return null;
+      if (dom().isVisible(a)) return a;
+    }
+    return null;
+  }
+
   function listboxFor(el) {
     const rootNode = el.getRootNode();
     const doc = el.ownerDocument;
@@ -286,6 +315,8 @@
     for (const id of ids) {
       const lb = (rootNode.getElementById && rootNode.getElementById(id)) || doc.getElementById(id);
       if (lb && dom().isVisible(lb) && !isChipList(lb)) return lb;
+      const around = lb && el.getAttribute('aria-expanded') === 'true' ? popupAround(lb, el) : null;
+      if (around) return around;
     }
     const comboLike =
       el.getAttribute('role') === 'combobox' ||
@@ -327,6 +358,9 @@
       });
     for (const sel of [OPTION_ROLES, MENUITEM_ROLES]) {
       const found = Array.from(lb.querySelectorAll(sel));
+      // Rows kept for screen readers only, none of them on screen (Ant Design's 0×0 role="listbox" naming the
+      // highlighted row and its neighbours): the rows people see and click are the other ones, whatever they carry.
+      if (found.length && !found.some((o) => dom().isVisible(o))) continue;
       if (found.length) return usable(found);
     }
     const lis = usable(Array.from(lb.querySelectorAll('li')));
@@ -481,7 +515,7 @@
     if (have.length >= 3 && have !== JTF.util.normalize(typed || '') && (want.includes(have) || have.includes(want)))
       return true;
     if (chipsOf(el).some((c) => JTF.util.normalize(dom().textOf(c)).includes(want))) return true;
-    const own = el.localName === 'input' ? '' : JTF.util.normalize(dom().textOf(el));
+    const own = el.localName === 'input' ? JTF.util.normalize(besideText(el)) : JTF.util.normalize(dom().textOf(el));
     return !!own && own.includes(want);
   }
 
@@ -686,7 +720,10 @@
     // A menu of ticks ("How did you hear about us?" on Teamtailor) takes several.
     if (lb && lb.querySelector('[role="menuitemcheckbox"]')) return true;
     if (el.getAttribute('aria-multiselectable') === 'true') return true;
-    return !!el.closest('[class*="is-multi" i], [class*="isMulti" i], [class*="--multi" i]');
+    // Ant Design's mode="multiple" says so only in its class ("ant-select-multiple"): no aria-multiselectable.
+    return !!el.closest(
+      '[class*="is-multi" i], [class*="isMulti" i], [class*="--multi" i], [class*="select-multiple" i]',
+    );
   }
 
   /* ------------------------------------------------------------ popups */
