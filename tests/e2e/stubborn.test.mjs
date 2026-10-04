@@ -28,6 +28,12 @@ test('typed, pasted, reformatted, re-made and refused boxes', async () => {
   assert.equal(state.zip, '94105', 'the emptied box gets its answer again');
   assert.match(state.linkedin, /^(www\.)?linkedin\.com\/in\/ada$/, 'the link without its scheme');
   assert.equal(state.source, 'LinkedIn', 'the select put back is chosen again');
+  assert.equal(state.start, '11/02/2026');
+  assert.equal(
+    await page.$eval('#calendar', (el) => el.style.display),
+    'none',
+    'a calendar that fades in from nothing is closed again',
+  );
   assert.equal(await value(page, '#source'), 'LinkedIn');
   // Nothing in a US profile satisfies "UK numbers only": that one is left to check, with what the page says.
   assert.deepEqual(r.check, ['Phone (“Please enter a UK mobile number starting with +44”)']);

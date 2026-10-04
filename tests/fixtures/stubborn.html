@@ -45,6 +45,10 @@
         </select>
       </div>
       <div class="row">
+        <label for="start">Earliest start date</label><input id="start" name="start" autocomplete="off" />
+        <div id="calendar" role="grid" aria-label="Choose a date" style="display: none"></div>
+      </div>
+      <div class="row">
         <label for="phone2">Mobile (UK numbers only)</label><input id="phone2" name="phone2" />
         <span class="error" id="phone2-error"></span>
       </div>
@@ -136,6 +140,20 @@
         model.source = $('source').value;
         show();
       });
+
+      // A calendar that opens on focus and fades in from nothing (as jQuery UI's does), and only closes on Escape or a
+      // click elsewhere: never on blur.
+      bind($('start'), 'start');
+      const calendar = $('calendar');
+      $('start').addEventListener('focus', () => {
+        if (calendar.style.display === 'block') return;
+        Object.assign(calendar.style, { display: 'block', opacity: '0' });
+        calendar.textContent = 'June 2027';
+        setTimeout(() => (calendar.style.opacity = '1'), 150);
+      });
+      const shut = () => (calendar.style.display = 'none');
+      $('start').addEventListener('keydown', (e) => e.key === 'Escape' && shut());
+      document.addEventListener('mousedown', (e) => e.target !== $('start') && !calendar.contains(e.target) && shut());
 
       // Only a UK number will do.
       bind($('phone2'), 'phone2');

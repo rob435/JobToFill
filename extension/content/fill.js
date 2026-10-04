@@ -1377,8 +1377,17 @@
   const POPUP =
     '[role="listbox"], [role="dialog"], [role="grid"], .react-datepicker-popper, .flatpickr-calendar.open, .ui-datepicker, [class*="datepicker" i][class*="popper" i], [class*="DayPicker" i]';
 
+  /**
+   * The popups on the page: `shown` (visible), and `present` (laid out, however transparent). A picker fading in
+   * starts at opacity 0 (jQuery UI's datepicker), so one that has just appeared counts as open; one that sits there
+   * transparent while closed was already present before.
+   */
   function openPopups(doc) {
-    return Array.from(doc.querySelectorAll(POPUP)).filter((p) => !p.closest('[data-jtf-ui]') && dom().isVisible(p));
+    const all = Array.from(doc.querySelectorAll(POPUP)).filter((p) => !p.closest('[data-jtf-ui]'));
+    return {
+      shown: all.filter((p) => dom().isVisible(p)),
+      present: all.filter((p) => dom().isVisible(p, { ignoreOpacity: true })),
+    };
   }
 
   /**
@@ -1393,12 +1402,19 @@
       await pending;
     }
     const doc = el.ownerDocument;
-    const fresh = () => openPopups(doc).filter((p) => !before.includes(p) && !p.contains(el));
+    const fresh = () => {
+      const now = openPopups(doc);
+      const opened = [
+        ...now.present.filter((p) => !before.present.includes(p)),
+        ...now.shown.filter((p) => !before.shown.includes(p)),
+      ];
+      return opened.filter((p) => !p.contains(el));
+    };
     // Widgets open on focus synchronously: nothing new now means nothing to close (and no time lost per box).
     if (!fresh().length) return;
     // Escape or a click outside would also close a modal the form itself sits in: leave those alone.
     const modal = '[role="dialog"], [aria-modal="true"]';
-    if (el.closest(modal) || before.some((p) => p.matches(modal))) return;
+    if (el.closest(modal) || before.present.some((p) => p.matches(modal))) return;
     const active = dom().deepActiveElement(doc);
     if (active && active !== el && active !== doc.body) key(active, 'Escape');
     key(el, 'Escape');
