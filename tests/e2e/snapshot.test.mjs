@@ -165,10 +165,13 @@ test('Greenhouse-style form: the copy keeps the form and what was picked, withou
   const fills = t.frames[0].fillTrace;
   assert.ok(fills.filter((f) => f.status === 'filled').length >= 15, JSON.stringify(fills));
   const first = fills.find((f) => f.question === 'First Name');
-  assert.deepEqual([first.kind, first.type, first.status, first.path], ['text', 'text', 'filled', 'input#first_name']);
+  assert.deepEqual(
+    [first.kind, first.type, first.valueKind, first.step, first.status, first.path],
+    ['text', 'name.first', 'text', 'fill', 'filled', 'input#first_name'],
+  );
   assert.ok(fills.every((f) => !('value' in f) && !('text' in f)));
   assert.ok(
-    fills.some((f) => f.question === 'Resume/CV' && f.type === 'file' && f.status === 'filled'),
+    fills.some((f) => f.question === 'Resume/CV' && f.type === 'file.resume' && f.status === 'filled'),
     'the upload is in the trace',
   );
   await Promise.all([view.close(), page.close()]);

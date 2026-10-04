@@ -7,18 +7,6 @@ const { load, desc } = require('./helpers');
 
 const JTF = load();
 require('../../extension/lib/redact.js');
-// A stand-in for content/fill.js, loaded before the snapshot module as in the page, so there is an apply to wrap.
-const fillCalls = [];
-JTF.fill = {
-  apply(field, v, opts) {
-    fillCalls.push({ field, v, opts, self: this });
-    if (v && v.throwNow) throw new Error('sync boom');
-    if (v && v.reject) return Promise.reject(new Error('async boom'));
-    return Promise.resolve(v && v.result ? v.result : { status: 'filled' });
-  },
-  hasValue: () => false,
-};
-const originalApply = JTF.fill.apply;
 require('../../extension/content/snapshot.js');
 const { redactor } = JTF.redact;
 
@@ -409,42 +397,25 @@ test('paths name where a field is', () => {
 
 /* ------------------------------------------------------------- the trace */
 
-test('the fill trace wraps apply transparently and never keeps values', async () => {
-  assert.notEqual(JTF.fill.apply, originalApply, 'wrapped once, at load');
-  assert.equal(JTF.fill.apply.traced, true);
+test('the fill trace notes each step of a fill, capped, never a value', () => {
   const { document } = parseHTML('<html><body><label for="a">First name</label><input id="a"></body></html>');
   const el = document.getElementById('a');
   const field = { el, kind: 'text', members: [el], desc: desc('First name') };
-  const opts = { overwrite: false, history: [] };
-  const v = { text: 'Ada', kind: 'text' };
   const before = JTF.snapshot.trace.length;
-
-  const p = JTF.fill.apply(field, v, opts);
-  const call = fillCalls[fillCalls.length - 1];
-  assert.equal(call.field, field);
-  assert.equal(call.v, v);
-  assert.equal(call.opts, opts);
-  assert.equal(call.self, JTF.fill, 'same this');
-  assert.deepEqual(await p, { status: 'filled' }, 'same result');
-
-  await assert.rejects(JTF.fill.apply(field, { reject: true }, opts), /async boom/, 'a rejection reaches the caller');
-  assert.throws(() => JTF.fill.apply(field, { throwNow: true }, opts), /sync boom/, 'a throw passes straight through');
-  await JTF.fill.apply(field, { kind: 'list', result: { status: 'skipped', reason: 'has value' } }, opts);
-  await new Promise((resolve) => setImmediate(resolve));
-
+  JTF.snapshot.note(field, { step: 'fill', type: 'name.first', valueKind: 'text', status: 'filled', ms: 3 });
+  JTF.snapshot.note(field, { step: 'read back', status: 'check', reason: 'Please enter a valid name' });
   const added = JTF.snapshot.trace.slice(before);
   assert.deepEqual(
-    added.map((t) => [t.question, t.kind, t.type, t.status, t.reason, t.path]),
+    added.map((t) => [t.question, t.kind, t.step, t.type || null, t.status, t.reason || null, t.path]),
     [
-      ['First name', 'text', 'text', 'filled', null, 'input#a'],
-      ['First name', 'text', null, 'threw', 'async boom', 'input#a'],
-      ['First name', 'text', 'list', 'skipped', 'has value', 'input#a'],
+      ['First name', 'text', 'fill', 'name.first', 'filled', null, 'input#a'],
+      ['First name', 'text', 'read back', null, 'check', 'Please enter a valid name', 'input#a'],
     ],
   );
-  assert.doesNotMatch(JSON.stringify(added), /Ada/, 'no values');
+  // A field it can't describe never stops a fill.
+  JTF.snapshot.note({ el: null, kind: 'text', desc: null }, { step: 'fill' });
 
   // Capped: the newest entries stay.
-  for (let i = 0; i < 320; i++) JTF.fill.apply(field, { kind: 'text' }, opts);
-  await new Promise((resolve) => setImmediate(resolve));
+  for (let i = 0; i < 320; i++) JTF.snapshot.note(field, { step: 'fill', status: 'filled' });
   assert.equal(JTF.snapshot.trace.length, 300);
 });

@@ -13,61 +13,31 @@
 
   /* ------------------------------------------------------------ fill trace */
 
-  // The outcome of each JTF.fill.apply call in this frame, newest last: question, field kind, the kind of value
-  // (text, date, list…), status and reason. Never the value.
+  // What the fills in this frame did, field by field, newest last (content/main.js notes each step): the question,
+  // the field's kind, what it was taken for and how, the kind of value, the outcome and how long it took. Never the
+  // value.
   const TRACE_MAX = 300;
   const trace = [];
 
-  function note(entry) {
-    trace.push(entry);
-    if (trace.length > TRACE_MAX) trace.splice(0, trace.length - TRACE_MAX);
+  /** Note one step of a fill for `field` (`entry`: step, type, source, valueKind, status, reason, ms). */
+  function note(field, entry) {
+    try {
+      trace.push(
+        Object.assign(
+          {
+            at: Date.now(),
+            question: U.cleanLabel(JTF.matcher.questionText(field.desc), 200),
+            kind: field.kind,
+            path: pathOf(field.el),
+          },
+          entry,
+        ),
+      );
+      if (trace.length > TRACE_MAX) trace.splice(0, trace.length - TRACE_MAX);
+    } catch (err) {
+      /* never in the way of a fill */
+    }
   }
-
-  /**
-   * Wraps JTF.fill.apply to note what each call did. Transparent: same arguments and `this`, the very promise
-   * apply returns (its rejection reaches the caller untouched), a synchronous throw passes straight through, and
-   * nothing the trace does can break a fill.
-   * TODO(lead): replace with a proper hook in fill()/apply() once the rewrite lands.
-   */
-  function traced(apply) {
-    const wrapper = function (field, v) {
-      let entry = null;
-      try {
-        entry = {
-          at: Date.now(),
-          question: U.cleanLabel(JTF.matcher.questionText(field.desc), 200),
-          kind: field.kind,
-          type: (v && v.kind) || null,
-          path: pathOf(field.el),
-          status: null,
-          reason: null,
-        };
-      } catch (err) {
-        entry = null;
-      }
-      const result = apply.apply(this, arguments);
-      const done = (status, reason) => {
-        if (!entry) return;
-        try {
-          note(Object.assign(entry, { status, reason: reason || null, ms: Date.now() - entry.at }));
-        } catch (err) {
-          /* never in the way of a fill */
-        }
-      };
-      if (result && typeof result.then === 'function')
-        result.then(
-          (res) => done(res && res.status, res && res.reason),
-          (err) => done('threw', String((err && err.message) || err)),
-        );
-      else done(result && result.status, result && result.reason);
-      return result;
-    };
-    wrapper.traced = true;
-    return wrapper;
-  }
-
-  if (JTF.fill && typeof JTF.fill.apply === 'function' && !JTF.fill.apply.traced)
-    JTF.fill.apply = traced(JTF.fill.apply);
 
   /* ------------------------------------------------------------- the copy */
 
@@ -555,5 +525,5 @@
     return out;
   }
 
-  JTF.snapshot = { capture, serialize, cleanUrl, pathOf, traced, trace };
+  JTF.snapshot = { capture, serialize, cleanUrl, pathOf, note, trace };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

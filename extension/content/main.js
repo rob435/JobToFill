@@ -365,7 +365,7 @@
       url: location.href,
       host: location.hostname,
       title: document.title,
-      top: root === root.top,
+      top: isTop(),
       jobContext: context.jobContext,
       detected: 0,
       filled: 0,
@@ -452,7 +452,9 @@
         report.missingTypes.push(r.type);
         continue;
       }
+      const started = Date.now();
       const res = await JTF.fill.attachVia(tile, v.document, { history });
+      traceStep({ el: tile.el, kind: 'file', desc: tile.desc }, r, v, res, started, 'upload menu');
       report.docs[r.type] = res.status === 'filled' ? 'filled' : report.docs[r.type] || res.status;
       if (res.status === 'filled') {
         report.filled++;
@@ -518,11 +520,13 @@
         documents: put.map((t) => docs[t]),
         keep: keep ? { except: put.map((t) => before[t]).filter(Boolean) } : null,
       };
+      const started = Date.now();
       const res = await JTF.fill.apply(field, v, {
         overwrite: true,
         comboboxes: settings.comboboxes !== false,
         history,
       });
+      traceStep(field, { type: types.join('+') }, v, res, started, 'fill');
       for (const t of put) report.docs[t] = res.status === 'filled' ? 'filled' : report.docs[t] || res.status;
       if (res.status === 'filled') {
         state.attached.set(el, Object.assign({}, before, ...put.map((t) => ({ [t]: docs[t].name }))));
@@ -583,14 +587,17 @@
           report.missing.push(label);
           report.missingTypes.push(r.type);
         }
+        traceStep(field, r, null, { status: 'nothing to put' }, 0, 'fill');
         return null;
       }
+      const started = Date.now();
       const res = await JTF.fill.apply(field, v, {
         overwrite: settings.overwrite || !!payload.force || !!(replace && replace.has(r.type)),
         correct: CORRECTED.has(r.type),
         comboboxes: settings.comboboxes !== false,
         history,
       });
+      traceStep(field, r, v, res, started, 'fill');
       if ((def && def.file) || r.type === 'coverLetter')
         report.docs[r.type] = res.status === 'filled' ? 'filled' : report.docs[r.type] || res.status;
       if (res.status === 'filled') {
@@ -710,6 +717,32 @@
     return report;
   }
 
+  /** Note what the fill did with a field, for a bug report's snapshot (content/snapshot.js). Never the value. */
+  function traceStep(field, r, v, res, started, step) {
+    if (!JTF.snapshot || !JTF.snapshot.note) return;
+    JTF.snapshot.note(field, {
+      step,
+      type: (r && r.type) || null,
+      source: (r && r.source) || null,
+      valueKind: (v && v.kind) || null,
+      status: (res && res.status) || null,
+      reason: (res && res.reason) || null,
+      ms: started ? Date.now() - started : null,
+    });
+  }
+
+  /**
+   * Is this the tab's top frame? Asked of the page's window: in Firefox a content script's global is a sandbox of
+   * its own, never the same object as `top`.
+   */
+  function isTop() {
+    try {
+      return window.self === window.top;
+    } catch (err) {
+      return false;
+    }
+  }
+
   /** A field's options, to tell when they change. */
   const optionsKey = (field) => (field.desc.options || []).map((o) => o.text).join('|');
 
@@ -729,7 +762,7 @@
    */
   async function scanWhenDrawn(profile) {
     let found = scan(profile);
-    if (found.fields.length || root !== root.top || !stillDrawing()) return found;
+    if (found.fields.length || !isTop() || !stillDrawing()) return found;
     for (let waited = 0; waited < 4000 && !found.fields.length && stillDrawing(); waited += 200) {
       await new Promise((resolve) => setTimeout(resolve, 200));
       found = scan(profile);
@@ -777,6 +810,15 @@
         await settle(600, 120);
         res = await JTF.fill.repair(field, w.v, again.check, opts).catch(() => ({ ok: true }));
       }
+      if (res.fixed || !res.ok)
+        traceStep(
+          field,
+          null,
+          w.v,
+          { status: res.ok ? 'repaired' : 'check', reason: res.refused || (res.lost ? 'not kept' : null) },
+          0,
+          'read back',
+        );
       if (res.ok) {
         if (res.fixed) out.repaired++;
         continue;
@@ -980,11 +1022,13 @@
         continue;
       }
       const v = answerValue(a);
+      const started = Date.now();
       const res = await JTF.fill.apply(field, v, {
         overwrite: false,
         comboboxes: settings.comboboxes !== false,
         history,
       });
+      traceStep(field, { type: 'ai' }, v, res, started, 'AI answer');
       if (res.status === 'filled') {
         filled++;
         state.aiFilled.set(field.el, JTF.fill.currentValue(field));
@@ -1182,7 +1226,7 @@
 
   /** What this page says about the job being applied for (see JTF.jobpage.applicationContext). */
   function jobContext() {
-    const out = { url: location.href, top: root === root.top, title: document.title };
+    const out = { url: location.href, top: isTop(), title: document.title };
     try {
       return Object.assign(out, JTF.jobpage.applicationContext(document, location.href));
     } catch (err) {

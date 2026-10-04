@@ -230,15 +230,26 @@
     el.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true }));
   }
 
+  /**
+   * A paste event carrying `data` ({ 'text/plain': …, 'text/html': … }). Firefox ignores the standard
+   * `clipboardData` and takes its own `dataType` and `data` instead (one type only): it gets the plain text that way.
+   */
+  function pasteEvent(data) {
+    const transfer = new DataTransfer();
+    for (const [type, value] of Object.entries(data)) transfer.setData(type, value);
+    const init = { clipboardData: transfer, bubbles: true, cancelable: true, composed: true };
+    const event = new ClipboardEvent('paste', init);
+    if (event.clipboardData && event.clipboardData.getData('text/plain') === data['text/plain']) return event;
+    return new ClipboardEvent('paste', Object.assign(init, { dataType: 'text/plain', data: data['text/plain'] }));
+  }
+
   /** Paste `text` over what the box holds: masks and editors that ignore a set value often take a paste. */
   function pasteText(el, text) {
     const doc = el.ownerDocument;
     el.focus({ preventScroll: true });
     el.dispatchEvent(new FocusEvent('focusin', { bubbles: true, composed: true }));
     if (el.select) el.select();
-    const data = new DataTransfer();
-    data.setData('text/plain', text);
-    const paste = new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true, composed: true });
+    const paste = pasteEvent({ 'text/plain': text });
     el.dispatchEvent(paste);
     // Nobody took the paste: the browser would insert it.
     if (!paste.defaultPrevented && !doc.execCommand('insertText', false, text)) {
@@ -280,16 +291,11 @@
   /** Paste into an editor, paragraphs as paragraphs: Quill, ProseMirror, Lexical and CKEditor all read a paste. */
   function pasteRich(el, text) {
     selectAllIn(el);
-    const data = new DataTransfer();
-    data.setData('text/plain', text);
-    data.setData(
-      'text/html',
-      text
-        .split(/\n/)
-        .map((line) => `<p>${escapeHtml(line) || '<br>'}</p>`)
-        .join(''),
-    );
-    const paste = new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true, composed: true });
+    const html = text
+      .split(/\n/)
+      .map((line) => `<p>${escapeHtml(line) || '<br>'}</p>`)
+      .join('');
+    const paste = pasteEvent({ 'text/plain': text, 'text/html': html });
     el.dispatchEvent(paste);
     // A plain contenteditable ignores a paste from script: type it in instead.
     if (!paste.defaultPrevented) insertRich(el, text);

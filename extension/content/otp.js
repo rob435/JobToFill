@@ -172,10 +172,13 @@
       try {
         const data = new DataTransfer();
         data.setData('text/plain', code);
+        const init = { clipboardData: data, bubbles: true, cancelable: true, composed: true };
+        let paste = new ClipboardEvent('paste', init);
+        // Firefox ignores clipboardData and takes its own dataType and data.
+        if (!paste.clipboardData || paste.clipboardData.getData('text/plain') !== code)
+          paste = new ClipboardEvent('paste', Object.assign(init, { dataType: 'text/plain', data: code }));
         inputs[0].focus();
-        inputs[0].dispatchEvent(
-          new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true, composed: true }),
-        );
+        inputs[0].dispatchEvent(paste);
       } catch (err) {
         /* no DataTransfer */
       }
