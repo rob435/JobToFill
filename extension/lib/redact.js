@@ -189,8 +189,9 @@
     ]))
       add(literal(s), '[your text]', { long: true });
 
-    const email = clean(contact.email);
-    if (email.includes('@')) {
+    // Your email and your university's.
+    for (const email of [clean(contact.email), clean(contact.schoolEmail)]) {
+      if (!email.includes('@')) continue;
       add(`(?<![\\p{L}\\p{N}._%+-])${exact(email).replace('@', '(?:@|%40)')}${AFTER}`, '[email]', { strict: true });
       // "Signed in as ada.lovelace90": the part before the @ when it is distinctive enough.
       const local = email.split('@')[0];

@@ -469,6 +469,9 @@
 
   function comboText(el) {
     if (el.localName === 'input') return el.value.trim();
+    // A value list's choice is what its hidden input holds ("United States (+1)" behind "+1").
+    const vl = dom().valueList(el);
+    if (vl && vl.hidden.value.trim()) return vl.hidden.value.trim();
     // What the button shows: the choice, not a placeholder kept for screen readers or hidden once chosen.
     return dom().visibleText(el) || '';
   }
@@ -745,6 +748,9 @@
   }
 
   function listboxFor(el) {
+    // A value list's rows show once its box is clicked (see dom.valueList).
+    const vl = dom().valueList(el);
+    if (vl) return dom().isVisible(vl.list) ? vl.list : null;
     const rootNode = el.getRootNode();
     const doc = el.ownerDocument;
     const ids = [el.getAttribute('aria-controls'), el.getAttribute('aria-owns')]
@@ -828,8 +834,20 @@
     return usable(Array.from(lb.children).filter((c) => !c.querySelector('input, textarea')));
   }
 
+  /**
+   * The rows of an open value list, every one: those in collapsed groups too ("How did you hear about us?" keeps
+   * "LinkedIn" under "Social media"), as the list takes a click on any row. Shown rows first, one per value.
+   */
+  function valueRows(lb) {
+    const rows = Array.from(lb.querySelectorAll('li')).filter((r) => dom().rowValue(r));
+    const shown = rows.filter((r) => dom().isVisible(r));
+    const values = new Set(shown.map((r) => dom().rowValue(r)));
+    return [...shown, ...rows.filter((r) => !values.has(dom().rowValue(r)) && !r.classList.contains('hidden'))];
+  }
+
   function currentOptions(el) {
     const lb = listboxFor(el);
+    if (lb && dom().valueList(el)) return valueRows(lb);
     let opts = lb ? optionsIn(lb) : [];
     if (!opts.length) {
       // react-select without ARIA roles: its ids share a prefix ("react-select-3-input", "-listbox",
@@ -1015,6 +1033,9 @@
   function isTicked(option, el) {
     if (!option.isConnected) return false;
     if (option.getAttribute('aria-checked') === 'true') return true;
+    // A value list that takes several marks what it took ("selected").
+    const vl = el && dom().valueList(el);
+    if (vl) return vl.multiple && /\bselected\b/.test(String(option.className || ''));
     // The <select> a widget stands in for knows what is picked (choices.js marks its highlighted row aria-selected).
     const native = el && dom().standsFor(el);
     if (native) {
@@ -1127,6 +1148,8 @@
     if (!box || box === el || box.localName !== 'input' || !/^(text|search)$/.test(box.type)) return null;
     if (box.readOnly || !dom().isVisible(box)) return null;
     if (el.contains(box)) return box;
+    const vl = dom().valueList(el);
+    if (vl) return vl.root.contains(box) ? box : null;
     const lb = listboxFor(el);
     if (!lb) return null;
     if (lb.id && (box.getAttribute('aria-controls') || '').split(/\s+/).includes(lb.id)) return box;
@@ -1152,6 +1175,8 @@
     // The menu goes on the widget's next render (Radix Select) or fades out (MUI): clicking its button before that
     // would open it again, and an open Radix Select leaves the rest of the page aria-hidden and unclickable.
     for (let waited = 0; waited < 150 && listboxFor(el); waited += 30) await sleep(30);
+    // A value list hides its box while open and closes on a click anywhere else.
+    if (dom().valueList(el) && listboxFor(el)) pointerClick(el.ownerDocument.body);
     if (!(await menuGone(el)) && el.localName !== 'input') pointerClick(el);
   }
 
@@ -1358,6 +1383,8 @@
 
   function isMulti(el) {
     if (takesSeveral.has(el)) return true;
+    const vl = dom().valueList(el);
+    if (vl) return vl.multiple;
     // The <select> a widget stands in for says so itself (chosen's and Tom Select's lists don't).
     const native = dom().standsFor(el);
     if (native) return native.multiple;

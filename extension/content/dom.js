@@ -67,6 +67,9 @@
     'data-cy',
   ];
   const PLACEHOLDERISH = /^(select|choose|please select|search|type to search|start typing|-+)\b/i;
+  // What a dropdown shows before a choice ("Select an option", "Choose one…"), never a question that starts the same
+  // way ("Select your college/university/school * Please search via full name or acronym…").
+  const placeholderish = (t) => PLACEHOLDERISH.test(t) && t.split(/\s+/).length <= 4;
   // A drop zone's instructions ("Click to upload or drag and drop here", "PDF, max 5MB") say nothing about
   // what the upload is for: the label is further out.
   const UPLOAD_WORDS = new Set(
@@ -106,6 +109,68 @@
     // Clipped down to nothing: the "visually hidden" 1px <select> a dropdown widget keeps for the form (Tom Select).
     if (style.clip === 'rect(0px, 0px, 0px, 0px)' || /^inset\((50|100)%/.test(style.clipPath)) return false;
     return true;
+  }
+
+  // The rows of a dropdown built from plain elements, each carrying the value it puts in the form (Jane Street's
+  // `li data-dropdown-selection="LinkedIn"`).
+  const VALUE_ROW = 'li[data-dropdown-selection], li[data-value], li[data-option-value]';
+  const rowValue = (row) =>
+    row.getAttribute('data-dropdown-selection') ||
+    row.getAttribute('data-value') ||
+    row.getAttribute('data-option-value') ||
+    '';
+  const valueLists = new WeakMap();
+
+  /**
+   * A dropdown with no <select> and no ARIA, only a hidden input the form submits (Jane Street's "standard-dropdown"):
+   * the box that shows the choice holds the hidden input, and beside it a list of rows that carry their values, shown
+   * once the box is clicked. { root, face, hidden, list, rows, multiple } for the hidden input, the box (`face`) or
+   * anything inside the widget; null for anything else.
+   */
+  function valueList(el) {
+    if (!el || el.nodeType !== 1) return null;
+    if (valueLists.has(el)) return valueLists.get(el);
+    let found = null;
+    const hidden =
+      el.localName === 'input' && el.type === 'hidden'
+        ? el
+        : el.querySelector && el.querySelector(':scope > input[type="hidden"]');
+    const face = hidden && hidden.parentElement;
+    if (face && face.localName !== 'form' && !face.matches('label, li, td')) {
+      let root = face.parentElement;
+      for (let i = 0; root && i < 3 && root.querySelectorAll(VALUE_ROW).length < 2; i++) root = root.parentElement;
+      const rows = root
+        ? Array.from(root.querySelectorAll(VALUE_ROW)).filter((r) => rowValue(r) && !face.contains(r))
+        : [];
+      if (
+        rows.length >= 2 &&
+        root.querySelectorAll('input[type="hidden"]').length === 1 &&
+        !root.querySelector('select, [role="combobox"], [role="listbox"], [aria-haspopup]') &&
+        !root.closest('[role="combobox"], [role="listbox"]')
+      ) {
+        // The part of the widget that holds every row: what opens when the box is clicked.
+        let list = rows[0].parentElement;
+        while (list && !rows.every((r) => list.contains(r))) list = list.parentElement;
+        while (list && list.parentElement !== root) list = list.parentElement;
+        if (list && !list.contains(face)) {
+          const multiple = /multi/i.test(root.className) || root.getAttribute('aria-multiselectable') === 'true';
+          found = { root, face, hidden, list, rows, multiple };
+        }
+      }
+    }
+    if (found) [found.hidden, found.face].forEach((n) => valueLists.set(n, found));
+    else if (el.localName === 'input' && el.type === 'hidden') valueLists.set(el, null);
+    return found;
+  }
+
+  /** The value-list widget (see valueList) `el` sits inside: its search or "please specify" box. */
+  function insideValueList(el) {
+    for (let a = el.parentElement, i = 0; a && i < 5; a = a.parentElement, i++) {
+      const hidden = a.querySelector('input[type="hidden"]');
+      const vl = hidden ? valueList(hidden) : null;
+      if (vl && vl.root === a) return vl;
+    }
+    return null;
   }
 
   /**
@@ -211,8 +276,34 @@
       const ref = byId(el, id);
       if (ref && ref !== el && !(outside && el.contains(ref))) parts.push(textOf(ref));
     }
-    if (!parts.length) for (const l of labelsOf(el)) parts.push(textOf(l));
+    if (!parts.length) for (const l of labelsOf(el)) if (!machineLabel(l, el)) parts.push(textOf(l));
     return U.cleanLabel(parts.filter(Boolean).join(' '));
+  }
+
+  /**
+   * A hidden <label for> that only repeats the field's name (Jane Street's chosen selects: "education_level" over
+   * "What degree are you currently pursuing?"): kept for the page's validation messages, not a question.
+   */
+  function machineLabel(l, el) {
+    const hidden = l.hidden || (l.style && l.style.display === 'none');
+    const text = U.normalize(l.textContent);
+    return hidden && !!text && [el.name, el.id].some((n) => n && U.normalize(n) === text);
+  }
+
+  /**
+   * The question over boxes labelled just "Month" and "Year" side by side ("Approximately when do you expect to
+   * begin full time employment?" over two chosen selects): the text before the group they make.
+   */
+  function datePartsQuestion(el) {
+    let group = el.parentElement;
+    for (let i = 0; group && i < 6 && countedIn(group).length < 2; i++) group = group.parentElement;
+    if (!group || group === el.ownerDocument.body || countedIn(group).length > 3) return '';
+    for (let node = group, i = 0; node && i < 3; node = node.parentElement, i++) {
+      const t = previousText(node);
+      if (t) return t;
+      if (!node.parentElement || countedIn(node.parentElement).length > countedIn(group).length) break;
+    }
+    return '';
   }
 
   function nextText(el) {
@@ -295,7 +386,7 @@
       if (!parent || parent === node.ownerDocument.body) break;
       if (foreignControls(parent, members) > 0) return previousText(node) || boilerplate;
       const t = shown && parent === shown.box ? '' : textOf(parent, skip);
-      if (t && !PLACEHOLDERISH.test(t)) {
+      if (t && !placeholderish(t)) {
         if (!isUploadBoilerplate(t)) return U.cleanLabel(t, 200);
         boilerplate = boilerplate || U.cleanLabel(t, 200);
       }
@@ -798,7 +889,22 @@
       s.id = el.id || '';
       s.title = el.getAttribute('title') || '';
       if (kind === 'checkbox' && !s.label) s.label = nextText(el);
-      if (!s.label && !s.aria) s.nearby = contextLabel(el, new Set([el]));
+      const vl = combo ? valueList(el) : null;
+      // A box inside a value list ("Please specify *" after "Other..."): what the list asks, for an answer it lacked.
+      const owner = !vl && !s.label && !s.aria ? insideValueList(el) : null;
+      if (owner) {
+        s.question = contextLabel(owner.root, new Set([owner.root]));
+        s.label = 'If other, please specify';
+      }
+      // A widget standing in for a <select> (chosen) is read from outside: never its menu's options.
+      let around = vl ? vl.root : el;
+      if (native) while (around.parentElement && !around.parentElement.contains(native)) around = around.parentElement;
+      if (!s.label && !s.aria) s.nearby = contextLabel(around, new Set([around]));
+      const unit = U.normalize(s.label || s.nearby || '');
+      if (/^(day|month|year)\b/.test(unit) && unit.split(' ').length <= 4) {
+        const q = datePartsQuestion(el);
+        if (q) s.question = q;
+      }
       const group =
         groupLabel(el) ||
         (kind === 'file' ? jobviteUploadLabel(el) : '') ||
@@ -816,6 +922,10 @@
       // several when that one does.
       const list = kind === 'select' ? el : native && native.options.length ? native : null;
       if (kind === 'select' || native) desc.multiple = !!(native || el).multiple;
+      if (vl) {
+        desc.multiple = vl.multiple;
+        desc.options = vl.rows.map((r) => ({ text: U.cleanLabel(textOf(r), 200) || rowValue(r), value: rowValue(r) }));
+      }
       if (list)
         desc.options = Array.from(list.options).map((o) => ({
           text: o.text,
@@ -843,6 +953,18 @@
     const seen = new Set();
     for (const el of collectControls(doc || document, [])) {
       if (seen.has(el)) continue;
+      if (el.localName === 'input' && el.type === 'hidden') {
+        const vl = valueList(el);
+        if (vl && !seen.has(vl.face) && isUsable(vl.face, 'combo')) {
+          seen.add(vl.face);
+          fields.push({ el: vl.face, kind: 'combo', members: [vl.face], desc: describe(vl.face, 'combo', [vl.face]) });
+        }
+        continue;
+      }
+      // A value list's search box is how it is filled; its "Please specify" box is a follow-up (describe).
+      const owner = el.localName === 'input' ? insideValueList(el) : null;
+      if (owner && el.closest('[class*="search" i]') && owner.root.contains(el.closest('[class*="search" i]')))
+        continue;
       const kind = kindOf(el);
       if (!kind || !isUsable(el, kind)) continue;
       if (el.matches(SEGMENT)) {
@@ -889,5 +1011,7 @@
     standsFor,
     dateSegments,
     shownValue,
+    valueList,
+    rowValue,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

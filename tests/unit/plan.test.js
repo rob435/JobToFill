@@ -3353,3 +3353,82 @@ test('Bain’s diversity questions: Asian "inclusive of" every region, LGBTQ+, f
   assert.deepEqual(picks(list), [1, 2]);
   assert.equal(type('Have you participated in any of our virtual events?', 'checkboxes', list), undefined);
 });
+
+test('Jane Street: when the degree began, full-time start, a second major, interviews, visitor visas, school email', () => {
+  const p = glaswegian();
+  const yn = ['Yes', 'No'];
+  const type = (q, kind = 'radio', list = yn) =>
+    (matcher.classify(desc(q, { kind, options: list ? opts(...list) : null })) || {}).type;
+  const today = new Date(2026, 9, 4);
+
+  const began = "What year did you begin your undergraduate (e.g. Bachelor's) degree?";
+  const years = Array.from({ length: 21 }, (_, i) => String(2006 + i));
+  assert.equal(type(began, 'combo', years), 'edu.start');
+  assert.equal(
+    choose(p, 'edu.start', began, years, { part: 'year' }),
+    String(util.parseDate(p.education[0].startDate).year),
+  );
+
+  // Full-time work starts once the degree you are on ends, or from your start date when that is later.
+  const ft = 'Approximately when do you expect to begin full time employment?';
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September'];
+  assert.equal(type(ft, 'select', months), 'job.fullTimeStart');
+  p.education[0].endDate = '2027-06';
+  p.job.startDate = '2026-11-02';
+  assert.equal(choose(p, 'job.fullTimeStart', ft, months, { part: 'month', today }), 'June');
+  assert.equal(choose(p, 'job.fullTimeStart', ft, ['2026', '2027', '2028'], { part: 'year', today }), '2027');
+  p.job.startDate = '2027-09-01';
+  assert.equal(choose(p, 'job.fullTimeStart', ft, months, { part: 'month', today }), 'September');
+  p.education[0].endDate = '2020-06';
+  p.job.startDate = '2026-11-02';
+  assert.equal(choose(p, 'job.fullTimeStart', ft, ['2026', '2027'], { part: 'year', today }), '2026', 'graduated');
+  // "When can you start?" is still the start date.
+  assert.equal(type('When can you start?', 'text', null), 'job.startDate');
+
+  // A second major is not your first one again.
+  const majors = ['Mathematics', 'Physics', 'Other'];
+  assert.equal(type('Major / Field of study', 'combo', majors), 'edu.field');
+  assert.equal(type('Secondary Major / Field of study', 'combo', majors), undefined);
+
+  // "Have you interviewed with Jane Street before?": No when you never applied; left when you did.
+  const interviewed = 'Have you interviewed with Jane Street before?';
+  assert.equal(type(interviewed), 'compliance.previouslyApplied');
+  p.compliance.previouslyApplied = 'No';
+  assert.equal(choose(p, 'compliance.previouslyApplied', interviewed, yn), 'No');
+  p.compliance.previouslyApplied = 'Yes';
+  assert.equal(choose(p, 'compliance.previouslyApplied', interviewed, yn), null);
+  assert.equal(choose(p, 'compliance.previouslyApplied', 'Have you applied to us before?', yn), 'Yes');
+
+  // A visitor visa for the interviews is a visit, not sponsorship: No for a citizen with the right to work there.
+  const visa =
+    'Do you require a visitor visa to enter the UK for your interviews? Yes: Require a Standard Visitor visa No: May enter with an electronic travel authorisation (ETA) or no visa required';
+  assert.equal(type(visa), 'job.visitorVisa');
+  assert.equal(choose(p, 'job.visitorVisa', visa, yn), 'No');
+  p.personal.nationality = 'Irish';
+  assert.equal(choose(p, 'job.visitorVisa', visa, yn), 'No', 'the Common Travel Area');
+  for (const nationality of ['French', 'American']) {
+    p.personal.nationality = nationality;
+    assert.equal(choose(p, 'job.visitorVisa', visa, yn), null, `${nationality}: left for you`);
+  }
+  p.personal.nationality = 'British';
+
+  // Recruiting timelines are deadlines.
+  assert.equal(type('Do you have any recruiting timelines we should be aware of?'), 'job.otherOffers');
+
+  // The school email is never your personal one.
+  const school = 'Your primary college/university/school email We may use this email to verify your enrollment.';
+  assert.equal(type(school, 'email', null), 'email.school');
+  assert.equal(type('Email', 'email', null), 'email');
+  p.contact.email = 'ada@example.com';
+  p.contact.schoolEmail = '';
+  assert.equal(ask(p, 'email.school', school), null);
+  p.contact.email = 'ada.lovelace.24@ucl.ac.uk';
+  assert.equal(ask(p, 'email.school', school).text, 'ada.lovelace.24@ucl.ac.uk');
+  p.contact.schoolEmail = 'a.lovelace@student.gla.ac.uk';
+  assert.equal(ask(p, 'email.school', school).text, 'a.lovelace@student.gla.ac.uk');
+
+  // A dial-code picker with no label of its own.
+  const codes = ['Canada (+1)', 'Guernsey (+44)', 'Isle of Man (+44)', 'Jersey (+44)', 'United Kingdom (+44)'];
+  assert.equal(type('', 'combo', codes), 'phone.countryCode');
+  assert.equal(type('Phone', 'combo', codes), 'phone.countryCode');
+});

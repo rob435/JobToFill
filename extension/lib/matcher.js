@@ -58,7 +58,7 @@
   // another country, please specify.": the box for an answer the list didn't have.
   const OTHER_FOLLOW_UP =
     /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|^(if|when) you (have )?(selected|chose|picked|ticked|checked) (?!yes\b)|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b|\bif (it|yours|your \w+( \w+)?) (is|was) not (listed|shown|in the list|found|available)\b|\bif (\w+ ){1,6}?(is|are|was|were) not (listed|shown|in (the|this|our) (list|options|dropdown))\b|\bif (\w+ ){1,6}?(isn t|aren t|wasn t|weren t) (listed|shown|in (the|this) list)\b|\bif (\w+ ){1,6}?(does not|doesn t|do not|don t) (appear|show up)\b|\bif (\w+ ){1,6}?not in (the|this) list\b|\bif (residing|living|based|located|studying) (in |at )?(another|a different) \w+\b|\bnot listed (above|below)\b.*\b(specify|enter|type|provide|state)\b|\bif not (listed|shown|in the list|found|available)\b|^(any )?other (university|school|college|institution|degree|subject|major|course)\b|\b(university|school|college|institution|degree|subject|major|course) (name )?other$/;
-  const EMAIL_TYPES = new Set(['email', 'account.username']);
+  const EMAIL_TYPES = new Set(['email', 'email.school', 'account.username']);
   // Field types a lone checkbox can answer: "I am authorized to work in the US", "I have read the
   // privacy notice", or one option of a checklist ("London" under "Which offices…?").
   const CHECKBOX_TYPES = new Set([
@@ -270,6 +270,8 @@
     if (opts.length === 1 && canonicalOf(opts[0].text) === 'yes') return make('consent');
     const canon = opts.map((o) => canonicalOf(o.text));
     if (canon.includes('male') && canon.includes('female')) return make('eeo.gender');
+    // "United Kingdom (+44)", "United States (+1)"…: a dial code (Jane Street's picker beside the number has no label).
+    if (looksLikePhoneCodes(opts)) return make('phone.countryCode');
     if (looksLikeDegreeClasses(opts)) return make('edu.classification');
     return null;
   }
@@ -320,6 +322,9 @@
     if (F().DATE_TYPES.has(r.type) && !r.part) r.part = detectPart(desc);
     // A "prefix" picker beside the number under "Phone number" (Ant Design's docs name it "prefix") is the dial code,
     // not a title like "Mr".
+    // A picker of dial codes beside the number box, under "Phone": the code, not the number.
+    if (r.type === 'phone' && /^(select|combo|combobox)$/.test(desc.kind) && looksLikePhoneCodes(desc.options))
+      r.type = 'phone.countryCode';
     if (
       (r.type === 'address.country' || r.type === 'nationality' || r.type === 'name.prefix') &&
       (looksLikePhoneCodes(desc.options) ||

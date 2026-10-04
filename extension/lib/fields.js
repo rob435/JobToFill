@@ -50,7 +50,15 @@
         dob: '',
         nationality: '',
       },
-      contact: { email: '', phoneCountryCode: '', phone: '', phoneType: 'Mobile', preferredContact: 'Email' },
+      contact: {
+        email: '',
+        // A university or school address, for "Your primary college/university/school email".
+        schoolEmail: '',
+        phoneCountryCode: '',
+        phone: '',
+        phoneType: 'Mobile',
+        preferredContact: 'Email',
+      },
       address: { line1: '', line2: '', city: '', state: '', postalCode: '', country: '', organization: '' },
       links: { linkedin: '', github: '', portfolio: '', website: '', twitter: '' },
       job: {
@@ -334,6 +342,10 @@
     if (v && table[v.text]) v.candidates = [v.text, ...table[v.text]];
     return v;
   }
+
+  // A university's or school's address: name@ucl.ac.uk, name@mit.edu, name@student.unimelb.edu.au.
+  const ACADEMIC_EMAIL =
+    /@([a-z0-9-]+\.)*[a-z0-9-]+\.(ac|edu)(\.[a-z]{2})?$|@([a-z0-9-]+\.)*(student|students|stud|alumni)\./i;
 
   function sponsorAware(v, p, about) {
     const canon = (t) => (JTF.matcher ? JTF.matcher.canonicalOf(t) : null);
@@ -2065,6 +2077,17 @@
     },
 
     email: simple('Email', 'contact.email'),
+    // "Your primary college/university/school email": the one you gave for it, or your email when it is a school's
+    // (".ac.uk", ".edu"); never your personal address.
+    'email.school': {
+      label: 'University / school email',
+      path: 'contact.schoolEmail',
+      get(p) {
+        const school = val(p.contact.schoolEmail);
+        if (school) return school;
+        return ACADEMIC_EMAIL.test(String(p.contact.email || '').trim()) ? val(p.contact.email) : null;
+      },
+    },
     phone: {
       label: 'Phone',
       path: 'contact.phone',
@@ -2258,7 +2281,16 @@
     'job.workIn': { label: 'Willing to work in the place asked about', get: workThere },
     'job.onsite': simple('Happy to work in the office / on site', 'job.onsite'),
     'job.adjustments': simple('Adjustments needed in the recruitment process', 'job.adjustments'),
-    'compliance.previouslyApplied': simple('Applied here before', 'compliance.previouslyApplied'),
+    // "Have you applied to us before?"; "Have you interviewed with Jane Street before?" is No when you never applied.
+    'compliance.previouslyApplied': {
+      label: 'Applied here before',
+      path: 'compliance.previouslyApplied',
+      get(p, ctx) {
+        const v = val(p.compliance.previouslyApplied);
+        if (v && /\binterview/.test(ctx.question || '')) return v.canonical === 'no' ? v : null;
+        return v;
+      },
+    },
     'job.relocate': simple('Willing to relocate', 'job.relocate'),
     'job.over18': simple('Over 18', 'job.over18'),
     'job.salary': simple('Salary expectation', 'job.salary', numberVal),
@@ -2316,6 +2348,35 @@
       },
     },
     'job.otherOffers': simple('Other offers / deadlines', 'job.otherOffers'),
+    // "Approximately when do you expect to begin full time employment?": once the degree you are on ends, or from the
+    // start date you gave when that is later.
+    'job.fullTimeStart': {
+      label: 'Full-time employment start',
+      get(p, ctx) {
+        const now = ctx.today || new Date();
+        const months = (d) => d.year * 12 + (d.month || 6) - 1;
+        const nowM = now.getFullYear() * 12 + now.getMonth();
+        const ends = (p.education || [])
+          .map((e) => ({ raw: e.endDate, d: U.parseDate(e.endDate) }))
+          .filter((x) => x.d && months(x.d) >= nowM)
+          .sort((a, b) => months(b.d) - months(a.d));
+        const start = U.parseDate(p.job.startDate);
+        const raw = ends.length && !(start && months(start) > months(ends[0].d)) ? ends[0].raw : p.job.startDate;
+        return dateVal(raw, ctx.part, 9);
+      },
+    },
+    // "Do you require a visitor visa to enter the UK for your interviews?": No for a citizen of a country with the
+    // right to work there (the UK, Ireland, the EU's free movement); otherwise left for you.
+    'job.visitorVisa': {
+      label: 'Visitor visa for interviews',
+      get(p, ctx) {
+        let { codes } = countriesAsked(ctx.question, null);
+        if (!codes.length) codes = jobCountries(ctx);
+        const nations = JTF.geo.nationalities(p.personal.nationality).map((row) => row[0]);
+        if (codes.length !== 1 || !nations.length) return null;
+        return JTF.geo.workRights(nations).has(codes[0]) ? val('No') : null;
+      },
+    },
     'job.startDate': {
       label: 'Available start date',
       path: 'job.startDate',
@@ -2740,6 +2801,7 @@
     'gen.end',
     'dob',
     'job.startDate',
+    'job.fullTimeStart',
     'cc.exp',
   ]);
 
@@ -2947,7 +3009,7 @@
       'job.sponsorship',
       /sponsor|visa (status|support|required|transfer|requirement)|\bh ?1 ?b\b|immigration (support|sponsorship|assistance)|require (a )?(work )?visa|\b(require|need)\b.{0,30}\b(work )?authori[sz]ation\b/,
       {
-        not: /adjustments?\b|accommodat/,
+        not: /adjustments?\b|accommodat|\bvisitor visa\b|\bvisa to (enter|visit|travel)\b/,
         // "Do you have the right to work in the region? … Sponsorship is not available" and "This position does not
         // support visa sponsorship. Do you currently have the right to work in the UK?" ask for your right to work.
         test: (desc, hit) =>
@@ -3036,13 +3098,13 @@
     ),
     R(
       'job.otherOffers',
-      /\b(other|competing|outstanding|existing|pending) (job |internship |employment )?offers?\b|\boffers? (from|at|with) (other|another|any other) (firms?|compan|employers?|organi)|\boffers? (and|or|&) deadlines?|\bdeadlines? (we|that we) should\b|\bany (other )?(offers|deadlines)\b|\bexploding offer|\b(upcoming|pending|current|any) (offer )?deadlines?\b|\boffer deadlines?\b|\bdecision (deadlines?|timelines?)\b|\baccepted an? (\w+ ){0,3}offer\b|\b(holding|hold) any (\w+ )?offers?\b/,
+      /\b(other|competing|outstanding|existing|pending) (job |internship |employment )?offers?\b|\boffers? (from|at|with) (other|another|any other) (firms?|compan|employers?|organi)|\boffers? (and|or|&) deadlines?|\bdeadlines? (we|that we) should\b|\bany (other )?(offers|deadlines)\b|\bexploding offer|\b(upcoming|pending|current|any) (offer )?deadlines?\b|\boffer deadlines?\b|\bdecision (deadlines?|timelines?)\b|\brecruiting timelines?\b|\btimelines? (we|that we) should\b|\baccepted an? (\w+ ){0,3}offer\b|\b(holding|hold) any (\w+ )?offers?\b/,
       { not: /\bif (yes|so)\b|\bwhich (firm|company)\b|\bwhat (firm|company)\b/ },
     ),
     // "Have you applied to Marshall Wace before?"
     R(
       'compliance.previouslyApplied',
-      /\b(previously|ever|already) applied\b|\bapplied (to|for|with|at)\b.{0,60}\b(before|previously|in the past|last year|this year)\b|\bhave you applied (to|for|with)\b/,
+      /\b(previously|ever|already) applied\b|\bapplied (to|for|with|at)\b.{0,60}\b(before|previously|in the past|last year|this year)\b|\bhave you applied (to|for|with)\b|\b(have|did) you (ever |previously )?(been )?interview(ed)? (with|at|for)\b(?!.*\b(affiliates?|portfolio|subsidiar\w*|group compan\w*)\b)/,
       { kinds: CHOICE.concat(LONG_TEXT), not: /\bif (yes|so)\b|\bwhen and\b/ },
     ),
     // "Do you require any reasonable adjustments to participate in the recruitment process?"
@@ -3071,6 +3133,18 @@
       kinds: CHOICE.concat(LONG_TEXT),
       not: /\b(available|availability|dates?|start)\b.{0,20}\b(to|for) (the |this |our )?(work|start|begin|commence|join|intern(ship)?|placement|programme|program|employment|role|position)\b|\bshifts?\b|\bper week\b|\bhours per\b/,
     }),
+    // "Approximately when do you expect to begin full time employment?" (Jane Street, of a student).
+    R(
+      'job.fullTimeStart',
+      /\b(expect|plan|intend|anticipate|hope|looking|likely) to (begin|start|commence|enter|seek)\b.{0,30}\b(full ?time|permanent|graduate) (employment|work|job|role|position)s?\b|\b(begin|start|commence)\w* (full ?time|permanent) (employment|work)\b/,
+      { kinds: CHOICE.concat(TEXTISH) },
+    ),
+    // "Do you require a visitor visa to enter the UK for your interviews?": a visit, not work sponsorship.
+    R(
+      'job.visitorVisa',
+      /\bvisitor visa\b|\b(visa|eta|electronic travel authori[sz]ation) to (enter|visit|travel to)\b/,
+      { kinds: CHOICE },
+    ),
     R(
       'job.startDate',
       /when (can|could|would) you (like to |be able to )?(start|begin|join)|when (are|will) you (be )?(able|available) to (start|begin|join)|available (start|to start|to begin|from)|\bavailability\b|earliest (possible )?(start|date)|date (you are )?available|(desired|preferred) start|expected start|join(ing)? date|how soon|start (date|dates) (for|of) (the|this|your) (internship|placement|programme|program|role|position|job)|\bdate (that )?you (could|can|would|will) (start|begin|join)\b|\b(ready|available) for (full ?time )?(employment|work)\b|\beintritt\w*|\bdisponibilit[ea]\b|\bdate de debut\b|\b(will|would|could|can) (you )?be (able|available) to (start|begin|commence|join)\b|\b(what|which) date\b.*\bavailab|\bwhen (are|will|would) you (be )?available\b/,
@@ -3271,6 +3345,12 @@
         not: /^(did|have) you|^are you (a |an )?(recent |new |high school |college |university )?(graduate|grad|undergrad)|\binterested in\b|\bopportunit|post ?grad|\bgraduate (degree|school|program|student)|\bgraduate (engineer|analyst|scheme|role|position|job|programme|trainee|consultant|developer|intake|associate|internship)s?\b|\bgpa\b|\bgrades?\b|\bwith (first class )?(honou?rs|distinction|merit|a (first|2 ?1|2 ?2))\b/,
       },
     ),
+    // "What year did you begin your undergraduate (e.g. Bachelor's) degree?", "When did you start your studies?".
+    R(
+      'edu.start',
+      /\b(year|date|when)\b.*\b(did|do|will) you (begin|start|commence|enrol+|enter)\b.*\b(degree|studies|course|program(me)?|universit\w*|college|undergrad\w*|bachelor\w*|master\w*|ph ?d|doctora\w*)\b|\b(began|started|commenced) (your )?(\w+ )?(degree|studies|course|program(me)?)\b/,
+      { not: /\b(job|employment|work|internship|placement|role|position)\b/ },
+    ),
     R(
       'edu.enrolled',
       /\benrol+(ment|ed) status\b|\b(are|were) you (currently )?(enrol+ed|a (current )?student)\b|\bcurrent(ly)? (enrol+ed|study status|student status)\b|\b(study|student) status\b|^(are|were) you (currently |presently |now )?(a |an )?(current |full ?time )?(undergrad\w*|post ?grad\w*|graduate|masters?|phd|doctoral) student\b/,
@@ -3356,7 +3436,7 @@
       'edu.field',
       /fields? of study|\bmajors?\b|\bdisciplines?\b|concentration|area of study|speciali[sz]ation|course of study|program(me)? of study|\bsubjects?\b|study (field|area)|^(your |main |academic )?field$|\bfield (studied|of expertise)\b|course name/,
       {
-        not: /minor|\bdid\b|field (sales|service|work|engineer|marketing|operations)|form ?field|field ?(set|label|wrapper|group|container|row|section|input)|\bsubjects? to\b|export control/,
+        not: /minor|\b(secondary|second|additional|double|joint|other) (major|field|subject|discipline)|\bdid\b|field (sales|service|work|engineer|marketing|operations)|form ?field|field ?(set|label|wrapper|group|container|row|section|input)|\bsubjects? to\b|export control/,
       },
     ),
     // "University Course", "Course", "Course title", "Course studied", "Name of course", "Programme name": what you
@@ -3447,6 +3527,15 @@
       {
         kinds: CHOICE,
         not: /marketing|newsletter|promotion|job alerts?|talent (community|network|pool)|subscribe|opt ?in|consent|emergency|\breferee|\breferences?\b|\bnumber\b|\baddress\b/,
+      },
+    ),
+    // "Your primary college/university/school email", "Student email address": not your personal one.
+    R(
+      'email.school',
+      /\b(school|universit\w*|college|student|academic|institution(al)?|\.edu)\b.{0,30}\be ?mail\b|\be ?mail\b.{0,20}\b(at|from|of|with) (your )?(school|universit\w*|college|institution)\b/,
+      {
+        kinds: ['email', 'text'],
+        not: /referr|reference|recruiter|career(s)? (service|office|advis)|advis[eo]r|tutor|professor|lecturer|supervisor|\bcontact\b/,
       },
     ),
     R('email', /e ?mail|courriel|correo|\bmail\b/, {

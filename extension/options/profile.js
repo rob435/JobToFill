@@ -113,6 +113,11 @@ const FORMS = {
         title: 'Contact',
         fields: [
           f('contact.email', 'Email', { type: 'email', autocomplete: 'email' }),
+          f('contact.schoolEmail', 'University / school email', {
+            type: 'email',
+            placeholder: 'e.g. name@ucl.ac.uk',
+            hint: 'For “Your primary college/university/school email”. Leave blank if your email above is your university’s.',
+          }),
           f('contact.phoneCountryCode', 'Phone country code', { placeholder: '+1', autocomplete: 'tel-country-code' }),
           f('contact.phone', 'Phone number', {
             type: 'tel',
