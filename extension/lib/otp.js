@@ -319,8 +319,27 @@
     'recruitment', 'talent', 'hr', 'eu', 'us', 'uk', 'com', 'net', 'org', 'io', 'co', 'hiring', 'external', 'global',
     'candidate', 'candidates', 'notifications', 'notification', 'support', 'verify', 'verification', 'web', 'online',
     'services', 'service', 'group', 'the', 'and', 'bank', 'home', 'site', 'sites', 'cloud', 'prod', 'fa', 'docs',
-    'forms', 'form',
+    'forms', 'form', 'student', 'students', 'graduate', 'graduates', 'campus', 'early', 'entry', 'level', 'intern',
+    'interns', 'internship', 'internships', 'experienced', 'professional', 'professionals', 'internal', 'ocs',
   ]);
+
+  // The words of a name: "BNY-Careers", "LazardStudentCareers" (Oracle site names run them together), less the ones
+  // that name nothing (careers, student) and Oracle's pod names (fa-evup-saasfaprod1.fa.ocs.oraclecloud.com).
+  const companyWords = (names) =>
+    [
+      ...new Set(
+        names.flatMap((l) =>
+          l
+            .replace(/([a-z])([A-Z])|([A-Z])([A-Z][a-z])/g, '$1$3 $2$4')
+            .toLowerCase()
+            .split(/[-_\s.%]+/)
+            // "gallifordtrycareers": the name before its "careers".
+            .map((t) => t.replace(/(.{3,}?)(careers?|jobs|recruitment|talent)$/, '$1')),
+        ),
+      ),
+    ].filter(
+      (t) => t.length >= 3 && !GENERIC.has(t) && !/^(wd\d+|\d+|career\d+|[a-z]{1,2}\d+|saas\w*prod\d*)$/.test(t),
+    );
 
   /** Words in a host name that name the company: acme.wd3.myworkdayjobs.com -> ['acme']. */
   function hostTokens(host) {
@@ -329,10 +348,48 @@
     const labels = String(host || '')
       .toLowerCase()
       .split('.');
-    const own = shared ? labels.slice(0, labels.length - s.split('.').length) : [s.split('.')[0]];
-    return [...new Set(own.flatMap((l) => l.split(/[-_]+/)))].filter(
-      (t) => t.length >= 3 && !GENERIC.has(t) && !/^(wd\d+|\d+|career\d+|[a-z]{1,2}\d+)$/.test(t),
-    );
+    return companyWords(shared ? labels.slice(0, labels.length - s.split('.').length) : [s.split('.')[0]]);
+  }
+
+  // Vetted tracking systems that name the employer in the page's path rather than its host, where only the employer
+  // can name it: Oracle Recruiting Cloud's career sites (eofe.fa.us2.oraclecloud.com, BNY's, serves
+  // /hcmUI/CandidateExperience/en/sites/BNY-Careers/…) and Workday's shared hosts
+  // (wd3.myworkdaysite.com/recruiting/acme/External/…).
+  const TENANT_PATHS = [
+    [/(^|\.)fa\.([a-z0-9-]+\.)*oraclecloud\.com$/, /\/candidateexperience\/[a-z]{2}(?:-[a-z]{2})?\/sites\/([^/?#]+)/i],
+    [/(^|\.)myworkdaysite\.com$/, /^\/(?:[a-z]{2}-[a-z]{2}\/)?recruiting\/([^/?#]+)/i],
+  ];
+
+  /**
+   * A page, given as its address or only its host name: { host, tokens }, the words that name its company, from the
+   * host (hostTokens) and, on the systems above, from the path.
+   */
+  function pageOf(entry) {
+    const s = String(entry || '');
+    let host = s.toLowerCase();
+    let path = '';
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
+      try {
+        const u = new URL(s);
+        host = u.hostname.toLowerCase();
+        path = u.pathname;
+      } catch (err) {
+        host = '';
+      }
+    }
+    const tokens = hostTokens(host);
+    for (const [hostRe, pathRe] of TENANT_PATHS) {
+      const m = hostRe.test(host) && path.match(pathRe);
+      if (!m) continue;
+      let name = m[1];
+      try {
+        name = decodeURIComponent(name);
+      } catch (err) {
+        /* keep it as it is */
+      }
+      tokens.push(...companyWords([name]));
+    }
+    return { host, tokens: [...new Set(tokens)] };
   }
 
   const hostOfUrl = (href) => {
@@ -345,26 +402,26 @@
 
   /**
    * How sure is it that `message` was sent by the site on `hosts` (the page, and the top page when it is
-   * the same site)? 'strong': the same site, the same tracking system, the company's own domain behind a
-   * vetted tracking system, or a link back to the page's site. On domains where anyone can publish a page
-   * only the exact host counts, and Google's and Microsoft's own pages never match. 'weak': the company's
-   * name only appears in it. 'none' otherwise.
+   * the same site: addresses, or host names only)? 'strong': the same site, the same tracking system, the
+   * company's own domain behind a vetted tracking system, or a link back to the page's site. On domains where
+   * anyone can publish a page only the exact host counts, and Google's and Microsoft's own pages never match.
+   * 'weak': the company's name only appears in it. 'none' otherwise.
    */
   function relevance(message, hosts) {
     const list = []
       .concat(hosts || [])
       .filter(Boolean)
-      .map((h) => String(h).toLowerCase());
+      .map(pageOf)
+      .filter((p) => p.host);
     const from = (message.from && message.from[0]) || {};
     const senderHost = (String(from.email || '').split('@')[1] || '').toLowerCase();
     const sender = site(senderHost);
     const { text, links } = readBody(message.body || '');
     const linkHosts = links.map((l) => hostOfUrl(l.href)).filter(Boolean);
     let weak = false;
-    for (const host of list) {
+    for (const { host, tokens } of list) {
       const page = site(host);
       const fam = familyOf(page);
-      const tokens = hostTokens(host);
       if (fam && SHARED.has(fam)) {
         // Google Forms, Microsoft Forms: anyone's page. Never strong.
       } else if (HOSTED.has(page) || RAW_HOST.test(host)) {
@@ -372,7 +429,7 @@
       } else {
         if (sender && sender === page) return 'strong';
         if (sender && fam && fam === mailFamilyOf(sender)) return 'strong';
-        // acme.wd3.myworkdayjobs.com emailing from talent@acme.com.
+        // acme.wd3.myworkdayjobs.com emailing from talent@acme.com; BNY's Oracle career site from people.bny.com.
         if (fam && VETTED.has(fam) && sender && !HOSTED.has(sender) && tokens.includes(sender.split('.')[0]))
           return 'strong';
         if (linkHosts.some((l) => site(l) === page)) return 'strong';
@@ -389,7 +446,7 @@
 
   /**
    * The code (or link) to use from a list of messages, newest first.
-   *   kind: 'code' | 'link'; hosts: the page's host names; since: ms, ignore older mail;
+   *   kind: 'code' | 'link'; hosts: the page's addresses (or host names); since: ms, ignore older mail;
    *   want: { length, numeric }; used: message ids already used; explicit: the person asked for it, so
    *   take the newest code even when its sender can't be matched to the page.
    * Returns { code | link, id, from, subject, date, relevance } or null.
@@ -400,9 +457,10 @@
       .filter((m) => m && m.id && !seen.has(m.id) && (m.date || 0) * 1000 >= since)
       .sort((a, b) => (b.date || 0) - (a.date || 0));
     let fallback = null;
+    const home = pageOf([].concat(hosts || [])[0]).host;
     for (const m of list) {
       const rel = relevance(m, hosts);
-      const found = kind === 'link' ? findLink(m, [].concat(hosts || [])[0]) : findCode(m, want);
+      const found = kind === 'link' ? findLink(m, home) : findCode(m, want);
       if (!found) continue;
       const from = (m.from && m.from[0]) || {};
       const out = {
@@ -420,7 +478,7 @@
     return fallback;
   }
 
-  const otp = { readBody, findCode, findLink, site, hostTokens, relevance, pick, familyOf };
+  const otp = { readBody, findCode, findLink, site, hostTokens, pageOf, relevance, pick, familyOf };
   JTF.otp = otp;
   if (typeof module === 'object' && module.exports) module.exports = otp;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

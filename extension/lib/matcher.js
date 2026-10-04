@@ -153,6 +153,9 @@
     // "Citizen or permanent resident of Cuba, Iran, North Korea, or Syria" among the options: a sanctions question,
     // whatever it says ("If you selected a response other than none of the above…" too).
     if (sanctionsOptions(desc)) return { type: 'compliance.sanctions', part: null, score: 1, source: 'options' };
+    // "Do any of the following apply to you?" over declarations and a "None of these apply to me".
+    if (DECLARATION_KINDS.includes(desc.kind) && declarationList(desc.options))
+      return { type: 'compliance.declarations', part: null, score: 1, source: 'options' };
     // "Which university…? Please select "Other" if yours is not listed" is the question, not its follow-up box.
     const asked = String(s.question || s.label || s.aria || s.nearby || '');
     const head = asked.split('?')[0];
@@ -235,6 +238,54 @@
   // A statement about you ("Citizen or permanent resident of…"), never an ethnicity's "Middle Eastern (e.g. Iranian,
   // Syrian…)".
   const ABOUT_YOU_STATEMENT = /\b(citizen\w*|nationals?|nationality|residen\w*|located|live|living|passports?)\b/;
+
+  // What a statement in a list of declarations can be ("You are currently serving as a Government Official…"): a Yes /
+  // No question the profile answers.
+  const DECLARATIONS = new Set([
+    'compliance.government',
+    'compliance.relatives',
+    'compliance.previouslyEmployed',
+    'compliance.previouslyApplied',
+    'compliance.criminal',
+    'compliance.regulatory',
+  ]);
+  const DECLARATION_KINDS = ['checkboxes', 'radio', 'select', 'combo', 'combobox'];
+  const YES_NO = [
+    { text: 'Yes', value: 'Yes' },
+    { text: 'No', value: 'No' },
+  ];
+
+  /**
+   * A list of declarations with its "None of these apply to me" (Oracle's "Do any of the following apply to you?"):
+   * { statements: [{ i, text, type }], none: { i, text } }, every other option reading as one of DECLARATIONS when
+   * asked as a Yes / No question. Null otherwise.
+   */
+  function declarationList(options) {
+    const opts = (options || [])
+      .map((o, i) => ({ i, text: String((o && o.text) || ''), n: norm(o && o.text) }))
+      .filter((o) => o.n && !isPlaceholder(o.n));
+    if (opts.length < 2 || opts.length > 12) return null;
+    const nones = opts.filter((o) => NONE_OPTION.test(o.n));
+    if (nones.length !== 1) return null;
+    const statements = [];
+    for (const o of opts) {
+      if (o === nones[0]) continue;
+      // "Yes", "Other", "Prefer not to say": answers, not statements.
+      if (o.n.split(' ').length < 5) return null;
+      const r = classify({
+        kind: 'radio',
+        inputType: 'radio',
+        autocomplete: '',
+        maxLength: 0,
+        placeholderRaw: '',
+        options: YES_NO,
+        signals: { question: o.text },
+      });
+      if (!r || !DECLARATIONS.has(r.type)) return null;
+      statements.push({ i: o.i, text: o.text, type: r.type });
+    }
+    return statements.length ? { statements, none: { i: nones[0].i, text: nones[0].text } } : null;
+  }
 
   /** A choice whose options are sanctions statements (each names two sanctioned places, and who you are there). */
   function sanctionsOptions(desc) {
@@ -331,6 +382,18 @@
         /\b(phone|mobile|tel|telephone|cell)\b/.test(norm((desc.signals || {}).group)))
     )
       r.type = 'phone.countryCode';
+    // "Employment eligibility status" offering "Yes, will require firm sponsorship" / "No. already has permanent work
+    // authorization" (Aquatic): its options answer whether you need sponsoring, whatever the label says. Not "Yes, but I
+    // will need visa sponsorship in the future" beside a plain "No, I can't legally work in the US" (circleback).
+    const said = (desc.options || []).map((o) => norm(o.text));
+    if (
+      r.type === 'job.authorized' &&
+      said.some((t) => /^yes\b.*\b(require|need)\w*\b.*\bsponsor/.test(t)) &&
+      said.some((t) =>
+        /^no\b.*\b(already|have|has|hold|holds)\b.*\b(authori[sz]ation|authori[sz]ed|right to work|permit)\b/.test(t),
+      )
+    )
+      r.type = 'job.sponsorship';
     if (desc.kind === 'email' && !EMAIL_TYPES.has(r.type)) r.type = 'email';
     // A "Passcode" box is often type="password" (SuccessFactors): the emailed code, not your password.
     if (desc.kind === 'password' && !r.type.startsWith('account.pass') && r.type !== 'otp') r.type = 'account.password';
@@ -1737,6 +1800,7 @@
     isPlaceholder,
     NONE_OPTION,
     dateOrder,
+    declarationList,
   };
   JTF.matcher = matcher;
   if (typeof module === 'object' && module.exports) module.exports = matcher;

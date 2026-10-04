@@ -1564,10 +1564,11 @@ async function otpFor(msg, sender) {
   const settings = store.otpSettings(await store.getSettings());
   if (msg.kind === 'link' && (settings.links === false || sender.frameId !== 0)) return { stop: true };
   // A framed form shares the top page's trust only when it is the same site (or the same tracking
-  // system): an ad or widget frame on careers.acme.com doesn't get Acme's code.
+  // system): an ad or widget frame on careers.acme.com doesn't get Acme's code. Whole addresses, as some tracking
+  // systems name the employer only in the path (Oracle's /sites/BNY-Careers/).
   const top = hostOf(sender.tab && sender.tab.url);
-  const hosts = [url.hostname];
-  if (top && top !== url.hostname && sameSite(url.hostname, top)) hosts.push(top);
+  const hosts = [url.href];
+  if (top && top !== url.hostname && sameSite(url.hostname, top)) hosts.push(sender.tab.url);
   const since = Math.max(Number(msg.since) || 0, Date.now() - 30 * 60e3);
   let list;
   try {
@@ -1653,7 +1654,7 @@ async function insertOtp(tab, info, frameIds) {
     await showToast(tab.id, 'Verification codes are only filled on secure (https) pages.', {}, frameIds);
     return;
   }
-  const hosts = [url.hostname, hostOf(tab.url)].filter(Boolean);
+  const hosts = [url.href, tab.url].filter(Boolean);
   const since = Date.now() - OTP_EXPLICIT_LOOKBACK;
   let found;
   try {

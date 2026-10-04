@@ -1555,3 +1555,27 @@ test('ordinal lists that are not degree classes: dates, rankings, years of study
     'edu.classification',
   );
 });
+
+test('boxes that are not yours to fill from the profile: a name "if different", a second or university email', () => {
+  // DRW: the legal name is only asked for when it differs from the preferred one.
+  assert.equal(typeOf(desc('Legal First Name (if different from preferred name)')), null);
+  assert.equal(typeOf(desc('Legal Last Name (if different from preferred name)')), null);
+  assert.equal(typeOf(desc('Preferred Name')), 'name.preferred');
+  assert.equal(typeOf(desc('Alternate Email')), null);
+  assert.equal(typeOf(desc('Confirm email')), 'email');
+  const p = fields.createProfile('Student');
+  p.contact.email = 'alex.morgan@gmail.com';
+  const ask = (q) => fields.resolve('email', p, { question: util.normalize(q) });
+  // Its own type (Settings › Contact › University / school email); one that lands on Email is still not yours.
+  assert.equal(typeOf(desc('Please provide your university email address.')), 'email.school');
+  assert.equal(fields.resolve('email.school', p, {}), null, 'a personal address is not a university one');
+  assert.equal(
+    ask('Please provide your university email address.'),
+    null,
+    'a personal address is not a university one',
+  );
+  assert.equal(ask('Email address').text, 'alex.morgan@gmail.com');
+  assert.equal(ask('Email (university address preferred)').text, 'alex.morgan@gmail.com');
+  p.contact.email = 'am123@st-andrews.ac.uk';
+  assert.equal(ask('University email').text, 'am123@st-andrews.ac.uk');
+});

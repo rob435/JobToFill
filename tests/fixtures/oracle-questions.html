@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Job Application Questions - 2027 BNY Summer Internship Program - Delivery (Manchester)</title>
+    <!--
+      Oracle Recruiting Cloud (BNY: eofe.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/BNY-Careers/job/82774/
+      apply/section/2, 3 and 4). The markup is the Candidate Experience app's own (static.oracle.com/cdn/fa/oj-hcm-ce,
+      2607.26): questions with ten options or fewer are "cx-select-pills", a <ul role="radiogroup"> of role="radio"
+      buttons for one answer, a <ul role="list"> of toggle buttons (no aria-pressed until something is picked) for
+      several; longer lists are its "cx-select" combobox, which picks the only option left on Enter; dates are a
+      cx-select per part (Day, Month, Year). "Please select the specific source" only appears once "How did you first
+      hear about BNY?" has an answer, with options that follow it.
+    -->
+    <style>
+      body { font: 15px/1.4 system-ui, sans-serif; background: #eef1f2; margin: 0; }
+      main { max-width: 900px; margin: 24px auto; background: #f4f5f5; padding: 24px; }
+      h2 { font-size: 18px; margin: 32px 0 4px; }
+      .input-row { margin: 22px 0; position: relative; }
+      .input-row__label { display: block; margin-bottom: 8px; }
+      .input-row__label--required .input-row__label--required-star::after { content: ' *'; color: #c00; }
+      .input-row__instructions { margin: 8px 0; }
+      .cx-select-pills-container { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+      .cx-select-pill-section { border: 1px solid #ccd; border-radius: 22px; background: #fff; padding: 8px 16px; font: inherit; cursor: pointer; text-align: left; }
+      .cx-select-pill-section--selected { border: 2px solid #0b4f5c; color: #0b4f5c; }
+      .cx-select-pill__plus-icon::after { content: ' +'; }
+      .cx-select-pill__remove-icon::after { content: ' ×'; }
+      .input-field-container { display: flex; border: 1px solid #ccd; border-radius: 22px; background: #fff; padding: 6px 16px; }
+      .input-field-container__left { flex: 1; display: flex; flex-direction: column; }
+      .input-field__label { font-size: 12px; color: #556; }
+      .cx-select-input { border: 0; font: inherit; outline: none; background: transparent; }
+      .icon-dropdown-arrow, .icon-clear { border: 0; background: none; cursor: pointer; }
+      .icon-dropdown-arrow::after { content: '▾'; }
+      .icon-clear::after { content: '×'; }
+      .input-row-composite__inputs { display: flex; gap: 8px; }
+      .input-row-composite__input { flex: 1; }
+      .input-field-container { position: relative; }
+      .cx-select__options { position: absolute; left: 0; top: 100%; background: #fff; border: 1px solid #99a; z-index: 10; max-height: 260px; overflow: auto; min-width: 240px; }
+      .cx-select__list-item { padding: 6px 12px; cursor: pointer; }
+      .cx-select__list-item--active { background: #dde; }
+      input.input-row__control { width: 100%; box-sizing: border-box; border: 1px solid #ccd; border-radius: 22px; padding: 10px 16px; font: inherit; }
+      .apply-flow-input-checkbox { display: flex; gap: 8px; align-items: center; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section id="questions">
+        <h2>Application Questions</h2>
+        <p>Please answer the following questions.</p>
+      </section>
+      <section id="experience">
+        <p>Fields marked with an asterisk (<span style="color: #c00">*</span>) are required.</p>
+        <h2>Work and Education History</h2>
+        <p>Please enter details about your work experience and education.</p>
+      </section>
+      <section id="more">
+        <h2>Licenses and Certificates</h2>
+        <p>Please provide details about your licenses and certificates.</p>
+        <h2>Diversity Information</h2>
+      </section>
+      <pre id="state"></pre>
+    </main>
+    <script>
+      const state = {};
+      const show = () => (document.getElementById('state').textContent = JSON.stringify(state));
+      let seq = 300000144000;
+
+      /** An input-row with Oracle's form-element-label: <label for> naming the control, a span with the question. */
+      function row(question, { required = true, instructions = '', cls = 'input-row--has-picker' } = {}) {
+        const id = String(seq++);
+        const wrap = document.createElement('div');
+        wrap.className = `input-row ${cls}`;
+        const label = document.createElement('label');
+        label.className = 'input-row__label' + (required ? ' input-row__label--required' : '');
+        label.htmlFor = id;
+        label.id = `label-${id}`;
+        label.setAttribute('aria-labelledby', `labelText-${id} instructionsText-${id}`);
+        label.innerHTML = `<span class="input-row__linebreak" id="labelText-${id}"></span>`;
+        label.firstChild.textContent = question;
+        if (required) label.insertAdjacentHTML('beforeend', '<span class="input-row__label--required-star" aria-hidden="true"></span>');
+        wrap.append(label);
+        if (instructions) {
+          const help = document.createElement('div');
+          help.className = 'input-row__instructions basic-formatter';
+          help.id = `instructionsText-${id}`;
+          help.textContent = instructions;
+          wrap.append(help);
+        }
+        const box = document.createElement('div');
+        box.className = 'input-row__control-container';
+        box.id = `container-${id}`;
+        box.dataset.qa = `q${id}`;
+        wrap.append(box);
+        return { id, wrap, box };
+      }
+
+      /** cx-select-pills: one answer (role="radio" buttons) or several (toggle buttons, one per list item). */
+      function pills(parent, key, question, options, { multi = false, ...opts } = {}) {
+        const { wrap, box } = row(question, opts);
+        if (multi) box.classList.add('input-row--multiselect', 'cx-multi-select-pills');
+        const ul = document.createElement('ul');
+        ul.className = 'cx-select-pills-container';
+        ul.setAttribute('role', multi ? 'list' : 'radiogroup');
+        ul.setAttribute('aria-label', question);
+        let value = multi ? null : null;
+        const buttons = options.map((label, i) => {
+          const li = document.createElement('li');
+          li.setAttribute('role', multi ? 'listitem' : 'presentation');
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'cx-select-pill-section';
+          b.setAttribute('aria-disabled', 'false');
+          if (!multi) b.setAttribute('role', 'radio');
+          b.innerHTML = '<span class="cx-select-pill-name"></span>';
+          b.firstChild.textContent = ' ' + label;
+          if (multi) b.insertAdjacentHTML('beforeend', '<span class="cx-select-pill__plus-icon"></span>');
+          b.addEventListener('click', () => {
+            if (multi) {
+              const list = value || [];
+              value = list.includes(label) ? list.filter((x) => x !== label) : [...list, label];
+            } else value = label;
+            render();
+          });
+          li.append(b);
+          ul.append(li);
+          return b;
+        });
+        const render = () => {
+          buttons.forEach((b, i) => {
+            const picked = multi ? !!value && value.includes(options[i]) : value === options[i];
+            b.classList.toggle('cx-select-pill-section--selected', picked);
+            if (multi) {
+              // No aria-pressed at all while nothing is picked (its isSelected is undefined then).
+              if (value) b.setAttribute('aria-pressed', String(picked));
+              const icon = b.querySelector('span:last-child');
+              icon.className = picked ? 'cx-select-pill__remove-icon' : 'cx-select-pill__plus-icon';
+            } else {
+              b.setAttribute('aria-checked', String(picked));
+              b.tabIndex = picked || (value == null && i === 0) ? 0 : -1;
+            }
+          });
+          state[key] = value;
+          show();
+        };
+        const holder = document.createElement('div');
+        holder.append(ul);
+        box.append(holder);
+        parent.append(wrap);
+        render();
+        return wrap;
+      }
+
+      /**
+       * cx-select: a combobox input whose list (drawn inside its box) filters as you type; Enter takes the only one
+       * left. A date's parts always show their name ("Month") and are labelled by the question and it.
+       */
+      function cxSelect(container, id, options, { label = '', hint = '', rowId = '', onPick } = {}) {
+        let value = null;
+        let list = null;
+        let active = -1;
+        const outer = document.createElement('div');
+        outer.className = 'cx-select-container ';
+        outer.innerHTML =
+          '<div class="input-field-container"><div class="input-field-container__left"></div><div class="input-field-container__right"></div></div>';
+        const field = outer.firstChild;
+        const left = outer.querySelector('.input-field-container__left');
+        const right = outer.querySelector('.input-field-container__right');
+        const input = document.createElement('input');
+        Object.assign(input, { type: 'text', id, name: id, className: 'cx-select-input', autocomplete: 'none' });
+        input.setAttribute('role', 'combobox');
+        input.setAttribute('aria-autocomplete', 'list');
+        input.setAttribute('aria-haspopup', 'grid');
+        input.setAttribute('aria-controls', `${id}-listbox`);
+        input.setAttribute('aria-expanded', 'false');
+        if (hint) {
+          left.insertAdjacentHTML('beforeend', `<span class="input-field__label" id="inputFieldLabel-${id}">${hint}</span>`);
+          input.setAttribute('aria-labelledby', `labelText-${rowId} inputFieldLabel-${id}`);
+        }
+        left.append(input);
+        const toggle = document.createElement('button');
+        Object.assign(toggle, { type: 'button', className: 'icon-dropdown-arrow', id: `${id}-toggle-button`, tabIndex: -1 });
+        toggle.setAttribute('aria-label', `Open the list of values for ${hint || label}`);
+        toggle.setAttribute('aria-controls', `${id}-listbox`);
+        right.append(toggle);
+        container.append(outer);
+
+        const close = () => {
+          if (list) list.remove();
+          list = null;
+          active = -1;
+          input.setAttribute('aria-expanded', 'false');
+          input.removeAttribute('aria-activedescendant');
+        };
+        const pick = (label) => {
+          value = label;
+          input.value = label;
+          close();
+          if (onPick) onPick(label);
+        };
+        const open = () => {
+          close();
+          const q = input.value.trim().toLowerCase();
+          const shown = q && q !== String(value || '').toLowerCase() ? options.filter((o) => o.toLowerCase().includes(q)) : options;
+          list = document.createElement('div');
+          list.className = 'cx-select__options';
+          list.innerHTML = `<div class="cx-select-container cx-select-dropdown--open"><div class="cx-select__listbox" id="${id}-listbox-container"></div></div>`;
+          const grid = document.createElement('div');
+          grid.className = 'cx-select__list';
+          grid.setAttribute('role', shown.length ? 'grid' : 'status');
+          grid.id = `${id}-listbox`;
+          grid.setAttribute('aria-label', hint || label);
+          grid.tabIndex = -1;
+          grid.addEventListener('mousedown', (e) => e.preventDefault());
+          shown.forEach((o, i) => {
+            const rowEl = document.createElement('div');
+            rowEl.setAttribute('role', 'row');
+            const cell = document.createElement('div');
+            cell.tabIndex = -1;
+            cell.setAttribute('role', 'gridcell');
+            cell.id = `${id}-listitem-${i}`;
+            cell.setAttribute('aria-selected', String(o === value));
+            cell.className = 'cx-select__list-item';
+            cell.innerHTML = '<div class="cx-select__list-item-container"><span class="cx-select__list-item--content"></span></div>';
+            cell.querySelector('span').textContent = o;
+            cell.addEventListener('click', () => pick(o));
+            rowEl.append(cell);
+            grid.append(rowEl);
+          });
+          if (!shown.length) grid.innerHTML = '<div class="cx-select__list-item--no-results">No results found</div>';
+          list.querySelector('.cx-select__listbox').append(grid);
+          field.append(list);
+          input.setAttribute('aria-expanded', 'true');
+        };
+        let timer = null;
+        input.addEventListener('input', () => {
+          clearTimeout(timer);
+          timer = setTimeout(open, 120);
+        });
+        input.addEventListener('click', () => (list ? close() : open()));
+        toggle.addEventListener('click', () => (list ? close() : open()));
+        input.addEventListener('keydown', (e) => {
+          const items = list ? [...list.querySelectorAll('[role=gridcell]')] : [];
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (!list) return open();
+            active = Math.min(active + 1, items.length - 1);
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            active = Math.max(active - 1, 0);
+          } else if (e.key === 'Enter') {
+            e.preventDefault();
+            // Oracle's: nothing highlighted, the one option left (or the one spelled as typed) is taken.
+            const exact = items.find((c) => c.textContent.toLowerCase() === input.value.trim().toLowerCase());
+            const only = items.length === 1 ? items[0] : exact;
+            if (active >= 0 && items[active]) pick(items[active].textContent);
+            else if (only) pick(only.textContent);
+            return;
+          } else if (e.key === 'Escape') return close();
+          else return;
+          items.forEach((c, i) => c.classList.toggle('cx-select__list-item--active', i === active));
+          if (items[active]) input.setAttribute('aria-activedescendant', items[active].id);
+        });
+        input.addEventListener('blur', () => {
+          setTimeout(() => {
+            if (document.activeElement === input) return;
+            close();
+            input.value = value || '';
+          }, 150);
+        });
+        return input;
+      }
+
+      function select(parent, key, question, options, opts = {}) {
+        const { id, wrap, box } = row(question, opts);
+        box.classList.add('reset-z-index');
+        parent.append(wrap);
+        cxSelect(box, id, options, {
+          label: question,
+          onPick: (v) => {
+            state[key] = v;
+            show();
+            if (opts.onPick) opts.onPick(v, wrap);
+          },
+        });
+        state[key] = null;
+        return wrap;
+      }
+
+      function textBox(parent, key, question, opts = {}) {
+        const { id, wrap, box } = row(question, { required: false, cls: 'input-row--text', ...opts });
+        const input = document.createElement('input');
+        Object.assign(input, { type: 'text', id, name: id, className: 'input-row__control', autocomplete: 'off' });
+        input.addEventListener('input', () => {
+          state[key] = input.value;
+          show();
+        });
+        box.append(input);
+        parent.append(wrap);
+        state[key] = '';
+        return wrap;
+      }
+
+      /** Oracle's date and month pickers: one cx-select per part, labelled by the part ("Day", "Month", "Year"). */
+      function datePicker(parent, key, question, parts, opts = {}) {
+        const { id, wrap, box } = row(question, { required: false, ...opts });
+        wrap.className = 'datepicker-row input-row input-row--with-placeholder input-row--has-picker';
+        wrap.setAttribute('aria-label', question);
+        box.classList.add('tooltip-trigger', 'reset-z-index');
+        const inputs = document.createElement('div');
+        inputs.className = 'input-row-composite__inputs';
+        box.append(inputs);
+        const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        const LISTS = {
+          day: Array.from({ length: 31 }, (_, i) => String(i + 1)),
+          month: MONTHS,
+          year: Array.from({ length: 80 }, (_, i) => String(2035 - i)),
+        };
+        const got = {};
+        for (const part of parts) {
+          const cell = document.createElement('div');
+          cell.className = `input-row-composite__input datepicker-row__input datepicker-row__input--${part}`;
+          inputs.append(cell);
+          const hint = part[0].toUpperCase() + part.slice(1);
+          cxSelect(cell, `${part}-${id}`, LISTS[part], {
+            label: hint,
+            hint,
+            rowId: id,
+            onPick: (v) => {
+              got[part] = v;
+              state[key] = { ...got };
+              show();
+            },
+          });
+        }
+        if (opts.note) box.insertAdjacentHTML('beforeend', `<p class="datepicker-row__hint">${opts.note}</p>`);
+        state[key] = null;
+        parent.append(wrap);
+        return wrap;
+      }
+
+      /* ---------------------------------------------- section 2: application questions */
+      const Q = document.getElementById('questions');
+      const YN = ['Yes', 'No'];
+      pills(Q, 'sponsorship', 'Do you now or will you in the future require sponsorship for employment visa status in the country within which this position is based?', YN);
+      pills(Q, 'eligible', 'Are you eligible to work in the country within which this position is based?', YN);
+      pills(Q, 'pcaob', 'Have you ever been suspended or barred from being associated with any entity or issuer by the Public Company Accounting Oversight Board?', YN);
+      pills(Q, 'license', 'Do you currently or have you previously held any license or professional certification?', YN);
+      const SOURCES = {
+        'Job Board': ['Bright Network', 'eFinancialCareers', 'Glassdoor', 'Handshake', 'Indeed', 'LinkedIn Jobs', 'Other Job Board'],
+        'Social Media': ['Facebook', 'Instagram', 'LinkedIn', 'TikTok', 'X (Twitter)', 'YouTube', 'Other Social Media'],
+        'Campus / University': ['Career Fair', 'Careers Service', 'Society Event', 'Other Campus Event'],
+      };
+      let specific = null;
+      select(Q, 'heard', 'How did you first hear about BNY?', ['BNY Website', 'Campus / University', 'Employee Referral', 'Job Board', 'Social Media', 'Agency', 'Other'], {
+        onPick(v, wrap) {
+          if (specific) specific.remove();
+          specific = null;
+          delete state.specificSource;
+          if (!SOURCES[v]) return show();
+          // Drawn a moment later, as the app fetches the list that follows the answer.
+          setTimeout(() => {
+            specific = document.createElement('div');
+            wrap.after(specific);
+            select(specific, 'specificSource', 'Please select the specific source', SOURCES[v]);
+            show();
+          }, 300);
+        },
+      });
+      select(Q, 'currency', 'Salary Expectation in Local Currency', ['Australian Dollar', 'Canadian Dollar', 'Euro', 'Hong Kong Dollar', 'Indian Rupee', 'Japanese Yen', 'Pound Sterling', 'Singapore Dollar', 'Swiss Franc', 'US Dollar', 'Polish Zloty']);
+      const BANDS = ['0 - 10,000', '10,001 - 20,000', '20,001 - 30,000', '30,001 - 40,000', '40,001 - 50,000', '50,001 - 60,000', '60,001 - 70,000', '70,001 - 80,000', '80,001 - 90,000', '90,001 - 100,000', '100,001+'];
+      select(Q, 'compensation', 'Please select your total compensation expectations (including base and bonus).', BANDS);
+      pills(Q, 'coveredFund', '"Do you, an immediate family member, or an extended family member within your household have a personal investment in a “Covered Fund” as defined by the Volcker Rule? Applicants should also be aware that other holdings of Covered Funds over which they have indirect ownership or control will generally be attributed to them.', YN, {
+        instructions: 'For purposes of responding to the Covered Fund question, the term “immediate family members” includes an applicant’s spouse, domestic partner & unemancipated children (including stepchildren, foster children, sons-in-law or daughters-in-law), whether or not they live in the same household as the employee."',
+      });
+      pills(Q, 'accounting', 'Have you worked at a public accounting firm (KPMG, PwC, EY, Deloitte, or other) in the past 3 years?', YN);
+      pills(Q, 'accommodation', 'At BNY we remain committed to equity for all. As an Equal Employment Opportunity employer, we will provide reasonable accommodations for qualified individuals with disabilities in the job application procedures. All requests will be submitted directly to our internal accommodation’s team. Would you like to formally request an accommodation during the recruitment process?', YN);
+      pills(Q, 'previouslyEmployed', 'Have you previously been employed by Company or any of its acquired business?', YN);
+      pills(Q, 'regulatory', 'The following question is in relation ONLY to financial regulatory agencies, banking securities or investment activities: Have you ever, or at this time are any administrative or regulatory charges pending against you; been fined, or a had a license revoked; subject to order, judgement, decree or sanction arising out of any banking, securities or investment activities?', YN);
+      pills(Q, 'declarations', 'Do any of the following apply to you?', [
+        'You are currently serving as a Government Official or you have served as a Government Official at any time during the past five years',
+        'You are subject to post-employment restrictions or employment bans as a result of employment with a government or regulatory authority',
+        'You, any member of your household, or any business partner of yours is a current or former United States Federal Government employee/official acting in a procurement capacity, or personally or substantially involved in a procurement matter',
+        'None of these apply to me',
+      ], { multi: true });
+      pills(Q, 'contributions', 'During the past two years, have you made US based contributions to any of the following?: A candidate for State or Local elective office; A state or local official seeking other elective office; bond ballot campaign committee; or inaugural committee', YN);
+      pills(Q, 'relatives', 'Are any of your relatives or members of your household employed by the Company?', YN, {
+        instructions: 'Note: For purposes of this Application, the term "relatives" includes both "Immediate Family Members" and "Other Family Members." These are defined as follows: Immediate Family Members includes spouse, domestic partner, (step)parent, (step)child, (step)grandchild, (step)sibling, or a closely associated person who has assumed the responsibility normally shouldered by immediate family. Members of your household includes anyone who lives with you such as roommate or renter.',
+      });
+      pills(Q, 'associates', 'Are any of your close personal associates serving or have served as a Government Official at any time during the past five years? OR Were you referred to BNY by a Government Official or an employee of an entity known, by you, to be an actual or prospective BNY Client?', YN);
+      select(Q, 'baseSalary', 'Please select your minimum annual base salary requirement.', BANDS);
+      pills(Q, 'mrt', 'Are you or have you ever been classified as a MRT (Material Risk Taker) with your current/previous employers?', YN);
+
+      /* ---------------------------------------------- section 3: work and education history */
+      const X = document.getElementById('experience');
+      pills(X, 'degree', 'Degree', ["Associate's Degree/College Diploma", "Bachelor's Degree", 'Doctorate Degree', 'High School Diploma/GED', 'Higher Degree', "Master's Degree", 'Non-Degree Program', 'None', 'Other', 'Technical Diploma']);
+      textBox(X, 'major', 'Major');
+      datePicker(X, 'eduStart', 'Start Date', ['month', 'year']);
+      datePicker(X, 'eduEnd', 'End Date', ['month', 'year'], { required: true });
+      textBox(X, 'educator', 'Educator');
+      textBox(X, 'completed', 'Completed Amount');
+
+      /* ---------------------------------------------- section 4: more about you */
+      const D = document.getElementById('more');
+      select(D, 'ethnicity', 'Ethnicity', ['Asian', 'Black', 'Mixed', 'White', 'Other', 'I do not wish to disclose'], { required: false });
+      select(D, 'gender', 'Gender', ['Female', 'Male', 'I do not wish to disclose']);
+      select(D, 'orientation', 'Sexual Orientation', ['Bisexual', 'Gay or Lesbian', 'Heterosexual', 'Other', 'I do not wish to disclose'], { required: false });
+      textBox(D, 'tps', 'TPS Temporary NI Number');
+      datePicker(D, 'veteranDate', 'Veteran First Civilian Start Date', ['day', 'month', 'year'], {
+        note: 'You need to enter the whole date otherwise the date won’t be saved.',
+      });
+      textBox(D, 'niPostcode', 'Northern Ireland Workplace Postcode for SPBP due to miscarriage');
+      const opt = document.createElement('div');
+      opt.className = 'input-row';
+      opt.innerHTML = '<input type="checkbox" id="optin" class="input-row__hidden-control"><label class="apply-flow-input-checkbox" for="optin"><span class="apply-flow-input-checkbox__button"></span><span class="apply-flow-input-checkbox__label">I agree to receive updates about new job opportunities.</span></label>';
+      D.append(opt);
+      show();
+    </script>
+  </body>
+</html>

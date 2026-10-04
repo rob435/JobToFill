@@ -116,7 +116,11 @@ test('sanctions: every shape of the question is recognised, never as nationality
   const mena = 'Middle Eastern or North African (e.g. Lebanese, Iranian, Egyptian, Syrian)';
   assert.equal(typeOf('What is your ethnicity?', 'select', ['White', mena, 'Asian']), 'eeo.race');
   assert.equal(typeOf('Ethnic background (e.g. Iranian, Syrian, Kurdish)', 'select', ['White', mena]), 'eeo.race');
-  assert.equal(typeOf('Have you ever been subject to any regulatory sanctions or disciplinary action?'), null);
+  assert.equal(
+    typeOf('Have you ever been subject to any regulatory sanctions or disciplinary action?'),
+    'compliance.regulatory',
+    'regulatory history, not sanctions',
+  );
   assert.equal(
     typeOf('Do you consent to sanctions and background screening of your country of residence?'),
     'consent',
@@ -544,4 +548,166 @@ test('SuccessFactors’ "No Selection" is the empty choice, never a No', () => {
   assert.deepEqual(picks(choices, ask(p, 'compliance.relatives', MOODYS_RELATIONSHIP, { kind: 'select' })), [
     choices[2].text,
   ]);
+});
+
+/* ---------------------------------------------------------- declarations */
+
+test('declarations: criminal and regulatory history are recognised, never a check you agree to', () => {
+  const regulatory = [
+    // BNY on Oracle Recruiting Cloud.
+    'Have you ever been suspended or barred from being associated with any entity or issuer by the Public Company Accounting Oversight Board?',
+    'The following question is in relation ONLY to financial regulatory agencies, banking securities or investment activities: Have you ever, or at this time are any administrative or regulatory charges pending against you; been fined, or a had a license revoked; subject to order, judgement, decree or sanction arising out of any banking, securities or investment activities?',
+    'Have you ever been the subject of a FINRA disciplinary action?',
+    'Has any professional license held by you ever been revoked or suspended?',
+    'Are you currently subject to any regulatory investigations?',
+  ];
+  for (const q of regulatory) assert.equal(typeOf(q), 'compliance.regulatory', q);
+  const criminal = [
+    'Have you ever been convicted of a criminal offence?',
+    'Do you have any unspent convictions?',
+    'Have you ever been convicted of, or pleaded guilty to, a felony or misdemeanor (excluding minor traffic violations)?',
+  ];
+  for (const q of criminal) assert.equal(typeOf(q), 'compliance.criminal', q);
+  // What they must leave alone.
+  assert.notEqual(typeOf('Are you willing to undergo a criminal background check?'), 'compliance.criminal');
+  assert.notEqual(typeOf('Do you consent to a DBS criminal record check?'), 'compliance.criminal');
+  assert.notEqual(typeOf('Do you hold FINRA licenses (SIE, Series 7)?'), 'compliance.regulatory');
+  assert.notEqual(typeOf('Has your driving licence ever been revoked?'), 'compliance.regulatory');
+  assert.notEqual(typeOf('Would you be willing to register with the FCA?'), 'compliance.regulatory');
+
+  const p = british();
+  assert.equal(ask(p, 'compliance.regulatory', regulatory[0]), null, 'blank: left for you');
+  Object.assign(p.compliance, { criminal: 'No', regulatory: 'No' });
+  assert.deepEqual(picks(opts('Yes', 'No'), ask(p, 'compliance.regulatory', regulatory[0])), ['No']);
+  assert.deepEqual(picks(opts('Yes', 'No'), ask(p, 'compliance.criminal', criminal[1])), ['No']);
+});
+
+// BNY's "Do any of the following apply to you?" (Oracle's multiple-choice pills).
+const BNY_STATEMENTS = opts(
+  'You are currently serving as a Government Official or you have served as a Government Official at any time during the past five years',
+  'You are subject to post-employment restrictions or employment bans as a result of employment with a government or regulatory authority',
+  'You, any member of your household, or any business partner of yours is a current or former United States Federal Government employee/official acting in a procurement capacity, or personally or substantially involved in a procurement matter',
+  'None of these apply to me',
+);
+
+test('declarations: a list of statements is answered statement by statement; "None…" when every one is a No', () => {
+  const q = 'Do any of the following apply to you?';
+  assert.equal(
+    typeOf(
+      q,
+      'checkboxes',
+      BNY_STATEMENTS.map((o) => o.text),
+    ),
+    'compliance.declarations',
+  );
+  const list = matcher.declarationList(BNY_STATEMENTS);
+  assert.deepEqual(
+    list.statements.map((s) => s.type),
+    ['compliance.government', 'compliance.government', 'compliance.government'],
+  );
+  assert.equal(list.none.text, 'None of these apply to me');
+  // Not a list of declarations: offices, answers, statements nothing in the profile speaks for.
+  assert.equal(matcher.declarationList(opts('London', 'New York', 'None of the above')), null);
+  assert.equal(matcher.declarationList(opts('Yes', 'No', 'Not applicable')), null);
+  assert.equal(
+    matcher.declarationList(opts('You have a full driving licence and access to a car', 'None of these apply to me')),
+    null,
+  );
+
+  const p = british();
+  const ctx = { kind: 'checkboxes', options: BNY_STATEMENTS };
+  assert.equal(ask(p, 'compliance.declarations', q, ctx), null, 'the profile can’t tell: left for you');
+  Object.assign(p.compliance, { governmentOfficial: 'No', familyGovernmentOfficial: 'No' });
+  assert.deepEqual(picks(BNY_STATEMENTS, ask(p, 'compliance.declarations', q, ctx), true), [
+    'None of these apply to me',
+  ]);
+  // A family member in government: the household statement, not the one about you, and never "None…".
+  p.compliance.familyGovernmentOfficial = 'Yes';
+  assert.deepEqual(picks(BNY_STATEMENTS, ask(p, 'compliance.declarations', q, ctx), true), [BNY_STATEMENTS[2].text]);
+  // A statement about relatives and one about regulators, judged from their own answers.
+  const mixed = opts(
+    'A member of your immediate family is employed by the Company',
+    'You have been fined or suspended by a financial regulator',
+    'None of the above',
+  );
+  Object.assign(p.compliance, { relatives: 'No', regulatory: '' });
+  assert.equal(ask(p, 'compliance.declarations', q, { kind: 'checkboxes', options: mixed }), null);
+  p.compliance.regulatory = 'No';
+  assert.deepEqual(picks(mixed, ask(p, 'compliance.declarations', q, { kind: 'checkboxes', options: mixed }), true), [
+    'None of the above',
+  ]);
+});
+
+test('BNY on Oracle: the source after "How did you first hear", "Educator", and boxes that are not yours', () => {
+  assert.equal(typeOf('How did you first hear about BNY?', 'combobox', null), 'job.referralSource');
+  assert.equal(typeOf('Please select the specific source', 'combobox', null), 'job.referralSource');
+  const p = british();
+  const specific = opts('Facebook', 'Instagram', 'LinkedIn', 'TikTok', 'Other Social Media');
+  assert.deepEqual(picks(specific, ask(p, 'job.referralSource', 'Please select the specific source')), ['LinkedIn']);
+  assert.equal(typeOf('Educator', 'text', null), 'edu.school');
+  // A workplace postcode (Northern Ireland's statutory parental bereavement pay) is never your home postcode, nor a
+  // company name.
+  assert.equal(typeOf('Northern Ireland Workplace Postcode for SPBP due to miscarriage', 'text', null), null);
+  assert.equal(typeOf('Postcode', 'text', null), 'address.postalCode');
+  // A veteran's civilian start date, in Day / Month / Year lists, is neither the veteran question nor a start date.
+  for (const part of ['Day', 'Month', 'Year'])
+    assert.equal(typeOf(`Veteran First Civilian Start Date ${part}`, 'combobox', null), null, part);
+  assert.equal(typeOf('Veteran status', 'select', ['I am not a protected veteran', 'I am a veteran']), 'eeo.veteran');
+});
+
+test('sanctions: a list of US visas ("…E-1/E-2, and E-3") is a sponsorship question, answered as one', () => {
+  // IMC (Chicago): its E-1 and E-2 are treaty visas, not Country Groups E:1 and E:2.
+  const q =
+    'Will you require immigration sponsorship to begin working for IMC? Examples of sponsorship would include (but is not limited to) F-1 OPT, H-1B, H-4 EAD, L-1, L-2, TN, O-1, J-1, E-1/E-2, and E-3.';
+  assert.equal(typeOf(q, 'select', ['Yes', 'No', 'Maybe/I don’t know']), 'job.sponsorship');
+  assert.equal(typeOf('Are you a national of a country in Country Group E:1 or E:2?'), 'compliance.sanctions');
+  // An American needs no sponsorship for a Chicago role; before, the sanctions answer said Yes.
+  const p = british();
+  Object.assign(p.personal, { nationality: 'American' });
+  Object.assign(p.address, { city: 'Chicago', state: 'IL', country: 'United States' });
+  const o = opts('Yes', 'No', 'Maybe/I don’t know');
+  assert.deepEqual(picks(o, ask(p, 'job.sponsorship', q, { jobLocation: 'Chicago, United States', options: o })), [
+    'No',
+  ]);
+});
+
+test('live forms: options about sponsorship under an eligibility label, and essays that mention skills', () => {
+  // Aquatic Capital (Chicago): "Employment eligibility status" whose options answer whether you need sponsoring.
+  const o = opts('Yes, will require firm sponsorship', 'No. already has permanent work authorization');
+  assert.equal(
+    typeOf(
+      'Employment eligibility status',
+      'select',
+      o.map((x) => x.text),
+    ),
+    'job.sponsorship',
+  );
+  const p = british();
+  assert.deepEqual(picks(o, ask(p, 'job.sponsorship', 'Employment eligibility status', { jobLocation: 'Chicago' })), [
+    'Yes, will require firm sponsorship',
+  ]);
+  // circleback: an authorization question whose Yes options add sponsorship, and a plain No.
+  const c = opts(
+    'Yes, but I will need visa sponsorship in the future',
+    'Yes, but I will need a visa transfer',
+    'Yes',
+    "No, I can't legally work in the US yet",
+  );
+  assert.equal(
+    typeOf(
+      'Are you authorized to work in the United States?',
+      'select',
+      c.map((x) => x.text),
+    ),
+    'job.authorized',
+  );
+  // Essays go to the AI, not the skills list.
+  for (const q of [
+    'Describe a product or system you built from scratch (0-to-1). Include: what you built, your specific contributions, the tech stack used, and the outcome or impact.',
+    'What unique skills, abilities, or experience would you bring to the role?',
+    'What are some AI specific technologies you are comfortable with?',
+  ])
+    assert.notEqual(typeOf(q, 'textarea', null), 'skills', q);
+  assert.equal(typeOf('Technical skills', 'textarea', null), 'skills');
+  assert.equal(typeOf('Which programming languages are you proficient in?', 'textarea', null), 'skills');
 });
