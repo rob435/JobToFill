@@ -2,57 +2,187 @@
 <html lang="en-US">
   <head>
     <meta charset="utf-8" />
-    <title>Create Account - Workday</title>
+    <title>Acme Careers</title>
     <style>
-      body { font: 14px system-ui; max-width: 480px; margin: 24px auto; }
+      body { font: 14px system-ui; max-width: 560px; margin: 24px auto; }
       label { display: block; margin: 12px 0 4px; }
       input[type='text'], input[type='password'] { display: block; width: 100%; }
-      .button-wrap { position: relative; display: inline-block; margin-top: 16px; }
-      .button-wrap button { padding: 8px 20px; }
-      [data-automation-id='click_filter'] { position: absolute; inset: 0; cursor: pointer; }
-      .error { color: #b00; }
+      .wrap { position: relative; display: inline-block; margin-top: 16px; }
+      .wrap button { padding: 8px 20px; }
+      [data-automation-id='click_filter'] { position: absolute; inset: 0; cursor: pointer; z-index: 1; }
+      [data-automation-id='errorMessage'] { color: #b00; }
+      [data-automation-id='beecatcher'] { border: 0; transform: scaleY(0.01); margin-top: -22px; display: block; z-index: -1; position: relative; }
+      .bee label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
     </style>
   </head>
   <body>
-    <!-- Modelled on Workday's "Create Account" step (myworkdayjobs.com, from memory of its markup): React inputs
-         with data-automation-id, "Verify New Password", the "I agree" checkbox, and buttons covered by an invisible
-         data-automation-id="click_filter" div that takes the click (clicking the button underneath does nothing).
-         Password rules only show once a password has been typed. -->
-    <div data-automation-id="createAccountPage">
-      <h2>Create Account</h2>
-      <label for="input-4">Email Address<abbr title="required">*</abbr></label>
-      <input type="text" id="input-4" data-automation-id="email" aria-required="true" />
-      <label for="input-5">Password<abbr title="required">*</abbr></label>
-      <input type="password" id="input-5" data-automation-id="password" aria-required="true" />
-      <label for="input-6">Verify New Password<abbr title="required">*</abbr></label>
-      <input type="password" id="input-6" data-automation-id="verifyPassword" aria-required="true" />
-      <div>
-        <input type="checkbox" id="input-7" data-automation-id="createAccountCheckbox" aria-required="true" />
-        <label for="input-7" style="display: inline">Yes, I have read and consent to the Terms and Conditions</label>
-      </div>
-      <p class="error" id="problem" hidden></p>
-      <div class="button-wrap">
-        <button type="button" data-automation-id="createAccountSubmitButton" tabindex="-1">Create Account</button>
-        <div role="button" tabindex="0" aria-label="Create Account" data-automation-id="click_filter"></div>
-      </div>
-      <p>Already have an account? <button type="button" data-automation-id="signInLink">Sign In</button></p>
+    <!-- Rebuilt from the live Workday pages (pimco.wd1.myworkdayjobs.com, td.wd3.myworkdayjobs.com,
+         mbda.wd3.myworkdayjobs.com, October 2026), markup kept as Workday renders it:
+           - the sign-in and create-account forms render in place on the job's apply page, switched by the
+             "Sign In" / "Create Account" buttons under the form (form-less <button>s, no type);
+           - each submit is an aria-hidden button under a role="button" "click filter" that takes the click: its label
+             is "Create Account" or "Sign In", or a bare "Submit" on the form reached through "Sign in with email";
+           - Workday's bot checks: a honeypot box ("beecatcher", name="website") that must stay empty, and a 500ms timer;
+           - after "Create Account" the server sends a known email back to its sign-in page with nothing said, and a
+             new one to the sign-in page with "An email has been sent to you. Please verify your account."; signing in
+             before the emailed link is opened says "Verify your account before you sign in or request a verification
+             email.", a wrong password "You may have entered the wrong email address or password or your account might
+             be locked.".
+         Accounts live in localStorage (so the emailed link works from another tab): ?fresh clears them, ?existing=<pw>
+         makes ada@example.com's, verified. ?view=login|chooser starts elsewhere. A signed-in tab goes to workday.html. -->
+    <div data-automation-id="utilityButtonBar">
+      <button data-automation-id="utilityButtonSignIn">Sign In</button>
     </div>
+    <h2 data-automation-id="jobTitleHeading">2027 Summer Intern - Technology Analyst, Software Engineering, EMEA</h2>
+    <ol data-automation-id="progressBar">
+      <li data-automation-id="progressBarActiveStep">current step 1 of 6 Create Account/Sign In</li>
+      <li data-automation-id="progressBarInactiveStep">step 2 of 6 My Information</li>
+    </ol>
+    <div id="root"></div>
     <script>
-      const $ = (id) => document.getElementById(id);
-      document.querySelector('[data-automation-id="createAccountSubmitButton"]').addEventListener('click', () =>
-        sessionStorage.setItem('underneath', 'clicked'),
-      );
-      document.querySelector('[data-automation-id="click_filter"]').addEventListener('click', () => {
-        const pw = $('input-5').value;
-        const ok =
-          /@/.test($('input-4').value) && pw && pw === $('input-6').value && pw.length >= 8 && /[A-Z]/.test(pw) && /[a-z]/.test(pw) && /\d/.test(pw) && /[^A-Za-z0-9]/.test(pw) && $('input-7').checked;
-        if (!ok) {
-          $('problem').hidden = false;
-          $('problem').textContent = 'Error: please check the highlighted fields.';
-          return;
+      const params = new URLSearchParams(location.search);
+      const EMAIL_SENT = 'An email has been sent to you. Please verify your account.';
+      const WRONG = 'You may have entered the wrong email address or password or your account might be locked.';
+      const UNVERIFIED = 'Verify your account before you sign in or request a verification email.';
+      const RULES = ['A special character', 'A minimum of 12 characters', 'A lowercase character', 'An uppercase character', 'An alphabetic character', 'A numeric character'];
+      const db = () => JSON.parse(localStorage.getItem('wd') || '{"accounts":{},"mail":[]}');
+      const save = (d) => localStorage.setItem('wd', JSON.stringify(d));
+      if (params.has('fresh')) localStorage.removeItem('wd');
+      if (params.has('existing')) {
+        const d = db();
+        d.accounts['ada@example.com'] = { password: params.get('existing'), verified: true };
+        save(d);
+      }
+      if (params.has('activate')) {
+        const d = db();
+        const mail = d.mail.find((m) => m.token === params.get('activate'));
+        if (mail && d.accounts[mail.email]) d.accounts[mail.email].verified = true;
+        save(d);
+        sessionStorage.setItem('activated', mail ? mail.email : 'bad token');
+      }
+      const note = (k, v) => sessionStorage.setItem(k, v);
+      const root = document.getElementById('root');
+      const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+      // The server's answers are page loads, as on Workday (a 303 to its sign-in page).
+      const go = (query) => setTimeout(() => (location.href = `workday-account.html?${query}`), 150);
+
+      function field(id, key, label, type, auto) {
+        return `<div data-automation-id="formField-${key}"><label for="${id}"><span>${label}<abbr aria-hidden="true">*</abbr></span></label>
+          <div><div style="width: 100%; max-width: 376px; min-width: 280px;"><input type="${type}" data-automation-id="${key}" id="${id}" aria-required="true" aria-invalid="false" autocomplete="${auto}" value=""></div><div class="hint"></div></div></div>`;
+      }
+      function submit(label, auto, text) {
+        return `<div data-automation-id="noCaptchaWrapper" style="position: relative" class="wrap"><div font-size="14" height="40" aria-label="${label}" role="button" tabindex="0" data-automation-id="click_filter"></div><button type="submit" data-automation-id="${auto}" tabindex="-2" aria-hidden="true">${text}</button></div>`;
+      }
+      const honeypot = `<div class="bee"><label for="bee">Enter website. This input is for robots only, do not enter if you're human.</label><input data-automation-id="beecatcher" id="bee" name="website" type="text"></div>`;
+
+      function render(view, opts = {}) {
+        const alert = opts.alert ? `<p data-automation-id="alertMessage" role="alert">${esc(opts.alert)}</p>` : '';
+        const error = opts.error ? `<div data-automation-id="errorMessage" role="alert"><span role="img" aria-label="Error"></span><p>${esc(opts.error)}</p></div>` : '';
+        let html = '';
+        if (view === 'chooser') {
+          html = `<h2 id="authViewTitle">Sign In</h2>
+            <div data-automation-id="richText"><p>We look forward to your application, which you can submit using the sign-in options listed below.</p></div>
+            <div><button type="button" aria-label="Sign in with Apple" data-automation-id="AppleSignInButton"><div>Sign in with Apple</div></button></div>
+            <div><button type="button" aria-label="Sign in with Google" data-automation-id="GoogleSignInButton"><div>Sign in with Google</div></button></div>
+            <div><span>OR</span><div><button data-automation-id="SignInWithEmailButton">Sign in with email</button></div></div>`;
+        } else if (view === 'signup') {
+          html = `<h3 id="authViewTitle">Create Account</h3>${alert}${error}
+            <div data-automation-id="createAccountIntroMessage"><p>Please create an account with us to keep up to date with your application.</p></div>
+            <div data-automation-id="passwordRulesList"><div data-automation-id="richText"><p>Password Requirements:</p><ul>${RULES.map((r) => `<li>${r}</li>`).join('')}</ul></div></div>
+            <form data-automation-id="signInFormo">
+              ${field('input-4', 'email', 'Email Address', 'text', 'email')}
+              ${field('input-5', 'password', 'Password', 'password', 'new-password')}
+              ${field('input-6', 'verifyPassword', 'Verify New Password', 'password', 'new-password')}
+              <div data-automation-id="richText"><p>Click <a href="https://example.com/disclosures" target="_blank">here</a> to view important disclosures.</p></div>
+              <div data-automation-id="formField-"><input id="input-9" type="checkbox" aria-checked="false" data-automation-id="createAccountCheckbox"><label for="input-9" style="display:inline">I have read and understand the disclosures.</label></div>
+              ${submit('Create Account', 'createAccountSubmitButton', 'Create Account')}
+            </form>
+            <div>Already have an account?<button data-automation-id="signInLink">Sign In</button></div>
+            <div><button data-automation-id="forgotPasswordLink">Forgot your password?</button></div>`;
+        } else {
+          html = `<h3 id="authViewTitle">Sign In</h3>${alert}${error}
+            <form data-automation-id="signInFormo">
+              ${field('input-4', 'email', 'Email Address', 'text', 'email')}
+              ${field('input-5', 'password', 'Password', 'password', 'current-password')}
+              ${submit(opts.viaEmail ? 'Submit' : 'Sign In', 'signInSubmitButton', 'Sign In')}
+            </form>
+            <div>Don't have an account yet?<button data-automation-id="createAccountLink">Create Account</button></div>
+            <div><button data-automation-id="forgotPasswordLink">Forgot your password?</button></div>`;
         }
-        sessionStorage.setItem('created', JSON.stringify({ email: $('input-4').value, password: pw }));
-      });
+        root.innerHTML = `<div data-automation-id="signInContent">${html}</div>${view === 'chooser' ? '' : honeypot}`;
+        if (opts.values) for (const [k, v] of Object.entries(opts.values)) root.querySelector(`[data-automation-id="${k}"]`).value = v;
+        wire(view, opts);
+      }
+
+      function wire(view, opts) {
+        const $ = (k) => root.querySelector(`[data-automation-id="${k}"]`);
+        const val = (k) => ($(k) ? $(k).value : '');
+        const shown = Date.now();
+        let human = false; // set by the click filter, as Workday's no-CAPTCHA test does
+        const filter = $('click_filter');
+        const wrapped = filter && filter.nextElementSibling;
+        if (filter) {
+          filter.addEventListener('click', () => {
+            human = true;
+            wrapped.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+          });
+          wrapped.addEventListener('click', (e) => {
+            if (!human) {
+              e.preventDefault();
+              note('underneath', 'clicked');
+            }
+          });
+        }
+        const form = root.querySelector('form');
+        if (form)
+          form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const ok = human && Date.now() - shown >= 500 && !val('beecatcher');
+            human = false;
+            if (!ok) return note('bot', 'caught');
+            const email = val('email').trim().toLowerCase();
+            const pw = val('password');
+            const d = db();
+            if (view === 'signup') {
+              const problems = [];
+              if (!/@/.test(email)) problems.push('email');
+              if (!(pw.length >= 12 && /[A-Z]/.test(pw) && /[a-z]/.test(pw) && /\d/.test(pw) && /[^A-Za-z0-9]/.test(pw))) problems.push('password');
+              if (pw !== val('verifyPassword')) problems.push('verifyPassword');
+              if (!$('createAccountCheckbox').checked) problems.push('createAccountCheckbox');
+              if (problems.length) {
+                for (const k of problems) $(k).setAttribute('aria-invalid', 'true');
+                return note('invalid', problems.join(','));
+              }
+              note('created', JSON.stringify({ email, password: pw, existed: !!d.accounts[email] }));
+              // A known email: back to sign in with nothing said. A new one: made, and a link emailed.
+              if (d.accounts[email]) return go('view=login');
+              d.accounts[email] = { password: pw, verified: false };
+              d.mail.push({ email, token: `tok-${Math.random().toString(36).slice(2, 10)}` });
+              save(d);
+              return go('view=login&notice=sent');
+            }
+            const account = d.accounts[email];
+            note('tries', String(+(sessionStorage.getItem('tries') || 0) + 1));
+            const values = { email: val('email'), password: pw };
+            if (!account || account.password !== pw) return render('login', { ...opts, alert: '', error: WRONG, values });
+            if (!account.verified) return render('login', { ...opts, alert: '', error: UNVERIFIED, values });
+            note('signedIn', JSON.stringify({ username: email, password: pw }));
+            setTimeout(() => (location.href = 'workday.html'), 150);
+          });
+        const sw = (k, view2, o) => $(k) && $(k).addEventListener('click', () => render(view2, o || {}));
+        sw('signInLink', 'login');
+        sw('createAccountLink', 'signup');
+        sw('SignInWithEmailButton', 'login', { viaEmail: true });
+        for (const k of ['AppleSignInButton', 'GoogleSignInButton'])
+          if ($(k)) $(k).addEventListener('click', () => note('otherService', k));
+        if ($('forgotPasswordLink')) $('forgotPasswordLink').addEventListener('click', () => note('forgot', 'clicked'));
+      }
+      document.querySelector('[data-automation-id="utilityButtonSignIn"]').addEventListener('click', () => note('header', 'clicked'));
+
+      const view = params.get('view') || 'signup';
+      const alert = params.get('notice') === 'sent' ? EMAIL_SENT : params.has('activate') ? 'Your account has been verified.' : '';
+      // Workday draws its form a moment after the page loads.
+      setTimeout(() => render(view, { alert }), 200);
     </script>
   </body>
 </html>

@@ -24,8 +24,10 @@
   const EMAIL_HINT = /e-?mail|inbox|mailbox|we (have |'ve |’ve )?sent|sent (you |to )|check your/i;
   const OTHER_CHANNEL =
     /authenticator|authentication app|google auth|text message|\bsms\b|texted|phone number ending|backup code|recovery code/i;
+  // Workday: "An email has been sent to you. Please verify your account." after Create Account, and "Verify your
+  // account before you sign in or request a verification email." when signed in to before that.
   const VERIFY_PAGE =
-    /(check|verify|confirm) your (e-?mail|inbox)|we('ve| have)? (just )?(sent|e-?mailed) (you )?(an? )?(e-?mail|link|verification|activation|confirmation)|(verification|activation|confirmation) (link|e-?mail) (has been |was )?sent|click the link (we sent|in the e-?mail)|activate your account/i;
+    /(check|verify|confirm) your (e-?mail|inbox)|we('ve| have)? (just )?(sent|e-?mailed) (you )?(an? )?(e-?mail|link|verification|activation|confirmation)|(verification|activation|confirmation) (link|e-?mail) (has been |was )?sent|an? (verification |confirmation |activation )?e-?mail has been sent|click the link (we sent|in the e-?mail)|(activate|verify|confirm) your account|account (is |has )?not (yet )?(been )?(verified|activated)/i;
 
   const state = { since: Date.now(), polling: null, done: new WeakSet(), observer: null, ended: false, link: null };
 
@@ -329,6 +331,8 @@
 
   let scheduled = false;
   let lastTextCheck = 0;
+  let textTimer = null;
+  const TEXT_EVERY = 4000;
   function check(options) {
     if (state.ended) return false;
     const target = document.querySelector('input') && findTarget();
@@ -336,8 +340,18 @@
       pollForCode(target);
       return true;
     }
-    // Reading the page's text is the costly part: at most every few seconds, and not once a link is awaited.
-    if (root === root.top && options && options.links !== false && !state.link && Date.now() - lastTextCheck > 4000) {
+    // Reading the page's text is the costly part: at most every few seconds, and not once a link is awaited. A look
+    // skipped for that is taken later (the notice may be drawn just after the last one).
+    if (root === root.top && options && options.links !== false && !state.link) {
+      const wait = TEXT_EVERY - (Date.now() - lastTextCheck);
+      if (wait > 0) {
+        if (!textTimer)
+          textTimer = setTimeout(() => {
+            textTimer = null;
+            if (!state.polling) check(state.options);
+          }, wait);
+        return false;
+      }
       lastTextCheck = Date.now();
       const text = (document.body && document.body.innerText) || '';
       if (VERIFY_PAGE.test(text.slice(0, 6000))) pollForLink();

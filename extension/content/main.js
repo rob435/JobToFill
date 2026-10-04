@@ -335,6 +335,9 @@
       return { url: location.href, frame: 'captcha', filled: 0, detected: 0 };
     // A fill that changes nothing keeps the previous one undoable.
     const history = [];
+    // A page the account flow landed on after one of its clicks (the application after signing in) is still drawing
+    // its form: it is filled once it has gone quiet.
+    if (payload.settleFirst) await settle(4000, 800);
     const { fields, results, context } = await scanWhenDrawn(profile);
     context.jobLocation = jobLocation(payload);
     // On a pure sign-up page in an account flow, the sign-up form's own terms box is part of creating the account.
@@ -627,7 +630,14 @@
     for (const [field, r] of countries) if ((await fillOne(field, r)) === 'filled') moved = true;
     if (moved) {
       await settle(2500, 400);
-      const again = scan(profile);
+      let again = scan(profile);
+      // Workday hides the whole form for a moment while it draws the new country's address fields: read it once it
+      // is back.
+      for (let waited = 0; again.fields.length < fields.length / 2 && waited < 8000; waited += 300) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        again = scan(profile);
+      }
+      if (again.fields.length < fields.length / 2) await settle(1500, 300);
       const known = new Set(fields.map((f) => f.el));
       fields.push(...again.fields.filter((field) => !known.has(field.el)));
       todo = again.fields
@@ -713,7 +723,7 @@
     // Only a job application's leftovers go to the AI (never a checkout's gift message or a sign-up page).
     if (!only && context.jobContext) report.pending = await pendingQuestions(profile, context, { peek: !!payload.ai });
     // What kind of page this is now (sign-in, sign-up, emailed code…), for signing in and creating accounts.
-    report.account = JTF.flow.analyze(scan(profile));
+    report.account = JTF.flow.analyze(scan(profile), { ignore: payload.accountIgnore });
     return report;
   }
 
@@ -1245,9 +1255,9 @@
     version: 1,
     fill,
     applyAnswers,
-    accountState: (payload) => JTF.flow.analyze(accountScan(payload)),
+    accountState: (payload) => JTF.flow.analyze(accountScan(payload), { ignore: payload && payload.ignore }),
     accountClick(which, payload) {
-      const res = JTF.flow.click(which, accountScan(payload));
+      const res = JTF.flow.click(which, accountScan(payload), { ignore: payload && payload.ignore });
       return Object.assign({}, res, { state: res.state ? { kind: res.state.kind, ready: res.state.ready } : null });
     },
     accountWait: (token, payload) =>

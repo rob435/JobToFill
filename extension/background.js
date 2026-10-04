@@ -161,12 +161,11 @@ async function fillPayload(tabId) {
  * types even when they hold something), consents (tick acknowledgements whatever the setting says), ai
  * (false: no AI answers), aiToast (say on the page when the AI answers are in), waitAi, quick (a fill
  * Quick apply makes itself), flow (a fill the person started: on a sign-in or sign-up page it may sign in or
- * create the account, see accountStep).
+ * create the account, see accountStep), auto (a fill the account flow made itself, after one of its clicks).
  */
 async function fillTab(tabId, options) {
   const opts = { toast: false, ...options };
   const { payload, letter } = await fillPayload(tabId);
-  const { profile } = payload;
   if (opts.consents) payload.settings = { ...payload.settings, consents: true };
   const { settings } = payload;
   if (opts.only) Object.assign(payload, { only: opts.only, force: opts.force !== false });
@@ -183,7 +182,23 @@ async function fillTab(tabId, options) {
   const aiReady = opts.only || opts.ai === false ? { ok: false, reason: 'off' } : await aiAvailable(settings);
   payload.ai = aiReady.ok;
   payload.accountFlow = !!opts.flow && !opts.only && settings.accountFlow !== false;
+  if (opts.auto) payload.settleFirst = true;
+  if (payload.accountFlow) {
+    const flow = await getFlow(tabId);
+    if (flow) payload.accountIgnore = flowIgnore(flow);
+  }
 
+  if (payload.accountFlow) flowEnter(tabId);
+  try {
+    return await fillFrames(tabId, opts, payload, letter, aiReady);
+  } finally {
+    if (payload.accountFlow) flowLeave(tabId);
+  }
+}
+
+/** fillTab, once its payload is ready: the frames' fills, the AI's turn, the account flow's next step. */
+async function fillFrames(tabId, opts, payload, letter, aiReady) {
+  const { profile, settings } = payload;
   let frames;
   const names = [profile.personal.firstName, profile.personal.lastName, profile.personal.preferredName];
   beginFill(tabId, profile.contact.email, letter && letter.id, names);
@@ -379,8 +394,9 @@ function newCredential(host, username, password, portal, note) {
   return cred;
 }
 
-// tabId -> where the last password filled in that tab came from ({ source, host, portal, username }), so an account
-// created with your default password can be remembered. Never the password itself.
+// tabId -> where the last password filled in that tab came from ({ source, host, portal, username, id, isDefault }),
+// so an account created with your default password can be remembered, and a login that turns out wrong forgotten.
+// Never the password itself.
 const lastSecrets = new Map();
 
 /** The password rules a sign-up page sent (its help text and attributes), as passwords.parseRules reads them. */
@@ -422,8 +438,14 @@ async function secretsFor(msg, sender) {
     const personal = { email: fill.email, names: fill.names };
     const problems = (pw) => (rules ? passwords.checkPassword(pw, rules, personal) : []);
     const fallback = settings.passwordStrategy === 'default' ? data.defaultPassword || '' : '';
-    let cred = passwords.findCredential(data, host, portal);
+    // Signing in for you to an account that turned out to exist already: your default password, whatever is saved.
+    const flow = !signup && sender.tab ? await getFlow(sender.tab.id) : null;
+    let cred = flow && flow.useDefault && data.defaultPassword ? null : passwords.findCredential(data, host, portal);
     let source = cred ? 'saved' : null;
+    if (!cred && flow && flow.useDefault && data.defaultPassword) {
+      cred = { username: fill.email || '', password: data.defaultPassword };
+      source = 'default';
+    }
     // A login saved for this host that this sign-up page wouldn't take (made for another employer here): a new one.
     if (cred && signup && problems(cred.password).length && cred.portal !== portal) cred = source = null;
     if (!cred && signup) {
@@ -452,7 +474,14 @@ async function secretsFor(msg, sender) {
     if (cred) out.credential = { username: cred.username || fill.email || '', password: cred.password, source };
     else out.notes.push(`No saved password for ${host}.`);
     if (source && sender.tab)
-      lastSecrets.set(sender.tab.id, { source, host, portal, username: (cred && cred.username) || fill.email || '' });
+      lastSecrets.set(sender.tab.id, {
+        source,
+        host,
+        portal,
+        username: (cred && cred.username) || fill.email || '',
+        id: (cred && cred.id) || null,
+        isDefault: !!cred && !!data.defaultPassword && cred.password === data.defaultPassword,
+      });
   }
 
   if (msg.card) {
@@ -1562,12 +1591,20 @@ async function otpFor(msg, sender) {
     if (found.relevance !== 'strong') return { waiting: true };
     await markUsed(found.id);
     const tab = sender.tab || {};
-    await api.tabs.create({
+    const opened = await api.tabs.create({
       url: found.link,
       active: false,
       index: tab.index != null ? tab.index + 1 : undefined,
       openerTabId: tab.id,
     });
+    // Creating an account for you: once the link has done its work, sign in where the account was made.
+    const flow = await getFlow(tab.id);
+    if (flow && flow.stage === 'verify-email') {
+      flow.stage = 'link-opened';
+      flow.linkOpened = true;
+      await putFlow(flow);
+      afterVerifyLink(tab.id, opened && opened.id).catch(() => {});
+    }
     return { opened: true, from };
   }
   if (found.relevance === 'strong') {
@@ -1656,6 +1693,11 @@ async function insertOtp(tab, info, frameIds) {
  *   - sign-up page: once everything is in and any CAPTCHA is solved by the person, click "Create account"; the
  *     code it emails is typed in by the code watcher, which then confirms that step;
  *   - "An account with this email already exists": go back to sign in, with the saved or default password.
+ *     Workday says it without words: "Create Account" with a known email lands on its sign-in page with nothing
+ *     on it, where a new account gets "An email has been sent to you. Please verify your account.";
+ *   - "Please verify your account": the link the site emailed is opened (with Nylas connected), then sign in;
+ *   - a sign-in refused with a password JobToFill made or saved: once more with your default password;
+ *   - a page of ways in (Workday's "Sign in with Google / Apple / email"): "Sign in with email".
  * One flow per tab, kept for minutes in session storage, at most FLOW_CLICKS clicks, only on the same site (and
  * employer), ended when the tab goes elsewhere. The page side (content/account.js) only clicks controls whose
  * wording passes JTF.accounts.intent(), and re-checks the page before each click.
@@ -1663,6 +1705,8 @@ async function insertOtp(tab, info, frameIds) {
 const FLOW_TTL = 10 * 60e3;
 const FLOW_CLICKS = 6;
 const FLOW_WAIT = 5 * 60e3; // how long a CAPTCHA or the terms are waited for
+const VERIFY_WAIT = 6 * 60e3; // how long the email with the verification link is waited for (content/otp.js polls 5)
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const flowKey = (tabId) => `flow:${tabId}`;
 
 async function getFlow(tabId) {
@@ -1744,27 +1788,52 @@ async function rememberDefault(tabId, page) {
   return id;
 }
 
-/** The site said the account already existed: it wasn't made with your default password after all. */
-async function forgetRemembered(flow) {
-  if (!flow.remembered) return;
-  const id = flow.remembered;
-  flow.remembered = null;
-  await passwords.update((data) => (data.credentials = data.credentials.filter((c) => c.id !== id)));
+/**
+ * The account existed before this flow: the logins it saved on the way (one made up for the sign-up page, one
+ * "Created with your default password") aren't its password after all.
+ */
+async function forgetMade(flow) {
+  const ids = [flow.remembered, flow.generated].filter(Boolean);
+  flow.remembered = flow.generated = null;
+  if (ids.length)
+    await passwords.update((data) => (data.credentials = data.credentials.filter((c) => !ids.includes(c.id))));
 }
+
+/**
+ * Signed in with your default password where the login saved for the site (or none) didn't work: keep it for next
+ * time, in place of the one that failed.
+ */
+async function rememberSignin(flow) {
+  const who = flow.signin;
+  if (!who) return;
+  await passwords.update((data) => {
+    if (!data.defaultPassword) return;
+    const old = data.credentials.find((c) => c.id === who.stale);
+    if (old) Object.assign(old, { password: data.defaultPassword, note: 'Your default password signed in' });
+    else if (!passwords.findCredential(data, who.host, who.portal, true))
+      data.credentials.push(
+        newCredential(who.host, who.username, data.defaultPassword, who.portal, 'Your default password signed in'),
+      );
+  });
+}
+
+/** What is still on the page from before and means nothing now (sent to the page with each look and click). */
+const flowIgnore = (flow) => [...(flow.seen || []), ...(flow.stale || [])];
 
 /** Click one of the page's account controls (after the toast): record it, or end the flow and say why not. */
 function clickStep(tabId, flow, page, which, line, after) {
-  // The same click on the same kind of page moments ago: the page hasn't answered it yet. Never click twice.
+  // The same click on the same kind of page moments ago: the page hasn't answered it yet. Never click twice, unless
+  // it is the one more try with another password (the page answered the first: "wrong password").
+  const retrying = !!(flow.stale && flow.stale.length);
   const last = flow.clicks[flow.clicks.length - 1];
-  if (last && last.which === which && last.kind === page.kind && Date.now() - last.at < 30e3)
+  if (last && last.which === which && last.kind === page.kind && Date.now() - last.at < 30e3 && !retrying)
     return { lines: [], clicked: flow.clicks.map((c) => c.label) };
-  flow.clicks.push({
-    which,
-    label: which === 'to-signup' ? page.toSignup : which === 'to-signin' ? page.toSignin : page.submit,
-    kind: page.kind,
-    url: page.url,
-    at: Date.now(),
-  });
+  const labels = { 'to-signup': page.toSignup, 'to-signin': page.toSignin, 'to-email': page.toEmail };
+  flow.clicks.push({ which, label: labels[which] || page.submit, kind: page.kind, url: page.url, at: Date.now() });
+  // An old "wrong password" is passed over for this one click (after the password was replaced), then counts again:
+  // a sign-in that fails as well shows it again. That click's answer is given longer to arrive.
+  const ignore = flowIgnore(flow);
+  flow.stale = null;
   if (after) Object.assign(flow, after);
   return {
     lines: [line],
@@ -1772,16 +1841,21 @@ function clickStep(tabId, flow, page, which, line, after) {
     act: async () => {
       // The code it emails: watched for in this tab, whatever "Fill codes by themselves" says.
       if (which === 'submit' && page.kind === 'signup' && (await otpReady())) await watchOtp(tabId).catch(() => {});
+      // Which password went in, before the next page's fill says another.
+      const made = which === 'submit' && page.kind === 'signup' ? lastSecrets.get(tabId) : null;
       const { profile } = await store.getActive();
-      const [res] = await callFrames(tabId, 'accountClick', [which, { profile }], [page.frameId]).catch(() => [null]);
+      const [res] = await callFrames(tabId, 'accountClick', [which, { profile, ignore }], [page.frameId]).catch(() => [
+        null,
+      ]);
       if (res && res.clicked) {
-        if (which === 'submit' && page.kind === 'signup') {
+        if (made) {
+          flow.generated = made.source === 'generated' ? made.id : null;
           flow.remembered = await rememberDefault(tabId, page).catch(() => null);
-          if (flow.remembered) await putFlow(flow);
+          await putFlow(flow);
         }
         // Pages that change in place (Workday's sign-in turning into its sign-up, an error under the form) have no
         // load to continue from: look again shortly. A real page load reschedules this.
-        scheduleFlow(tabId, which === 'submit' ? 3000 : 2000);
+        scheduleFlow(tabId, which !== 'submit' ? 2000 : retrying ? 8000 : 3000);
         return;
       }
       await endFlow(tabId);
@@ -1795,8 +1869,128 @@ function clickStep(tabId, flow, page, which, line, after) {
   };
 }
 
-/** The next step on a sign-in, sign-up or code page: { lines, act?, end? }. */
-async function flowDecide(tabId, flow, page) {
+/** Fill the sign-in page again with another password (the one `flow.useDefault` or the saved logins now give). */
+function refillStep(tabId, flow, line) {
+  return {
+    lines: [line],
+    act: () =>
+      fillTab(tabId, {
+        toast: true,
+        flow: true,
+        auto: true,
+        replace: ['account.password'],
+        consents: flow.quick || undefined,
+        quick: false,
+      }),
+  };
+}
+
+/**
+ * A sign-in page during a flow: what the site's answer to the last step means. Returns a step, or { line } to say
+ * before signing in as usual, or null.
+ */
+async function loginStep(tabId, flow, page, opts) {
+  const host = page.host;
+  const stop = (line) => ({ lines: [line], end: true, clicked: flow.clicks.map((c) => c.label) });
+  const tried = lastSecrets.get(tabId);
+  const made = flow.stage === 'registered';
+  // Waiting for the email: another look at the page changes nothing, but your own Fill means you verified it.
+  if (flow.stage === 'verify-email') {
+    if (opts && opts.auto) return { lines: [] };
+    flow.stage = 'link-opened';
+  }
+
+  // The account was made and waits for the link the site emailed (or a sign-in found it not verified yet).
+  if (page.verifyEmail && !page.badLogin) {
+    if (flow.stage === 'link-opened') return null;
+    if (flow.linkOpened)
+      return stop(
+        `${host} still says your account isn’t verified: open the link in its email yourself, then press Fill.`,
+      );
+    flow.stage = 'verify-email';
+    // That notice stays on the page: it says nothing about the sign-in that follows.
+    flow.seen = [...new Set([...(flow.seen || []), ...(page.notices || [])])];
+    const what = made ? `Account created on ${host}.` : `${host} wants your account verified first.`;
+    if (await otpReady()) {
+      flow.expires = Math.max(flow.expires, Date.now() + VERIFY_WAIT);
+      return {
+        lines: [`${what} Waiting for the email that verifies it: JobToFill opens its link, then signs you in.`],
+        act: () => watchOtp(tabId).catch(() => {}),
+      };
+    }
+    return stop(
+      `${what} Open the link it emailed you, then press Fill: JobToFill signs you in. (Connect your inbox under JobToFill › Email codes to have the link opened for you.)`,
+    );
+  }
+
+  if (page.badLogin) {
+    const data = await passwords.read();
+    // A password JobToFill made or saved didn't work: your default password, once.
+    if (!flow.retried && data.defaultPassword && tried && tried.host === host && !tried.isDefault) {
+      flow.retried = true;
+      flow.useDefault = true;
+      flow.stale = page.notices || [];
+      flow.signin = {
+        host,
+        portal: page.portal || '',
+        username: tried.username,
+        stale: tried.source === 'saved' ? tried.id : null,
+      };
+      const ours = !!tried.id && [flow.generated, flow.remembered].includes(tried.id);
+      // Logins saved on the way here aren't the account's password: it existed before.
+      await forgetMade(flow);
+      flow.stage = 'retry';
+      const which = ours || tried.source !== 'saved' ? 'the password JobToFill made' : 'the password saved for it';
+      return refillStep(tabId, flow, `${host} didn’t take ${which}: trying your default password…`);
+    }
+    await forgetMade(flow);
+    const what =
+      tried && tried.isDefault
+        ? flow.signin && flow.signin.stale
+          ? 'the password saved for it or your default password'
+          : 'your default password'
+        : 'the password JobToFill has for it';
+    const already =
+      flow.made || flow.accountExisted ? `An account with your email already exists on ${host}, but ` : '';
+    const sentence = already ? `${already}it didn’t take ${what}` : `${host} didn’t take ${what}`;
+    return stop(
+      `${sentence}. Use “Forgot your password?” on this page to set a new one (your default password, if you like), then press Fill.`,
+    );
+  }
+
+  // The box still holds a login just found wrong (its replacement is on its way): never signed in with.
+  if (flow.useDefault && tried && tried.host === host && !tried.isDefault) return { lines: [] };
+
+  // Sent back to sign in right after "Create Account", with nothing said: Workday's way of saying the email already
+  // has an account (a new one gets "An email has been sent to you"). The password just made up isn't its password.
+  if (made && (page.system === 'workday' || flow.family === 'workday') && !page.errors.length) {
+    flow.accountExisted = true;
+    flow.stage = 'existing';
+    const madeUp = !!(tried && tried.id && tried.id === flow.generated);
+    await forgetMade(flow);
+    const data = await passwords.read();
+    const saved = passwords.findCredential(data, host, page.portal);
+    if (madeUp && !saved && !data.defaultPassword)
+      return stop(
+        `An account with your email already exists on ${host}, and JobToFill doesn’t have its password. Sign in yourself (“Forgot your password?” sets a new one).`,
+      );
+    const which = saved ? 'the password saved for it' : 'your default password';
+    if (!saved) {
+      flow.useDefault = true;
+      flow.signin = { host, portal: page.portal || '', username: (tried && tried.username) || '', stale: null };
+    }
+    const line = `An account with your email already exists on ${host}: signing in with ${which}…`;
+    if (madeUp) return refillStep(tabId, flow, line);
+    return { line };
+  }
+  return null;
+}
+
+/**
+ * The next step on a sign-in, sign-up or code page: { lines, act?, end? }. `opts.auto`: a look the flow took itself
+ * (after one of its clicks), not a Fill you pressed.
+ */
+async function flowDecide(tabId, flow, page, opts) {
   const host = page.host;
   const stop = (line) => ({ lines: [line], end: true, clicked: flow.clicks.map((c) => c.label) });
   if (page.kind === 'verify') {
@@ -1811,9 +2005,11 @@ async function flowDecide(tabId, flow, page) {
   }
   if (flow.clicks.length >= FLOW_CLICKS)
     return stop(`JobToFill stopped after ${FLOW_CLICKS} steps: finish here yourself.`);
+  if (page.kind === 'chooser')
+    return clickStep(tabId, flow, page, 'to-email', `Choosing “${page.toEmail}” on ${host}…`);
   if (page.kind === 'signup' && page.exists) {
-    flow.accountExists = true;
-    await forgetRemembered(flow).catch(() => {});
+    flow.accountExists = flow.accountExisted = true;
+    await forgetMade(flow).catch(() => {});
     if (page.toSignin)
       return clickStep(
         tabId,
@@ -1825,10 +2021,12 @@ async function flowDecide(tabId, flow, page) {
       );
     return stop(`An account with your email already exists on ${host}: sign in with your password.`);
   }
-  if (page.kind === 'login' && page.badLogin)
-    return stop(
-      `Signing in to ${host} didn’t work. Check the password saved for it under JobToFill › Passwords & cards, or reset it on the site.`,
-    );
+  let said = '';
+  if (page.kind === 'login') {
+    const step = await loginStep(tabId, flow, page, opts);
+    if (step && step.line) said = step.line;
+    else if (step) return step;
+  }
   if (page.errors.length) return stop(`The page says: “${page.errors[0]}”. Fix that and press Fill again.`);
   if (page.kind === 'login' && !flow.accountExists && !(await accountKnown(page))) {
     if (page.toSignup && flow.stage !== 'to-signin') {
@@ -1879,9 +2077,12 @@ async function flowDecide(tabId, flow, page) {
     return clickStep(tabId, flow, page, 'submit', `Creating your account on ${host} (clicking “${page.submit}”)…`, {
       stage: 'registered',
       accountExists: true,
+      made: true,
     });
-  return clickStep(tabId, flow, page, 'submit', `Signing you in to ${host} (clicking “${page.submit}”)…`, {
+  const signing = `Signing you in to ${host} (clicking “${page.submit}”)…`;
+  return clickStep(tabId, flow, page, 'submit', said ? `${said}\n${signing}` : signing, {
     stage: 'signin',
+    linkOpened: flow.linkOpened || flow.stage === 'link-opened',
   });
 }
 
@@ -1900,11 +2101,12 @@ async function accountStep(tabId, frames, settings, opts) {
   const states = frames.filter((f) => f.account).map((f) => ({ ...f.account, frameId: f.frameId }));
   const applying = states.some((s) => s.kind === 'application');
   const pick = (kind) => states.find((s) => s.kind === kind && s.pure);
-  const page = applying ? null : pick('signup') || pick('login') || pick('verify');
+  const page = applying ? null : pick('signup') || pick('login') || pick('verify') || pick('chooser');
   if (!page) {
     if (!flow) return null;
     await endFlow(tabId);
     // Landed on the application after signing in: say what was clicked on the way.
+    if (applying && flow.useDefault) await rememberSignin(flow).catch(() => {});
     if (applying && flow.clicks.length)
       return {
         lines: [`Signed in: JobToFill clicked ${quote(flow.clicks.map((c) => c.label))} on the way here.`],
@@ -1938,7 +2140,7 @@ async function accountStep(tabId, frames, settings, opts) {
     };
   if (page.portal && !flow.portal) flow.portal = page.portal;
   flow.waiting = null;
-  const step = await flowDecide(tabId, flow, page);
+  const step = await flowDecide(tabId, flow, page, { auto: !!opts.auto });
   if (step.end) await endFlow(tabId);
   else await putFlow(flow);
   return step;
@@ -1957,20 +2159,72 @@ function scheduleFlow(tabId, delay) {
   );
 }
 
+// One look at a tab's page at a time: two at once (a page load and a script-made change moments apart) would each
+// decide on their own, one with a password the other has just replaced. A look asked for meanwhile comes after.
+const flowBusy = new Map(); // tabId -> { n, again }
+function flowEnter(tabId) {
+  const busy = flowBusy.get(tabId) || { n: 0, again: false };
+  busy.n++;
+  flowBusy.set(tabId, busy);
+}
+function flowLeave(tabId) {
+  const busy = flowBusy.get(tabId);
+  if (!busy || --busy.n > 0) return;
+  flowBusy.delete(tabId);
+  // A look already scheduled (after a click, for its answer) comes anyway.
+  if (busy.again && !flowTimers.has(tabId)) scheduleFlow(tabId, 300);
+}
+
 async function continueFlow(tabId) {
-  // Only after one of the flow's own clicks (a wait it was in ended with the page it was on).
-  const flow = await getFlow(tabId);
-  if (!flow || !flow.clicks.length) return;
-  // Mid-navigation: the page's "complete" brings this back.
-  const tab = await api.tabs.get(tabId).catch(() => null);
-  if (!tab || tab.status === 'loading') return;
-  // Pages built by scripts (Workday) show their form a moment after loading.
-  for (let i = 0; i < 4; i++) {
-    const summary = await fillTab(tabId, { toast: true, flow: true, consents: flow.quick || undefined, quick: false });
-    if (summary.error || summary.detected || summary.account) return;
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    if (!(await getFlow(tabId))) return;
+  const busy = flowBusy.get(tabId);
+  if (busy) {
+    busy.again = true;
+    return;
   }
+  flowEnter(tabId);
+  try {
+    // Only after one of the flow's own clicks (a wait it was in ended with the page it was on).
+    const flow = await getFlow(tabId);
+    if (!flow || !flow.clicks.length) return;
+    // Mid-navigation: the page's "complete" brings this back.
+    const tab = await api.tabs.get(tabId).catch(() => null);
+    if (!tab || tab.status === 'loading') return;
+    // Pages built by scripts (Workday) show their form a moment after loading.
+    for (let i = 0; i < 4; i++) {
+      const summary = await fillTab(tabId, {
+        toast: true,
+        flow: true,
+        auto: true,
+        consents: flow.quick || undefined,
+        quick: false,
+      });
+      if (summary.error || summary.detected || summary.account) return;
+      await sleep(1500);
+      if (!(await getFlow(tabId))) return;
+    }
+  } finally {
+    flowLeave(tabId);
+  }
+}
+
+/**
+ * The link that verifies a new account is open in a tab beside it: once that page has loaded and done its work, close
+ * it (unless it went to another site) and sign in where the account was made.
+ */
+async function afterVerifyLink(tabId, linkTabId) {
+  const deadline = Date.now() + 30e3;
+  while (linkTabId != null && Date.now() < deadline) {
+    const t = await api.tabs.get(linkTabId).catch(() => null);
+    if (!t || t.status === 'complete') break;
+    await sleep(500);
+  }
+  // Pages built by scripts (Workday) check the link's token after they load.
+  await sleep(4000);
+  const flow = await getFlow(tabId);
+  if (!flow || flow.stage !== 'link-opened') return;
+  const t = linkTabId != null ? await api.tabs.get(linkTabId).catch(() => null) : null;
+  if (t && sameFlowSite(flow, t.url || '', '')) await api.tabs.remove(linkTabId).catch(() => {});
+  await continueFlow(tabId);
 }
 
 api.tabs.onUpdated.addListener(async (tabId, info, tab) => {
@@ -2013,13 +2267,18 @@ async function flowReady(msg, sender) {
     return { ok: true };
   }
   const { profile } = await store.getActive();
-  const [state] = await callFrames(tabId, 'accountState', [{ profile }], [sender.frameId]).catch(() => [null]);
+  const [state] = await callFrames(
+    tabId,
+    'accountState',
+    [{ profile, ignore: flowIgnore(flow) }],
+    [sender.frameId],
+  ).catch(() => [null]);
   const page = state && { ...state, frameId: sender.frameId };
   if (!page || !page.pure || !['login', 'signup', 'verify'].includes(page.kind)) {
     await endFlow(tabId);
     return { ok: false };
   }
-  const step = await flowDecide(tabId, flow, page);
+  const step = await flowDecide(tabId, flow, page, { auto: true });
   if (step.end) await endFlow(tabId);
   else await putFlow(flow);
   if (settings.toast !== false && step.lines.length) await showToast(tabId, step.lines.join('\n'), { duration: 15000 });
@@ -2036,7 +2295,12 @@ async function otpFilled(msg, sender) {
   if (settings.accountFlow === false) return { ok: false };
   await new Promise((resolve) => setTimeout(resolve, 600));
   const { profile } = await store.getActive();
-  const [state] = await callFrames(tabId, 'accountState', [{ profile }], [sender.frameId]).catch(() => [null]);
+  const [state] = await callFrames(
+    tabId,
+    'accountState',
+    [{ profile, ignore: flowIgnore(flow) }],
+    [sender.frameId],
+  ).catch(() => [null]);
   if (!state || state.kind !== 'verify' || !state.pure || !state.ready || flow.clicks.length >= FLOW_CLICKS)
     return { ok: false };
   const page = { ...state, frameId: sender.frameId };

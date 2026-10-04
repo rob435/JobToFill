@@ -35,6 +35,9 @@
     /^(?:(?:sign|log) ?in(?: here| now| instead)?|login|already (?:have an account|registered|a member)(?: (?:sign|log) ?in(?: here| now)?)?|(?:back|go|return) to (?:sign|log) ?in|existing (?:user|candidate|applicant)s?(?: (?:sign|log) ?in)?)$/;
   const VERIFY =
     /^(?:continue|verify|confirm|next|ok|proceed|verify (?:code|e ?mail(?: address)?|and continue|my e ?mail)|confirm (?:code|e ?mail(?: address)?))$/;
+  // Workday's "Sign in with email" beside "Sign in with Google / Apple / LinkedIn": your email and a password.
+  const TO_EMAIL =
+    /^(?:(?:sign|log) ?(?:in|on|up)|continue|register) (?:with|using|via) (?:your |an? )?e ?mail(?: address)?(?: and password)?$|^use (?:your )?e ?mail(?: address)?(?: instead)?$/;
 
   /**
    * What clicking a control with this text would do, for a page of the given kind:
@@ -43,6 +46,7 @@
    *   'to-signup' a link from a sign-in page to the sign-up page ("Create your account", "New user?")
    *   'to-signin' a link back to sign in ("Already have an account? Sign in")
    *   'verify'    the submit of an emailed-code step ("Continue", "Verify")
+   *   'to-email'  a sign-in page's "Sign in with email", beside other services' buttons
    *   'only'      "Submit" / "Continue" / "Next": only as the one submit of a pure account form
    * or null. Anything on the deny-list is null.
    */
@@ -53,6 +57,7 @@
     if (SIGN_IN_TO.test(t))
       return NEVER.test(t.replace(/^(sign|log) ?in (to|and) (apply|continue)/, '')) ? null : 'signin';
     if (NEVER.test(t)) return null;
+    if (TO_EMAIL.test(t)) return 'to-email';
     if (SIGN_IN.test(t)) return 'signin';
     if (SIGN_UP.test(t)) return 'signup';
     if (TO_SIGN_UP.test(t)) return 'to-signup';
@@ -74,10 +79,19 @@
   const BAD_LOGIN =
     /\b(invalid|incorrect|wrong|unrecogni[sz]ed|unknown) (user ?name|e ?mail( address)?|password|credentials|login|sign in|log in|combination)\b|\b(user ?name|e ?mail( address)?|password|login|credentials) (and|or|\/) (password|user ?name|e ?mail)( combination)? (is |are |was |were |you entered )*(invalid|incorrect|wrong|not (valid|correct|recogni[sz]ed))|\b(could not|couldn t|unable to|can t|cannot) (sign|log) (you )?in\b|\b(login|sign in|log in|authentication) (failed|unsuccessful|error)\b|\bpassword (is |was )?(incorrect|invalid|wrong)\b|\b(kennwort|passwort) ungultig\b|\bungultig(e)? (e mail|anmeldedaten|zugangsdaten)/;
 
-  /** What a page's messages (errors, alerts) say about the account: { exists, badLogin }. */
+  // The account was made and waits for the link the site emailed: Workday's "An email has been sent to you. Please
+  // verify your account." after "Create Account", and its "Verify your account before you sign in or request a
+  // verification email." when it is signed in to too soon.
+  const VERIFY_EMAIL =
+    /\b(an? |the )?(verification |confirmation |activation )?e ?mail (has been|was|have been|is being) sent\b|\bwe( ve| have)? (just )?(sent|e ?mailed) (you )?(an? )?(e ?mail|link|verification|activation|confirmation)\b|\b(please )?(verify|confirm|activate) your (account|e ?mail( address)?)\b|\bcheck your (e ?mail|inbox)\b|\b(account|e ?mail( address)?) (is |has )?not (yet )?(been )?(verified|activated|confirmed)\b|\bunverified (account|e ?mail)\b/;
+
+  /** Does this one message say a link to verify the account was emailed (not an error to fix)? */
+  const isVerifyNotice = (text) => VERIFY_EMAIL.test(norm(text).slice(0, 600));
+
+  /** What a page's messages (errors, alerts) say about the account: { exists, badLogin, verifyEmail }. */
   function readMessages(text) {
     const t = norm(text).slice(0, 4000);
-    return { exists: EXISTS.test(t), badLogin: BAD_LOGIN.test(t) };
+    return { exists: EXISTS.test(t), badLogin: BAD_LOGIN.test(t), verifyEmail: VERIFY_EMAIL.test(t) };
   }
 
   // Frames that belong to CAPTCHA services: nothing is filled or clicked inside them.
@@ -111,7 +125,7 @@
     return '';
   }
 
-  const accounts = { intent, denied, readMessages, isCaptchaFrame, portal };
+  const accounts = { intent, denied, readMessages, isVerifyNotice, isCaptchaFrame, portal };
   JTF.accounts = accounts;
   if (typeof module === 'object' && module.exports) module.exports = accounts;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

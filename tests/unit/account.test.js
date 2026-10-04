@@ -98,8 +98,38 @@ test('what a page says after a submit', () => {
     '*indicates a required field.',
   ]) {
     const said = accounts.readMessages(t);
-    assert.deepEqual(said, { exists: false, badLogin: false }, t);
+    assert.deepEqual(said, { exists: false, badLogin: false, verifyEmail: false }, t);
   }
+  // Workday's own words (live pages, October 2026).
+  const wrong = 'You may have entered the wrong email address or password or your account might be locked.';
+  assert.deepEqual(accounts.readMessages(wrong), { exists: false, badLogin: true, verifyEmail: false });
+  for (const t of [
+    'An email has been sent to you. Please verify your account.',
+    'Verify your account before you sign in or request a verification email.',
+    'We’ve sent you a verification email.',
+    'Check your inbox to activate your account.',
+  ]) {
+    assert.equal(accounts.readMessages(t).verifyEmail, true, t);
+    assert.equal(accounts.readMessages(t).badLogin, false, t);
+    assert.equal(accounts.isVerifyNotice(t), true, t);
+  }
+  assert.equal(accounts.isVerifyNotice(wrong), false);
+  assert.equal(
+    accounts.isVerifyNotice('Please create an account with us to keep up to date with your application.'),
+    false,
+  );
+});
+
+test('Workday’s “Sign in with email” beside other services’ buttons', () => {
+  for (const t of [
+    'Sign in with email',
+    'Sign In with Email',
+    'Continue with email',
+    'Sign in with your email address',
+  ])
+    assert.equal(accounts.intent(t), 'to-email', t);
+  for (const t of ['Sign in with Google', 'Sign in with Apple', 'Sign in with LinkedIn', 'Apply with email'])
+    assert.equal(accounts.intent(t), null, t);
 });
 
 test('the employer behind a shared portal host, and CAPTCHA frames', () => {

@@ -378,19 +378,212 @@ test(
   },
 );
 
+/* ---------------------------------------------------------------- Workday */
+
+// workday-account.html is rebuilt from the live pages: a known email is sent back to sign in with nothing said, a new
+// one gets "An email has been sent to you. Please verify your account." and a link by email.
+const wd = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('wd') || 'null')).catch(() => null);
+const WD_DEFAULT = 'Moodys-Pass-24'; // fits Workday's rules: 12 or more, upper, lower, number, special
+
+/** The text of JobToFill's toast (in a closed shadow root: CDP sees through it). */
+async function toastText(page) {
+  const cdp = await h.context.newCDPSession(page);
+  try {
+    const { root } = await cdp.send('DOM.getDocument', { depth: -1, pierce: true });
+    const texts = [];
+    const walk = (node, inUi) => {
+      const ui = inUi || /^jobtofill/i.test(node.nodeName);
+      if (ui && node.nodeType === 3) texts.push(node.nodeValue);
+      for (const child of [...(node.children || []), ...(node.shadowRoots || [])]) walk(child, ui);
+    };
+    walk(root, false);
+    return texts.join(' ').replace(/\s+/g, ' ');
+  } finally {
+    await cdp.detach();
+  }
+}
+
+function verifyMail(token, port) {
+  return {
+    id: `msg-verify-${token}`,
+    grant_id: NYLAS.grantId,
+    subject: 'Verify your candidate account',
+    from: [{ name: 'Acme Careers', email: 'acme@myworkday.com' }],
+    to: [{ email: NYLAS.email }],
+    date: Math.floor(Date.now() / 1000),
+    snippet: 'Please verify your account',
+    // Where the link sends you afterwards names the sign-in page: that doesn't make it a sign-in link.
+    body: `<p>Hello,</p><p>Thank you for creating a candidate account with Acme. Please verify your account by clicking the link below.</p>
+      <p><a href="http://localhost:${port}/workday-account.html?activate=${token}&redirect=%2Fen-US%2Facme%2Flogin">Verify Account</a></p>
+      <p><a href="https://www.myworkday.com/privacy">Privacy Policy</a> · <a href="http://localhost:${port}/unsubscribe">Unsubscribe</a></p>`,
+  };
+}
+
+const useDefault = async (password = WD_DEFAULT) => {
+  await h.setSettings({ passwordStrategy: 'default' });
+  await h.bg((pw) => globalThis.JTF.passwords.update((d) => (d.defaultPassword = pw)), password);
+};
+
 test(
-  'Workday “Create Account”: the terms box is ticked and the click lands on its click filter',
+  'Workday “Create Account”: the terms box is ticked, the click lands on its click filter, the honeypot stays empty',
   { skip },
   async () => {
-    const page = await h.open('workday-account.html');
+    const page = await h.open('workday-account.html?fresh=1');
+    const tabId = await h.tabId(page);
     const r = await flowFill(page);
-    const password = await value(page, '#input-5');
-    assert.equal(await value(page, '#input-6'), password, 'Verify New Password');
-    assert.equal(await checked(page, '#input-7'), true);
-    const created = JSON.parse(await eventually(() => stored(page, 'created'), 5000, 'the account to be created'));
-    assert.deepEqual(created, { email: 'ada@example.com', password });
-    assert.equal(await stored(page, 'underneath'), null, 'clicked like a person: on what is on top');
+    assert.ok(
+      r.account.lines.some((l) => /Creating your account on localhost \(clicking “Create Account”\)/.test(l)),
+      JSON.stringify(r.account),
+    );
     assert.ok(r.ticked >= 1, JSON.stringify(r));
+    const created = JSON.parse(await eventually(() => stored(page, 'created'), 5000, 'the account to be created'));
+    // A new password made for Workday's rules, saved for the site.
+    const saved = await credentials();
+    assert.deepEqual(
+      saved.map((c) => [c.host, c.password]),
+      [['localhost', created.password]],
+    );
+    assert.equal(created.email, 'ada@example.com');
+    assert.equal(created.existed, false);
+    assert.ok(created.password.length >= 12, created.password);
+    assert.equal(await stored(page, 'underneath'), null, 'clicked like a person: on what is on top');
+    assert.equal(await stored(page, 'bot'), null, 'the honeypot is left empty and the timer passes');
+    // A new account: "An email has been sent to you." is news, not an error, and without Nylas it's yours to open.
+    await eventually(async () => !(await flowOf(tabId)), 15000, 'the flow to end');
+    assert.match(await toastText(page), /Account created on localhost\. Open the link it emailed you/);
+    assert.equal(await stored(page, 'tries'), null, 'no sign-in before the account is verified');
+    await page.close();
+  },
+);
+
+test(
+  'Workday, new account: the emailed link is opened, then signed in and on to the application',
+  { skip },
+  async () => {
+    await useDefault();
+    await h.bg((config) => globalThis.JTF.store.setNylas(config), NYLAS);
+    const page = await h.open('workday-account.html?fresh=1');
+    const tabId = await h.tabId(page);
+    await flowFill(page);
+    await page.waitForURL(/notice=sent/, { timeout: 15000 });
+    // Workday emails the link a moment later.
+    const state = await eventually(async () => {
+      const s = await wd(page);
+      return s && s.mail.length && s;
+    });
+    mailbox = [verifyMail(state.mail[0].token, h.port)];
+    await page.waitForURL(/workday\.html/, { timeout: 45000 });
+    assert.deepEqual(JSON.parse(await stored(page, 'signedIn')), { username: 'ada@example.com', password: WD_DEFAULT });
+    assert.equal((await wd(page)).accounts['ada@example.com'].verified, true, 'the link was opened');
+    // The link's tab has done its job and is closed again.
+    const tabs = await h.bg(async () => (await globalThis.JTF.api.tabs.query({})).map((t) => t.url));
+    assert.ok(!tabs.some((u) => /activate=/.test(u)), tabs.join('\n'));
+    await eventually(async () => (await value(page, '#input-1')) === 'Ada', 15000, 'the application to be filled');
+    await eventually(async () => !(await flowOf(tabId)), 10000, 'the flow to end');
+    // The account made with the default password is remembered.
+    assert.deepEqual(
+      (await credentials()).map((c) => [c.host, c.password, c.note]),
+      [['localhost', WD_DEFAULT, 'Created with your default password']],
+    );
+    await page.close();
+  },
+);
+
+test(
+  'Workday, the email already has an account: the made-up password is dropped and the default one signs in',
+  { skip },
+  async () => {
+    // "Generate" strategy: the sign-up page gets a new password, which can't be the existing account's.
+    await h.bg((pw) => globalThis.JTF.passwords.update((d) => (d.defaultPassword = pw)), WD_DEFAULT);
+    const page = await h.open(`workday-account.html?fresh=1&existing=${WD_DEFAULT}`);
+    await flowFill(page);
+    await page.waitForURL(/workday\.html/, { timeout: 30000 });
+    const created = JSON.parse(await stored(page, 'created'));
+    assert.equal(created.existed, true);
+    assert.notEqual(created.password, WD_DEFAULT);
+    assert.deepEqual(JSON.parse(await stored(page, 'signedIn')), { username: 'ada@example.com', password: WD_DEFAULT });
+    assert.equal(await stored(page, 'tries'), '1', 'the right password first time: no wrong guess first');
+    // The made-up password is gone; the one that signed in is kept (once the application is reached).
+    await eventually(async () => (await credentials()).some((c) => c.note === 'Your default password signed in'));
+    assert.deepEqual(
+      (await credentials()).map((c) => [c.host, c.password, c.note]),
+      [['localhost', WD_DEFAULT, 'Your default password signed in']],
+    );
+    await page.close();
+  },
+);
+
+test(
+  'Workday, an account with another password: one try with the default password, then “Forgot your password?” is yours',
+  { skip },
+  async () => {
+    await useDefault();
+    const page = await h.open('workday-account.html?fresh=1&existing=Another-Pass-99');
+    const tabId = await h.tabId(page);
+    await flowFill(page);
+    await eventually(async () => (await stored(page, 'tries')) === '1', 20000, 'the sign-in');
+    await eventually(async () => !(await flowOf(tabId)), 15000, 'the flow to end');
+    assert.match(
+      await toastText(page),
+      /An account with your email already exists on localhost, but it didn’t take your default password\. Use “Forgot your password\?”/,
+    );
+    await sleep(1500);
+    assert.equal(await stored(page, 'tries'), '1', 'never more than the one try');
+    assert.equal(await stored(page, 'forgot'), null, '“Forgot your password?” is never clicked');
+    assert.deepEqual(await credentials(), [], 'no login saved that doesn’t work');
+    await page.close();
+  },
+);
+
+test(
+  'Workday “Sign in with email”: chosen over Google and Apple, then on to create the account',
+  { skip },
+  async () => {
+    await useDefault();
+    const page = await h.open('workday-account.html?fresh=1&view=chooser');
+    const tabId = await h.tabId(page);
+    const r = await flowFill(page);
+    assert.ok(
+      r.account.lines.some((l) => /Choosing “Sign in with email” on localhost/.test(l)),
+      JSON.stringify(r.account),
+    );
+    // "Sign in with email" -> its sign-in form -> "Create Account" -> the account.
+    const created = JSON.parse(await eventually(() => stored(page, 'created'), 20000, 'the account to be created'));
+    assert.deepEqual(created, { email: 'ada@example.com', password: WD_DEFAULT, existed: false });
+    assert.equal(await stored(page, 'otherService'), null, 'never Google or Apple');
+    assert.equal(await stored(page, 'header'), null, 'not the header’s “Sign In”');
+    await eventually(async () => !(await flowOf(tabId)), 15000, 'the flow to end');
+    assert.match(await toastText(page), /Account created on localhost/);
+    await page.close();
+  },
+);
+
+test(
+  'Workday sign-in with a saved login it refuses: once more with the default password, which is kept',
+  { skip },
+  async () => {
+    await useDefault();
+    await h.bg(() =>
+      globalThis.JTF.passwords.update((d) =>
+        d.credentials.push({
+          id: 'old-1',
+          host: 'localhost',
+          username: 'ada@example.com',
+          password: 'Stale-Pass-001!',
+        }),
+      ),
+    );
+    // Workday's "Submit" click filter over its "Sign In" (the email sign-in form) is pressed too.
+    const page = await h.open(`workday-account.html?fresh=1&existing=${WD_DEFAULT}&view=chooser`);
+    await flowFill(page);
+    await page.waitForURL(/workday\.html/, { timeout: 30000 });
+    assert.deepEqual(JSON.parse(await stored(page, 'signedIn')), { username: 'ada@example.com', password: WD_DEFAULT });
+    assert.equal(await stored(page, 'tries'), '2');
+    await eventually(async () => (await credentials()).some((c) => c.note === 'Your default password signed in'));
+    assert.deepEqual(
+      (await credentials()).map((c) => [c.id, c.password, c.note]),
+      [['old-1', WD_DEFAULT, 'Your default password signed in']],
+    );
     await page.close();
   },
 );

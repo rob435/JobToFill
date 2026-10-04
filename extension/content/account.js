@@ -205,13 +205,17 @@
 
   /**
    * What kind of page this frame is, from a scan ({ fields, results } as main.js makes them):
-   *   kind     'login' | 'signup' | 'verify' | 'application' | 'none'
+   *   kind     'login' | 'signup' | 'verify' | 'chooser' | 'application' | 'none'
+   *            ('chooser': a sign-in page that only offers ways in, Workday's "Sign in with email" among them)
    *   pure     no job-application questions or uploads (the only pages anything is ever clicked on)
    * plus what it would take to submit it: blockers, errors, the submit and switch links it offers.
+   * `opts.ignore`: messages still showing from an earlier try (an old "wrong password" once the password has been
+   * replaced), left out of errors and of what the page says.
    */
-  function analyze(scan) {
+  function analyze(scan, opts) {
     const { fields, results } = scan;
     const F = JTF.fields;
+    const ignore = new Set((opts && opts.ignore) || []);
     const out = {
       kind: 'none',
       url: location.href,
@@ -225,10 +229,17 @@
       errors: [],
       exists: false,
       badLogin: false,
+      verifyEmail: false,
+      notices: [],
+      // The tracking system behind the page, when its sign-in says so (Workday's, also on employers' own domains).
+      system: document.querySelector('[data-automation-id="signInContent"], [data-automation-id="signInFormo"]')
+        ? 'workday'
+        : '',
       captcha: null,
       submit: '',
       toSignup: '',
       toSignin: '',
+      toEmail: '',
     };
     if (A().isCaptchaFrame(location.href)) return out;
     const types = results.map((r) => (r && r.type) || null);
@@ -256,6 +267,22 @@
     else if (passwords.length === 1)
       out.kind = /\bnew-password\b/.test(fields[passwords[0]].desc.autocomplete) ? 'signup' : 'login';
     else if (codes.length) out.kind = 'verify';
+    else {
+      // No boxes yet, only ways in: "Sign in with Google", "Sign in with Apple", "Sign in with email" (Workday). The
+      // wording is read first: only a page with such a button is looked at closer.
+      const candidates = Array.from(document.querySelectorAll(CLICKABLE));
+      const email = candidates
+        .filter((el) => A().intent(controlText(el)) === 'to-email' && usableControl(el))
+        .map((el) => ({ el, text: controlText(el) }))[0];
+      const others = () => candidates.some((el) => OTHER_SERVICE.test(controlText(el)) && shown(el));
+      if (email && (others() || /\b(sign|log) ?in\b/i.test(headings()))) {
+        out.kind = 'chooser';
+        out.pure = true;
+        out.toEmail = email.text;
+        out.ready = true;
+      }
+      return out;
+    }
     if (out.kind === 'none' || out.kind === 'application') return out;
     out.pure = true;
 
@@ -281,10 +308,15 @@
       if (row.done || (row.robot && c)) continue;
       out.blockers.push({ kind: row.robot ? 'captcha' : 'terms', label: row.label, wait: true });
     }
-    out.errors = messages(document, ERRORS).filter((t) => !/^\*?\s*(indicates|denotes) a required/i.test(t));
-    const said = A().readMessages(messages(document, NOTICES).join(' \n '));
+    // "An email has been sent to you. Please verify your account." is news, not an error to fix.
+    out.errors = messages(document, ERRORS).filter(
+      (t) => !/^\*?\s*(indicates|denotes) a required/i.test(t) && !ignore.has(t) && !A().isVerifyNotice(t),
+    );
+    out.notices = messages(document, NOTICES).filter((t) => !ignore.has(t));
+    const said = A().readMessages(out.notices.join(' \n '));
     out.exists = said.exists;
     out.badLogin = said.badLogin;
+    out.verifyEmail = said.verifyEmail;
     if (!out.errors.length) {
       const invalid = fields.filter((f) => f.el.getAttribute('aria-invalid') === 'true' && shown(f.el));
       if (invalid.length) out.errors.push(`Check ${U.cleanLabel(JTF.matcher.questionText(invalid[0].desc), 60)}`);
@@ -296,17 +328,21 @@
     const all = controls(document);
     const form = anchor && anchor.el.form;
     // On a sign-in page "Create your account" leads to sign-up; on a sign-up page a "Sign in" link (not the
-    // submit of a sign-in form beside it) leads back.
+    // submit of a sign-in form beside it) leads back. Workday's is a <button> outside any form, after the form; the
+    // header's "Sign In" before it opens a menu, so the ones after the form come first.
     const up = out.kind === 'login' ? all.find((x) => x.intent === 'to-signup' || x.intent === 'signup') : null;
+    const following = (x) => !!anchor && !!(anchor.el.compareDocumentPosition(x.el) & Node.DOCUMENT_POSITION_FOLLOWING);
     const back =
       out.kind === 'signup'
-        ? all.find(
-            (x) =>
-              x.intent === 'to-signin' ||
-              (x.intent === 'signin' &&
-                (x.el.localName === 'a' || !form || !form.contains(x.el)) &&
-                !x.el.matches(SUBMIT_TYPE)),
-          )
+        ? all
+            .filter(
+              (x) =>
+                x.intent === 'to-signin' ||
+                (x.intent === 'signin' &&
+                  (x.el.localName === 'a' || !form || !form.contains(x.el)) &&
+                  !(x.el.matches(SUBMIT_TYPE) && x.el.form)),
+            )
+            .sort((a, b) => following(b) - following(a))[0]
         : null;
     out.toSignup = up ? up.text : '';
     out.toSignin = back ? back.text : '';
@@ -320,8 +356,12 @@
     return out;
   }
 
+  // Other services' sign-in buttons (never clicked) that tell a page of ways in from any page with an email button.
+  const OTHER_SERVICE =
+    /\b(?:(?:sign|log) ?(?:in|on|up)|continue|connect)\b.*\b(?:google|apple|linked ?in|microsoft|facebook|indeed|git ?hub|twitter|yahoo|amazon)\b/i;
+
   const headings = () =>
-    Array.from(document.querySelectorAll('h1, h2, [role="heading"]'))
+    Array.from(document.querySelectorAll('h1, h2, h3, [role="heading"]'))
       .filter(shown)
       .slice(0, 6)
       .map((h) => h.textContent)
@@ -360,8 +400,8 @@
 
   /**
    * Click like a person: on whatever is on top at the control's centre, when that is the control itself (or an
-   * overlay that says the same, like Workday's click filter). Anything else covering it (a cookie banner, a
-   * dialog) means no click.
+   * overlay that says the same, like Workday's click filter, whose label is a bare "Submit" over the "Sign In" of
+   * its email sign-in form). Anything else covering it (a cookie banner, a dialog) means no click.
    */
   function press(el) {
     if (el.scrollIntoView) el.scrollIntoView({ block: 'center', inline: 'nearest' });
@@ -372,8 +412,15 @@
     let target = el;
     if (top && top !== el && !el.contains(top)) {
       const over = top.closest(CLICKABLE) || top;
-      if (!A().intent(controlText(over)) || A().intent(controlText(over)) !== A().intent(controlText(el)))
-        return { ok: false, reason: 'covered' };
+      const said = A().intent(controlText(over));
+      const own = A().intent(controlText(el));
+      // A plain "Submit" laid over the submit itself: the two share a wrapper.
+      const filter =
+        said === 'only' &&
+        ['signin', 'signup', 'verify'].includes(own) &&
+        !!over.parentElement &&
+        over.parentElement.contains(el);
+      if (!said || (said !== own && !filter)) return { ok: false, reason: 'covered' };
       target = over;
     }
     const view = el.ownerDocument.defaultView;
@@ -399,8 +446,8 @@
    * the page is ready), 'to-signup' or 'to-signin'. Checks everything again first. Returns { clicked } or
    * { refused }.
    */
-  function click(which, scan) {
-    const st = analyze(scan);
+  function click(which, scan, opts) {
+    const st = analyze(scan, opts);
     if (!st.pure || st.kind === 'application' || st.kind === 'none')
       return { refused: 'not a sign-in or sign-up page', state: st };
     if (location.protocol !== 'https:' && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname))
@@ -416,6 +463,8 @@
     } else if (which === 'to-signup' || which === 'to-signin') {
       const label = which === 'to-signup' ? st.toSignup : st.toSignin;
       target = label ? controls(document).find((c) => c.text === label) : null;
+    } else if (which === 'to-email' && st.kind === 'chooser') {
+      target = controls(document).find((c) => c.intent === 'to-email' && c.text === st.toEmail) || null;
     }
     if (!target) return { refused: 'no such control', state: st };
     // The last word: the wording must still pass, and never a denied one.

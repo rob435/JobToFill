@@ -233,3 +233,38 @@ test('otp: sign-in approval links are never opened', () => {
   const approve = msg('Verify', '<a href="https://acme.com/login/approve?t=1">Verify and sign in</a>');
   assert.equal(otp.findLink(approve, 'acme.com'), null);
 });
+
+test('otp: Workday’s verification link, whatever page it sends you to afterwards', () => {
+  const page = 'acme.wd3.myworkdayjobs.com';
+  // Where the link goes afterwards names the sign-in page: that isn't what the link does.
+  const onward = msg(
+    'Verify your candidate account',
+    `<p>Please verify your account.</p><a href="https://${page}/en-US/Acme/activate/tok123?redirect=%2Fen-US%2FAcme%2Flogin">Verify Account</a>
+     <a href="https://${page}/en-US/Acme/login">Sign In</a>`,
+  );
+  assert.equal(
+    otp.findLink(onward, page).href,
+    `https://${page}/en-US/Acme/activate/tok123?redirect=%2Fen-US%2FAcme%2Flogin`,
+  );
+  // Its activation link under the site's own sign-in pages counts on that very host, nowhere else.
+  const under = msg('Verify', `<a href="https://${page}/en-US/Acme/login/activate?token=t1">Verify Account</a>`);
+  assert.equal(otp.findLink(under, page).href, `https://${page}/en-US/Acme/login/activate?token=t1`);
+  const elsewhere = msg('Verify', '<a href="https://evil.example/login/activate?token=t1">Verify Account</a>');
+  assert.equal(otp.findLink(elsewhere, page), null);
+  // "Click here": the one link back to the page, in an email about verifying the account.
+  const plain = msg(
+    'Verify your candidate account',
+    `<p>Please verify your email address.</p><a href="https://${page}/en-US/Acme/t/9f8e7d">Click here</a> <a href="https://www.workday.com/privacy">Privacy</a>`,
+  );
+  assert.equal(otp.findLink(plain, page).href, `https://${page}/en-US/Acme/t/9f8e7d`);
+  // Not when the email has several such links, or isn't about verifying.
+  const two = msg(
+    'Verify your candidate account',
+    `<p>Please verify your email address.</p><a href="https://${page}/en-US/Acme/t/1">Click here</a> <a href="https://${page}/en-US/Acme/jobs">See our jobs</a>`,
+  );
+  assert.equal(otp.findLink(two, page), null);
+  assert.equal(
+    otp.findLink(msg('Your application', `<a href="https://${page}/en-US/Acme/t/1">Click here</a>`), page),
+    null,
+  );
+});

@@ -176,7 +176,24 @@
 
   // Links that approve something rather than confirm your address: opening one could let someone else in.
   const LINK_DANGER =
-    /approve|authori[sz]e|allow|grant|deny|was (this|it) you|(sign|log)[- ]?in|login|session|device|unusual|suspicious|new (sign|log)|payment|transfer|delete|cancel|withdraw/i;
+    /approve|authori[sz]e|allow|grant|deny|was (this|it) you|device|unusual|suspicious|new (sign|log)|payment|transfer|delete|cancel|withdraw/i;
+  // Sign-in links too, unless one goes back to the page's own host to verify there (Workday's activation link
+  // lives under its sign-in pages).
+  const LINK_SIGNIN = /(sign|log)[- ]?in|login|session/i;
+  // Where a link sends you afterwards ("?redirect=/en-US/acme/login"), which says nothing about what it does.
+  const ONWARD =
+    /^(redirect|redirect_?ur[il]|return(_?to|_?ur[il])?|next|continue|success_?redirect_?ur[il]|callback(_?ur[il])?|target|dest(ination)?|goto|ru)$/i;
+
+  /** A link's path and query, less where it sends you afterwards: what it does, for the word lists. */
+  function linkPurpose(href) {
+    try {
+      const u = new URL(href);
+      for (const key of [...u.searchParams.keys()]) if (ONWARD.test(key)) u.searchParams.delete(key);
+      return decodeURIComponent(u.pathname + u.search);
+    } catch (err) {
+      return href.replace(/^https?:\/\/[^/]+/, '');
+    }
+  }
 
   /** The "verify your email" link in a message: { href, score } or null. */
   function findLink(message, pageHost) {
@@ -190,6 +207,7 @@
     )
       return null;
     let best = null;
+    const home = [];
     for (const l of links) {
       let host;
       try {
@@ -197,8 +215,11 @@
       } catch (err) {
         continue;
       }
-      const path = l.href.replace(/^https?:\/\/[^/]+/, '');
-      if (LINK_BAD.test(l.text) || LINK_BAD.test(path) || LINK_DANGER.test(l.text) || LINK_DANGER.test(path)) continue;
+      const path = linkPurpose(l.href);
+      const said = `${l.text} ${path}`;
+      if (LINK_BAD.test(said) || LINK_DANGER.test(said)) continue;
+      if (LINK_SIGNIN.test(said) && !(host === pageHost && LINK_GOOD.test(said))) continue;
+      if (host === pageHost && !home.includes(l.href)) home.push(l.href);
       let score = 0;
       if (LINK_GOOD.test(l.text)) score += 4;
       if (LINK_GOOD.test(l.href)) score += 2;
@@ -206,6 +227,9 @@
       if (LINK_GOOD.test(subject)) score += 1;
       if (score >= 4 && (!best || score > best.score)) best = { href: l.href, score };
     }
+    // "Please verify your account: click here", the one link back to the page's own host saying nothing itself.
+    if (!best && home.length === 1 && LINK_GOOD.test(subject) && LINK_GOOD.test(text.slice(0, 3000)))
+      best = { href: home[0], score: 4 };
     return best;
   }
 
