@@ -165,6 +165,21 @@ test('ats: Eightfold, Avature, Phenom and the smaller boards', () => {
 
   const av = jp.ats('https://koch.avature.net/en_US/careers/JobDetail/Intern-Trading/184786');
   assert.deepEqual([av.name, av.company, av.jobId, av.stage], ['avature', 'koch', '184786', 'description']);
+  const bain = jp.ats('https://careers.bain.com/jobs/FolderDetail/AI-Engineering-Intern-London-main-folder/109373');
+  assert.deepEqual([bain.name, bain.company, bain.jobId, bain.stage], ['avature', 'bain', '109373', 'description']);
+  const bainApply = jp.ats('https://careers.bain.com/jobs/EEOQuestions?folderId=109373');
+  assert.deepEqual([bainApply.name, bainApply.jobId, bainApply.stage], ['avature', '109373', 'application']);
+  assert.equal(jp.ats('https://careers.bain.com/jobs/Login?folderId=109373').stage, 'application');
+  assert.equal(jp.ats('https://example.com/docs/view?folderId=12').name, null);
+  // Its job page: the location from the "Location(s)" row.
+  const folder = jp.fromHtml(
+    html('avature-folder.html'),
+    'https://careers.bain.com/jobs/FolderDetail/AI-Engineering-Intern-London-main-folder/109373',
+  );
+  assert.deepEqual(
+    [folder.title, folder.location, folder.ats],
+    ['AI Engineering, Intern (London)', 'London', 'avature'],
+  );
   const avApply = jp.ats('https://koch.avature.net/en_US/careers/ApplicationMethods?jobId=184786');
   assert.deepEqual([avApply.jobId, avApply.stage], ['184786', 'application']);
 
@@ -757,6 +772,11 @@ test('descriptionUrls: the job page behind each kind of application step', () =>
   assert.equal(
     first('https://koch.avature.net/en_US/careers/ApplicationMethods?jobId=184786'),
     'https://koch.avature.net/en_US/careers/JobDetail/184786',
+  );
+  // Avature on Bain's own domain, by job folder.
+  assert.equal(
+    first('https://careers.bain.com/jobs/EEOQuestions?folderId=109373'),
+    'https://careers.bain.com/jobs/FolderDetail/109373',
   );
   assert.equal(
     first('https://aexp.eightfold.ai/careers/apply?pid=24871234&domain=aexp.com'),

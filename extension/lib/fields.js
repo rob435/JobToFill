@@ -385,10 +385,16 @@
 
   const optionTexts = (ctx) => (ctx.options || []).map((o) => U.normalize(o && typeof o === 'object' ? o.text : o));
 
+  // "…in the country of any office you selected?", "…in the country where this role is based?": the job's country.
+  const JOB_COUNTRY =
+    /\bcountr(y|ies) (of|for|where|in which) (any|the|each|every|this|that|your|all)( of the)? (selected |chosen )?(offices?|locations?|roles?|jobs?|positions?|vacanc(y|ies)|opportunit(y|ies))\b|\b(offices?|locations?|countr(y|ies)) (that )?you (have )?(selected|chosen|chose|picked|applied)\b/;
+
   /**
    * The countries a work-authorisation question is about: the places it names ("…in London" is the UK) and whether
    * it needs all of them ("…in the UK and the US?") or one ("…in the UK or the US?"); else the country its visa words
    * name ("(e.g., H-1B visa status)"), or its options ("…eligible to work in the United States with no restrictions").
+   * Visa words are only examples in a question about the job's own country (Bain: "…in the country of any office you
+   * selected? (For example: H-1B, TN, O-1…)").
    */
   function countriesAsked(question, options) {
     const q = question || '';
@@ -397,7 +403,7 @@
     const wide = places.filter((pl) => pl.type !== 'metro');
     const named = [...new Set((wide.length ? wide : places).map((pl) => pl.country))];
     if (named.length) return { codes: named, all: !/\bor\b/.test(q) };
-    let codes = JTF.geo.visaCountries(q);
+    let codes = JOB_COUNTRY.test(q) ? [] : JTF.geo.visaCountries(q);
     if (!codes.length) {
       const texts = optionTexts({ options });
       codes = [...new Set(texts.flatMap((t) => [...JTF.geo.countriesNamed(t), ...JTF.geo.visaCountries(t)]))];
@@ -987,6 +993,20 @@
     return val(y.candidates.some((c) => [want, want + ' year'].includes(U.normalize(c))) ? 'Yes' : 'No');
   }
 
+  /**
+   * Does your profile name this option ("MLT Career Prep", "ALPFA" from "Association of Latino Professionals For
+   * America (ALPFA)") in an experience or education entry, your summary or skills? Never "None" or "Prefer not to say".
+   */
+  function namedInProfile(p, text) {
+    const name = U.normalize(String(text || '').replace(/\([^)]*\)/g, ' '));
+    const short = (String(text || '').match(/\(([A-Z][A-Za-z0-9]{2,})\)/) || [])[1];
+    if (!name || (JTF.matcher && (JTF.matcher.NONE_OPTION.test(name) || JTF.matcher.canonicalOf(name)))) return false;
+    const entries = [...(p.experience || []), ...(p.education || [])].flatMap((e) => Object.values(e || {}));
+    const said =
+      ' ' + U.normalize([p.summary, p.skills, ...entries].filter((x) => typeof x === 'string').join(' . ')) + ' ';
+    return said.includes(' ' + name + ' ') || (!!short && said.includes(' ' + U.normalize(short) + ' '));
+  }
+
   /* ---------------------------------------------------------------- ethnicity */
 
   // Ethnic groups and subgroups as UK (ONS 2001/2011/2021) and US (EEO) forms list them. `words` name the group
@@ -999,7 +1019,12 @@
       words: /\basian\b/,
       subs: [
         ['chinese', 'Chinese', /\bchinese\b|\bhong kong(er)?\b|\btaiwanese\b/, 'east'],
-        ['indian', 'Indian', /(?<!\b(american|west|east|north american|alaskan?) )\bindian\b/, 'south'],
+        [
+          'indian',
+          'Indian',
+          /(?<!\b(american|west|east|north american|alaskan?) )\bindian\b(?! subcontinent)/,
+          'south',
+        ],
         ['pakistani', 'Pakistani', /\bpak[ia]stan[ia]?\b/, 'south'],
         ['bangladeshi', 'Bangladeshi', /\bbangladesh[ia]?\b/, 'south'],
         ['japanese', 'Japanese', /\bjapanese\b/, 'east'],
@@ -1102,6 +1127,8 @@
     ['south', /\bsouth asian?\b/],
     ['east', /(?<!\bsouth )\beast asian?\b/],
   ];
+  // Asian regions no option stands for alone.
+  const MORE_ASIAN = /\b(north ?east(ern)?|central|west(ern)?) asian?\b|\bfar east\b|\bindian subcontinent\b/;
   // US EEO's broad categories: a group, whatever subgroup words they contain.
   const US_BROAD = /^(black or african american|african american or black|hispanic or latin[aox]+|white|asian)$/;
 
@@ -1144,8 +1171,10 @@
       }
     }
     if (!sub && !US_BROAD.test(all) && (groups.includes('asian') || !groups.length)) {
-      const r = ASIAN_REGIONS.find(([, re]) => re.test(all));
-      if (r) region = r[0];
+      // Bain's "Asian (inclusive of Northeast Asian, Southeast Asian, Southern and Central Asian)" and the US "…the Far
+      // East, Southeast Asia, or the Indian subcontinent" name several regions: the whole group, not one.
+      const regions = ASIAN_REGIONS.filter(([, re]) => re.test(all));
+      if (regions.length === 1 && !MORE_ASIAN.test(all)) region = regions[0][0];
     }
     const group = subGroup || (region ? 'asian' : groups.find((g) => g !== 'other') || groups[0] || null);
     if (!group) return null;
@@ -1160,11 +1189,21 @@
     };
   }
 
+  // A mixed answer's two groups.
+  const MIXED_PARTS = {
+    whiteasian: ['White', 'Asian'],
+    whiteblackafrican: ['White', 'Black – African'],
+    whiteblackcaribbean: ['White', 'Black – Caribbean'],
+  };
+
   /** An ethnicity answer: matched against an option list by parseEthnicity, most specific option first. */
   function ethnicityVal(text) {
     const v = val(text);
     const eth = v ? parseEthnicity(v.text) : null;
     if (eth) Object.assign(v, { kind: 'ethnicity', eth });
+    // "Select all that apply" without a mixed option: both groups ("White" and "Asian").
+    const both = eth && MIXED_PARTS[eth.sub];
+    if (both) v.items = both.map(ethnicityVal);
     return v;
   }
 
@@ -2385,15 +2424,16 @@
         return v;
       },
     },
-    // "Do you identify as LGBTQIA+?": from your orientation and gender identity.
+    // "Do you identify as LGBTQIA+?": from your orientation and gender identity; No when neither says otherwise.
     'eeo.lgbt': {
       label: 'LGBTQ+',
       get(p) {
         const o = U.normalize(p.eeo.sexualOrientation);
-        const same = JTF.matcher ? JTF.matcher.canonicalOf(p.eeo.genderIdentitySame) : null;
-        if (!o || /prefer not|decline/.test(o)) return null;
-        if (!/^heterosexual|^straight/.test(o) || same === 'no') return val('Yes');
-        return same === 'yes' ? val('No') : null;
+        const canon = (t) => (JTF.matcher ? JTF.matcher.canonicalOf(t) : null);
+        const same = canon(p.eeo.genderIdentitySame);
+        if (same === 'no' || (o && !/^heterosexual|^straight|prefer not|decline/.test(o))) return val('Yes');
+        if (canon(o) === 'decline' || (!o && same === 'decline')) return val('Prefer not to say');
+        return val('No');
       },
     },
     'eeo.religion': {
@@ -2469,9 +2509,9 @@
       path: 'eeo.parentsDegree',
       get(p, ctx) {
         const v = withSpellings(p.eeo.parentsDegree, PARENT_DEGREE);
-        // "Are you the first in your family to go to university?" asks the opposite.
-        if (v && /\bfirst\b.*\b(family|generation)\b|\bfirst generation\b/.test(ctx.question || '')) {
-          if (v.canonical === 'yes') return val('No');
+        // "Are you the first in your family to go to university?" asks the opposite; No when you haven't said.
+        if (/\bfirst\b.*\b(family|generation)\b|\bfirst generation\b/.test(ctx.question || '')) {
+          if (!v || v.canonical === 'yes') return val('No');
           if (v.canonical === 'no') return val('Yes');
         }
         const unsettled = v && PARENT_LEVEL_UNSETTLED[v.canonical];
@@ -2490,12 +2530,33 @@
       label: 'Socio-economic background (household earner’s job at 14)',
       get(p, ctx) {
         const v = val(p.eeo.parentOccupation);
+        // Bain's "Do you identify with the experience of growing up in a lower socio-economic household?": Yes for
+        // a working-class background or free school meals, else No.
+        const lower = /\b(lower|low income|disadvantaged)\b/.test(ctx.question || '');
+        if (lower && (!v || v.canonical !== 'decline')) {
+          const meals = JTF.matcher ? JTF.matcher.canonicalOf(p.eeo.freeSchoolMeals) : null;
+          return val(BACKGROUND_OF[v && v.text] === 'working' || meals === 'yes' ? 'Yes' : 'No');
+        }
         if (!v || v.canonical === 'decline') return v;
         const bg = BACKGROUND_OF[v.text];
         if (!bg) return null;
-        if (/\b(lower|low income|disadvantaged)\b/.test(ctx.question || ''))
-          return bg === 'intermediate' ? null : val(bg === 'working' ? 'Yes' : 'No');
         return val(BACKGROUNDS[bg][0], { candidates: BACKGROUNDS[bg] });
+      },
+    },
+    // Bain's "Have you participated in the following organizations? [AfroTech, ALPFA, Forte, MLT…, Prefer not to say]":
+    // the ones your CV entries name, else "None of the above" (or "Prefer not to say" where that's all there is).
+    'eeo.organisations': {
+      label: 'Diversity organisations taken part in',
+      get(p, ctx) {
+        const texts = (ctx.options || []).map((o) => (o && typeof o === 'object' ? o.text : String(o)));
+        const mine = texts.filter((t) => namedInProfile(p, t));
+        if (mine.length) return val(mine.join(', '), { kind: 'list', items: mine });
+        if (!texts.length) return val('None');
+        const none = texts.find((t) => JTF.matcher && JTF.matcher.NONE_OPTION.test(U.normalize(t)));
+        const decline = texts.find((t) => JTF.matcher && JTF.matcher.canonicalOf(t) === 'decline');
+        const no = texts.find((t) => U.normalize(t) === 'no');
+        const pick = none || no || decline;
+        return pick ? val(pick, { canonical: null }) : null;
       },
     },
 
@@ -3151,7 +3212,7 @@
     ),
     R(
       'eeo.parentsDegree',
-      /\bparents?\b.*\b(universit|degree|higher education|college|qualification)|\bguardians?\b.*\b(universit|degree|higher education|qualification)|\bfirst (person )?in (your|my) (immediate )?family\b.*\b(universit|college|higher education|degree)|\b(universit|college|higher education)\w*\b.*\bfirst (person )?(in|of) (your|my) (immediate )?family\b|\bfirst generation (student|university|college)|\b(qualifications?|degree|universit\w*|education)\b.*\b(parents?|guardians?)\b/,
+      /\bparents?\b.*\b(universit|degree|higher education|college|qualification)|\bguardians?\b.*\b(universit|degree|higher education|qualification)|\bfirst (person |member |one )?(in|of) (your|my) (immediate )?family\b.*\b(universit|college|higher education|degree)|\b(universit|college|higher education)\w*\b.*\bfirst (person |member |one )?(in|of) (your|my) (immediate )?family\b|\bfirst generation (student|university|college)|\b(qualifications?|degree|universit\w*|education)\b.*\b(parents?|guardians?)\b/,
       { kinds: CHOICE },
     ),
     R(
@@ -3160,6 +3221,11 @@
       { kinds: CHOICE },
     ),
     R('eeo.socioEconomic', /\bsocio ?economic\b|\bsocial (class|background)\b|\bworking class\b/, { kinds: CHOICE }),
+    R(
+      'eeo.organisations',
+      /\b(participated|taken part|took part|been (involved|a member|part)|member of|involved (in|with)|affiliated)\b.*\b(following|these|any of the)\b.*\b(organi[sz]ations?|associations?|networks?)\b|\b(which|any) of (the following|these) (organi[sz]ations?|associations?|networks?)\b.*\b(participated|taken part|took part|involved|member|affiliated)\b/,
+      { kinds: CHOICE },
+    ),
     R('pronouns', /\bpronouns?\b/), // not "how your name is pronounced"
     R(
       'dob',

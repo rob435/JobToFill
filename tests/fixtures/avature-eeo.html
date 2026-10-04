@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>AI Engineering, Intern London (main folder) - Bain &amp; Company</title>
+  <style>
+    body { font: 14px system-ui; max-width: 760px; margin: 24px auto; }
+    .fieldSpec { margin: 12px 0; }
+    fieldset { border: 0; padding: 0; }
+    .labelRequiredIcon { color: #c00; }
+  </style>
+</head>
+<body>
+  <!-- Reduced from careers.bain.com/jobs/EEOQuestions?folderId=109373 (an Avature wizard): a sponsorship question
+       whose US visas are only examples, and the diversity questions: ethnicity (select all that apply), LGBTQ+, the
+       first in your family at university, a lower socio-economic household, and diversity organisations. -->
+  <h1>AI Engineering, Intern London (main folder)</h1>
+  <form id="wizard-id-287" class="form" method="post">
+    <fieldset class="fieldSpec">
+      <legend>Will you now or at any point in the future require sponsorship for employer-based work authorization in
+        the country of any office you selected? (For example: H-1B, TN, O-1, or other employment-based visas.)
+        <span class="labelRequiredIcon" aria-hidden="true"> *</span></legend>
+      <label><input type="radio" name="14001" value="1"> Yes</label>
+      <label><input type="radio" name="14001" value="2"> No</label>
+    </fieldset>
+    <fieldset class="fieldSpec">
+      <legend>To which racial or ethnic group(s) do you most identify?</legend>
+      <p>Select all that apply. If you do not see your racial or ethnic group(s) listed below, please select “Prefer to
+        self-describe” and type your racial or ethnic group(s) in the box that will appear</p>
+      <label><input type="checkbox" name="14002[]" value="1"> Asian (inclusive of Northeast Asian, Southeast Asian, Southern and Central Asian)</label>
+      <label><input type="checkbox" name="14002[]" value="2"> Black (inclusive of the full diaspora across all continents)</label>
+      <label><input type="checkbox" name="14002[]" value="3"> Hispanic, Latino/a/x, Chicano/a/x, Latin American, and Caribbean</label>
+      <label><input type="checkbox" name="14002[]" value="4"> Indigenous (inclusive of Native American, First Nations, Aboriginal, Torres Strait Islander, or other Indigenous group)</label>
+      <label><input type="checkbox" name="14002[]" value="5"> Middle Eastern or North African</label>
+      <label><input type="checkbox" name="14002[]" value="6"> Native Hawaiian or Other Pacific Islander</label>
+      <label><input type="checkbox" name="14002[]" value="7"> White</label>
+      <label><input type="checkbox" name="14002[]" value="8"> Prefer to self-describe</label>
+      <label><input type="checkbox" name="14002[]" value="9"> Prefer not to say</label>
+    </fieldset>
+    <fieldset class="fieldSpec">
+      <legend>Do you consider yourself a member of the LGBTQ+ community?</legend>
+      <label><input type="radio" name="14003" value="1"> Yes</label>
+      <label><input type="radio" name="14003" value="2"> No</label>
+      <label><input type="radio" name="14003" value="3"> Prefer not to say</label>
+    </fieldset>
+    <fieldset class="fieldSpec">
+      <legend>Are you the first member of your immediate family to attend university?</legend>
+      <label><input type="radio" name="14004" value="1"> Yes</label>
+      <label><input type="radio" name="14004" value="2"> No</label>
+      <label><input type="radio" name="14004" value="3"> Prefer not to say</label>
+    </fieldset>
+    <fieldset class="fieldSpec">
+      <legend>Do you identify with the experience of growing up in a lower socio-economic household?</legend>
+      <label><input type="radio" name="14005" value="1"> Yes</label>
+      <label><input type="radio" name="14005" value="2"> No</label>
+      <label><input type="radio" name="14005" value="3"> Prefer not to say</label>
+    </fieldset>
+    <fieldset class="fieldSpec">
+      <legend>Have you participated in the following organizations?</legend>
+      <p>Select all that apply</p>
+      <label><input type="checkbox" name="14006[]" value="1"> AfroTech Conference</label>
+      <label><input type="checkbox" name="14006[]" value="2"> Association of Latino Professionals For America (ALPFA)</label>
+      <label><input type="checkbox" name="14006[]" value="3"> EurOut</label>
+      <label><input type="checkbox" name="14006[]" value="4"> Forte MBA</label>
+      <label><input type="checkbox" name="14006[]" value="5"> Forte Undergraduate</label>
+      <label><input type="checkbox" name="14006[]" value="6"> Hellohive</label>
+      <label><input type="checkbox" name="14006[]" value="7"> MLT Career Prep</label>
+      <label><input type="checkbox" name="14006[]" value="8"> MLT Experienced Talent Network</label>
+      <label><input type="checkbox" name="14006[]" value="9"> MLT MBA Professional Development</label>
+      <label><input type="checkbox" name="14006[]" value="10"> National Black MBA Association Conference (NBMBAA)</label>
+      <label><input type="checkbox" name="14006[]" value="11"> Out for Undergrad Business Conference (O4U)</label>
+      <label><input type="checkbox" name="14006[]" value="12"> Prefer not to say</label>
+    </fieldset>
+  </form>
+  <pre id="state"></pre>
+  <script>
+    const form = document.getElementById('wizard-id-287');
+    const picked = (name) =>
+      Array.from(form.querySelectorAll(`input[name="${name}"]:checked`)).map((el) => el.parentElement.textContent.trim());
+    const show = () =>
+      (document.getElementById('state').textContent = JSON.stringify({
+        sponsorship: picked('14001'),
+        ethnicity: picked('14002[]'),
+        lgbt: picked('14003'),
+        firstGen: picked('14004'),
+        lowerSes: picked('14005'),
+        organisations: picked('14006[]'),
+      }));
+    form.addEventListener('change', show);
+    show();
+  </script>
+</body>
+</html>

@@ -2262,6 +2262,12 @@ test('live survey: US work questions that name no country by name — visa words
   assert.equal(choose(p, 'job.authorized', based, yn, { jobLocation: 'London, England, United Kingdom' }), 'Yes');
   assert.equal(choose(p, 'job.authorized', based, yn, { jobLocation: 'Dublin, Ireland' }), 'Yes');
   assert.equal(choose(p, 'job.authorized', based, yn), 'Yes');
+  // Bain: the US visas are only examples; the country is the office's.
+  const bain =
+    'Will you now or at any point in the future require sponsorship for employer-based work authorization in the country of any office you selected? (For example: H-1B, TN, O-1, or other employment-based visas.)';
+  assert.equal(choose(p, 'job.sponsorship', bain, yn), 'No');
+  assert.equal(choose(p, 'job.sponsorship', bain, yn, { jobLocation: 'London' }), 'No');
+  assert.equal(choose(p, 'job.sponsorship', bain, yn, { jobLocation: 'Boston, MA' }), 'Yes');
   const dv = [
     'Yes, I am authorized to work in this country for any employer',
     'No, I am not authorized to work in this country for any employer',
@@ -3151,7 +3157,8 @@ test('round-up from the survey: code samples, AI disclosures, ranked lists, relo
   const notion =
     'This role requires that you are willing to relocate to one of the following locations New York, NY, USA or San Francisco, CA, USA. Please confirm that you are willing to relocate for this role?';
   assert.equal(type(notion, 'radio', ['Yes', 'No']), 'job.relocate');
-  // Socio-economic background from the household earner's job, opt-in like the rest.
+  // Socio-economic background from the household earner's job; "…a lower socio-economic background?" is No unless
+  // that job or free school meals say otherwise.
   const classes = ['Professional', 'Intermediate', 'Working class', 'Prefer not to say'];
   const ynp = ['Yes', 'No', 'Prefer not to say'];
   const lower =
@@ -3160,6 +3167,10 @@ test('round-up from the survey: code samples, AI disclosures, ranked lists, relo
   assert.equal(type(which, 'select', classes), 'eeo.socioEconomic');
   assert.equal(type(lower, 'select', ynp), 'eeo.socioEconomic');
   assert.equal(choose(p, 'eeo.socioEconomic', which, classes), null, 'blank: never filled');
+  assert.equal(choose(p, 'eeo.socioEconomic', lower, ynp), 'No', 'blank: No');
+  p.eeo.freeSchoolMeals = 'Yes';
+  assert.equal(choose(p, 'eeo.socioEconomic', lower, ynp), 'Yes', 'free school meals');
+  p.eeo.freeSchoolMeals = '';
   p.eeo.parentOccupation = 'Manager / administrator';
   assert.equal(choose(p, 'eeo.socioEconomic', which, classes), 'Professional');
   assert.equal(choose(p, 'eeo.socioEconomic', lower, ynp), 'No');
@@ -3168,9 +3179,10 @@ test('round-up from the survey: code samples, AI disclosures, ranked lists, relo
   assert.equal(choose(p, 'eeo.socioEconomic', lower, ynp), 'Yes');
   p.eeo.parentOccupation = 'Clerical / intermediate';
   assert.equal(choose(p, 'eeo.socioEconomic', which, classes), 'Intermediate');
-  assert.equal(choose(p, 'eeo.socioEconomic', lower, ynp), null, 'neither, so left');
+  assert.equal(choose(p, 'eeo.socioEconomic', lower, ynp), 'No', 'not lower');
   p.eeo.parentOccupation = 'Decline to answer';
   assert.equal(choose(p, 'eeo.socioEconomic', which, classes), 'Prefer not to say');
+  assert.equal(choose(p, 'eeo.socioEconomic', lower, ynp), 'Prefer not to say');
   // The city alone where only the city is asked.
   for (const label of ['Current city', 'Which city are you based in?'])
     assert.equal(ask(p, type(label), label, { kind: 'text' }).text, 'Glasgow', label);
@@ -3258,4 +3270,86 @@ test('Ant Design forms: date pickers by their prompts, "Start month" under the r
   // The number beside it is the number without its code.
   assert.deepEqual(plan(phone), ['phone.countryCode', 'phone:national']);
   assert.deepEqual(plan([desc('Prefix', { kind: 'select', options: opts('Mr', 'Ms', 'Dr') })]), ['name.prefix']);
+});
+
+test('Bain’s diversity questions: Asian "inclusive of" every region, LGBTQ+, first in family, organisations', () => {
+  const p = glaswegian();
+  const ynp = ['Yes', 'No', 'Prefer not to say'];
+  const type = (q, kind, list) => (matcher.classify(desc(q, { kind, options: opts(...list) })) || {}).type;
+  const race = [
+    'Asian (inclusive of Northeast Asian, Southeast Asian, Southern and Central Asian)',
+    'Black (inclusive of the full diaspora across all continents)',
+    'Middle Eastern or North African',
+    'White',
+    'Prefer to self-describe',
+    'Prefer not to say',
+  ];
+  const ethnic = 'To which racial or ethnic group(s) do you most identify? Select all that apply.';
+  // An option naming several Asian regions is the whole group, whichever region yours is.
+  for (const answer of ['Asian – Chinese', 'Asian – Indian', 'Asian – Filipino', 'Asian'])
+    assert.equal(
+      choose(Object.assign(p, { eeo: { ...p.eeo, race: answer } }), 'eeo.race', ethnic, race),
+      race[0],
+      answer,
+    );
+  // So is the US definition naming the Far East, Southeast Asia and the Indian subcontinent.
+  assert.equal(
+    fields.parseEthnicity(
+      'Asian: A person having origins in any of the original peoples of the Far East, Southeast Asia, or the Indian subcontinent',
+    ).region,
+    null,
+  );
+  assert.equal(fields.parseEthnicity('Southeast Asian').region, 'southeast');
+  // A mixed answer on a list without a mixed option ticks both groups (a single choice takes neither).
+  p.eeo.race = 'Mixed – White and Asian';
+  const mixed = ask(p, 'eeo.race', ethnic, { kind: 'checkboxes', options: opts(...race) });
+  assert.equal(matcher.matchOption(opts(...race), mixed), -1);
+  assert.deepEqual(matcher.matchAll(opts(...race), mixed), [3, 0]);
+
+  // LGBTQ+: from your orientation and gender identity, else No; "Prefer not to say" stays yours.
+  const lgbt = 'Do you consider yourself a member of the LGBTQ+ community?';
+  assert.equal(type(lgbt, 'radio', ynp), 'eeo.lgbt');
+  assert.equal(choose(p, 'eeo.lgbt', lgbt, ynp), 'No', 'blank');
+  p.eeo.sexualOrientation = 'Heterosexual / straight';
+  assert.equal(choose(p, 'eeo.lgbt', lgbt, ynp), 'No');
+  p.eeo.genderIdentitySame = 'No';
+  assert.equal(choose(p, 'eeo.lgbt', lgbt, ynp), 'Yes');
+  p.eeo.genderIdentitySame = '';
+  p.eeo.sexualOrientation = 'Bisexual';
+  assert.equal(choose(p, 'eeo.lgbt', lgbt, ynp), 'Yes');
+  p.eeo.sexualOrientation = 'Decline to answer';
+  assert.equal(choose(p, 'eeo.lgbt', lgbt, ynp), 'Prefer not to say');
+
+  // The first in your family at university: the opposite of a parent's degree, else No.
+  const first = 'Are you the first member of your immediate family to attend university?';
+  assert.equal(type(first, 'radio', ynp), 'eeo.parentsDegree');
+  assert.equal(choose(p, 'eeo.parentsDegree', first, ynp), 'No', 'blank');
+  p.eeo.parentsDegree = 'No';
+  assert.equal(choose(p, 'eeo.parentsDegree', first, ynp), 'Yes');
+  p.eeo.parentsDegree = 'Decline to answer';
+  assert.equal(choose(p, 'eeo.parentsDegree', first, ynp), 'Prefer not to say');
+  // "Did a parent go to university?" is still left alone when you haven't said.
+  p.eeo.parentsDegree = '';
+  assert.equal(choose(p, 'eeo.parentsDegree', 'Did either of your parents attend university?', ynp), null);
+
+  // Diversity organisations: those your CV names, else "None of the above", else "Prefer not to say".
+  const orgs = 'Have you participated in the following organizations? Select all that apply';
+  const list = [
+    'AfroTech Conference',
+    'Association of Latino Professionals For America (ALPFA)',
+    'MLT Career Prep',
+    'Out for Undergrad Business Conference (O4U)',
+    'Prefer not to say',
+  ];
+  assert.equal(type(orgs, 'checkboxes', list), 'eeo.organisations');
+  const picks = (l) =>
+    matcher.matchAll(opts(...l), ask(p, 'eeo.organisations', orgs, { kind: 'checkboxes', options: opts(...l) }));
+  const one = (l) =>
+    matcher.matchOption(opts(...l), ask(p, 'eeo.organisations', orgs, { kind: 'checkboxes', options: opts(...l) }));
+  assert.equal(one(list), 4);
+  assert.equal(one([...list.slice(0, 4), 'None of the above', 'Prefer not to say']), 4);
+  assert.equal(one(['Yes', 'No']), 1);
+  p.experience[0].description = 'MLT Career Prep fellow; ALPFA chapter member.';
+  assert.deepEqual(picks(list), [1, 2]);
+  assert.equal(type('Have you participated in any of our virtual events?', 'checkboxes', list), undefined);
 });

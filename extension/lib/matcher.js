@@ -1263,7 +1263,7 @@
         .filter(Boolean);
     const picks = [];
     for (const item of items) {
-      const idx = matchOption(options, F().val(item));
+      const idx = matchOption(options, typeof item === 'string' ? F().val(item) : item);
       if (idx >= 0 && !picks.includes(idx)) picks.push(idx);
     }
     return picks;
@@ -1730,6 +1730,7 @@
     isIntegratedMasters,
     formatForText,
     isPlaceholder,
+    NONE_OPTION,
     dateOrder,
   };
   JTF.matcher = matcher;

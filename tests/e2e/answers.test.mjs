@@ -110,7 +110,8 @@ test('the questions a fill leaves empty are answered by the AI, checked, filled 
     .filter((c) => c.last.includes('QUESTIONS:'))
     .flatMap((c) => JSON.parse(c.last.slice(c.last.indexOf('QUESTIONS:') + 10)).map((q) => q.question));
   assert.ok(!asked.some((q) => /how did you hear/i.test(q)), asked.join(' | '));
-  assert.equal(await selectedText(page, '#ses'), 'Select...');
+  // "…a lower socio-economic background?" is No by rule when the profile doesn't say otherwise.
+  assert.equal(await selectedText(page, '#ses'), 'No');
   assert.equal(await selectedText(page, '#convicted'), 'Select...');
   assert.equal(await checked(page, '#privacy'), false);
   const left = r.ai.skipped.map((s) => s.question).join(' | ');

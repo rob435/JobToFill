@@ -1465,6 +1465,8 @@
   // Never chosen: anything that signs in to or fetches from another service.
   const CLOUD_OPTION =
     /dropbox|google|drive|one ?drive|\bbox\b|icloud|linked ?in|indeed|seek|\burl\b|\blink\b|paste|sign ?in|log ?in|cloud|camera|photo|scan/;
+  // Avature's "Upload Resume: From Device" (Bain): its hidden file box only counts once the button has opened it.
+  const RESUME_METHOD = '.uploadResumeTriggerFile, a[data-registermethod="file"]';
   const TRIGGERS = 'button, a, [role="button"], [role="link"], [id$=":_attachIcon"], [tabindex]:not([tabindex="-1"])';
   const MENU_ITEMS = '[role="menuitem"], [role="option"], [role="button"], button, a, li, label';
 
@@ -1481,7 +1483,7 @@
       // Never a link that leaves the page or a button that submits its form.
       if (el.localName === 'a' && !/^(#|javascript:|$)/i.test((el.getAttribute('href') || '').trim())) return false;
       if (el.form && el.matches('button:not([type="button"]):not([type="reset"]), input[type="submit"]')) return false;
-      return /:_attachIcon$/.test(el.id) || UPLOAD_TRIGGER.test(triggerText(el));
+      return /:_attachIcon$/.test(el.id) || UPLOAD_TRIGGER.test(triggerText(el)) || el.matches(RESUME_METHOD);
     });
     // The innermost of nested candidates (a link inside a focusable tile).
     const list = found.filter((el) => !found.some((o) => o !== el && el.contains(o)));
@@ -1497,10 +1499,14 @@
       // only uploads once "Upload from Device" has made it.
       const input = box.querySelector('input[type="file"]');
       if (input && !/:_file$/.test(input.id)) continue;
+      // Avature's file box, apart from its button, that has your CV already (an earlier fill's).
+      const made = el.matches(RESUME_METHOD) && doc.getElementById('resumeFile');
+      if (made && made.files && made.files.length) continue;
       const own = JTF.util.cleanLabel(dom().textOf(el) || el.getAttribute('aria-label') || '', 120);
       let row = JTF.util.cleanLabel(dom().textOf(box), 300);
       if (own && row.startsWith(own)) row = row.slice(own.length).trim();
       else if (own) row = row.replace(own, ' ').trim();
+      if (el.matches(RESUME_METHOD)) row = `Resume ${row}`.trim();
       const desc = {
         kind: 'file',
         inputType: 'file',
@@ -1572,8 +1578,12 @@
     setFile(input, doc);
     // The tile shows the file's name (or says it uploaded) once it has.
     const name = JTF.util.normalize(doc.name.replace(/\.[a-z0-9]+$/i, ''));
+    // Avature names it beside the file box, away from its button.
+    const near = trigger.el.matches(RESUME_METHOD) ? input.closest('fieldset') : null;
     const shows = () => {
-      const text = JTF.util.normalize(trigger.box.isConnected ? trigger.box.textContent : page.body.textContent);
+      const text = JTF.util.normalize(
+        trigger.box.isConnected ? `${trigger.box.textContent} ${near ? near.textContent : ''}` : page.body.textContent,
+      );
       return (
         (!!name && text.includes(name)) ||
         /\b(uploaded|upload (complete|successful)|erfolgreich hochgeladen)\b/.test(text)

@@ -454,6 +454,18 @@
         return set('avature', host.split('.')[0], id, stage);
       }
     }
+    // Avature on a company's own domain, by job folder (Bain): careers.bain.com/jobs/FolderDetail/{slug}/{id}; apply:
+    // Login?folderId=, EEOQuestions?folderId= (its page names are CamelCase).
+    const folder = lower.indexOf('folderdetail');
+    const page = parts[parts.length - 1] || '';
+    if (
+      folder >= 0 ||
+      (/^\d+$/.test(qp.get('folderId') || '-') &&
+        /^(Login|Register|Apply)$|^[A-Z][a-z]+[A-Z]\w*$|^[A-Z]{2,}[a-z]\w*$/.test(page))
+    ) {
+      const id = folder >= 0 ? parts.slice(folder + 1).find((p) => /^\d+$/.test(p)) : qp.get('folderId');
+      return set('avature', companyFromHost(host), id, folder >= 0 ? 'description' : 'application', { folder: true });
+    }
 
     // Phenom People career sites: [/{site}]/{country}/{lang}/job/{id}/{slug}; apply: …/{country}/{lang}/apply?jobSeqNo=
     for (let k = 0; k <= 1 && k + 2 < parts.length; k++) {
@@ -767,7 +779,9 @@
         }
         break;
       case 'avature':
-        if (a.stage === 'application' && a.jobId) {
+        if (a.stage === 'application' && a.jobId && a.folder)
+          add(`${u.origin}${u.pathname.replace(/\/[^/]*$/, '')}/FolderDetail/${a.jobId}`, 'the Avature job page');
+        else if (a.stage === 'application' && a.jobId) {
           const base = u.pathname.replace(
             /\/(ApplicationMethods|Login|Register|Apply\w*|SubmitApplication\w*)(\/.*)?$/i,
             '',
@@ -1279,6 +1293,16 @@
     return '';
   }
 
+  /** Avature's "Location(s)" row (Bain): the value beside its label. */
+  function avatureLocation(doc) {
+    for (const row of qa(doc, '.article__content__view__field')) {
+      const label = q(row, '.article__content__view__field__label');
+      const value = q(row, '.article__content__view__field__value');
+      if (label && value && /^\s*locations?\s*(\(s\))?\s*:?\s*$/i.test(label.textContent)) return shortText(value, 150);
+    }
+    return '';
+  }
+
   function fromAtsDom(doc, url, name) {
     for (const rule of DOM_RULES) {
       if (rule.ats && rule.ats !== name) continue;
@@ -1306,7 +1330,7 @@
         url,
         title: pickTitle(doc, rule.title),
         company: firstText(doc, rule.company, 120),
-        location: firstText(doc, rule.location, 150),
+        location: firstText(doc, rule.location, 150) || (rule.ats === 'avature' ? avatureLocation(doc) : ''),
         description,
         source: 'page',
         ats: name || null,

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>How do you want to register? - Bain &amp; Company</title>
+  <style>
+    body { font: 14px system-ui; max-width: 720px; margin: 24px auto; }
+    .methodButton { display: inline-block; padding: 8px 16px; border: 1px solid #c00; cursor: pointer; }
+    .fieldSpec { margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <!-- Reduced from careers.bain.com/jobs/RegistrationMethods (Avature). The "From Device" link is all the page
+       shows; at load Avature's portal script appends a hidden fieldset with a hidden file box, a privacy checkbox and
+       Continue to the empty form. Clicking "From Device" shows that fieldset and clicks the file box; a file put into
+       the box while the fieldset is still hidden is never seen by whoever fills the form in. -->
+  <h2>How do you want to register?</h2>
+  <ul class="list list--steps">
+    <li class="list__item list__item--current"><div class="list__item__text__title">Upload Resume</div></li>
+    <li class="list__item"><div class="list__item__text__title">Personal Information</div></li>
+  </ul>
+  <article class="article article--methods">
+    <div class="article__content">
+      <ul class="grid grid--methods list list--methods">
+        <li class="grid__item list__item list__item--file">
+          <a data-fromcomputer="From Device" data-nofileselected="No file selected" data-continue="Continue"
+             data-allowedfilextensions=".pdf,.doc,.docx,.txt" id="methodButton--file"
+             class="uploadResumeTriggerFile methodButton methodButton--file" role="button" tabindex="0"
+             data-registermethod="file">From Device</a>
+        </li>
+      </ul>
+    </div>
+    <div class="article__content">
+      <form class="form form--methods" id="manualRegisterMethodsForm" enctype="multipart/form-data" method="post"></form>
+    </div>
+  </article>
+  <pre id="state"></pre>
+  <script>
+    const state = { opened: 0, mode: '' };
+    const show = () => (document.getElementById('state').textContent = JSON.stringify(state));
+    const button = document.getElementById('methodButton--file');
+    const form = document.getElementById('manualRegisterMethodsForm');
+    form.insertAdjacentHTML(
+      'afterbegin',
+      `<input class="resumeRegistrationFileMode" type="hidden" name="radio">
+      <fieldset id="methodButton--fileFieldSetContainer" class="manualRegisterMethodExtra Section" style="display:none">
+        <div id="methodButton--fileFieldSpec" class="fieldSpec">
+          <label class="requiredField" for="resumeFile">From Device<span class="labelRequiredIcon" aria-hidden="true"> *</span></label>
+          <div class="fieldContainer"><input id="resumeFile" type="file" name="resumeFile" aria-required="true"
+            accept=".pdf,.doc,.docx,.txt" style="display:none">
+            <div class="selectedFile"><span id="fileNameContainer" class="fileNameContainer">No file selected</span>
+              <a id="filePickerAnother" class="button" tabindex="0" role="button">Choose another file</a></div></div>
+        </div>
+        <div class="fieldSpecCheckbox"><div class="fieldContainerCheckbox"><input id="checkBoxfile" type="checkbox"
+          name="checkBoxfile" aria-required="true"><label class="requiredField" for="checkBoxfile">I acknowledge that I
+          have read the Privacy Policy and hereby consent to the terms described therein.</label></div></div>
+        <div id="uploadFileResumeContainer" class="fieldSpec button-bar"><button id="uploadFileResume" type="submit"
+          value="Continue">Continue</button></div>
+      </fieldset>`,
+    );
+    const input = document.getElementById('resumeFile');
+    button.addEventListener('click', () => {
+      state.opened++;
+      document.getElementById('methodButton--fileFieldSetContainer').style.display = '';
+      input.click();
+      show();
+    });
+    input.addEventListener('change', () => {
+      document.getElementById('fileNameContainer').textContent = input.files[0] ? input.files[0].name : 'No file selected';
+      show();
+    });
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (input.value && document.getElementById('checkBoxfile').checked) state.mode = 'file';
+      show();
+    });
+    show();
+  </script>
+</body>
+</html>
