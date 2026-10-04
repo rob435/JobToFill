@@ -239,6 +239,16 @@ const FORMS = {
             options: YES_NO,
           }),
           f('compliance.governmentDetails', 'Government connection: details', { wide: true }),
+          f('compliance.criminal', 'Any criminal convictions?', {
+            type: 'select',
+            options: YES_NO,
+            hint: '“Have you ever been convicted of a criminal offence?”, “Do you have any unspent convictions?”',
+          }),
+          f('compliance.regulatory', 'Any regulatory or disciplinary action against you?', {
+            type: 'select',
+            options: YES_NO,
+            hint: 'Fined, suspended or barred by a regulator (FCA, SEC, FINRA, PCAOB), a professional licence revoked, charges pending, or disciplinary action by an employer, university or professional body. With No, a list of these and government statements gets its “None of these apply to me”.',
+          }),
         ],
       },
       {

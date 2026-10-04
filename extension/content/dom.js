@@ -8,9 +8,12 @@
   const JTF = (root.JTF = root.JTF || {});
   const U = JTF.util;
 
+  // Toggle buttons: Ashby's Yes/No, and Oracle Recruiting Cloud's multiple-choice pills, a <ul role="list"> of
+  // <li><button aria-pressed> that carry no aria-pressed at all until one is picked.
+  const TOGGLE = 'button[aria-pressed], .cx-select-pills-container[role="list"] > li > button';
   // Choices built from ARIA widgets instead of <input>s: Radix/Headless UI radios, toggle-button
-  // groups like Ashby's Yes/No, custom checkboxes and switches.
-  const ARIA_CHOICE = '[role="radio"], [role="checkbox"], [role="switch"], button[aria-pressed]';
+  // groups, custom checkboxes and switches.
+  const ARIA_CHOICE = `[role="radio"], [role="checkbox"], [role="switch"], ${TOGGLE}`;
   // Rich-text editors (Quill, ProseMirror/TipTap, Lexical, CKEditor): the element that holds the contenteditable.
   const EDITOR = '[contenteditable]:not([contenteditable="false"])';
   // A date typed in parts that aren't inputs: MUI X's and React Aria's date fields show "MM" "DD" "YYYY" as
@@ -312,7 +315,8 @@
 
   function groupQuestion(members) {
     const first = members[0];
-    const group = first.closest('[role="radiogroup"], [role="group"]');
+    // A list of toggles names its question too (Oracle's pills: <ul role="list" aria-label="Do any of…">).
+    const group = first.closest('[role="radiogroup"], [role="group"], [role="list"][aria-label]');
     if (group && members.every((m) => group.contains(m))) {
       const l = explicitLabel(group) || group.getAttribute('aria-label');
       if (l) return U.cleanLabel(l);
@@ -584,12 +588,27 @@
     return { box, parts, units };
   }
 
-  /** Toggle buttons only count as a choice when they come in a group: "Yes" "No". */
+  /** A toggle button alone in a list item: one of a list of them, each picked on its own (Oracle's pills). */
+  const inListItem = (el) =>
+    !!el.parentElement && el.parentElement.localName === 'li' && !!el.parentElement.parentElement;
+
+  /**
+   * Toggle buttons only count as a choice when they come in a group: "Yes" "No" side by side, or a list of them
+   * one per item ("None of these apply to me" among statements).
+   */
   function pressedGroup(el) {
     const parent = el.parentElement;
-    // Bold / Italic in an editor toolbar are not an answer.
-    if (!parent || el.closest('[role="toolbar"], [role="menubar"], [role="tablist"], [contenteditable]')) return [];
-    const list = Array.from(parent.children).filter((c) => c.matches('button[aria-pressed]'));
+    // Bold / Italic in an editor toolbar are not an answer, nor a site's filters in its navigation.
+    if (
+      !parent ||
+      el.closest('[role="toolbar"], [role="menubar"], [role="tablist"], [contenteditable], nav, [role="navigation"]')
+    )
+      return [];
+    const list = inListItem(el)
+      ? Array.from(parent.parentElement.children).flatMap((li) =>
+          li.localName === 'li' ? Array.from(li.children).filter((c) => c.matches(TOGGLE)) : [],
+        )
+      : Array.from(parent.children).filter((c) => c.matches(TOGGLE));
     return list.length >= 2 && list.length <= 12 ? list : [];
   }
 
@@ -600,7 +619,7 @@
     if (isAriaChoice(el)) {
       // A wrapper around a real input is handled through the input.
       if (el.querySelector('input[type="radio"], input[type="checkbox"]')) return null;
-      if (el.matches('button[aria-pressed]')) return pressedGroup(el).length ? 'radio' : null;
+      if (el.matches(TOGGLE)) return pressedGroup(el).length ? (inListItem(el) ? 'checkbox' : 'radio') : null;
       return el.getAttribute('role') === 'radio' ? 'radio' : 'checkbox';
     }
     if (tag === 'select') return 'select';
@@ -679,7 +698,7 @@
 
   function ariaMembers(el, kind) {
     let list;
-    if (el.matches('button[aria-pressed]')) list = pressedGroup(el);
+    if (el.matches(TOGGLE)) list = pressedGroup(el);
     else {
       const role = el.getAttribute('role');
       const group = el.closest(role === 'radio' ? '[role="radiogroup"]' : '[role="group"], fieldset');
@@ -742,7 +761,7 @@
   }
 
   function groupMembers(el) {
-    if (isAriaChoice(el)) return ariaMembers(el, el.matches('button[aria-pressed]') ? 'radio' : kindOf(el));
+    if (isAriaChoice(el)) return ariaMembers(el, kindOf(el));
     if (el.type === 'radio' && !el.hasAttribute('name')) return namelessRadios(el);
     if (el.type === 'checkbox' && !el.hasAttribute('name')) return labelledCheckboxes(el) || [el];
     const scope = el.form || el.getRootNode();

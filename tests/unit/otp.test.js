@@ -268,3 +268,59 @@ test('otp: Workday’s verification link, whatever page it sends you to afterwar
     null,
   );
 });
+
+test('otp: an employer named only in the path of its tracking system (BNY on Oracle, Workday’s shared hosts)', () => {
+  // BNY's Oracle Recruiting Cloud site: the host is Oracle's pod name, the employer is in /sites/BNY-Careers/.
+  const page =
+    'https://eofe.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/BNY-Careers/job/82774/apply/email?keyword=%22engineering%22';
+  assert.deepEqual(otp.pageOf(page), { host: 'eofe.fa.us2.oraclecloud.com', tokens: ['eofe', 'bny'] });
+  assert.deepEqual(otp.pageOf('eofe.fa.us2.oraclecloud.com').tokens, ['eofe'], 'a host name alone');
+  // A numbered site says nothing more.
+  assert.deepEqual(
+    otp.pageOf('https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/1').tokens,
+    ['jpmc'],
+  );
+  assert.deepEqual(
+    otp.pageOf('https://wd3.myworkdaysite.com/en-US/recruiting/acme/External/job/London/Analyst_R1').tokens,
+    ['acme'],
+  );
+  // Site names run together, and Oracle's pod names, say only what they say.
+  assert.deepEqual(
+    otp.pageOf('https://icbpjb.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/LazardStudentCareers/job/1')
+      .tokens,
+    ['icbpjb', 'lazard'],
+  );
+  assert.deepEqual(
+    otp.pageOf('https://ebqb.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/BDOEntryLevelCareers/job/1')
+      .tokens,
+    ['ebqb', 'bdo'],
+  );
+  assert.deepEqual(
+    otp.pageOf('https://cbct.fa.em2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/gallifordtrycareers/job/1')
+      .tokens,
+    ['cbct', 'gallifordtry'],
+  );
+  assert.deepEqual(otp.hostTokens('fa-evup-saasfaprod1.fa.ocs.oraclecloud.com'), ['evup']);
+  const bny = {
+    id: 'bny1',
+    subject: 'BNY Careers - Confirm Your Identity',
+    body: '<p>Hi Robin,</p><p>Just one more step before you get started.</p><p>You must confirm your identity using the one-time pass code: 421326</p><p>Note: This code will expire in 10 minutes.</p><p>Thank You,<br>BNY Talent Acquisition Team.</p>',
+    from: [{ name: 'bnycareerspeople@people.bny.com', email: 'noreply-bnycareerspeople@people.bny.com' }],
+    date: Math.floor(Date.now() / 1000),
+  };
+  assert.equal(otp.findCode(bny, { length: 6, numeric: true }).code, '421326');
+  assert.equal(otp.relevance(bny, [page]), 'strong', 'the employer behind its Oracle site');
+  assert.equal(otp.pick([bny], { hosts: [page], want: { length: 6, numeric: true } }).code, '421326');
+  // The same email on someone else's Oracle site, or a path that only looks like one, is not BNY's.
+  const other = 'https://abcd.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/1';
+  assert.notEqual(otp.relevance(bny, [other]), 'strong');
+  assert.notEqual(
+    otp.relevance(bny, ['https://evil.example/hcmUI/CandidateExperience/en/sites/BNY-Careers/']),
+    'strong',
+  );
+  assert.notEqual(
+    otp.relevance(bny, ['https://objectstorage.us-ashburn-1.oraclecloud.com/CandidateExperience/en/sites/BNY/x']),
+    'strong',
+  );
+  assert.notEqual(otp.relevance(bny, ['https://bny-careers.recruitee.com/']), 'strong');
+});

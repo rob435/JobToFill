@@ -72,6 +72,8 @@ export const SURVEY_PROFILE = {
     governmentOfficial: 'No',
     familyGovernmentOfficial: 'No',
     governmentDetails: '',
+    criminal: 'No',
+    regulatory: 'No',
   },
   education: [
     {

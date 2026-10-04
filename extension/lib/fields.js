@@ -106,6 +106,10 @@
         governmentOfficial: '',
         familyGovernmentOfficial: '',
         governmentDetails: '',
+        // Declarations: a criminal conviction; regulatory or disciplinary action (fined, suspended, barred, a licence
+        // revoked, charges pending)
+        criminal: '',
+        regulatory: '',
       },
       // Interview and assessment slots you can do: weekdays, hours, and dates you can't ("12–23 January 2027").
       availability: { days: 'Mon, Tue, Wed, Thu, Fri', from: '08:00', to: '20:00', unavailable: '' },
@@ -1735,6 +1739,9 @@
   const at = (path, wrap) => (p) => (wrap || val)(U.getPath(p, path));
   const simple = (label, path, wrap) => ({ label, path, get: at(path, wrap) });
 
+  // A university's address: ox.ac.uk, st-andrews.ac.uk, mit.edu, student.unimelb.edu.au.
+  const ACADEMIC_EMAIL = /@([\w-]+\.)*(ac\.[a-z]{2}|edu(\.[a-z]{2})?)$/i;
+
   // "Undergraduate GPA", "GPA (Graduate)", "Name of secondary school": the entry at that level of study.
   const LEVEL_WORDS = [
     [
@@ -2025,7 +2032,23 @@
       },
     },
 
-    email: simple('Email', 'contact.email'),
+    // "Please provide your university email address": yours only when it is a university's.
+    email: {
+      label: 'Email',
+      path: 'contact.email',
+      get(p, ctx) {
+        const q = U.normalize((ctx && ctx.question) || '');
+        const email = String(p.contact.email || '').trim();
+        // "Email (university address preferred)" still takes yours.
+        if (
+          /\b(university|college|school|student|academic|institutional|edu) e ?mail\b/.test(q) &&
+          !/\bprefer/.test(q) &&
+          !ACADEMIC_EMAIL.test(email)
+        )
+          return null;
+        return val(email);
+      },
+    },
     phone: {
       label: 'Phone',
       path: 'contact.phone',
@@ -2429,9 +2452,10 @@
           /\b(related to|family|relatives?|parents?|spouse|partner|siblings?|child(ren)?|household|close associates?)\b/.test(
             q,
           );
+        // "You, any member of your household, or any business partner…": a statement about you and them.
         const self =
           !family ||
-          (/\b(you or|you and|yourself|are you (a|an|currently|now|ever|or)|have you (ever )?(been|held|worked)|were you)\b/.test(
+          (/^you\b|\b(you or|you and|yourself|are you (a|an|currently|now|ever|or)|have you (ever )?(been|held|worked)|were you)\b/.test(
             q,
           ) &&
             !/\bare you related\b/.test(q));
@@ -2455,6 +2479,34 @@
         const answers = [p.compliance.governmentOfficial, p.compliance.familyGovernmentOfficial].map(canon);
         const answer = answers.includes('yes') ? 'Yes' : answers.every((x) => x === 'no') ? 'No' : '';
         return detailsIfYes(answer, p.compliance.governmentDetails, ctx);
+      },
+    },
+
+    'compliance.criminal': simple('Criminal convictions', 'compliance.criminal'),
+    'compliance.regulatory': simple('Regulatory or disciplinary action', 'compliance.regulatory'),
+    // "Do any of the following apply to you?" over statements ("You are currently serving as a Government Official…",
+    // "…subject to post-employment restrictions…") and "None of these apply to me": each statement is answered as the
+    // Yes / No question it is (matcher.declarationList), "None…" only when every one is a No. Left for you when your
+    // profile can't tell one of them.
+    'compliance.declarations': {
+      label: 'Declarations (government, relatives, regulatory)',
+      get(p, ctx) {
+        const list = JTF.matcher ? JTF.matcher.declarationList(ctx.options) : null;
+        if (!list) return null;
+        const yes = [];
+        for (const st of list.statements) {
+          const v = resolve(st.type, p, {
+            ...ctx,
+            question: U.normalize(st.text),
+            kind: 'radio',
+            options: [{ text: 'Yes' }, { text: 'No' }],
+          });
+          const answer = v && v.canonical;
+          if (answer === 'yes') yes.push(st.text);
+          else if (answer !== 'no') return null;
+        }
+        const items = yes.length ? yes : [list.none.text];
+        return val(items.join('; '), { kind: 'list', items, candidates: items, canonical: null });
       },
     },
 
@@ -2855,8 +2907,9 @@
       ),
       {
         kinds: CHOICE,
-        // Not where you'd work or have been ("Are you willing to travel to Cuba or Iran?"), nor an ethnicity.
-        not: /\b(disciplinary|regulatory|professional|criminal)\b|\bconsent\b|\b(willing|happy|open|prepared) to\b|\btravel\w*|\bvisit\w*|\bdo(ing)? business\b|\bethnic\w*|\brace\b|\bheritage\b|\bancestr\w*|\bdescent\b|\blanguages?\b/,
+        // Not where you'd work or have been ("Are you willing to travel to Cuba or Iran?"), nor an ethnicity, nor a
+        // list of US visas ("…sponsorship would include F-1 OPT, H-1B, … E-1/E-2, and E-3": treaty visas, not E:1/E:2).
+        not: /\b(disciplinary|regulatory|professional|criminal)\b|\bsponsor\w*|\bvisas?\b|\bh ?1 ?b\b|\bimmigration\b|\bconsent\b|\b(willing|happy|open|prepared) to\b|\btravel\w*|\bvisit\w*|\bdo(ing)? business\b|\bethnic\w*|\brace\b|\bheritage\b|\bancestr\w*|\bdescent\b|\blanguages?\b/,
         // A lone box is a statement about you ("I am not a citizen or resident of…") or its "None of the above",
         // never an acknowledgement that mentions sanctions.
         test: (desc, hit) =>
@@ -2954,7 +3007,13 @@
     ),
     R(
       'job.referralSource',
-      /how did you (hear|find|learn|come across|discover|get to know|connect with)|where did you (hear|find|learn|see|discover|come across)|hear(d)? about (us|this|the)|learn(ed)? about (us|this|the)|source of (application|referral|hire|candidate)|referral source|^source$|how were you referred|found (us|this|the job)/,
+      /how did you (first )?(hear|find|learn|come across|discover|get to know|connect with)|where did you (first )?(hear|find|learn|see|discover|come across)|hear(d)? about (us|this|the)|learn(ed)? about (us|this|the)|source of (application|referral|hire|candidate)|referral source|^source$|how were you referred|found (us|this|the job)/,
+    ),
+    // The list that follows "How did you first hear about BNY?" (Job Board → "Please select the specific source").
+    R(
+      'job.referralSource',
+      /\b(specific|exact|detailed) source\b|\bsource (details?|name|specifics)\b|\bspecify (the |your )?source\b|\bwhich (job board|job site|jobs? website|social (media|network)( platform| site)?)\b/,
+      { kinds: CHOICE },
     ),
     R(
       'job.salary',
@@ -3065,7 +3124,7 @@
     // EEO notices ("Government officials engaged in enforcing laws…") are not questions.
     R(
       'compliance.government',
-      /\bgovernment (official|employee|position|role|connection|body|agency|department|entity|minister)s?\b|\bpublic (official|office|servant)s?\b|\bpolitically exposed|\bpeps?\b|\bstate ?owned (entit|enterprise|compan|business)|\bforeign (government )?official|\bcivil servant|\binvolved (in|with) (the )?(government|politics)\b|\b(public|political|government) (office|position|appointment)s?\b|\bpublic (function|trust|role|post)s?\b|\bprominent public\b|\bsenior political figure/,
+      /\bgovernment (official|employee|position|role|connection|body|agency|department|entity|minister)s?\b|\bgovernment (or regulatory )?authorit(y|ies)\b|\bpublic (official|office|servant)s?\b|\bpolitically exposed|\bpeps?\b|\bstate ?owned (entit|enterprise|compan|business)|\bforeign (government )?official|\bcivil servant|\binvolved (in|with) (the )?(government|politics)\b|\b(public|political|government) (office|position|appointment)s?\b|\bpublic (function|trust|role|post)s?\b|\bprominent public\b|\bsenior political figure/,
       {
         kinds: CHOICE.concat(LONG_TEXT),
         not: /\bengaged in enforcing\b|\benforcing (the )?laws?\b|\bequal (employment|opportunity)\b|\bfederal contractor|\bgovernment (contracts?|contractors?|funding|grants?)\b|\bvisa\b|\bsponsor/,
@@ -3088,6 +3147,23 @@
         not: /\bapplied\b|\binterview|\brelated|famil|relative|\bin (finance|banking|consulting|the industry|a similar)|\b(ernst|ey|deloitte|pwc|pricewaterhouse\w*|kpmg|auditors?|audit)\b/,
       },
     ),
+    // "Have you ever been convicted of a criminal offence?", "Do you have any unspent convictions?". Never a check you'd
+    // agree to or undergo.
+    R(
+      'compliance.criminal',
+      /\b(convicted|convictions?|criminal (record|offen[cs]es?|history|charges?|proceedings?|cases?)|unspent|(pleaded|pled) (guilty|no contest)|nolo contendere|felon(y|ies)|misdemeanou?rs?)\b/,
+      {
+        kinds: CHOICE,
+        not: /\b(consent|willing|agree|authori[sz]e|undergo|happy to|prepared to|able to pass|background (check|screen)\w*|dbs check)\b/,
+      },
+    ),
+    // "…any administrative or regulatory charges pending against you; been fined, or had a license revoked…", "Have you
+    // ever been suspended or barred … by the Public Company Accounting Oversight Board?"
+    R(
+      'compliance.regulatory',
+      /\b(regulatory|disciplinary|administrative|enforcement) (actions?|charges?|proceedings?|investigations?|sanctions?|history|matters?|complaints?|orders?|measures?)\b|\b(suspended|barred|expelled|censured|debarred|disqualified|struck off)\b.*\b(regulat\w*|oversight|authorit(y|ies)|exchanges?|finra|sec|fca|pra|pcaob|nfa|cftc|licen[cs]es?|registrations?|membership|professional body|association|issuer|entity)\b|\blicen[cs]es?\b.{0,40}\b(revoked|suspended|denied|withdrawn)\b|\b(revoked|suspended|denied|withdrawn|refused)\b.{0,40}\blicen[cs]es?\b|\bsubject to (an? |any )?(order|judge?ment|decree|sanction)s?\b.*\b(banking|securities|investment|financial|insurance|commodit\w*)\b|\bfined\b.*\b(regulat\w*|authorit\w*|exchange|finra|fca)\b/,
+      { kinds: CHOICE, not: /\b(willing|happy to|prepared to|able to|consent|agree)\b|\bdriv(ing|er s?)\b/ },
+    ),
 
     // Voluntary self-identification
     // Sexual orientation, gender identity vs sex at birth, LGBTQ+, religion, neurodiversity.
@@ -3107,7 +3183,12 @@
     ),
     R('eeo.hispanic', /hispanic|latin[oax]\b/, { kinds: CHOICE }),
     R('eeo.race', /\brace\b|ethnic/, { kinds: CHOICE }),
-    R('eeo.veteran', /veteran|military (service|status)|armed forces|served in the/, { kinds: CHOICE }),
+    // Not a date a veteran gives (Oracle's "Veteran First Civilian Start Date" in Day / Month / Year lists, where "No"
+    // would pick November).
+    R('eeo.veteran', /veteran|military (service|status)|armed forces|served in the/, {
+      kinds: CHOICE,
+      not: /\bdates?\b|\bwhen\b/,
+    }),
     R('eeo.disability', /disabilit|disabled|handicap|impairment/, { kinds: CHOICE, not: /adjustments?\b|accommodat/ }),
     R('eeo.gender', /\bgender\b|\bsex\b|geschlecht|\bgenre\b|\bsexo\b/, {
       not: /orientation|transgender|same as|(registered|assigned) at birth|\bpronouns?\b/,
@@ -3226,7 +3307,7 @@
     // "Which university are you enrolled in, or from which institution did you receive your most recent degree?"
     R(
       'edu.school',
-      /^(which|what) (university|school|college|institution)\b|^name of (the |your )?(university|college)\b/,
+      /^(which|what) (university|school|college|institution)\b|^name of (the |your )?(university|college)\b|^educator$|^educational (establishment|institution|provider)$/,
       {
         not: /\b(university|college) degree\b|\b(university|college|school) (course|programme|program|subject)s?\b|\bschool (type|diploma|grades?|did you attend)\b|type of school|\bgraduat\w* (year|date)|\byear\b|\bgpa\b|\bcity\b|\bcountry\b|\blocation\b/,
       },
@@ -3340,7 +3421,8 @@
       'name.preferred',
       /\bpreferred (first |given |full |legal |short )?(name|forename)|\bpref(erred)? name|nick ?name|\bgoes by\b|\bgo by\b|\bknown as\b|\bchosen (first |full )?name|\bname you (go by|prefer|are known by|use|would like|like to (be called|go by))|\b(what|how) (should|do|can|may) (we|i) call you|\bcall you\b|\b(display|screen|short|common|informal|alias) name\b|\balias\b|\benglish (first |given |full )?name\b|\bspitzname|\brufname|\bbevorzugter (vor)?name|\bnom (d usage|usuel)|\bprenom usuel|\bsurnom\b|\bapodo\b|\bnombre (preferido|social)|\bsoprannome\b|\bnome (preferito|social)/,
       {
-        not: /user ?name|company|employer|school|business|card|organi|contact|\breferences?\b|\breferr|emergency|manager|screen ?name ?(on|in)/,
+        // "Legal First Name (if different from preferred name)" asks for the legal one.
+        not: /user ?name|company|employer|school|business|card|organi|contact|\breferences?\b|\breferr|emergency|manager|screen ?name ?(on|in)|\bdifferent (from|to|than) (your |the )?pref(erred)? name\b/,
       },
     ),
     R(
@@ -3383,8 +3465,9 @@
         not: /marketing|newsletter|promotion|job alerts?|talent (community|network|pool)|subscribe|opt ?in|consent|emergency|\breferee|\breferences?\b|\bnumber\b|\baddress\b/,
       },
     ),
+    // Not someone else's, nor a second address of yours ("Alternate Email": the same one again says nothing).
     R('email', /e ?mail|courriel|correo|\bmail\b/, {
-      not: /referr|reference|recruiter|manager|supervisor|emergency|friend|hiring|newsletter|marketing|subscribe/,
+      not: /referr|reference|recruiter|manager|supervisor|emergency|friend|hiring|newsletter|marketing|subscribe|\b(alternate|alternative|secondary|additional|backup|second) e ?mail\b/,
     }),
     R(
       'account.username',
@@ -3462,7 +3545,11 @@
     R(
       'address.postalCode',
       /\bzip\b|zip ?code|\bzipcode|postal|post ?code|postcode|\bpin ?code\b|\bplz\b|postleitzahl|codigo postal|code postal|\bcap\b|\bcep\b/,
-      { yieldsTo: ['exp.location'] },
+      // Not where you work: Oracle's "Northern Ireland Workplace Postcode for SPBP due to miscarriage".
+      {
+        yieldsTo: ['exp.location'],
+        not: /\bworkplace\b|\b(work|employer s?|company|office|branch) (post ?code|postcode|zip|postal)\b/,
+      },
     ),
     R('citizen', /^(are|is) you (a |an )?(\w+ ){0,3}(citizen|national)s?\b/, {
       kinds: ['select', 'radio', 'combo', 'combobox'],
@@ -3514,20 +3601,23 @@
       'gen.start',
       /^(start|from|begin|started|since)( date| month| year)?( (or )?(actual|expected|anticipated)( or (actual|expected|anticipated))?)?$|\bstart ?date\b|\bstart (month|year)\b|\bdate (from|started|joined|of joining)\b|\bfrom (date|month|year)\b|\bstarted\b|\bbegin date\b|\bdate from\b/,
       {
-        // "From (Actual)" (Workday) is an entry's date; "Expected start date" is when you could start the job.
-        not: /when (can|could|would) you|availab|earliest|desired|preferred|^expected|\bexpected (start|to start|from)\b|can you start|internship|placement|programme|program\b/,
+        // "From (Actual)" (Workday) is an entry's date; "Expected start date" is when you could start the job. Oracle's
+        // "Veteran First Civilian Start Date" is a veteran's own.
+        not: /when (can|could|would) you|availab|earliest|desired|preferred|^expected|\bexpected (start|to start|from)\b|can you start|internship|placement|programme|program\b|\bveteran|\bmilitary\b|\bcivilian\b|\barmed forces\b|\bdischarge/,
       },
     ),
     R(
       'gen.end',
       /^(end|to|until|finish|till)( date| month| year)?( (or )?(actual|expected|anticipated)( or (actual|expected|anticipated))?)?$|\bend ?date\b|\bend (month|year)\b|\bdate (to|left|ended|of leaving)\b|\bto (date|month|year)\b|\bended\b|\bfinish date\b|\bdate to\b|\bleaving date\b/,
-      { not: /open ended|\b(percentage|average|marks?|grades?|score|results?|gpa|total|overall)\b/ },
+      {
+        not: /open ended|\b(percentage|average|marks?|grades?|score|results?|gpa|total|overall)\b|\bveteran|\bmilitary\b|\bcivilian\b|\barmed forces\b|\bdischarge/,
+      },
     ),
     R(
       'exp.company',
       /\bcompany\b|employer|organi[sz]ation|\bfirm\b|business name|workplace|unternehmen|\bempresa\b|entreprise/,
       {
-        not: /current|present|most recent|size|industry|website|\btype\b|e ?mail|phone|address|why|how|referr|recruit|agency|\burl\b|linked ?in|do you|have you|are you|did you|related|know anyone|anyone at|family|relative|this company|our company|the company|interest|^if (yes|so|you)\b|deadlines?|\boffers?\b/,
+        not: /current|present|most recent|size|industry|website|\btype\b|e ?mail|phone|address|why|how|referr|recruit|agency|\burl\b|linked ?in|do you|have you|are you|did you|related|know anyone|anyone at|family|relative|this company|our company|the company|interest|^if (yes|so|you)\b|deadlines?|\boffers?\b|post ?code|postal|\bzip\b/,
       },
     ),
     R(
@@ -3569,8 +3659,10 @@
     ),
     // Not "Please disclose whether AI tools were used…" or "…which teams may be the best fit based on your skill set
     // … anything else you'd like to note".
+    // Nor an essay that mentions them ("Describe a product you built… the tech stack used", "What unique skills would
+    // you bring?") or a kind of them the list doesn't say ("What are some AI specific technologies…?"): the AI's.
     R('skills', /\bskills?\b|technologies|tech(nical)? stack|competenc|expertise|\btools\b|proficienc(y|ies)/, {
-      not: /language|\bdo you\b|have you|rate your|years|\blevel\b|how (proficient|experienced|comfortable|much|long)|\bwhether\b|\bdisclose\b|\bai tools\b|\banything else\b|\bfeel free\b|\bbest fit\b/,
+      not: /language|\bdo you\b|have you|rate your|years|\blevel\b|how (proficient|experienced|comfortable|much|long)|\bwhether\b|\bdisclose\b|\bai tools\b|\banything else\b|\bfeel free\b|\bbest fit\b|^(describe|tell (us|me)|explain|share|walk us through|give (us )?an example)\b|\bwould you bring\b|\bunique\b|\byou (built|developed|created|designed|made)\b|\b(ai|ml|machine learning|cloud|web|mobile|front ?end|back ?end|devops|security)( specific)? (technologies|tools|skills)\b/,
     }),
     R(
       'languages',
