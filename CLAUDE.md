@@ -17,7 +17,9 @@ Features list before changing behaviour, and its Development section for the fil
   person wrote answer guidance. Facts the material doesn't give are skipped, never guessed. Grades are never
   converted (a 2:1 never becomes a GPA).
 - **Snapshots and page maps in redacted mode carry no personal data.** `tests/e2e/snapshot.test.mjs` asserts it;
-  keep it passing and extend it when you add a field to what they carry.
+  keep it passing and extend it when you add a field to what they carry. A page map that leaves the browser (to
+  the AI, in a file) is made with `values: 'redacted'`: the default `'state'` hides typed values but not the
+  page's own text ("Welcome back, Ada").
 - **Fills stay deterministic.** The rules (`lib/fields.js`, `lib/matcher.js`) do the filling: fast, free,
   private. AI handles the leftovers; don't route fills through a model.
 - Fills must not regress on any fixture: a change for one site runs against all of them in the e2e suite.

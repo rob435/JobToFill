@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <title>Apply – Northbridge Capital</title>
+  <style>
+    body { font: 15px system-ui; margin: 0; }
+    header, main, footer { padding: 16px 32px; }
+    nav a { margin-right: 12px; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+    .parked { position: absolute; left: -9999px; }
+    .error { color: #b00; }
+    .cookies { position: fixed; left: 0; right: 0; bottom: 0; padding: 16px 32px; background: #222; color: #fff; }
+    .modal { position: fixed; top: 20%; left: 30%; width: 40%; background: #fff; border: 1px solid #999; padding: 16px; }
+  </style>
+</head>
+<body>
+  <!-- The page map's test page: a step list, an alert, a field the page marks wrong, hidden things that must not show
+       on the map, navigation and a footer to collapse, a cookie banner and a modal dialog over the form. -->
+  <header>
+    <a href="/">Northbridge Capital</a>
+    <nav aria-label="Main">
+      <a href="/jobs">Jobs</a> <a href="/teams">Teams</a> <a href="/students">Students</a> <a href="/about">About us</a>
+      <a href="/hidden" hidden>Hidden link</a>
+    </nav>
+  </header>
+  <main>
+    <h1>Summer Analyst 2027</h1>
+    <ol class="steps">
+      <li>Your details</li>
+      <li aria-current="step">Education</li>
+      <li>Questions</li>
+      <li>Review</li>
+    </ol>
+    <div role="alert" class="error-summary">Please fix the 1 error below.</div>
+    <p>We read every application. Tell us where you study and what you are studying.</p>
+    <p>Your CV: Ada_Lovelace_CV.pdf (uploaded on step 1)</p>
+    <p style="display: none">Hidden paragraph that must not appear.</p>
+    <p aria-hidden="true">Decorative text for screen readers to skip.</p>
+    <p class="sr-only">Screen-reader-only note.</p>
+    <p class="parked">Parked off-screen text.</p>
+    <form id="apply" action="/apply" aria-label="Application">
+      <h2>Education</h2>
+      <div>
+        <label for="school">University *</label>
+        <input id="school" name="school" required aria-invalid="true" aria-describedby="school-error" autofocus>
+        <span id="school-error" class="error">This field is required</span>
+      </div>
+      <div>
+        <label for="degree">Degree</label>
+        <select id="degree" name="degree"><option value="">Please select</option><option>BSc</option><option>BA</option><option disabled>PhD</option></select>
+      </div>
+      <fieldset>
+        <legend>Are you on a placement year?</legend>
+        <label><input type="radio" name="placement" value="yes"> Yes</label>
+        <label><input type="radio" name="placement" value="no"> No</label>
+      </fieldset>
+      <div hidden><label for="secret">Hidden field</label><input id="secret" name="secret"></div>
+      <input type="hidden" name="token" value="tok-123">
+      <div aria-hidden="true"><label for="trap">Leave this empty</label><input id="trap" name="trap" tabindex="-1"></div>
+      <p>
+        <button type="button">Back</button>
+        <button type="submit">Save and continue</button>
+        <a href="#" class="later">Save for later</a>
+      </p>
+    </form>
+  </main>
+  <footer>
+    <a href="/privacy">Privacy</a> <a href="/terms">Terms</a> <a href="/cookies">Cookies</a>
+    <p>© Northbridge Capital</p>
+  </footer>
+  <div class="cookies" id="cookies">
+    <p>We use cookies to understand how you use our site.</p>
+    <button type="button">Accept all</button> <button type="button">Reject all</button> <a href="/cookies">Cookie settings</a>
+  </div>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+    <h2 id="dialog-title">Before you continue</h2>
+    <p>Your answers are saved as you go.</p>
+    <button type="button">Close</button>
+  </div>
+</body>
+</html>

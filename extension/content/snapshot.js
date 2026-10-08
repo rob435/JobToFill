@@ -417,11 +417,33 @@
     'stepMismatch', 'badInput', 'customError',
   ];
 
+  const attr = (m, a) => (m.getAttribute && m.getAttribute(a)) || '';
+
+  /** Is the answer to a question of this type personal even as a picked option (see PRIVATE_CHOICE)? */
+  const isPrivate = (type) => !!type && PRIVATE_CHOICE.test(type);
+
+  /** required, aria-required, or a label that ends in "*" ("First Name *"). */
+  function isRequired(field) {
+    const { el, desc } = field;
+    const s = desc.signals || {};
+    return (
+      field.members.some((m) => m.required || attr(m, 'aria-required') === 'true') ||
+      !!(el.closest && el.closest('[aria-required="true"]')) ||
+      /\*\s*$/.test(s.label || s.question || '') ||
+      Array.from(el.labels || []).some((l) => /\*\s*$/.test(l.textContent || ''))
+    );
+  }
+
+  /** Does the page mark any of the field's controls invalid (aria-invalid)? */
+  const isInvalid = (field) => field.members.some((m) => !/^(|false)$/.test(attr(m, 'aria-invalid')));
+
+  /** The browser's own checks the control fails ("valueMissing", "typeMismatch"…). */
+  const validityOf = (el) => (el.validity ? VALIDITY.filter((k) => el.validity[k]) : []);
+
   /** What the developer needs to know about one field: never its value, only whether it has one. */
   function fieldInfo(field, res, r) {
     const { el, desc } = field;
     const s = desc.signals || {};
-    const attr = (m, a) => (m.getAttribute && m.getAttribute(a)) || '';
     let hasValue = null;
     try {
       hasValue = !!JTF.fill.hasValue(field);
@@ -441,14 +463,9 @@
       options: options ? options.slice(0, 50) : null,
       optionCount: options ? options.length : null,
       hasValue,
-      // required, aria-required, or a label that ends in "*" ("First Name *").
-      required:
-        field.members.some((m) => m.required || attr(m, 'aria-required') === 'true') ||
-        !!(el.closest && el.closest('[aria-required="true"]')) ||
-        /\*\s*$/.test(s.label || s.question || '') ||
-        Array.from(el.labels || []).some((l) => /\*\s*$/.test(l.textContent || '')),
-      invalid: field.members.some((m) => !/^(|false)$/.test(attr(m, 'aria-invalid'))),
-      validity: el.validity ? VALIDITY.filter((k) => el.validity[k]) : [],
+      required: isRequired(field),
+      invalid: isInvalid(field),
+      validity: validityOf(el),
       validationMessage: r.text(unquote(el.validationMessage)),
       path: r.ident(pathOf(el)),
     };
@@ -525,5 +542,19 @@
     return out;
   }
 
-  JTF.snapshot = { capture, serialize, cleanUrl, pathOf, note, trace };
+  // The page map (content/pagemap.js) shares how a field's required, invalid and private state is read.
+  JTF.snapshot = {
+    capture,
+    serialize,
+    cleanUrl,
+    pathOf,
+    note,
+    trace,
+    unquote,
+    shownAnswer,
+    isPrivate,
+    isRequired,
+    isInvalid,
+    validityOf,
+  };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

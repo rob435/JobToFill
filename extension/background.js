@@ -21,6 +21,7 @@ if (typeof importScripts === 'function') {
     'lib/letter.js',
     'lib/answers.js',
     'lib/jobpage.js',
+    'lib/pagemap.js',
     'lib/doctext.js',
     'lib/otp.js',
     'lib/nylas.js',
@@ -28,7 +29,19 @@ if (typeof importScripts === 'function') {
   );
 }
 
-const { store, passwords, util, fields, answers, jobpage, doctext, otp, nylas, redact: redaction } = globalThis.JTF;
+const {
+  store,
+  passwords,
+  util,
+  fields,
+  answers,
+  jobpage,
+  doctext,
+  otp,
+  nylas,
+  pagemap,
+  redact: redaction,
+} = globalThis.JTF;
 const llm = globalThis.JTF.ai;
 const api = globalThis.JTF.api;
 
@@ -612,7 +625,8 @@ const snapshotNote = (version, when) =>
   Kept: city, country, school and degree names (forms list them as options), and which options are ticked or
   picked, except in equal-opportunity (diversity) questions.
   The page's other frames follow it in <template data-frame-url> blocks; what JobToFill saw and did is in the
-  jtf-trace JSON at the end. The Content-Security-Policy at the top keeps anything in the page from running.`;
+  jtf-trace JSON at the end, with the page map (the page as an outline of its text, fields and buttons) in pageMap.
+  The Content-Security-Policy at the top keeps anything in the page from running.`;
 
 /** Saved logins for the sites in these frames: their usernames and passwords are redacted too (never sent to a page). */
 async function snapshotSecrets(hosts) {
@@ -635,8 +649,11 @@ const TRACE_KEYS = ['at', 'question', 'kind', 'type', 'status', 'reason', 'ms', 
 const ordered = (obj, keys) =>
   Object.assign(Object.fromEntries(keys.filter((k) => k in obj).map((k) => [k, obj[k]])), obj);
 
-/** The frames' copies as one self-contained file: the page, its other frames in templates, and the trace. */
-function snapshotFile(frames, redact, { version, when }) {
+/**
+ * The frames' copies as one self-contained file: the page, its other frames in templates, and the trace (with the
+ * redacted page map's text, `pageMap`, when there is one).
+ */
+function snapshotFile(frames, redact, { version, when, pageMap }) {
   const top = frames.find((f) => f.frameId === 0);
   const others = frames.filter((f) => f !== top && typeof f.html === 'string');
   const trace = {
@@ -644,6 +661,7 @@ function snapshotFile(frames, redact, { version, when }) {
     title: top.title,
     when: when.toISOString(),
     version,
+    ...(typeof pageMap === 'string' ? { pageMap } : {}),
     frames: frames.map((f) => {
       const out = {
         url: f.url || '',
@@ -701,8 +719,12 @@ async function snapshotTab(tabId, opts = {}) {
   });
   // A frame that couldn't redact itself still names where it is and what it's called: those go through here.
   for (const f of frames) Object.assign(f, { url: redact.text(f.url || ''), title: redact.text(f.title || '') });
+  // How the extension saw the page, as the AI would be shown it: redacted in each frame, then again here with the
+  // saved logins. A page map that fails leaves the snapshot as it was.
+  const mapped = await pageMapTab(tabId, { values: 'redacted', payload }).catch((err) => ({ error: String(err) }));
+  const pageMap = mapped.error ? null : redact.text(mapped.text);
   const when = new Date();
-  const html = snapshotFile(frames, redact, { version: api.runtime.getManifest().version, when });
+  const html = snapshotFile(frames, redact, { version: api.runtime.getManifest().version, when, pageMap });
   if (opts.returnHtml) return { html };
 
   const stamp = `${localDate(when).replace(/-/g, '')}-${localTime(when).replace(':', '')}`;
@@ -723,6 +745,88 @@ async function snapshotTab(tabId, opts = {}) {
     // Firefox's download() returns once the Save As dialog is answered, and reads the blob then: let it go later.
     if (url.startsWith('blob:')) setTimeout(() => URL.revokeObjectURL(url), 5 * 60e3);
   }
+}
+
+/* -------------------------------------------------------------- page maps */
+
+// The page map (lib/pagemap.js, content/pagemap.js): a tab's frames as one outline of its text, every field the fill
+// scans with its ref, question, state and classification, the buttons and the frames; for the AI, bug-report
+// snapshots and developers (scripts/pagemap.mjs). Its walker goes into a page only when a map is asked for, never with
+// a fill, and only reads it.
+const PAGEMAP_FILES = ['lib/pagemap.js', 'content/pagemap.js'];
+const PAGEMAP_VALUES = new Set(['state', 'redacted', 'full']);
+
+/** Put the page map's walker into each frame (after the content scripts it builds on), once. */
+async function ensurePageMap(tabId, frameIds) {
+  await ensureInjected(tabId, frameIds);
+  const probe = await execute(tabId, frameIds, { func: () => !!(globalThis.__jtf && globalThis.__jtf.pageMap) });
+  const missing = probe.filter((r) => !r.result).map((r) => r.frameId);
+  if (missing.length) await execute(tabId, missing, { files: PAGEMAP_FILES });
+}
+
+/**
+ * The page map of a tab: { map, text }, or { error }. opts: values ('state': what is picked, never what is typed;
+ * 'redacted': also every text through the snapshot's redactor; 'full': typed values too, for developers), maxChars
+ * (the text's budget), payload (a fill payload already read).
+ */
+async function pageMapTab(tabId, opts = {}) {
+  const { profile, settings, docs, jobLocation } = opts.payload || (await fillPayload(tabId)).payload;
+  const values = PAGEMAP_VALUES.has(opts.values) ? opts.values : 'state';
+  const files = Object.entries(docs || {})
+    .filter(([, d]) => d && d.name)
+    .map(([which, d]) => ({ which, name: d.name }));
+  // Which documents there are, never their names (those only go to the redactor, which takes them out).
+  const has = Object.fromEntries(Object.entries(docs || {}).map(([which, d]) => [which, !!d]));
+  const args = {
+    profile,
+    settings: { consents: !!(settings && settings.consents) },
+    docs: has,
+    jobLocation,
+    values,
+    files: values === 'redacted' ? files : [],
+  };
+  let frames;
+  try {
+    await ensurePageMap(tabId);
+    frames = await execute(tabId, null, {
+      func: (o) => (globalThis.__jtf && globalThis.__jtf.pageMap ? globalThis.__jtf.pageMap(o) : null),
+      args: [args],
+    });
+  } catch (err) {
+    return { error: await explainError(err, tabId) };
+  }
+  const map = pagemap.merge(frames.map((r) => ({ frameId: r.frameId, ...(r.result || { problem: 'not mapped' }) })));
+  return { map, text: pagemap.render(map, { maxChars: opts.maxChars }) };
+}
+
+/**
+ * Draw the page map's refs on the page, each at the top left of its field, button or frame (for a screenshot), from a
+ * map made now: { on, marks, map, text }. Off takes them all away again.
+ */
+async function pageMapMarks(tabId, on, opts = {}) {
+  const draw = (o, names) =>
+    globalThis.__jtf && globalThis.__jtf.pageMapMarks ? globalThis.__jtf.pageMapMarks(o, names) : null;
+  if (!on) {
+    try {
+      await execute(tabId, null, { func: draw, args: [false, null] });
+    } catch (err) {
+      return { error: await explainError(err, tabId) };
+    }
+    return { on: false };
+  }
+  const res = await pageMapTab(tabId, opts);
+  if (res.error) return res;
+  let marks = 0;
+  // Each frame draws the page's refs for its own fields and buttons.
+  for (const frame of res.map.frames) {
+    if (frame.problem) continue;
+    const [r] = await execute(tabId, [frame.frameId], {
+      func: draw,
+      args: [true, pagemap.labels(res.map, frame.index)],
+    }).catch(() => []);
+    marks += (r && r.result && r.result.marks) || 0;
+  }
+  return { on: true, marks, ...res };
 }
 
 /* ---------------------------------------------------------- cover letters */
@@ -2386,6 +2490,8 @@ const HANDLERS = {
   },
   'jtf:backup': () => writeBackup({ force: true }),
   'jtf:snapshot': (msg) => snapshotTab(msg.tabId, { returnHtml: !!msg.returnHtml, saveAs: msg.saveAs !== false }),
+  'jtf:pagemap': (msg) => pageMapTab(msg.tabId, { values: msg.values, maxChars: msg.maxChars }),
+  'jtf:pagemap-marks': (msg) => pageMapMarks(msg.tabId, !!msg.on, { values: msg.values, maxChars: msg.maxChars }),
   'jtf:job-context': (msg) => jobContext(msg.tabId),
   'jtf:scrape': (msg) => scrapeInTab(msg.url),
   'jtf:attach': (msg) => attachLetter(msg.tabId, msg.letterId),
@@ -2551,6 +2657,8 @@ globalThis.JTFBackground = {
   writeBackup,
   lookForPreviousBackup,
   snapshotTab,
+  pageMapTab,
+  pageMapMarks,
   otpFor,
   watchOtp,
   getFlow,

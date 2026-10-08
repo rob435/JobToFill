@@ -274,6 +274,7 @@ extension/
     letter.js          cover letter and CV prompts, and the checks every draft must pass
     answers.js         AI answers to the questions a fill leaves empty: what may be sent, limits, prompt, checks
     jobpage.js         job postings: extraction, ATS APIs, finding the description, same-job validation
+    pagemap.js         page maps: the frames' maps merged into one page, and its text outline within a budget
     doctext.js         text from PDF and Word files (your CV, example letters), no dependencies
     pdfdoc.js          PDF writer: TeX-style line breaking, embedded fonts, the letter and CV layouts
   fonts/               Latin Modern (GUST font licence) as TrueType subsets, and English hyphenation patterns
@@ -283,6 +284,7 @@ extension/
     fill.js            sets values the way frameworks notice, custom dropdowns, files and upload tiles, undo
     account.js         sign-in / sign-up / code pages: what blocks the submit, CAPTCHAs, the allowed clicks
     main.js            in-page API: fill / learn / inspect / undo / toast
+    pagemap.js         a frame's page map (injected only when one is asked for), and its refs drawn for screenshots
   ui/                  shared styles and helpers for the popup and settings page (ES modules)
   popup/               toolbar popup
   studio/              the cover letter page: find the job, write, check, preview, attach, tailor the CV
@@ -332,3 +334,41 @@ node tests/live/survey.mjs --limit 20                      # the real extension 
 ```
 
 The first survey (117 live forms, 2,408 questions on Trackr's UK and US finance and tech trackers) is what the country-by-country right to work, job-site mapping, on-site and adjustments answers, and AI answers were built from. The rules now fill 1,546 of those questions (64%, up from 60%; about a third of the gain is the new profile answers, the rest is new and corrected rules), and about 30 right-to-work answers that were wrong for a British applicant on US forms are now right. Most of the 461 questions they still don't recognise are firm-specific, and those go to the AI.
+
+### Measuring the AI features
+
+`tests/eval/` runs the AI answers and the cover letter writer, exactly as they ship, on 40 live application forms (276 questions labelled by hand) and 12 postings, for any provider and model, and scores coverage, answers that should never have been given, letters that pass their checks, cost and time; Claude can grade the writing too. Every call is recorded, so a run can be re-scored without a key. Compare models or prompt changes with it before switching (`tests/eval/README.md`):
+
+```bash
+OPENROUTER_API_KEY=sk-or-… npm run eval -- --provider openrouter --model deepseek/deepseek-v4.1-flash --split train
+npm run eval:scoreboard
+```
+
+### Page maps
+
+A page map is a page as JobToFill sees it, written out for a reader who can't see the screen: an AI model reading it as text, or you in a terminal. It is an outline in reading order, through shadow DOM and into every frame, of the page's landmarks, headings and text; every field the fill scans, with a ref (`f1`, `f2`…), its question, options, what it holds and what the rules take it for; the buttons that act on the form (`b1`…, with what they do: next, back, submit, upload, accept or reject cookies…); and the frames (`i1`…). Above the outline: the page's title and address, the job site and widget libraries it is built with, the step of a multi-step form, alerts, dialogs and cookie banners.
+
+```
+PAGE "Senior Engineer at Acme - Greenhouse-style application" http://localhost:8080/greenhouse.html  lang=en  platform=greenhouse
+FIELDS 24 (4 required, 23 filled, 0 invalid)  ACTIONS 1
+# Apply for Senior Engineer
+[form]
+  f1 text* "First Name" filled → name.first ✓ fill=filled
+  f7 file "Cover Letter" no file → file.coverLetter ✗ no value fill=nothing to put
+  f11 select "Are you legally authorized to work in the United States?" [Yes | No] chosen "Yes" → job.authorized ✓ fill=filled
+  f21 select "Gender" [Male | Female | Decline To Self Identify] filled (answer withheld) → eeo.gender ✓ fill=filled
+  b1 submit "Submit Application" (submit)
+```
+
+`→ name.first ✓` says what the rules take the field for and that your profile has the answer; `✗ no value` that it hasn't, and `(none: for AI)` that no rule knows the question, so it goes to the AI. A long page is cut to a budget (24,000 characters unless you say otherwise): page text far from the form goes first, then the tail of long option lists, then navigation links. Fields and buttons are never left out, and the last line says what was.
+
+```bash
+node scripts/pagemap.mjs greenhouse.html                   # a demo form from tests/fixtures, by its name
+node scripts/pagemap.mjs https://job-boards.greenhouse.io/figma/jobs/5458801004
+node scripts/pagemap.mjs greenhouse.html --fill            # fill it with the test profile first, then map it
+node scripts/pagemap.mjs <page> --screenshot page.png      # and a full-page screenshot with every ref drawn on
+node scripts/pagemap.mjs <page> --json map.json            # the whole map as JSON (rects, rules, validity, paths…)
+node scripts/pagemap.mjs <page> --max-chars 8000 --wait 3000 --headed
+```
+
+It runs the real extension in Chromium, as the end-to-end tests do, with their test profile, and never clicks or submits anything (`--fill` fills the way the Fill button does). A map says what is picked in a field, never what is typed in it, and not which answer an equal-opportunity question has; `--values redacted` also turns your details into placeholders everywhere, as snapshots do, and `--values full` shows what is typed too (for test profiles). Passwords, file names and hidden inputs' values are never on a map. Bug-report snapshots carry the redacted map as `pageMap` in their `jtf-trace` JSON. The page map's walker (`content/pagemap.js`) goes into a page only when a map is asked for (the background's `jtf:pagemap` message), never with a fill.
