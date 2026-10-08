@@ -5,3 +5,4 @@ test-results/
 .DS_Store
 tests/live/*-report.json
 .cache/
+tests/eval/runs/

@@ -16,9 +16,13 @@
     "firefox": "web-ext run --target firefox-desktop",
     "demo": "node tests/fixtures/serve.mjs",
     "icons": "node scripts/icons.mjs",
-    "firms": "node scripts/firms.mjs"
+    "firms": "node scripts/firms.mjs",
+    "eval": "node tests/eval/run.mjs",
+    "eval:build": "node tests/eval/build.mjs",
+    "eval:scoreboard": "node tests/eval/scoreboard.mjs"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.132.1",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@eslint/js": "^10.0.1",
