@@ -71,6 +71,42 @@ test('withheld: diversity, declarations and ID numbers never go; legal and healt
     ),
     null,
   );
+  // Parents' education is social-mobility monitoring however it's put (Talos).
+  assert.equal(w('What is the highest level of education completed by either of your parents or guardians?'), 'eeo');
+  // A question the rules took for a monitoring one is withheld whatever its words, and its answer never goes.
+  const guessed = { question: 'Background', kind: 'select', guess: { type: 'eeo.parentsDegree', value: 'Yes' } };
+  assert.equal(A.withheld(guessed, ''), 'eeo');
+  assert.equal(A.questionJson(guessed).profileValue, undefined);
+  assert.equal(
+    A.questionJson({
+      question: 'How did you hear about us?',
+      kind: 'select',
+      guess: { type: 'job.referralSource', value: 'Trackr' },
+    }).profileValue,
+    'Trackr',
+  );
+  // Disciplinary action is a legal matter; a degree's discipline isn't (Appian, Freeform).
+  assert.equal(w('Have you ever been subject to disciplinary action by a regulator?'), 'guidance');
+  assert.equal(w('Have you ever been disciplined by a professional body?'), 'guidance');
+  assert.equal(
+    w(
+      'Are you currently pursuing a Major in one of the following disciplines: Computer Science or Computer Engineering',
+    ),
+    null,
+  );
+  assert.equal(w('Why did you want to become an engineer in your respective discipline?'), null);
+  // Health by what is asked, not by the accommodation boilerplate in front of another question (Notion).
+  assert.equal(
+    w(
+      'We work from our offices on Mondays, Tuesdays, and Thursdays (Anchor Days). If you need an accommodation, we’ll partner with you and explore reasonable options consistent with applicable law. Are you able to commit to working from one of our offices on Anchor Days each week?',
+    ),
+    null,
+  );
+  assert.equal(
+    w('Are you able to perform the essential functions of the job, with or without a reasonable accommodation?'),
+    'guidance',
+  );
+  assert.equal(w('Do you need an accommodation during the interview process?'), 'guidance');
   for (const q of [
     'Why do you want to join Figma?',
     'Do you have practical Python experience?',

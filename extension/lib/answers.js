@@ -30,7 +30,7 @@
 
   // Never sent to the model: diversity monitoring (opt-in, in the profile), declarations, identity numbers.
   const EEO =
-    /\b(gender|sex|ethnic\w*|race|racial|sexual orientation|sexuality|religio\w*|faith|disabilit\w*|disabled|veteran|military service|transgender|lgbt\w*|pronouns?|marital|pregnan\w*|caring responsibilit\w*|carer|free school meals|socio ?economic|social mobility|household earner|first generation|parents? (or guardians? )?(have|has|went|attended|completed|education|degree|occupation)|type of school|school did you (mainly )?attend|diversity|equal (employment )?opportunit\w*|eeo|demographic|hispanic|latin[aox]|age range|age group|neurodiver\w*|refugee|asylum|care leaver|been in care|bursary)\b/;
+    /\b(gender|sex|ethnic\w*|race|racial|sexual orientation|sexuality|religio\w*|faith|disabilit\w*|disabled|veteran|military service|transgender|lgbt\w*|pronouns?|marital|pregnan\w*|caring responsibilit\w*|carer|free school meals|socio ?economic|social mobility|household earner|first generation|parents? (or guardians? )?(have|has|went|attended|completed|education|degree|occupation)|(either|both|one|any) of (your )?parents|parents? or guardians?|type of school|school did you (mainly )?attend|diversity|equal (employment )?opportunit\w*|eeo|demographic|hispanic|latin[aox]|age range|age group|neurodiver\w*|refugee|asylum|care leaver|been in care|bursary)\b/;
   // The same in German, French, Spanish, Dutch and Italian forms (normalised: no accents).
   const EEO_INTL =
     /\b(geschlecht|ethnisch\w*|herkunft|behinderung|schwerbehindert\w*|religion|konfession|sexuelle orientierung|sexe|genre|origine (ethnique|sociale)|ethnique|handicap|orientation sexuelle|situation de handicap|genero|etnia|origen etnico|discapacidad|orientacion sexual|geslacht|etniciteit|afkomst|beperking|seksuele orientatie|genere|etnia|disabilita|orientamento sessuale|diversit[ae]t?)\b/;
@@ -40,7 +40,7 @@
     /\b(password|passport (number|no)|national insurance|social security|ssn|sin number|tax (id|number|identification)|driv(er|ing) licen[cs]e (number|no)|sort code|iban|account number|card number|cvv|date of birth|birth ?date|dob|student (id|number)|candidate (id|number)|employee (id|number)|ucas (id|number)|share code|visa number)\b/;
   // Sent only when the candidate's answer guidance has something to say: legal and regulatory history, health.
   const LEGAL =
-    /\b(convict\w*|criminal|offen[cs]es?|felon\w*|misdemeanou?rs?|arrest\w*|caution\w*|plead\w*|pled|nolo|bankrupt\w*|insolven\w*|judge?ments?|liens?|bond(ing)? company|disciplin\w*|sanction\w*|suspend\w*|revok\w*|regulat(or|ory) (authority|body|action)|finra|form u ?4|registered representative|securities licen[cs]es?|lie detector|polygraph|drug (test|screen)\w*|background (check|screen)\w*|credit (check|history)|debarred|dismissed|export control\w*|itar)\b/;
+    /\b(convict\w*|criminal|offen[cs]es?|felon\w*|misdemeanou?rs?|arrest\w*|caution\w*|plead\w*|pled|nolo|bankrupt\w*|insolven\w*|judge?ments?|liens?|bond(ing)? company|disciplinary|disciplined|sanction\w*|suspend\w*|revok\w*|regulat(or|ory) (authority|body|action)|finra|form u ?4|registered representative|securities licen[cs]es?|lie detector|polygraph|drug (test|screen)\w*|background (check|screen)\w*|credit (check|history)|debarred|dismissed|export control\w*|itar)\b/;
   // Security vetting: where you've lived, other citizenships. Inferring these from a CV is a guess.
   const VETTING =
     /\b(continuous(ly)? (uk |us )?(resident|residency|residence)|resident in (the )?[a-z ]+ for (the )?(last|past)|lived (outside|abroad)|outside (of )?the (uk|us|united kingdom|united states) (for|in the past)|consecutive days outside|(other|another|dual|second|previous|former) (citizenships?|nationalit(y|ies))|held citizenship|citizenship (of|for) any other)\b/;
@@ -51,6 +51,17 @@
     /\b(applied (to|for|with|at)\b.*\b(before|previously|in the past)|previously applied|ever applied|applied before|interviewed with|referr(ed|al|er)|who referred|relatives?|related to|family members?|domestic partner|acquainted|know anyone|connected (to|with) any|current or former (employee|intern)|offers?|deadlines?|other (applications|processes)|in (the )?process (for|with))\b/;
 
   /**
+   * What a question asks: its last sentence that ends in a question mark, past any preamble ("We work from our
+   * offices on Anchor Days. If you need an accommodation, we'll partner with you… Are you able to commit to…?").
+   */
+  function asked(question) {
+    const asks = String(question || '')
+      .split(/(?<=[.?!])\s+/)
+      .filter((s) => /\?\s*$/.test(s));
+    return asks.length ? asks[asks.length - 1] : String(question || '');
+  }
+
+  /**
    * Why a question isn't sent to the model, or null when it can be: 'eeo', 'consent', 'identity', or
    * 'guidance' (legal and health questions, without answer guidance to go on).
    */
@@ -58,6 +69,8 @@
     const text = norm([item.question, item.section, item.help].filter(Boolean).join(' '));
     const options = norm((item.options || []).join(' '));
     if (IDENTITY.test(norm(item.question))) return 'identity';
+    // The rules took it for a monitoring question, whatever its wording: its answer is the profile's to give.
+    if (item.guess && /^eeo\./.test(item.guess.type || '')) return 'eeo';
     if (
       EEO.test(norm(item.question)) ||
       EEO_INTL.test(norm(item.question)) ||
@@ -68,8 +81,9 @@
     if (/\b(male|female|non binary)\b.*\b(male|female|non binary)\b|\bwhite\b.*\b(black|asian)\b/.test(options))
       return 'eeo';
     if (CONSENT.test(norm(item.question)) || (item.kind === 'checkbox' && CONSENT.test(options))) return 'consent';
-    if ((LEGAL.test(text) || HEALTH.test(text) || VETTING.test(text)) && !String(guidance || '').trim())
-      return 'guidance';
+    // Health by what the question asks, not by the accommodation boilerplate US forms put in front of other questions.
+    const health = HEALTH.test(norm([asked(item.question), item.section, item.help].filter(Boolean).join(' ')));
+    if ((LEGAL.test(text) || health || VETTING.test(text)) && !String(guidance || '').trim()) return 'guidance';
     return null;
   }
 
@@ -269,7 +283,9 @@
         answer: item.follows.answer ? U.cleanLabel(item.follows.answer, 200) : '(not answered)',
       };
     // What the profile had that no option matched ("Trackr" for "How did you hear about us?").
-    if (item.guess && item.guess.value) q.profileValue = U.cleanLabel(item.guess.value, 200);
+    // Never a monitoring answer (withheld() keeps those questions back; this keeps their answers back whatever).
+    if (item.guess && item.guess.value && !/^eeo\./.test(item.guess.type || ''))
+      q.profileValue = U.cleanLabel(item.guess.value, 200);
     if (HISTORY.test(norm(item.question))) q.answerOnlyFrom = 'material or guidance';
     return q;
   }

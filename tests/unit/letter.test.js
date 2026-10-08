@@ -311,6 +311,29 @@ test('ai: a provider without JSON mode is asked again without it', async () => {
   assert.equal(fetch.seen[0].body.reasoning, undefined, 'only OpenRouter gets the reasoning switch');
 });
 
+test('ai: a model that sets its own temperature is asked again without one', async () => {
+  const fetch = fakeFetch([
+    { status: 400, body: { error: { message: '`temperature` is not supported for this model.' } } },
+    reply('{"ok":true}'),
+  ]);
+  const r = await ai.chat(
+    { provider: 'openrouter', apiKey: 'k', model: 'anthropic/claude-opus-5.5' },
+    { messages: [], json: true, temperature: 0.4, fetch },
+  );
+  assert.deepEqual(r.json, { ok: true });
+  // A model the provider doesn't have is still said as much, and not asked again.
+  await assert.rejects(
+    ai.chat(cfg, {
+      messages: [],
+      fetch: fakeFetch([{ status: 400, body: { error: { message: 'The model `x/y` does not exist' } } }]),
+    }),
+    (err) => err.code === 'model' && /doesn’t offer the model/.test(err.message),
+  );
+  assert.equal(fetch.seen[0].body.temperature, 0.4);
+  assert.equal('temperature' in fetch.seen[1].body, false);
+  assert.equal(fetch.seen.length, 2);
+});
+
 test('ai: custom providers need an https address', () => {
   assert.match(ai.problem({ provider: 'custom', apiKey: 'k', model: 'm', baseUrl: 'ftp://x' }), /API address/);
   assert.equal(ai.problem({ provider: 'custom', apiKey: 'k', model: 'm', baseUrl: 'https://x.example/v1/' }), null);

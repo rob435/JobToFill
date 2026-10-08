@@ -100,7 +100,12 @@
         status,
         code: 'credit',
       });
-    if (status === 404 || (status === 400 && /model/i.test(detail) && /not|invalid|exist|support/i.test(detail)))
+    // A setting the model won't take ("`temperature` is not supported for this model") isn't a missing model.
+    const setting = /temperature|top_p|response_format|reasoning|max_tokens|thinking/i.test(detail);
+    if (
+      status === 404 ||
+      (status === 400 && !setting && /model/i.test(detail) && /not|invalid|exist|support/i.test(detail))
+    )
       return new AIError(
         `${c.label} doesn’t offer the model “${c.model}”. Pick another one in Settings › Cover letters.`,
         {
@@ -251,6 +256,12 @@
         }
         if (err.status === 400 && body.reasoning && /reasoning/i.test(err.message)) {
           delete body.reasoning;
+          attempt--;
+          continue;
+        }
+        // Newer models fix their own sampling (Claude Opus 5.5 rejects any temperature): ask again without it.
+        if (err.status === 400 && 'temperature' in body && /temperature/i.test(err.message)) {
+          delete body.temperature;
           attempt--;
           continue;
         }
