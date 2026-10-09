@@ -596,6 +596,9 @@
     return '';
   }
 
+  // A form's step bar or navigation, never instructions: Phenom's "My information My experience Application…".
+  const STEP_BAR = 'nav, [role="navigation"], [role="toolbar"], [role="tablist"], [role="menubar"]';
+
   /**
    * The instructions right under the heading of a section a control sits in: the text between that heading and the
    * section's first field ("If your school/university uses a GPA system, enter your GPA on a 0- 4.0 scale. Otherwise,
@@ -619,7 +622,7 @@
           parts = [head && all.includes(head) ? all.slice(all.lastIndexOf(head) + head.length) : ''];
           open = true;
         } else if (field || c.matches('label') || c.querySelector('label')) open = false;
-        else if (open) parts.push(textOf(c));
+        else if (open && !c.matches(STEP_BAR) && !c.querySelector(STEP_BAR)) parts.push(textOf(c));
       }
       const t = parts ? U.cleanLabel(parts.join(' '), 400) : '';
       if (t) return t;
