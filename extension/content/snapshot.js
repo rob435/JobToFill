@@ -422,17 +422,8 @@
   /** Is the answer to a question of this type personal even as a picked option (see PRIVATE_CHOICE)? */
   const isPrivate = (type) => !!type && PRIVATE_CHOICE.test(type);
 
-  /** required, aria-required, or a label that ends in "*" ("First Name *"). */
-  function isRequired(field) {
-    const { el, desc } = field;
-    const s = desc.signals || {};
-    return (
-      field.members.some((m) => m.required || attr(m, 'aria-required') === 'true') ||
-      !!(el.closest && el.closest('[aria-required="true"]')) ||
-      /\*\s*$/.test(s.label || s.question || '') ||
-      Array.from(el.labels || []).some((l) => /\*\s*$/.test(l.textContent || ''))
-    );
-  }
+  /** required, aria-required, or a mark on its label ("First Name *"): see dom.isRequired. */
+  const isRequired = (field) => JTF.dom.isRequired(field);
 
   /** Does the page mark any of the field's controls invalid (aria-invalid)? */
   const isInvalid = (field) => field.members.some((m) => !/^(|false)$/.test(attr(m, 'aria-invalid')));

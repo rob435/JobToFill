@@ -81,6 +81,15 @@ test('lazy: the walker goes into a fresh tab only when a map is asked for, and a
   await Promise.all([page.close(), filled.close()]);
 });
 
+test('Ashby: the job’s details beside the Application tab are neither a field’s section nor its help', async () => {
+  const page = await h.open('ashby.html');
+  const { map } = await pageMap(page);
+  const name = byQuestion(map, 'Legal Name');
+  assert.equal(name.section || '', '', 'not "Location" from the job’s details');
+  assert.equal(name.help || '', '', 'not "Engineering"');
+  await page.close();
+});
+
 test('Greenhouse-style form: every field once with its ref, its section, options, rules and the submit', async () => {
   const page = await h.open('greenhouse.html');
   const { map, text } = await pageMap(page);
@@ -228,9 +237,9 @@ test('widget libraries are named and counted', async () => {
   const antd = await h.open('lib-antd.html');
   await antd.waitForSelector('#apply_firstName');
   const a = await pageMap(antd);
-  assert.equal(a.map.widgets['Ant Design'], 20);
-  assert.match(a.text.split('\n')[0], /widgets=Ant Design×20$/);
-  assert.equal(a.map.fields.length, 20);
+  assert.equal(a.map.widgets['Ant Design'], 21);
+  assert.match(a.text.split('\n')[0], /widgets=Ant Design×21$/);
+  assert.equal(a.map.fields.length, 21);
   await antd.close();
 
   const jquery = await h.open('lib-jquery.html');

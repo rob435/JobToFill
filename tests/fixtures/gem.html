@@ -12,7 +12,8 @@
   </head>
   <body>
     <!-- Reduced from jobs.gem.com: labels are spans, uploads are drop zones that only say "Click to upload",
-         and radio buttons have no name (React keeps the state). -->
+         and radio buttons have no name (React keeps the state). Checkboxes have none either, and sit four wrappers
+         below their question (Nominal's clearance levels). -->
     <div class="form">
       <div class="field"><span>First name *</span><div><input id="first" type="text" /></div></div>
       <div class="field"><span>Email *</span><div><input id="email" type="text" /></div></div>
@@ -37,6 +38,15 @@
           <div><input id="spons-yes" type="radio" /><label for="spons-yes">Yes</label></div>
           <div><input id="spons-no" type="radio" /><label for="spons-no">No</label></div>
         </div>
+      </div>
+      <div class="field">
+        <div><span>If you have held a U.S. security clearance in the past, what clearance level have you held?<span> *</span></span></div>
+        <div><div><div>
+          <div><input id="clr-confidential" type="checkbox" /><label for="clr-confidential"><span></span><div>Confidential</div></label><div></div></div>
+          <div><input id="clr-secret" type="checkbox" /><label for="clr-secret"><span></span><div>Secret</div></label><div></div></div>
+          <div><input id="clr-top" type="checkbox" /><label for="clr-top"><span></span><div>Top Secret</div></label><div></div></div>
+          <div><input id="clr-na" type="checkbox" /><label for="clr-na"><span></span><div>N/A - have never held a U.S. security clearance</div></label><div></div></div>
+        </div></div></div>
       </div>
     </div>
     <script>

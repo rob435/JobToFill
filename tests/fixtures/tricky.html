@@ -12,7 +12,14 @@
   </style>
 </head>
 <body>
+  <main>
   <h1>Apply now</h1>
+  <h2>Your details</h2>
+  <!-- A script and a hidden error template between the heading and the form (Trakstar's reCAPTCHA set-up, Eploy's
+       "already registered" message): not help anyone reads -->
+  <script>window.onSubmit = function () { /* grecaptcha.ready(function () { … }) */ };</script>
+  <div class="red" style="display:none">Sorry, the email address you have supplied is already registered in our records.</div>
+  <p>Fields marked * are required.</p>
   <form id="f">
     <div class="q"><label for="pre">First name</label><input id="pre" value="Augusta"></div>
 
@@ -60,6 +67,18 @@
 
     <div class="q"><label for="fav">What is your favourite programming language?</label><input id="fav"></div>
     <div class="q"><label for="tw">Twitter</label><input id="tw"></div>
+    <!-- Aluna's GPA bands: nameless MUI checkboxes, each in a span with its text and no <label>, under a span question -->
+    <div class="q gpa"><span class="ApplyForm__Field__Label">What's your cumulative GPA?</span><span class="CheckLabel"><span class="MuiCheckbox-root"><input id="gpa-0" type="checkbox" value=""><svg width="12" height="12"></svg></span>4</span><span class="CheckLabel"><span class="MuiCheckbox-root"><input id="gpa-1" type="checkbox" value=""><svg width="12" height="12"></svg></span>3.51 to 3.99</span><span class="CheckLabel"><span class="MuiCheckbox-root"><input id="gpa-2" type="checkbox" value=""><svg width="12" height="12"></svg></span>3.01 to 3.50</span><span class="CheckLabel"><span class="MuiCheckbox-root"><input id="gpa-3" type="checkbox" value=""><svg width="12" height="12"></svg></span>3.00 or below</span></div>
+    <!-- A referee's details and a talent-pool opt-in: someone else's, and yours to decide -->
+    <h3>References</h3>
+    <div class="q"><label for="ref_name">Name</label><input id="ref_name" name="reference_1_name"></div>
+    <div class="q"><label for="ref_email">Email</label><input id="ref_email" name="reference_1_email" type="email"></div>
+    <h3>Staying in touch</h3>
+    <div class="q"><label><input type="checkbox" id="pool"> Yes, Acme can add me to the talent pool and contact me about future job opportunities.</label></div>
+    <!-- Maven's follow-up box: for the subject the list lacks, N/A otherwise -->
+    <div class="q"><label for="subject">Degree subject</label><select id="subject"><option value="">Select…</option><option>Computer Science</option><option>Mathematics</option><option>Other</option></select></div>
+    <div class="q"><label for="subject_other">If you selected 'Other' for the above question, please specify here or write N/A if you selected another answer</label><input id="subject_other"></div>
   </form>
+  </main>
 </body>
 </html>

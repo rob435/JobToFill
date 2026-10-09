@@ -35,6 +35,8 @@
       profile,
     );
     splitBoxes(fields, planned.results);
+    // A follow-up box knows the list it follows ("Please specify" after "How did you hear about us?").
+    for (const r of planned.results) if (r && r.follows != null) r.followsField = fields[r.follows];
     return { fields, results: planned.results, context: planned.context };
   }
 
@@ -393,25 +395,24 @@
     const hold = payload.hold ? new Set(payload.hold) : null;
     const replace = payload.replace ? new Set(payload.replace) : null;
     const docCache = {};
+    /** What the profile's value for a field is worked out from: the question, the page's help, the options. */
+    const ctxFor = (field, r, question) =>
+      Object.assign({}, context, {
+        index: r.index || 0,
+        part: r.part,
+        kind: field.kind,
+        secrets,
+        answer: r.answer,
+        question,
+        help: U.normalize(JTF.matcher.helpText(field.desc)),
+        options: field.desc.options,
+        consents: !!settings.consents || accountTerms,
+        // How the page writes "03/11" (interview slots).
+        dateOrder: JTF.matcher.dateOrder(field.desc),
+      });
     const valueFor = async (field, r, def, question) => {
       if (def && def.file) return documentValue(r.type, payload, docCache);
-      return JTF.fields.resolve(
-        r.type,
-        profile,
-        Object.assign({}, context, {
-          index: r.index || 0,
-          part: r.part,
-          kind: field.kind,
-          secrets,
-          answer: r.answer,
-          question,
-          help: U.normalize(JTF.matcher.helpText(field.desc)),
-          options: field.desc.options,
-          consents: !!settings.consents || accountTerms,
-          // How the page writes "03/11" (interview slots).
-          dateOrder: JTF.matcher.dateOrder(field.desc),
-        }),
-      );
+      return JTF.fields.resolve(r.type, profile, ctxFor(field, r, question));
     };
     // Files first: sites like Breezy and Lever read an uploaded CV and rewrite the form, which would
     // wipe answers filled before it. The rest is filled once the page has settled.
@@ -568,11 +569,20 @@
         if (!JTF.fill.hasValue(field)) report.consents++;
         return null;
       }
+      // An opt-in is yours to decide.
+      if (def && def.leave) return null;
       // "I'm not a robot" is only ticked when no CAPTCHA stands behind it.
       if (r.type === 'human' && JTF.flow.captcha(document)) return null;
       if (uploaded && !settled && field.kind !== 'file') {
         await settle();
         settled = true;
+      }
+      // "Please specify" after a list is for the answer the list didn't have: only once "Other" is its choice. "…or
+      // write N/A if you selected another answer" (r.type 'na') is N/A until then, and yours to write after.
+      if ((r.part === 'specify' || r.type === 'na') && r.followsField) {
+        const chosen = U.normalize(JTF.fill.currentValue(r.followsField));
+        const other = /\bother\b|\bnot listed\b|\bsomething else\b/.test(chosen);
+        if (r.type === 'na' ? other || !chosen : !other) return null;
       }
       let v = await valueFor(field, r, def, question);
       if (v && r.type !== 'custom' && FOLLOW_UP.test(question) && !JTF.fields.followUpAnswer(v, field.kind))
@@ -586,7 +596,7 @@
         if (!v || !v.text) return null;
       }
       if (!v) {
-        if (count && !(def && def.secret)) {
+        if (count && !(def && def.secret) && !JTF.fields.leftEmpty(r.type, profile, ctxFor(field, r, question))) {
           report.missing.push(label);
           report.missingTypes.push(r.type);
         }
@@ -892,7 +902,7 @@
   // declarations), secrets, uploads, and a cover letter (the letter writer does those).
   // Sanctions declarations and interview slots too: left for you when your profile can't tell.
   const NOT_FOR_AI =
-    /^(name\.|email$|phone|address\.|links\.|dob$|age$|pronouns$|account\.|otp$|human$|cc\.|file\.|consent$|eeo\.|coverLetter$|job\.salary$|compliance\.sanctions$|job\.availability$)/;
+    /^(name\.|email$|phone|address\.|links\.|dob$|age$|pronouns$|account\.|otp$|human$|cc\.|file\.|consent$|optIn$|referee$|eeo\.|coverLetter$|job\.salary$|compliance\.sanctions$|job\.availability$)/;
   const FOLLOW_ON = /^(if|please (specify|explain|state|give|provide)|other\b|specify)\b/;
   const MAX_PENDING = 40;
 
@@ -915,6 +925,7 @@
       if (q.length < 3) continue;
       let guess = null;
       if (r && r.type === 'custom') guess = { type: 'custom', value: r.answer };
+      else if (r && r.type === 'na') guess = null;
       else if (r && r.type) {
         const def = JTF.fields.DEFS[r.type];
         if (NOT_FOR_AI.test(r.type) || !def || def.consent || def.secret || def.file) continue;
@@ -928,8 +939,9 @@
           options: field.desc.options,
         };
         // A grade your profile holds is the rules' to give (or to leave, as a class in a GPA box that wants a
-        // number): the AI never turns a 2:1 into a GPA.
-        if (JTF.fields.gradeHeld(r.type, profile, ctx)) continue;
+        // number): the AI never turns a 2:1 into a GPA. Nor does it answer a box left empty on purpose ("A-Level
+        // Subject 4" for three A-levels).
+        if (JTF.fields.gradeHeld(r.type, profile, ctx) || JTF.fields.leftEmpty(r.type, profile, ctx)) continue;
         const v = JTF.fields.resolve(r.type, profile, ctx);
         // A follow-up after a "No" ("If yes, give details") or a box the profile said no to stays empty.
         if (v && (field.kind === 'checkbox' || (FOLLOW_UP.test(q) && !JTF.fields.followUpAnswer(v, field.kind))))
@@ -963,11 +975,7 @@
         options: options && options.length ? options : null,
         multiple,
         maxLength: field.desc.maxLength || 0,
-        required: !!(
-          field.el.required ||
-          field.el.getAttribute('aria-required') === 'true' ||
-          /\*\s*$/.test(field.desc.signals.label || field.desc.signals.question || '')
-        ),
+        required: JTF.dom.isRequired(field),
         section: U.cleanLabel(field.desc.signals.section || '', 120),
         placeholder: U.cleanLabel(field.desc.placeholderRaw || '', 120),
         follows: prev

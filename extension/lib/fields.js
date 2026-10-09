@@ -319,7 +319,17 @@
   };
 
   const RELIGIONS = {
-    'No religion or belief': ['No religion or belief', 'No religion', 'Atheist', 'None', 'No religion / atheist'],
+    'No religion or belief': [
+      'No religion or belief',
+      'No religion',
+      'Non Religious',
+      'Non-religious',
+      'Not religious',
+      'Atheist',
+      'Atheism',
+      'None',
+      'No religion / atheist',
+    ],
     Agnostic: ['Agnostic'],
     Buddhist: ['Buddhist', 'Buddhism'],
     Christian: ['Christian', 'Christianity'],
@@ -341,9 +351,14 @@
   };
 
   /** A settings-page answer plus the longer ways forms spell it. */
+  /**
+   * A named answer and its other spellings. "No religion or belief" names a category: it is no "No" that a "Not
+   * Specified" would answer (a bare "No" still is).
+   */
   function withSpellings(text, table) {
     const v = val(text);
     if (v && table[v.text]) v.candidates = [v.text, ...table[v.text]];
+    if (v && table[v.text] && v.canonical === 'no' && !/^no$/i.test(v.text.trim())) v.canonical = null;
     return v;
   }
 
@@ -485,6 +500,26 @@
   }
 
   /**
+   * "Where do you have the right to work? (Select all that apply)" over statements that each name a country ("I have
+   * the right to work in the UK (post-Brexit does not apply automatically for EU-citizens)", "…in Germany", "Neither…"):
+   * every statement about a country you have the right to work in (matcher.rightsPicks), never another's.
+   */
+  const US_CLEARANCE = /\b(u s|us|united states|american)( government)? (security )?clearances?\b/;
+  const RIGHT_IN = /\b(right|rights|authori[sz]ed|eligible|entitled|permitted|allowed) to work in\b/;
+
+  function rightsStatements(p, ctx) {
+    const named = (ctx.options || [])
+      .map((o) => U.normalize(String(o && typeof o === 'object' ? o.text : o).replace(/\([^)]*\)/g, ' ')))
+      .filter((t) => RIGHT_IN.test(t) && !/^(no|not|neither|none)\b|^i (do not|don t|am not|have no)\b/.test(t))
+      .map((t) => JTF.geo.countriesNamed(t))
+      .filter((codes) => codes.length === 1);
+    if (named.length < 2 || new Set(named.map((c) => c[0])).size < 2) return null;
+    const mine = workCountries(p);
+    if (!mine.length) return null;
+    return val('Yes', { kind: 'rights', rights: [...JTF.geo.workRights(mine)], many: ctx.kind === 'checkboxes' });
+  }
+
+  /**
    * "Right to work / Visa status" in a text box wants a sentence, not "No": written from your two answers.
    * Null for yes/no questions ("Do you require sponsorship?") and choice controls.
    */
@@ -493,10 +528,56 @@
     const canon = (t) => (JTF.matcher ? JTF.matcher.canonicalOf(t) : null);
     const ok = canon(p.job.authorized);
     const sponsor = canon(p.job.sponsorship);
-    if (ok === 'yes' && sponsor === 'no') return val('I have the right to work and do not need visa sponsorship.');
-    if (ok === 'yes' && sponsor === 'yes') return val('I have the right to work now but will need visa sponsorship.');
-    if (ok === 'no' || sponsor === 'yes') return val('I will need visa sponsorship to work in this role.');
+    // "If no, type N/A" when you need no visa; but Peel Hunt's "If you do require a visa or are currently on a visa,
+    // please provide details… If you do not require a visa, please type N/A" wants a visa's details from anyone on one:
+    // N/A only for a citizen. Arma's "…please confirm what visa type you have…": "British citizen (no visa needed)".
+    const q = ctx.question || '';
+    const citizen = rightType(p, ctx);
+    const instead = sponsor === 'no' && otherwiseVal(ctx);
+    if (instead && (citizen || !/\b(currently )?on a visa\b|\b(hold|have) a visa\b/.test(q))) return instead;
+    if (citizen && /\bvisa type\b|\btype of visa\b/.test(q)) return citizen;
+    // Sentences, not a "No": a box's "If you do not require a visa, please type N/A" is for citizens only (above).
+    const say = (text) => val(text, { canonical: null });
+    if (ok === 'yes' && sponsor === 'no') return say('I have the right to work and do not need visa sponsorship.');
+    if (ok === 'yes' && sponsor === 'yes') return say('I have the right to work now but will need visa sponsorship.');
+    if (ok === 'no' || sponsor === 'yes') return say('I will need visa sponsorship to work in this role.');
     return null;
+  }
+
+  /**
+   * "What type of right to work in the UK do you hold?" [Citizenship/Nationality/Permanent Residency | … Visa | …]:
+   * the citizenship one for a citizen of the country asked (or the job's); a text box gets "British citizen (no visa
+   * needed)". Nothing for anyone else: which visa or status you hold isn't in the profile.
+   */
+  function rightType(p, ctx) {
+    if (/^if (yes|so)\b/.test(ctx.question || '')) return null;
+    let { codes } = countriesAsked(ctx.question, null);
+    if (!codes.length) codes = jobCountries(ctx);
+    // Peel Hunt's visa box names no country, nor does the page: the country you live in.
+    if (!codes.length) codes = JTF.geo.countriesIn(p.address.country || '');
+    const rows = JTF.geo.nationalities(p.personal.nationality).filter(Boolean);
+    if (codes.length !== 1 || !rows.some((row) => row[0] === codes[0])) return null;
+    const row = rows.find((r) => r[0] === codes[0]);
+    const demonym = (JTF.geo.demonyms(row[0])[0] || row[1]).replace(/^./, (c) => c.toUpperCase());
+    const named = /\bcitizen(ship)?s?\b|\bnationality\b|\bnational\b|\bpassport\b/;
+    if (CHOICE.includes(ctx.kind))
+      return val(`${demonym} citizen`, { named, candidates: [`${demonym} citizen`, 'Citizen'] });
+    return val(`${demonym} citizen (no visa needed)`);
+  }
+
+  /**
+   * "Do you hold dual nationality?", "Do you currently hold any other (dual) nationality or citizenships?": Yes with
+   * two in your profile ("British, Irish"), else No. A text box gets the others. Citizenships held before aren't in it.
+   */
+  function dualNationality(p, ctx) {
+    const q = ctx.question || '';
+    if (/\b(previously|formerly|ever|in the past)\b/.test(q)) return null;
+    const rows = JTF.geo.nationalities(p.personal.nationality).filter(Boolean);
+    if (!rows.length) return null;
+    if (rows.length < 2) return val('No');
+    return LONG_TEXT.includes(ctx.kind) && !/^(do|does|are|is|have)\b/.test(q)
+      ? val(rows.map((r) => r[1]).join(', '))
+      : val('Yes');
   }
 
   /**
@@ -732,7 +813,7 @@
   // result in your school/university's grading system" (Shell's Workday): a result in your own grading system is
   // welcome too, whatever scale the GPA is on.
   const OWN_SYSTEM =
-    /\botherwise\b.{0,80}\b(results?|grades?|marks?|class(es|ification)?)\b|\b(own|local|national|home|equivalent|(school|university|college|institution|country)( s)?) (grading|marking|grade|assessment) (system|scale)\b|\b(does not|doesn t|do not|don t) use (a |the )?(gpa|grade point)\b/;
+    /\botherwise\b.{0,80}\b(results?|grades?|marks?|class(es|ification)?)\b|\b(own|local|national|home|equivalent|(school|university|college|institution|country)( s)?) (grading|marking|grade|assessment) (system|scale)\b|\b(does not|doesn t|do not|don t) use (a |the )?(gpa|grade point)\b|\bscale (used|of|at) (by |at |in )?(your )?(own |local |home )?(school|university|college|institution|country)\b/;
 
   /**
    * A GPA question: your GPA (a class written there too, unless the question wants a number). With no GPA, a "Grade"
@@ -862,6 +943,26 @@
    * A degree subject: its other names too ("Computing Science" also tries "Computer Science"), for each subject it
    * names, in the order it names them ("Mathematics and Computer Science").
    */
+  /** The subjects a text names: "…the following disciplines: Computer Science or Computer Engineering". */
+  function subjectsNamed(text) {
+    const t = ' ' + U.normalize(text) + ' ';
+    return SUBJECTS.filter((row) => row.keys.some((k) => t.includes(' ' + k + ' ')));
+  }
+
+  /**
+   * Appian's "Are you currently pursuing a Major in one of the following disciplines: Computer Science or Computer
+   * Engineering": Yes when your subject is one of them, else No.
+   */
+  function subjectIn(p, ctx) {
+    const e = (p.education || [])[0];
+    const named = subjectsNamed(ctx.question || '');
+    if (!e || U.isBlank(e.field) || !named.length) return null;
+    const mine = subjectVal(e.field).candidates.map(U.normalize);
+    if (named.some((row) => row.names.some((n) => mine.includes(U.normalize(n))))) return val('Yes');
+    // Aluna's "…in Finance, Accounting or similar?": whether Economics is similar is yours to say.
+    return /\b(or )?(similar|related|equivalent|relevant)\b/.test(ctx.question || '') ? null : val('No');
+  }
+
   function subjectVal(text) {
     const v = val(text);
     if (!v) return v;
@@ -872,10 +973,14 @@
       if (at.length) hits.push([Math.min(...at), row]);
     }
     hits.sort((a, b) => a[0] - b[0]);
+    const stem = hits.some(([, row]) => row.stem);
+    // A subject the list doesn't have: its "Other" (SpaceX's "Other (Non-Technical)" for Economics).
+    const other = stem ? ['Other (Technical)', 'Other (STEM)'] : ['Other (Non-Technical)', 'Other (Non-STEM)'];
     return Object.assign(v, {
       kind: 'subject',
       candidates: [...new Set([v.text, ...hits.flatMap(([, row]) => row.names)])],
-      stem: hits.some(([, row]) => row.stem),
+      stem,
+      fallback: [...other, 'Other', 'Other (please specify)'],
     });
   }
 
@@ -925,15 +1030,21 @@
    * dates (job.availability). Null when it isn't one.
    */
   function availableAnswer(raw, question, today) {
-    const q = question || '';
-    // The question can follow the facts: "The internship runs from 1 July to 30 September 2027. Can you confirm…"
+    // "7. Are you available to start…": the question's number is not part of it.
+    const q = (question || '').replace(/^\d{1,2} /, '');
+    // The question can follow the facts: "The internship runs from 1 July to 30 September 2027. Can you confirm…";
+    // "Please confirm that if you receive an offer…, you will be able to work as of 22 February 2027".
     if (
-      !/^((are|will|would|can|could|do) you|(i )?confirm)\b|\b(are|will|would|can|could) you (confirm|be available|be able)\b/.test(
+      !/^((are|will|would|can|could|do) you|(i |please )?confirm)\b|\b(are|will|would|can|could) you (confirm|be available|be able)\b|\byou (will|would|can) be (able|available)\b|\b(are|will) you (able|free|ready|available) to\b/.test(
         q,
       )
     )
       return null;
-    if (!/\bavailab|\bstart|\bready\b|\bcommence|\bjoin|\bsuit(s|able)?\b|\bconvenient\b|\bwork for (me|you)\b/.test(q))
+    if (
+      !/\bavailab|\bstart|\bready\b|\bcommence|\bjoin|\bsuit(s|able)?\b|\bconvenient\b|\bwork for (me|you)\b|\bable to work\b|\bfree to\b/.test(
+        q,
+      )
+    )
       return null;
     if (INTERVIEW_SLOTS.test(q)) return null;
     const start = U.parseDate(raw);
@@ -953,7 +1064,9 @@
     }
     const head = q.slice(0, year.index + 4);
     const range = q.match(/\bfrom (.+?) (?:to|until|till|through) /);
-    const phrase = range ? range[1] + ' ' + year[0] : head.replace(/^.*?\b(from|on|by|in|for|around|before)\b /, '');
+    const phrase = range
+      ? range[1] + ' ' + year[0]
+      : head.replace(/^.*?\b(from|on|by|in|for|around|before|as of)\b /, '');
     const span = JTF.matcher.optionSpan(
       phrase.replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/g, ''),
     );
@@ -1275,6 +1388,28 @@
     return val('Yes', { candidates: [...words, 'Yes', 'Currently enrolled', 'Enrolled'] });
   }
 
+  // "Highest Education Obtained", "…qualification you hold": what you have finished. "…currently pursuing" is not.
+  const HELD = /\b(obtained|held|hold|completed|attained|achieved|awarded|earned|gained)\b/;
+  const UNDER_WAY = /\b(pursuing|studying|current(ly)?|expected|will be|working towards|in progress)\b/;
+  const SOME_COLLEGE =
+    /\bsome (college|university|uni)\b|\bcurrently (studying|enrolled)\b|\b(in progress|ongoing|working towards|studying towards)\b/;
+
+  /**
+   * Your highest education: your degree, or while it is still under way and the question asks what you hold or
+   * obtained (BambooHR's "Highest Education Obtained", Menzies' "…qualification you hold"), "Some College" where the
+   * list has it, else your finished school qualification (A-levels).
+   */
+  function highestLevel(p, ctx) {
+    const list = p.education || [];
+    if (!list.length) return null;
+    const q = (ctx && ctx.question) || '';
+    const enrolled = enrolment(p, ctx && ctx.today);
+    if (!HELD.test(q) || UNDER_WAY.test(q) || !enrolled || enrolled.canonical !== 'yes')
+      return degreeVal(list[0].degree);
+    const school = list.find((e) => JTF.matcher.degreeGroup(U.normalize(e.degree)) === 'highschool');
+    return Object.assign(degreeVal((school || list[0]).degree), { named: SOME_COLLEGE });
+  }
+
   function degreeVal(text) {
     return val(text, { kind: 'degree' });
   }
@@ -1319,7 +1454,7 @@
   ];
   const LANGUAGE_RE = new RegExp(`\\b(${LANGUAGE_NAMES.join('|')})\\b`, 'g');
   const YES_NO_LANGUAGE =
-    /^(are|do|can|could|would|is|have) (you|your)\b|^(fluent|fluency|proficient|proficiency) in\b/;
+    /^(are|do|can|could|would|is|have) (you|your)\b|^(fluent|fluency|proficient|proficiency) in\b|^(please )?confirm (that )?you (speak|are fluent|can speak)\b/;
 
   /** The languages a question names: "Are you fluent in French or German?" -> ["french", "german"]. */
   function languagesNamed(question) {
@@ -1767,7 +1902,7 @@
 
   // "…Otherwise, enter N/A.", "If not, please write 'None'", "(enter N/A if not applicable)": a box's word for No.
   const OTHERWISE =
-    /\b(?:otherwise|if (?:not|no|none|not applicable|you (?:answered|selected|said|chose) no))\b,? (?:please )?(?:enter|write|type|put|input|insert|state|answer|fill in)(?: in)? (n a|na|none|not applicable|nil|no|nothing|0)\b|\b(?:enter|write|type|put|input|insert) (n a|na|none|not applicable|nil) (?:if|where|when) (?:not applicable|it does not apply|this does not apply|not|no|none|n a|you (?:answered|selected|said) no)\b/;
+    /\bor (?:just )?(?:enter|write|type|put|input),? (n a|na|none|not applicable|nil|nothing)$|\b(?:otherwise|if (?:not|no|none|not applicable|you (?:answered|selected|said|chose) no|(?:you )?(?:haven t|have not|were not|weren t|are not|aren t|did not|didn t|do not|don t)(?: \w+){1,3}))\b,? (?:please )?(?:enter|write|type|put|input|insert|state|answer|fill in)(?: in)? (n a|na|none|not applicable|nil|no|nothing|0)\b|\b(?:enter|write|type|put|input|insert|indicate|state|answer) (n a|na|none|not applicable|nil) (?:if|where|when) (?:not applicable|it does not apply|this does not apply|not|no|none|n a|you (?:answered|selected|said) no|you (?:do not|don t) have)\b/;
   const OTHERWISE_WORDS = {
     'n a': 'N/A',
     na: 'NA',
@@ -1782,7 +1917,28 @@
   /** The word a box asks for when the answer is No ("Otherwise, enter N/A" -> "N/A"), or null. */
   function otherwiseVal(ctx) {
     const m = LONG_TEXT.includes(ctx.kind) && String(ctx.question || '').match(OTHERWISE);
-    return m ? val(OTHERWISE_WORDS[m[1] || m[2]], { otherwise: true, canonical: null }) : null;
+    return m ? val(OTHERWISE_WORDS[m[1] || m[2] || m[3]], { otherwise: true, canonical: null }) : null;
+  }
+
+  /** "N/A" for a text box that asks only "if applicable" ("Postgraduate Degree (if applicable)"), or null. */
+  const notApplicable = (ctx) =>
+    LONG_TEXT.includes(ctx.kind) && /\bif (applicable|any|relevant)\b/.test(ctx.question || '')
+      ? val('N/A', { otherwise: true, canonical: null })
+      : null;
+
+  /**
+   * An address for a suggestions list: searched as line 1 and the city (no flat number: "Apt 5" is in no suggestion),
+   * matched on line 1, and preferring options that name your city, postcode, region or country (matcher.bestText).
+   */
+  function nearHome(v, p) {
+    if (!v) return v;
+    const a = p.address;
+    v.near = [a.city, a.postalCode, a.state, a.country].filter((t) => !U.isBlank(t));
+    if (!U.isBlank(a.line1)) {
+      v.candidates = [...new Set([v.text, a.line1])];
+      v.search = [a.line1, a.city].filter((t) => !U.isBlank(t)).join(', ');
+    }
+    return v;
   }
 
   /* -------------------------------------------------------------- definitions */
@@ -1834,6 +1990,70 @@
     return !asked.length || !held.length || /\bequivalent\b/.test(question) || asked.some((q) => held.includes(q));
   }
 
+  /** Which qualification a school entry is, its school qualifications ("A-Levels" -> ['alevel']). */
+  const heldQuals = (p) => (p.education || []).flatMap((e) => qualsOf(U.normalize(e.degree)));
+  const schoolEntries = (p) =>
+    (p.education || []).filter((e) => JTF.matcher.degreeGroup(U.normalize(e.degree)) === 'highschool');
+
+  /**
+   * "Did you complete UK A-levels?": Yes when a school entry is that qualification, No when your school entries are
+   * another one (Advanced Highers), nothing when the profile has no school entry.
+   */
+  function qualificationHeld(p, ctx) {
+    const asked = qualsOf(ctx.question || '');
+    if (!asked.length) return null;
+    if (heldQuals(p).some((q) => asked.includes(q))) return val('Yes');
+    return schoolEntries(p).length ? val('No') : null;
+  }
+
+  /**
+   * "If you didn't complete UK A-levels, please provide your equivalent high school qualification and results":
+   * nothing when you did; else your school entry as you would write it ("Advanced Highers in Mathematics, Physics –
+   * AAA").
+   */
+  function equivalentQualification(p, ctx) {
+    const asked = qualsOf(ctx.question || '');
+    if (!asked.length || heldQuals(p).some((q) => asked.includes(q))) return null;
+    const e = schoolEntries(p)[0];
+    if (!e) return null;
+    const what = [e.degree, e.field].filter((t) => !U.isBlank(t)).join(' in ');
+    return val([what, e.gpa].filter((t) => !U.isBlank(t)).join(' – '));
+  }
+
+  /**
+   * The position a question asks for in a list of subjects or grades: "A-Level Subject 2", "A-Level Grade 2", "2nd
+   * subject", "Second A-level grade" are 1. -1 for none ("A-level grades", "GCSE Maths grade (9-1)").
+   */
+  function positionAsked(q) {
+    const m =
+      q.match(/\b(?:subject|grade|result)s? (?:no |number )?([1-9])\b(?! \d)/) ||
+      q.match(/\b([1-9])(?:st|nd|rd|th)? (?:a level |gcse |higher )?(?:subject|grade|result)\b/);
+    if (m) return +m[1] - 1;
+    const w = q.match(
+      /\b(first|second|third|fourth|fifth|sixth) (?:a level |gcse |higher )?(?:subject|grade|result)\b/,
+    );
+    return w ? ORDINALS.indexOf(w[1]) : -1;
+  }
+
+  /** "Mathematics, Further Mathematics and Economics" -> the three subjects; one subject stays one. */
+  function subjectList(text) {
+    const parts = String(text || '')
+      .split(/\s*[,;]\s*/)
+      .filter(Boolean);
+    if (parts.length > 1 && / and /.test(parts[parts.length - 1])) parts.push(...parts.pop().split(/\s+and\s+/));
+    return parts;
+  }
+
+  /** "A*A*A", "A* A* A", "AAB", "D*D*D": one grade each; null for anything else ("38/45", "2:1", "3.8"). */
+  function gradeList(text) {
+    const t = String(text || '').trim();
+    const parts = /[\s,;/]/.test(t) ? t.split(/[\s,;/]+/).filter(Boolean) : t.match(/[A-GU]\*{0,2}/gi) || [];
+    const each = parts.length > 1 && parts.every((g) => /^([A-GU]\*{0,2}|[1-9])$/i.test(g));
+    return each && parts.join('').length === t.replace(/[\s,;/]+/g, '').length
+      ? parts.map((g) => g.toUpperCase())
+      : null;
+  }
+
   /** The one level of study a question names, or null (none, or several). */
   function eduLevelOf(question) {
     const hits = levelsOf(question);
@@ -1853,6 +2073,8 @@
 
   // The documents an upload names: your CV, a cover letter, a transcript.
   const CV_NAMED = /\b(resumes?|cvs?|curriculum|lebenslauf)\b/;
+  const AUTOFILL_UPLOAD =
+    /\bauto ?fill|automatically fill|apply with (your )?(resume|cv)|\bpre ?fill|\bparse|save time by uploading/;
   const LETTER_NAMED = /cover ?letter|motivation(al)? letter|letter of motivation|anschreiben|lettre de motivation/;
   const TRANSCRIPT_NAMED =
     /transcript|academic record|grade (report|sheet)|mark ?sheet|record of (marks|grades)|notenspiegel|releve de notes/;
@@ -1928,6 +2150,34 @@
     return null;
   }
 
+  /**
+   * "Are you currently or have you ever attended university?", Capgemini's "Are you currently studying for, or have you
+   * completed, a postgraduate qualification other than a masters degree?": Yes with an entry at that level (a degree
+   * for "university"), else No.
+   */
+  function levelAttended(p, ctx) {
+    const q = ctx.question || '';
+    const list = p.education || [];
+    if (!list.length) return null;
+    let asked = levelsOf(q);
+    // "…other than a masters degree": a doctorate or another postgraduate qualification.
+    if (/\bother than (a |an )?(masters?|msc|ma)\b/.test(q)) asked = ['doctorate'];
+    if (!asked.length) asked = ['bachelor', 'master', 'doctorate'];
+    return val(list.some((e) => entryLevels(e).some((l) => asked.includes(l))) ? 'Yes' : 'No');
+  }
+
+  /**
+   * Aurora's "Are you currently studying or have you completed your most recent degree in the UK?": from where your
+   * latest entry is. Nothing when its place isn't in the profile.
+   */
+  function studiedIn(p, ctx) {
+    const named = [...new Set(JTF.geo.placesNamed(ctx.question || '').map((pl) => pl.country))];
+    const e = (p.education || [])[0];
+    const here = e && entryCountry(e, p);
+    if (named.length !== 1 || !here || !here.iso2) return null;
+    return val(here.iso2 === named[0] ? 'Yes' : 'No');
+  }
+
   /** The entry a question is about: the one at the level of study it names ("Undergraduate GPA"), else entry `index`. */
   function entryAt(p, list, ctx) {
     const level = list === 'education' ? eduLevelOf(ctx.question) : null;
@@ -1952,6 +2202,72 @@
     return level !== 'highschool' || sameQualification((ctx && ctx.question) || '', e.degree);
   }
 
+  /**
+   * Does the profile answer a box with nothing, on purpose? "A-Level Subject 4" for three A-levels, "A-Level Grade 1"
+   * for Advanced Highers; "If you didn't complete UK A-levels, … your equivalent" for someone who did. Not missing
+   * from the profile, nor the AI's to answer.
+   */
+  function leftEmpty(type, p, ctx) {
+    const q = (ctx && ctx.question) || '';
+    if (type === 'edu.equivalent') return qualsOf(q).some((x) => heldQuals(p).includes(x));
+    // A grade you hold that the box can't take (a 2:1 in a number box): never converted, nor missing.
+    if (gradeHeld(type, p, ctx) && !resolve(type, p, ctx)) return true;
+    if (!['edu.field', 'edu.gpa', 'edu.classification'].includes(type)) return false;
+    const { e, level } = entryAt(p, 'education', ctx || {});
+    if (!e) return false;
+    if (level === 'highschool' && !sameQualification(q, e.degree)) return true;
+    const nth = type === 'edu.classification' ? -1 : positionAsked(q);
+    const list =
+      nth < 0 ? null : type === 'edu.gpa' ? gradeList(e.gpa) : U.isBlank(e.field) ? null : subjectList(e.field);
+    return !!list && nth >= list.length;
+  }
+
+  /**
+   * An entry's end date for a form's "To" box: a stint that starts and ends in the same month (a spring week, an
+   * insight day: "03/2026" to "03/2026") ends the month after, since forms turn down a "To" that isn't after "From".
+   */
+  function endAfterStart(e) {
+    const start = U.parseDate(e.startDate);
+    const end = U.parseDate(e.endDate);
+    if (!start || !end || !start.month || end.day || start.year !== end.year || start.month !== end.month)
+      return e.endDate;
+    const next = start.year * 12 + start.month; // the month after, counted from January of year 0
+    return `${Math.floor(next / 12)}-${U.pad2((next % 12) + 1)}`;
+  }
+
+  const DEGREE_TITLE = /\b(exact|full) (degree )?(title|name)\b|\bdegree (title|name)\b|\btitle of (your )?degree\b/;
+
+  /**
+   * "Please state your higher educational qualifications, including (current) grade and starting and (expected)
+   * graduating date" (DN Capital): one line per degree (school entries too when the question isn't about higher
+   * education), "BSc Economics, University College London, September 2024 – June 2027 (expected), predicted 2:1".
+   */
+  function qualificationsSummary(p, ctx) {
+    const q = ctx.question || '';
+    const higher = /\b(higher|university|degree|tertiary|undergraduate|post ?graduate)\b/.test(q);
+    const now = ctx.today || new Date();
+    const when = (raw) => {
+      const d = U.parseDate(raw);
+      const month = d && d.month ? U.monthName(d.month) : '';
+      return d ? [month.charAt(0).toUpperCase() + month.slice(1), d.year].filter(Boolean).join(' ') : '';
+    };
+    const lines = (p.education || [])
+      .filter((e) => !U.isBlank(e.school) || !U.isBlank(e.degree))
+      .filter((e) => !higher || JTF.matcher.degreeGroup(U.normalize(e.degree)) !== 'highschool')
+      .map((e) => {
+        const end = U.parseDate(e.endDate);
+        const ongoing = !!end && end.year * 12 + (end.month || 6) - 1 >= now.getFullYear() * 12 + now.getMonth();
+        // "BSc Economics"; "A-Levels (Mathematics, Further Mathematics, Economics)".
+        const field = U.isBlank(e.field) ? '' : /,/.test(e.field) ? `(${e.field})` : e.field;
+        const title = [e.degree, field].filter((t) => !U.isBlank(t)).join(' ');
+        const dates = [when(e.startDate), when(e.endDate)].filter(Boolean).join(' – ');
+        const grade = !U.isBlank(e.classification) ? e.classification : e.gpa;
+        const graded = U.isBlank(grade) ? '' : ongoing && !/predict|expect/i.test(grade) ? `predicted ${grade}` : grade;
+        return [title, e.school, dates && (ongoing ? `${dates} (expected)` : dates), graded].filter(Boolean).join(', ');
+      });
+    return lines.length ? val(lines.join('\n')) : null;
+  }
+
   function entry(label, list, key, kind) {
     return {
       label,
@@ -1965,7 +2281,9 @@
           return key === 'company' && i === 0 ? val(p.address.organization) : null;
         }
         const { e, level } = entryAt(p, list, ctx);
-        if (!e) return null;
+        // No studies at the level asked: "…graduate (Master) GPA? Please indicate N/A if you do not have one.", and
+        // Eastdil's required "Postgraduate University (if applicable)" for someone with no postgraduate degree.
+        if (!e) return level ? otherwiseVal(ctx) || notApplicable(ctx) : null;
         if (
           level === 'highschool' &&
           ['gpa', 'class', 'subject'].includes(kind) &&
@@ -1974,8 +2292,23 @@
           return null;
         if (kind === 'date') {
           if (key === 'endDate' && e.current) return null;
+          // Capgemini's "If you selected predicted Status, which month will you complete this degree qualification?"
+          // [N/A | January…]: N/A once it's finished.
+          if (
+            key === 'endDate' &&
+            /^if you (selected|chose|answered|said) (predicted|expected)\b/.test(ctx.question || '')
+          ) {
+            const end = U.parseDate(e.endDate);
+            const now = ctx.today || new Date();
+            if (end && end.year * 12 + (end.month || 6) - 1 < now.getFullYear() * 12 + now.getMonth())
+              return val('N/A', { otherwise: true, canonical: null, candidates: ['N/A', 'Not applicable'] });
+          }
           const typical = key === 'endDate' ? 6 : 9;
-          const v = windowAnswer(e[key], ctx.question, typical) || dateVal(e[key], ctx.part, typical);
+          const raw = key === 'endDate' ? endAfterStart(e) : e[key];
+          const v = windowAnswer(raw, ctx.question, typical) || dateVal(raw, ctx.part, typical);
+          // PDT's "What is your anticipated graduation date?" [Fall 2027 | Spring 2028 | … | Other]: "Other" for a term
+          // the list doesn't have.
+          if (v && list === 'education' && CHOICE.includes(ctx.kind)) v.fallback = ['Other', 'Other (please specify)'];
           // Graduated already: "Expected graduation date: … / I am not currently enrolled" takes the last one.
           if (v && v.date && key === 'endDate' && list === 'education') {
             const now = ctx.today || new Date();
@@ -1987,15 +2320,29 @@
         if (kind === 'bool') return val(e[key] ? 'Yes' : 'No');
         if (kind === 'degree') {
           // "What degree course are you studying?" in a text box wants "BSc in Mathematics", not just "BSc".
+          const q = ctx.question || '';
           const withSubject =
             LONG_TEXT.includes(ctx.kind) &&
-            /\b(course|subject|studying|major)\b/.test(ctx.question || '') &&
             !U.isBlank(e.degree) &&
             !U.isBlank(e.field) &&
             !U.normalize(e.degree).includes(U.normalize(e.field));
-          return degreeVal(withSubject ? `${e.degree} in ${e.field}` : e[key]);
+          // Capgemini's "Please state your exact degree title": "BSc Economics".
+          if (withSubject && DEGREE_TITLE.test(q)) return degreeVal(`${e.degree} ${e.field}`);
+          return degreeVal(
+            withSubject && /\b(course|subject|studying|major)\b/.test(q) ? `${e.degree} in ${e.field}` : e[key],
+          );
         }
         if (kind === 'number') return numberVal(e[key]);
+        // "A-Level Grade 2" / "A-Level Subject 2" (Eastdil): the second of your grades or subjects, or nothing.
+        const nth = kind === 'gpa' || kind === 'subject' ? positionAsked(ctx.question || '') : -1;
+        if (nth >= 0 && kind === 'gpa' && gradeList(e.gpa)) {
+          const grade = gradeList(e.gpa)[nth];
+          return grade ? val(grade, { kind: 'grade' }) : null;
+        }
+        if (nth >= 0 && kind === 'subject' && !U.isBlank(e.field)) {
+          const subject = subjectList(e.field)[nth];
+          return subject ? subjectVal(subject) : null;
+        }
         if (kind === 'gpa') return gpaFor(e, ctx);
         if (kind === 'class') return classFor(e, ctx);
         if (kind === 'school') return val(e[key], { kind: 'school' });
@@ -2021,7 +2368,9 @@
         const q = U.normalize((ctx && ctx.question) || '');
         const full =
           /\b(full|legal|complete|whole|entire|surname|passport|official|nom complet|nombre completo)\b/.test(q);
-        const first = /\b(first|given|short|nick ?name|forename|prenom|vorname|nombre|nome)\b/.test(q);
+        // OC&C's "Known As": the name you go by, so your first name.
+        const first =
+          /\b(first|given|short|nick ?name|forename|known as|goes by|go by|prenom|vorname|nombre|nome)\b/.test(q);
         return val(first && !full ? p.personal.firstName : fullName(p));
       },
     },
@@ -2052,8 +2401,10 @@
             : countryVal(p.personal.nationality);
         // Lists of nationalities ("American", "British") as well as of countries.
         if (v && v.iso2) v.candidates = [...new Set([...v.candidates, ...JTF.geo.demonyms(v.iso2)])];
-        // A US citizenship-status list ("U.S. citizen / green card holder / … / Other (please explain)").
+        // A US citizenship-status list ("U.S. citizen / green card holder / … / Other (please explain)"): your
+        // citizenship when it is listed (never a green card "of the United States" for an American), else Other.
         if (v) v.fallback = ['Other', 'Other (please explain)', 'Other (please specify)', 'None of the above'];
+        if (v) v.citizen = JTF.geo.citizenWords(p.personal.nationality);
         return v;
       },
     },
@@ -2157,12 +2508,30 @@
     'address.line1': {
       label: 'Address line 1',
       path: 'address.line1',
-      get: (p, ctx) => (ctx.kind === 'textarea' ? DEFS['address.full'].get(p, ctx) : val(p.address.line1)),
+      get(p, ctx) {
+        if (ctx.kind === 'textarea') return DEFS['address.full'].get(p, ctx);
+        // The only address box on the form (see matcher.plan): all of it on one line, or up to the postcode when the
+        // form asks for the region and country apart.
+        if (ctx.part === 'oneLine') {
+          const v = DEFS['address.full'].get(p, ctx);
+          return v && val(v.text.split('\n').join(', '));
+        }
+        if (ctx.part === 'withCity') {
+          const a = p.address;
+          return val(
+            [a.line1, a.line2, [a.city, a.postalCode].filter(Boolean).join(' ')]
+              .filter((t) => !U.isBlank(t))
+              .join(', '),
+          );
+        }
+        return nearHome(val(p.address.line1), p);
+      },
     },
     'address.line2': simple('Address line 2', 'address.line2'),
     'address.street': {
       label: 'Street address',
-      get: (p) => val([p.address.line1, p.address.line2].filter((s) => !U.isBlank(s)).join(', ')),
+      // An address search (Teamtailor's) lists every "12 Gower Street": the one in your city, postcode or country.
+      get: (p) => nearHome(val([p.address.line1, p.address.line2].filter((s) => !U.isBlank(s)).join(', ')), p),
     },
     'address.full': {
       label: 'Full address',
@@ -2271,7 +2640,10 @@
       label: 'Authorized to work',
       path: 'job.authorized',
       get: (p, ctx) =>
-        elsewhere(p, ctx, 'authorized') || workStatus(p, ctx) || sponsorAware(val(p.job.authorized), p, 'authorized'),
+        rightsStatements(p, ctx) ||
+        elsewhere(p, ctx, 'authorized') ||
+        workStatus(p, ctx) ||
+        sponsorAware(val(p.job.authorized), p, 'authorized'),
     },
     'job.sponsorship': {
       label: 'Requires sponsorship',
@@ -2282,6 +2654,8 @@
         sponsorAware(val(p.job.sponsorship), p, 'sponsorship'),
     },
     'job.visa': { label: 'Holds a visa (yes/no)', get: visaHeld },
+    'job.rightType': { label: 'Type of right to work', get: rightType, derived: true },
+    'personal.dualNationality': { label: 'Dual nationality (yes/no)', get: dualNationality, derived: true },
     // "Are you located in London?" / "Are you based in the UK?": from your address (Glasgow is in the UK, not London).
     'location.in': {
       label: 'Lives in the place asked about',
@@ -2333,7 +2707,26 @@
       label: 'Preferred locations',
       path: 'job.locations',
       get(p, ctx) {
-        const v = listVal(p.job.locations);
+        let v = listVal(p.job.locations);
+        // Ashton Fire's "Please indicate your first / second choice office location": that one of yours, or nothing.
+        const nth = ['first', 'second', 'third', 'fourth'].findIndex((w, i) =>
+          new RegExp(`\\b(${w}|${i + 1}(st|nd|rd|th)) (choice|preference)\\b`).test(ctx.question || ''),
+        );
+        if (v && nth >= 0) v = v.items[nth] ? listVal(v.items[nth]) : null;
+        // FDM's "Which FDM Location…?" [Canada | Ireland | UK | USA | None]: London's country when the list has no
+        // city of yours (its own nation only: never "Scotland" for London).
+        if (v && CHOICE.includes(ctx.kind)) {
+          const places = v.items.flatMap((item) => JTF.geo.placesNamed(item)).filter((pl) => pl.type === 'metro');
+          const nations = /^(England|Scotland|Wales|Northern Ireland)$/;
+          v.fallback = [
+            ...new Set(
+              places.flatMap((pl) => [
+                ...(pl.region && !/^[A-Z]{2}$/.test(pl.region) ? [pl.region] : []),
+                ...JTF.geo.countryCandidates(pl.country).filter((c) => !nations.test(c) && c !== pl.country),
+              ]),
+            ),
+          ];
+        }
         const named = JTF.geo.placesNamed(ctx.question || '').filter((pl) => pl.type === 'metro');
         if (!v || !LONG_TEXT.includes(ctx.kind) || named.length < 2) return v;
         const q = ' ' + (ctx.question || '') + ' ';
@@ -2360,11 +2753,25 @@
     'job.clearanceEligible': {
       label: 'Eligible for security clearance',
       path: 'job.clearanceEligible',
-      get(p) {
+      get(p, ctx) {
+        const q = (ctx && ctx.question) || '';
+        // A US clearance takes US citizenship: "Do you presently hold an active U.S. security clearance, or are you
+        // eligible to obtain one?" is No for a British student.
+        const nations = JTF.geo.nationalities(p.personal.nationality).map((row) => row[0]);
+        if (US_CLEARANCE.test(q) && nations.length && !nations.includes('US')) return val('No');
         // Holding one already answers "Do you hold, or are you willing to obtain, SC clearance?".
         const held = String(p.job.clearance || '').trim();
-        if (held && !/^(none|no|n\/?a|not applicable|nil)$/i.test(held)) return val('Yes');
-        return val(p.job.clearanceEligible);
+        const holds = !!held && !/^(none|no|n\/?a|not applicable|nil)$/i.test(held);
+        const v = holds ? val('Yes') : val(p.job.clearanceEligible);
+        if (!v) return v;
+        // Eligible, not holding one: "Yes, I'm eligible…", never "Yes, I hold an active … clearance".
+        if (!holds)
+          v.avoid = (o) =>
+            /\b(hold|holds|have|has) (an? )?(active|current|valid)\b|\b(currently|already) hold/.test(o.n);
+        // "To meet the eligibility requirements, you must have lived in the UK for the last 5 years and not have spent
+        // more than 6 months… outside of the UK": the statement that says it back (matcher.agreeing).
+        if (/\b(must|required to|requirements?|eligib\w*)\b/.test(q)) v.requirement = q;
+        return v;
       },
     },
     'job.otherOffers': simple('Other offers / deadlines', 'job.otherOffers'),
@@ -2413,18 +2820,60 @@
     'job.referralSource': {
       label: 'How you heard about the job',
       path: 'job.referralSource',
-      get(p) {
+      get(p, ctx) {
         const raw = String(p.job.referralSource || '').trim();
         if (/^[-–—]+$/.test(raw)) return null;
+        // The "Please specify" box after its list: where you heard, as you wrote it.
+        if (ctx && ctx.part === 'specify') return val(raw || 'LinkedIn');
         const v = val(raw || 'LinkedIn');
         const words = U.normalize(v.text).split(' ');
         const kind = SOURCE_KINDS.find(([re]) => re.test(words.join(' ')));
         v.candidates = [v.text, ...(kind ? kind[1] : [])];
-        if (kind && kind[1] === JOB_SITE) v.avoid = NOT_A_JOB_SITE;
+        // Another job site's own option ("LinkedIn Job Posting", "Handshake Job Posting") is never yours; examples in
+        // brackets name no site ("Other Job Board (e.g. University Job Board, etc.)", "Job Board (Indeed, LinkedIn…)").
+        if (kind && kind[1] === JOB_SITE) {
+          const mine = SOURCE_KINDS[0][0].exec(words.join(' '));
+          v.avoid = (o) => {
+            const bare = U.normalize(String(o.text).replace(/\([^)]*\)|\b(e\.?g\.?|such as|i\.?e\.?)\b.*$/gi, ' '));
+            const site = SOURCE_KINDS[0][0].exec(bare) || /\blinked ?in\b/.exec(bare);
+            return (
+              NOT_A_JOB_SITE.test(bare) ||
+              (!!site && !/^job ?(board|site)$/.test(site[0]) && (!mine || site[0] !== mine[0]))
+            );
+          };
+        }
         // An option that names it wins over broader ones: "Job Board / LinkedIn", "Social Media (LinkedIn, …)".
         if (words.length <= 3) v.named = new RegExp(`\\b${words.join(' ?')}\\b`);
         v.fallback = ['Other', 'Other (please specify)', 'Others', 'Something else'];
         return v;
+      },
+    },
+    // "Please provide the name and team of your referrer. If you haven't been referred please state n/a", "If you were
+    // referred by a Graham Capital employee, please enter their name. If not, write N/A.": the word it asks for, when
+    // where you heard about the job is no referral. A referral's name is yours to give.
+    // Never ticked or chosen for you, nor counted missing, nor sent to the AI.
+    optIn: { label: 'Opt-in', get: () => null, leave: true, derived: true },
+    // A referee's name, email or phone: not in your profile, and never yours.
+    referee: { label: 'Referee details', get: () => null, leave: true, derived: true },
+    // A box for the answer a list above didn't have, "or write N/A if you selected another answer" (see matcher.plan).
+    na: { label: 'N/A for another answer', get: () => val('N/A', { otherwise: true, canonical: null }), derived: true },
+    // "Were you referred by a current Cirrus Logic employee?": from where you heard of the job.
+    'job.referred': {
+      label: 'Referred by an employee (yes/no)',
+      get(p) {
+        const source = U.normalize(p.job.referralSource || '');
+        if (!source) return null;
+        return val(/\b(referr\w*|refer|employee|friend|colleague|relative|family)\b/.test(source) ? 'Yes' : 'No');
+      },
+      derived: true,
+    },
+    'job.referrer': {
+      label: 'Who referred you',
+      get(p, ctx) {
+        const source = U.normalize(p.job.referralSource || '');
+        return /\b(referr\w*|refer|employee|friend|colleague|relative|family)\b/.test(source)
+          ? null
+          : otherwiseVal(ctx);
       },
     },
     // "What is your communication preference?", "Preferred method of contact".
@@ -2670,7 +3119,7 @@
       },
     },
 
-    'edu.level': { label: 'Highest education', get: (p) => degreeVal(((p.education || [])[0] || {}).degree) },
+    'edu.level': { label: 'Highest education', get: highestLevel },
     // A school is matched by the words that tell institutions apart: never "Glasgow Caledonian" for "Glasgow".
     'edu.school': entry('School / university', 'education', 'school', 'school'),
     'edu.degree': entry('Degree', 'education', 'degree', 'degree'),
@@ -2688,9 +3137,42 @@
     'edu.end': entry('Graduation date', 'education', 'endDate', 'date'),
     'edu.year': {
       label: 'Year of study',
-      get: (p, ctx) => (YEAR_ASKED.test(ctx.question || '') ? yearAnswer(p, ctx) : studyYear(p, ctx.today)),
+      get(p, ctx) {
+        const q = ctx.question || '';
+        if (YEAR_ASKED.test(q)) return yearAnswer(p, ctx);
+        // Clarity's "School Year completed by the beginning of Summer 2027": the year you are in just before then.
+        const by = q.match(/\b(completed|finished) by (?:the )?(?:(beginning|start|end) of )?(.+?(?:19|20)\d{2})\b/);
+        const span = by && JTF.matcher.optionSpan(by[3]);
+        if (!span) return studyYear(p, ctx.today);
+        const m = (by[2] === 'end' ? span[1] + 1 : span[0]) - 1;
+        return studyYear(p, new Date(Math.floor(m / 12), m % 12, 15));
+      },
     },
     'edu.enrolled': { label: 'Currently enrolled', get: (p, ctx) => enrolment(p, ctx.today, ctx.question) },
+    // "Can you confirm you have completed your studies?", "Have you graduated?": the other way round from enrolled.
+    'edu.completed': {
+      label: 'Studies completed',
+      get(p, ctx) {
+        // "Is your postgraduate degree completed or still predicted?": that degree's, nothing without one.
+        const level = eduLevelOf(ctx.question || '');
+        const at = level ? (p.education || []).filter((e) => entryLevels(e).includes(level)) : null;
+        if (at && !at.length) return null;
+        const enrolled = enrolment(at ? { education: at } : p, ctx.today);
+        if (!enrolled) return null;
+        // Capgemini's "…degree completed or still predicted?" [Completed | Predicted].
+        return enrolled.canonical === 'yes'
+          ? val('No', { candidates: ['No', 'Predicted', 'Expected', 'In progress', 'Ongoing', 'Still studying'] })
+          : val('Yes', { candidates: ['Yes', 'Completed', 'Achieved', 'Graduated', 'Awarded'] });
+      },
+    },
+
+    'edu.summary': { label: 'Qualifications (summary)', get: qualificationsSummary, derived: true },
+    'edu.attended': { label: 'Studied at that level (yes/no)', get: levelAttended, derived: true },
+    'edu.majorIn': { label: 'Studies one of the subjects asked (yes/no)', get: subjectIn, derived: true },
+    'edu.inCountry': { label: 'Studied in the country asked (yes/no)', get: studiedIn, derived: true },
+    // "Did you complete UK A-levels?", and the box for an equivalent if you didn't.
+    'edu.qualification': { label: 'School qualification held (yes/no)', get: qualificationHeld },
+    'edu.equivalent': { label: 'Equivalent school qualification', get: equivalentQualification, derived: true },
 
     'exp.company': entry('Company', 'experience', 'company'),
     'exp.title': entry('Job title', 'experience', 'title'),
@@ -2734,7 +3216,11 @@
           const mine = listVal(text) ? listVal(text).items.map(U.normalize) : [];
           return asked.some((l) => mine.some((m) => m === l || m.split(' ').includes(l))) ? val('Yes') : null;
         }
-        return listVal(text);
+        // Aurora's "Do you speak any non-European languages…? Please select 'None' if you do not.": "None" when the
+        // list has none of yours.
+        const v = listVal(text);
+        if (v && /\bnone\b/.test(q)) v.fallback = ['None', 'None of the above', 'N/A'];
+        return v;
       },
     },
     summary: simple('Summary', 'summary'),
@@ -2883,9 +3369,9 @@
   const R = (type, re, opts) => Object.assign({ type, re }, opts || {});
 
   const CONSENT =
-    /acknowledg|\b(answer|applicant|candidate|application) certification\b|\b(allow|permit|authori[sz]e) (us|[a-z]+) to (process|store|hold|use|retain) (your|my) (personal )?(data|information|details)\b|\bcertification of (answers|application|accuracy)\b|\bi (have )?(read|reviewed|understood)\b|\bi (hereby )?(confirm|agree|accept|consent|certify|attest|declare|understand)\b|\bconsent\b|privacy (notice|policy|statement)|notice at collection|data (protection|privacy|processing) (notice|policy|statement)|terms (and|&) conditions|terms of (use|service)|\bgdpr\b|candidate (privacy|data) (notice|policy)|confidentiality (agreement|undertaking|notice|statement)|non ?disclosure (agreement|undertaking)|maintain (the )?(strict )?confidentiality/;
+    /acknowledg|\b(answer|applicant|candidate|application) certification\b|\b(allow|permit|authori[sz]e) (us|[a-z]+) to (process|store|hold|use|retain) (your|my) (personal )?(data|information|details)\b|\bcertification of (answers|application|accuracy)\b|\bi (have )?(read|reviewed|understood)\b|\bi (hereby )?(confirm|agree|accept|consent|certify|attest|declare|understand)\b|\bconsent\b|privacy (notice|policy|statement)|notice at collection|data (protection|privacy|processing) (notice|policy|statement)|terms (and |& )?conditions|terms of (use|service)|\bgdpr\b|candidate (privacy|data) (notice|policy)|confidentiality (agreement|undertaking|notice|statement)|non ?disclosure (agreement|undertaking)|maintain (the )?(strict )?confidentiality/;
   const OPT_IN =
-    /marketing|newsletter|promotion|(applicant|candidate|talent) (database|pool)|\bsms\b|text messages?|whats ?app|job alerts?|talent (community|network|pool)|future (opportunit|roles?|jobs?|vacanc|positions?|openings?)|other (roles|positions|opportunities|openings)|keep (me|my)|contact me|subscribe|\bupdates\b|share my (data|information|details) with/;
+    /marketing|newsletter|promotion|(applicant|candidate|talent) (database|pool)|\bsms\b|text messages?|whats ?app|job alerts?|talent (community|network|pool)|future (opportunit|roles?|jobs?|vacanc|positions?|openings?)|other (roles|positions|opportunities|openings)|keep (me|my)|contact me|subscribe|\bupdates\b|share my (data|information|details) with|\bnews (and |& )?(events|updates)\b|\b(job|vacancy|posting) (posting )?notifications?\b/;
 
   const NEGATED = /\b(not|don t|do not|does not|decline|disagree|refuse|withdraw|object)\b/;
 
@@ -2937,6 +3423,11 @@
   const OTHER_PHONE =
     /\b(alternat(e|ive)|alt|secondary|second|additional|other|another|backup|2nd) (phone|mobile|telephone|tel|cell|contact|number)\b|\bif (it is |its )?different\b|(?<!\b(mobile|cell|cellular) or )\bland ?line\b(?! or (mobile|cell))/;
 
+  // Someone else's address ("Referrer's email", "Emergency contact email", Teamtailor's "Email address without domain":
+  // a colleague's work address) or a second one of yours: never yours, even in a type="email" box.
+  const OTHERS_EMAIL =
+    /\b(referr\w*|referee|recruiter|manager|supervisor|emergency|friend|colleague|parent|guardian)\b.{0,40}\be ?mail\b|\be ?mail\b.{0,30}\bof (your |the |a )?(referr\w*|referee|recruiter|manager|supervisor|emergency contact|friend|colleague|parent|guardian)\b|\b(alternate|alternative|secondary|additional|backup|second) e ?mail\b|\bwithout (the |a |your )?domain\b/;
+
   // Order matters only for ties: put specific rules (and long questions that
   // mention other keywords, like "authorized to work in the country…") first.
   const RULES = [
@@ -2953,15 +3444,22 @@
     R('file.resume', /resume|\bcv\b|curriculum|lebenslauf|attach|upload|document|\bfile\b/, {
       kinds: ['file'],
       // "Autofill from resume" / "Apply with resume" read the file and rewrite the form: not the resume upload.
-      not: /photo|picture|image|avatar|headshot|^(?!.*\b(resume|cv)\b).*(\b(portfolio|cover)\b|transcript)|certificat|passport|\bid\b|writing sample|\b(other|additional|supporting|further) (documents?|files?|attachments?|materials?)\b|auto ?fill|automatically fill|apply with (your )?(resume|cv)|pre ?fill|parse/,
+      // Nor Personio's "Other ( Optional )" or "Employment reference ( Optional )".
+      not: /photo|picture|image|avatar|headshot|^(?!.*\b(resume|cv)\b).*(\b(portfolio|cover)\b|transcript)|certificat|passport|\bid\b|writing sample|^(upload )?(other|others|misc\w*|any other)( optional)?$|\b(employment |character |job )?references?\b|\b(other|additional|supporting|further) (\w+ )?(documents?|files?|attachments?|materials?)\b|auto ?fill|automatically fill|apply with (your )?(resume|cv)|pre ?fill|parse/,
       // An "Attach" button whose id or group says "cover letter" is not the resume upload.
       // So is a "Portfolio" upload, unless it also asks for the CV ("Resume / portfolio").
       // So is a code sample or a programming exercise ("If you would like to share a file of your code sample…",
       // "Write a program in C++ … Attach the file").
       notAny:
-        /^(?!.*\b(resume|cv|curriculum)\b).*(cover ?letter|motivation(al)? letter|letter of motivation|anschreiben|lettre de motivation|\b(portfolio|work samples?)\b|\b(other|additional|supporting|further) (documents?|files?|attachments?|materials?)\b|\bcode samples?\b|\bsamples? of (your )?code\b|\bwrite a (program|function|script)\b|\b(coding|programming) (exercise|task|assignment|challenge|test|question)\b|\bsource code\b|transcript)|writing sample|headshot|photo|passport/,
+        /^(?!.*\b(resume|cv|curriculum)\b).*(cover ?letter|motivation(al)? letter|letter of motivation|anschreiben|lettre de motivation|\b(portfolio|work samples?)\b|\b(other|additional|supporting|further) (\w+ )?(documents?|files?|attachments?|materials?)\b|\bcode samples?\b|\bsamples? of (your )?code\b|\bwrite a (program|function|script)\b|\b(coding|programming) (exercise|task|assignment|challenge|test|question)\b|\bsource code\b|transcript)|writing sample|headshot|photo|passport/,
       // …unless what it says names the CV too: "Resume/CV/Transcripts" above a "(transcripts are required…)" note.
       unlessAny: CV_NAMED,
+      // A CV reader that fills the form in ("AUTOFILL FOR SPEED, save time by uploading your cv" on CharlieHR, whose
+      // file box is named "user_cv") is never the upload, whatever its name says.
+      test: (desc) =>
+        !['label', 'question', 'aria', 'nearby'].some((k) =>
+          AUTOFILL_UPLOAD.test(U.normalize((desc.signals || {})[k])),
+        ),
     }),
 
     // Passwords. "Passcode" and "One-time password" are the emailed code, not your password.
@@ -3043,7 +3541,9 @@
     R(
       'job.clearanceEligible',
       /\b(eligib\w*|able|willing|prepared|happy|agree)\b.*\b(obtain|hold|undergo|apply for|get|gain|be granted|achieve|pass|go through|complete)\b.*\b(clearance|vetting)\b|\b(clearance|vetting)\b.*\b(eligib\w*|willing|able to obtain)\b|\b(requires?|required|subject to|need to (obtain|pass|hold))\b.*\b(security )?(clearance|vetting)\b/,
-      { kinds: CHOICE.concat(['text']) },
+      // "…impacted if you are intending to travel… Are you intending to travel outside of the UK for 6 months or
+      // more?" asks about your plans.
+      { kinds: CHOICE.concat(['text']), not: /\b(intend\w*|plan\w*|going) to (travel|live|move|spend|stay)\b/ },
     ),
     // "Do you currently hold an active security clearance?", "Clearance level".
     R(
@@ -3070,21 +3570,39 @@
     ),
     R(
       'job.authorized',
-      /\b(authori[sz]ed|eligible|entitled|permitted|allowed) to (lawfully |legally )?work|work (authori[sz]ation|permit|eligibility)|employment (authori[sz]ation|eligibility)|eligib(le|ility) (for|to) (employment|work)|authori[sz]ation to work|right to work|legal right to|legally (work|employed)|\bimmigration status\b/,
-      // "Will you in the future require authorization to work in the US?" asks whether you need sponsoring.
-      { not: /\b(require|need)\b.{0,30}\b(work )?authori[sz]ation\b/ },
+      /\b(authori[sz]ed|eligible|entitled|permitted|allowed) to (lawfully |legally )?work|work (authori[sz]ation|permit|eligibility)|employment (authori[sz]ation|eligibility)|eligib(le|ility) (for|to) (employment|work)|authori[sz]ation to work|rights? to work|legal rights? to|legally (work|employed)|\bimmigration status\b/,
+      // "Will you in the future require authorization to work in the US?" asks whether you need sponsoring; "Will you
+      // rely on a UK Graduate Route visa for your right to work…?" whether you hold a visa.
+      {
+        not: /\b(require|need)\b.{0,30}\b(work )?authori[sz]ation\b|\brely on (a |an |the |any )?(\w+ ){0,3}visa\b|\b(type|kind|basis|form|category) of (your )?(right to work|work authori[sz]ation|immigration status)\b/,
+      },
     ),
     // "Are you able to work in the UK?" is about permission; "able to work on-site 5 days a week" is not.
+    // Nor "…you will be able to work as of 22 February 2027 on a full-time basis…", which asks when you can start.
     R('job.authorized', /\bable to (lawfully |legally )?work\b/, {
-      not: /\bon ?site\b|in (the |our )?office|in person|days (a|per) week|\bcommute|\bhybrid\b|\bshifts?\b|weekends?|overtime|consecutive|full ?time for/,
+      not: /\bon ?site\b|in (the |our )?office|in person|days (a|per) week|\bcommute|\bhybrid\b|\bshifts?\b|weekends?|overtime|consecutive|full ?time for|\bable to work (as of|from|starting|by|on) /,
     }),
     // "Do you hold a valid UK visa?" (never "a visa that allows you to work…", which asks for your right to work).
+    // IK Partners' "What type of right to work in the UK do you hold?" [Citizenship/Nationality/… | … Visa | …].
+    R(
+      'job.rightType',
+      /\b(type|kind|basis|form|category) of (your )?(right to work|work authori[sz]ation|immigration status)\b/,
+      {
+        kinds: CHOICE.concat(LONG_TEXT),
+      },
+    ),
+    // Capgemini's "Do you hold dual nationality?", Cambridge Consultants' "…any other (dual) nationality or citizenships?".
+    R(
+      'personal.dualNationality',
+      /\bdual (nationality|nationalities|citizenship)\b|\b(any |an )?(other|another|second|additional|multiple) (\(dual\) |dual )?(nationalit(y|ies)|citizenships?)\b|\bcitizenship (of|for|in) (any )?other countr/,
+      { kinds: CHOICE.concat(LONG_TEXT) },
+    ),
     R(
       'job.visa',
-      /^(do|does) you (currently )?(hold|have|possess)( a| an| any)?( valid| current| active)? (\w+ ){0,2}visas?\b/,
+      /^(do|does) you (currently )?(hold|have|possess)( a| an| any)?( valid| current| active)? (\w+ ){0,2}visas?\b|^(will|would|do) you (need to )?rely on (a |an |any )?(\w+ ){0,3}visas?\b/,
       {
         kinds: CHOICE,
-        not: /\bsponsor|\bor\b.*\b(citizen|right to work|settled|indefinite|permanent|passport|residen)|\bif (yes|so)\b|\b(type|expir\w*|number)\b|\b(allows?|permits?|entitles?|lets) you to\b|\bwork (in|for)\b/,
+        not: /\bsponsor|\bor\b.*\b(citizen|right to work|settled|indefinite|permanent|passport|residen)|\bif (yes|so)\b|\b(type|expir\w*|number)\b|\b(allows?|permits?|entitles?|lets) you to\b|(?<!\bright to )\bwork (in|for)\b/,
       },
     ),
     // "Are you able to commute into our London office?", "Do you live within commuting distance of our London office?"
@@ -3116,7 +3634,7 @@
     ),
     R(
       'job.locations',
-      /\blocations?\b.*\b(interested|prefer|willing|open to|relocat|consider|like to work|want to work)|\b(preferred|desired|target|ideal) (work |office |job |internship |role )?(locations?|offices?|cities)|\bwhich (other )?(offices?|locations?|cities)\b|\b(office|location|city) preferences?\b|where would you (like|prefer|want) to (work|be based)|\brelocat\w* (where|which (cities|locations|offices))\b|^where\b.*\brelocat/,
+      /\b(first|second|top|1st|2nd) (choice|preference) (of )?(office|location|city)|\b(first|top) choice (office )?locations?\b|\blocations?\b.*\b(interested|prefer|willing|open to|relocat|consider|like to work|want to work)|\b(preferred|desired|target|ideal) (work |office |job |internship |role )?(locations?|offices?|cities)|\bwhich (other )?(offices?|locations?|cities)\b|\b(office|location|city) preferences?\b|where would you (like|prefer|want) to (work|be based)|\brelocat\w* (where|which (cities|locations|offices))\b|^where\b.*\brelocat/,
       // "…willing to relocate to one of the following locations New York… Please confirm" [Yes / No] is about relocating.
       { test: (desc) => !hasYesNoOptions(desc) },
     ),
@@ -3127,7 +3645,17 @@
     ),
     R(
       'job.referralSource',
-      /how did you (first )?(hear|find|learn|come across|discover|get to know|connect with)|where did you (first )?(hear|find|learn|see|discover|come across)|hear(d)? about (us|this|the)|learn(ed)? about (us|this|the)|source of (application|referral|hire|candidate)|referral source|^source$|how were you referred|found (us|this|the job)/,
+      /how did you (first )?(hear|find|learn|come across|discover|get to know|connect with)|where did you (first )?(hear|find|learn|see|discover|come across)|hear(d)? about (us|this|the)|learn(ed)? about (us|this|the)|source of (application|referral|hire|candidate)|referral source|^source$|how were you referred|found (us|this|the job)|\b(become|became) aware of (us|this|the)\b/,
+    ),
+    R(
+      'job.referred',
+      /^(were|have) you (been )?referred\b|^did (a |an |any )?(current |existing )?(\w+ ){0,3}(employee|member of staff|staff member|colleague) refer you\b/,
+      { kinds: CHOICE },
+    ),
+    R(
+      'job.referrer',
+      /\b(name|names|details|team)\b.{0,40}\breferr(er|al)s?\b|\breferred (to us |to you )?by\b.{0,80}\b(name|names)\b|\breferr(er|al) s? (name|full name)\b|\b(name|names) of (the )?(person|people|employee|colleague)s? who referred you\b/,
+      { kinds: LONG_TEXT },
     ),
     // The list that follows "How did you first hear about BNY?" (Job Board → "Please select the specific source").
     R(
@@ -3154,22 +3682,33 @@
     ),
     R(
       'job.otherOffers',
-      /\b(other|competing|outstanding|existing|pending) (job |internship |employment )?offers?\b|\boffers? (from|at|with) (other|another|any other) (firms?|compan|employers?|organi)|\boffers? (and|or|&) deadlines?|\bdeadlines? (we|that we) should\b|\bany (other )?(offers|deadlines)\b|\bexploding offer|\b(upcoming|pending|current|any) (offer )?deadlines?\b|\boffer deadlines?\b|\bdecision (deadlines?|timelines?)\b|\brecruiting timelines?\b|\btimelines? (we|that we) should\b|\baccepted an? (\w+ ){0,3}offer\b|\b(holding|hold) any (\w+ )?offers?\b/,
-      { not: /\bif (yes|so)\b|\bwhich (firm|company)\b|\bwhat (firm|company)\b/ },
+      /\b(other|competing|outstanding|existing|pending) (job |internship |employment )?offers?\b|\boffers? (from|at|with) (other|another|any other) (firms?|compan|employers?|organi)|\boffers? (and|or|&) deadlines?|\bdeadlines? (we|that we) should\b|\bany (other )?(offers|deadlines)\b|\bexploding offer|\b(upcoming|pending|current|any) (offer )?deadlines?\b|\boffer deadlines?\b|\bdecision (deadlines?|timelines?)\b|\brecruiting timelines?\b|\btimelines? (we|that we) should\b|\baccepted an? (\w+ ){0,3}offer\b|\b(holding|hold) any (\w+ )?offers?\b|\b(other )?(processes|interviews) (and |or )?(offers|timelines)\b/,
+      // Nominal's "Do you have any pending offers or deadlines we should know about? If so, what companies and dates?"
+      // in one box takes your answer; a box of its own that starts "If so…" is the follow-up.
+      { not: /^if (yes|so)\b|^(which|what) (firm|company)\b/ },
     ),
     // "Have you applied to Marshall Wace before?"
     R(
       'compliance.previouslyApplied',
       /\b(previously|ever|already) applied\b|\bapplied (to|for|with|at)\b.{0,60}\b(before|previously|in the past|last year|this year)\b|\bhave you applied (to|for|with)\b|\b(have|did) you (ever |previously )?(been )?interview(ed)? (with|at|for)\b(?!.*\b(affiliates?|portfolio|subsidiar\w*|group compan\w*)\b)/,
-      { kinds: CHOICE.concat(LONG_TEXT), not: /\bif (yes|so)\b|\bwhen and\b/ },
+      // "If yes, when?" after it is its follow-up; "Have you ever applied… before? If yes, please list dates and
+      // position." in one box is the question.
+      { kinds: CHOICE.concat(LONG_TEXT), not: /^if (yes|so)\b|\bwhen and\b/ },
     ),
     // "Do you require any reasonable adjustments to participate in the recruitment process?"
     R(
       'job.adjustments',
-      /\breasonable adjustments?\b|\b(require|need|request)\b.{0,40}\b(adjustments?|accommodations?|support)\b.{0,60}\b(recruitment|application|interview|assessment|selection|hiring)\b|\badjustments? (to|during|in|for) (the |our )?(recruitment|application|interview|assessment|selection)/,
+      /\breasonable adjustments?\b|^(do|will|would) you (require|need|have) any (special|additional|access) (requirements?|arrangements?|needs)\b|\b(require|need|request)\b.{0,40}\b(adjustments?|accommodations?|support|(special|additional|access) (requirements?|arrangements?|needs|assistance))\b.{0,60}\b(recruitment|application|interview|assessment|selection|hiring)\b|\badjustments? (to|during|in|for) (the |our )?(recruitment|application|interview|assessment|selection)|\b(additional|special|access) (requirements?|needs)\b.{0,80}\b(interview|assessment|recruitment)\b/,
       {
-        kinds: CHOICE,
-        not: /essential functions|housing|\bif (yes|so)\b|please (provide|give|tell)/,
+        // A text box asking it as a yes/no question ("Do you require any special requirements if you are invited to
+        // attend an interview?" on Phenom) takes the answer too; one asking what they are is left for you.
+        kinds: CHOICE.concat(LONG_TEXT),
+        test: (desc, text) =>
+          CHOICE.includes(desc.kind) ||
+          /^(do|does|will|would|are|is|have|has) (you|there)\b|\b(are|is) there\b|\b(do|will|would) you (require|need)\b/.test(
+            text,
+          ),
+        not: /essential functions|housing|^if (yes|so)\b|^please (provide|give|tell|state|describe|list)/,
       },
     ),
     // "Are you willing to work in the office 5 days a week?" (where it is is the AI's to weigh up)
@@ -3203,7 +3742,7 @@
     ),
     R(
       'job.startDate',
-      /when (can|could|would) you (like to |be able to )?(start|begin|join)|when (are|will) you (be )?(able|available) to (start|begin|join)|available (start|to start|to begin|from)|\bavailability\b|earliest (possible )?(start|date)|date (you are )?available|(desired|preferred) start|expected start|join(ing)? date|how soon|start (date|dates) (for|of) (the|this|your) (internship|placement|programme|program|role|position|job)|\bdate (that )?you (could|can|would|will) (start|begin|join)\b|\b(ready|available) for (full ?time )?(employment|work)\b|\beintritt\w*|\bdisponibilit[ea]\b|\bdate de debut\b|\b(will|would|could|can) (you )?be (able|available) to (start|begin|commence|join)\b|\b(what|which) date\b.*\bavailab|\bwhen (are|will|would) you (be )?available\b/,
+      /when (can|could|would) you (like to |be able to )?(start|begin|join)|when (are|will) you (be )?(able|available) to (start|begin|join)|available (start|to start|to begin|from)|\bavailability\b|earliest (possible )?(start|date)|date (you are )?available|(desired|preferred) start|expected start|join(ing)? date|how soon|start (date|dates) (for|of) (the|this|your) (internship|placement|programme|program|role|position|job)|\bdate (that )?you (could|can|would|will) (start|begin|join)\b|\b(ready|available) for (full ?time )?(employment|work)\b|\beintritt\w*|\bdisponibilit[ea]\b|\bdate de debut\b|\b(will|would|could|can) (you )?be (able|available) to (start|begin|commence|join)\b|\b(what|which) date\b.*\bavailab|\bwhen (are|will|would) you (be )?available\b|\b(best|ideal|preferred|desired|earliest|possible|likely|proposed) start (date|time)\b|\b(free|ready|able) to (start|begin|commence|join)\b|\bwhen (are|do|would|will) you (aiming|planning|hoping|looking|intending|expecting|want|like) to (start|begin|join)\b|\bable to work (as of|from|starting( on| from)?|by) |\bable to work on (the )?\d/,
       { not: INTERVIEW_SLOTS },
     ),
     // "The internship runs from 1 July to 30 September 2027. Can you confirm that you are available…?"
@@ -3244,6 +3783,15 @@
       notAny: OPT_IN,
       yieldsTo: ['edu.end', 'job.startDate'],
     }),
+    // Opt-ins ("Yes, Arma Partners can add me to the talent pool…", "Would you like to receive job alerts from us?",
+    // "Sms Consent", "Do you agree to be contacted via WhatsApp?"): recognised, and left for you.
+    R('optIn', OPT_IN, {
+      kinds: ['checkbox', 'checkboxes', 'select', 'combo', 'combobox', 'radio'],
+      test: (desc, text) =>
+        /\b(agree|consent|allow|permit|can|may|happy|receive|opt in|sign (me )?up|subscribe|add me|contact(ed)? me|retain|like to (be|join|hear))\b/.test(
+          text,
+        ),
+    }),
     // "I'm not a robot" as a plain <input type="checkbox">. A CAPTCHA widget's own box (role="checkbox" inside
     // reCAPTCHA's frame) is never one: those are left for you.
     R(
@@ -3265,7 +3813,7 @@
     // Not about the company's auditors ("…employed by Ernst & Young, that engages in audit work?").
     R(
       'compliance.relatives',
-      /\b(related to|relatives?|family members?|immediate family|spouse|domestic partner|close (personal )?relationship)\b.*\b(work|works|working|worked|employ|employed|employee|employees|staff)\b|\b(know|related to) any ?one (who )?(currently )?(works?|working|employed|at)\b|\b(personal|family|romantic|intimate|close) relationships? with\b.*\b(employees?|employed|staff|work\w*|current|affiliates?|subsidiar\w*|colleagues?)\b|\b(employees?|staff)\b.*\b(with whom )?you have (a |an |any )?(personal|family|romantic|close) relationship\b/,
+      /\b(related to|relatives?|family members?|immediate family|spouse|domestic partner|close (personal )?relationship)\b.*\b(work|works|working|worked|employ|employed|employee|employees|staff)\b|\b(know|related to) any ?one (who )?(currently )?(works?|working|employed|at)\b|\b(personal|family|romantic|intimate|close) relationships? with\b.*\b(employees?|employed|staff|work\w*|current|affiliates?|subsidiar\w*|colleagues?)\b|\b(employees?|staff)\b.*\b(with whom )?you have (a |an |any )?(personal|family|romantic|close) relationship\b|\b(connected|connections?) (to|with) (any )?(current |existing )?(employees?|staff)\b/,
       {
         kinds: CHOICE.concat(LONG_TEXT),
         not: /government|public official|politically|referr|refer you|emergency|\b(ernst|ey|deloitte|pwc|pricewaterhouse\w*|kpmg|auditors?|audit)\b/,
@@ -3273,7 +3821,7 @@
     ),
     R(
       'compliance.previouslyEmployed',
-      /\b(previously|ever|formerly|before|in the past) (been )?(worked|employed|work|been employed|interned)\b.*\b(for|at|by|with)\b|\b(current or former|former|ex) (employee|staff member|intern)\b|\bhave you (ever )?worked (for|at|with) (us|our)\b|\bworked (for|at) [a-z ]+ (before|previously|in the past)\b/,
+      /\b(previously|ever|formerly|before|in the past) (been )?(worked|employed|work|been employed|interned)\b.*\b(for|at|by|with)\b|\b(current or former|former|ex) (employee|staff member|intern)\b|\bhave you (ever )?worked (for|at|with) (us|our)\b|\bworked (for|at) [a-z ]+ (before|previously|in the past)\b|\bbeen employed (by|at|with) [a-z ]+ (before|previously|in the past)\b/,
       {
         kinds: CHOICE.concat(LONG_TEXT),
         not: /\bapplied\b|\binterview|\brelated|famil|relative|\bin (finance|banking|consulting|the industry|a similar)|\b(ernst|ey|deloitte|pwc|pricewaterhouse\w*|kpmg|auditors?|audit)\b/,
@@ -3315,6 +3863,11 @@
     ),
     R('eeo.hispanic', /hispanic|latin[oax]\b/, { kinds: CHOICE }),
     R('eeo.race', /\brace\b|ethnic/, { kinds: CHOICE }),
+    // IK Partners' "How would you describe your ethnic origin?" in a text box: your answer, as you gave it.
+    R('eeo.race', /\bethnic(ity| origin| background| group)\b/, {
+      kinds: LONG_TEXT,
+      test: (desc, text) => /^(how would you describe|what is|please (state|describe|tell us))\b|^ethnic/.test(text),
+    }),
     // Not a date a veteran gives (Oracle's "Veteran First Civilian Start Date" in Day / Month / Year lists, where "No"
     // would pick November).
     R('eeo.veteran', /veteran|military (service|status)|armed forces|served in the/, {
@@ -3322,6 +3875,13 @@
       not: /\bdates?\b|\bwhen\b/,
     }),
     R('eeo.disability', /disabilit|disabled|handicap|impairment/, { kinds: CHOICE, not: /adjustments?\b|accommodat/ }),
+    // "Would you consider yourself having any type of impairment? If yes, please describe." in a text box: Yes or No
+    // (what it is, you describe).
+    R('eeo.disability', /disabilit|disabled|impairment/, {
+      kinds: LONG_TEXT,
+      not: /adjustments?\b|accommodat/,
+      test: (desc, text) => /^(do|would|are|have|is)\b/.test(text),
+    }),
     R('eeo.gender', /\bgender\b|\bsex\b|geschlecht|\bgenre\b|\bsexo\b/, {
       not: /orientation|transgender|same as|(registered|assigned) at birth|\bpronouns?\b/,
     }),
@@ -3335,7 +3895,7 @@
     R('eeo.postcodeAt14', /\bpost ?code\b.*\b(14|fourteen)\b|\b(14|fourteen)\b.*\bpost ?code\b/, { kinds: TEXTISH }),
     R(
       'eeo.careLeaver',
-      /\bcare leaver\b|\b(been|grew up|lived|were you|spent time|time) in (local authority |foster |residential |social )?care\b|\blooked after (child|young person|by (a|the) local authority)|\bfoster(ed)? care\b|\blocal authority care\b|\bin the care system\b/,
+      /\bcare leaver\b|\bin the care of (a |the )?(local authority|council|social services|state)\b|\b(been|grew up|lived|were you|spent time|time) in (local authority |foster |residential |social )?care\b|\blooked after (child|young person|by (a|the) local authority)|\bfoster(ed)? care\b|\blocal authority care\b|\bin the care system\b/,
       { kinds: CHOICE },
     ),
     R(
@@ -3411,16 +3971,18 @@
     R(
       'edu.level',
       /highest (level of )?(completed |finished |attained )?(education|degree|qualification|academic)|education(al)? (level|attainment|background|qualification)|level of (education|study|degree)/,
-      { not: /fields? of study|\bsubjects?\b|\bmajors?\b|\bdisciplines?\b|\bparents?\b|guardian|mother|father/ },
+      {
+        not: /fields? of study|\bsubjects?\b|\bmajors?\b|\bdisciplines?\b|\bparents?\b|guardian|mother|father|\bqualifications\b.*\b(including|with)\b.*\b(grades?|results?|dates?)\b/,
+      },
     ),
     R(
       'edu.end',
-      /\bgraduat(ion|ed|e|ing)\b|expected graduation|completion (date|year)|year of (graduation|completion|passing)|class of|passing year|year (graduated|completed)|\b(course|degree|studies|programme|program) (finish|end|complete)s?\b|\b(finish|finishing|complete|completing|end|ending) (your |my |the )?(university |college |undergraduate |current |academic )?(course|degree|studies|programme|program)\b|\bend (date |year )?of (your |the )?(course|degree|studies)\b|\bleav(e|ing) (academia|university|full time education)\b|\b(finish|finished|complete|completed|leave|left) (high school|secondary school|secondary education|sixth form|(your )?a levels?)\b/,
+      /\bgraduat(ion|ed|e|ing)\b|expected graduation|completion (date|year)|year of (graduation|completion|passing)|class of|passing year|(?<!\b(school|academic|study|class) )year (graduated|completed)|\b(course|degree|studies|programme|program) (finish|end|complete)s?\b|\b(finish|finishing|complete|completing|end|ending) (your |my |the |this )?(most recent |latest |current )?(university |college |undergraduate |current |academic )?(course|degree|studies|programme|program|qualification)\b|\bend (date |year )?of (your |the )?(course|degree|studies)\b|\bleav(e|ing) (academia|university|full time education)\b|\b(finish|finished|complete|completed|leave|left) (high school|secondary school|secondary education|sixth form|(your )?a levels?)\b/,
       {
         // "undergraduate" no longer matches (\b), so "graduation year (undergraduate degrees…)" is still a date.
         // "Graduate Engineer / Summer Internship" is a job for graduates, not a date. "What year did you graduate from
         // high school?" is your school's date (eduLevelOf), "Do you expect to graduate with honours?" about the class.
-        not: /^(did|have) you|^are you (a |an )?(recent |new |high school |college |university )?(graduate|grad|undergrad)|\binterested in\b|\bopportunit|post ?grad|\bgraduate (degree|school|program|student)|\bgraduate (engineer|analyst|scheme|role|position|job|programme|trainee|consultant|developer|intake|associate|internship)s?\b|\bgpa\b|\bgrades?\b|\bwith (first class )?(honou?rs|distinction|merit|a (first|2 ?1|2 ?2))\b/,
+        not: /^(did|have) you|^are you (a |an )?(recent |new |high school |college |university )?(graduate|grad|undergrad)s?\b|\b(after|before|once) (completing|finishing)\b|\binterested in\b|\bopportunit|post ?grad|\bgraduate (degree|school|program|student)|\bgraduate (engineer|analyst|scheme|role|position|job|programme|trainee|consultant|developer|intake|associate|internship)s?\b|\bgpa\b|\bgrades?\b|\bwith (first class )?(honou?rs|distinction|merit|a (first|2 ?1|2 ?2))\b/,
       },
     ),
     // "What year did you begin your undergraduate (e.g. Bachelor's) degree?", "When did you start your studies?".
@@ -3429,28 +3991,67 @@
       /\b(year|date|when)\b.*\b(did|do|will) you (begin|start|commence|enrol+|enter)\b.*\b(degree|studies|course|program(me)?|universit\w*|college|undergrad\w*|bachelor\w*|master\w*|ph ?d|doctora\w*)\b|\b(began|started|commenced) (your )?(\w+ )?(degree|studies|course|program(me)?)\b/,
       { not: /\b(job|employment|work|internship|placement|role|position)\b/ },
     ),
+    // DN Capital's "Please state your higher educational qualifications, including (current) grade and starting and
+    // (expected) graduating date": every degree with its grade and dates.
+    R(
+      'edu.summary',
+      /\b(state|list|give|provide|detail|enter|summari[sz]e)\b.{0,30}\b(qualifications|degrees)\b.*\b(grades?|results?|classifications?|dates?|graduat\w*)\b/,
+      { kinds: LONG_TEXT },
+    ),
+    // "Did you complete UK A-levels? Yes or No. If yes, please provide your A-Level subjects…" (Eastdil).
+    R(
+      'edu.qualification',
+      /^(did|do|have) you (\w+ )?(complete|completed|take|taken|sit|sat|study|studied|have|hold|achieve|achieved|do|done) (any |the |your )?(uk |english |scottish |irish )?(a levels?|as levels?|(advanced )?highers|ib|international baccalaureate|gcses?|btecs?|leaving cert\w*|abitur)\b/,
+      { kinds: CHOICE },
+    ),
+    // "If you didn't complete UK A-levels, please provide your equivalent high school qualification and results".
+    R(
+      'edu.equivalent',
+      /\bif you (did not|didn t|have not|haven t|do not|don t) (\w+ )?(complete|completed|take|taken|sit|sat|study|studied|have|hold|achieve|achieved|do|done) (any |the |your )?(uk |english |scottish |irish )?(a levels?|as levels?|(advanced )?highers|ib|international baccalaureate|gcses?|btecs?|leaving cert\w*|abitur)\b.*\bequivalent\b/,
+      { kinds: LONG_TEXT },
+    ),
+    R(
+      'edu.majorIn',
+      /^(are|were|is|do|did) (you|your)\b.*\b(majors?|majoring|degree|studying|pursuing|disciplines?|subjects?|fields?)\b/,
+      { kinds: CHOICE, test: (desc, text) => subjectsNamed(text).length > 0 },
+    ),
+    R(
+      'edu.attended',
+      /\b(currently|ever) (or have you (ever )?)?attended (a )?(university|college|higher education)\b|\b(studying|studied) for,? or (have you )?(completed|obtained|achieved)\b/,
+      { kinds: CHOICE },
+    ),
+    R(
+      'edu.inCountry',
+      /^(are|were|did|have) you\b.*\b(studying|studied|study|completed|complete|obtained|obtaining)\b.{0,50}\b(degree|studies|course|qualification)\b.{0,15}\bin (the )?[a-z]/,
+      { kinds: CHOICE, test: (desc, text) => JTF.geo.placesNamed(text).some((pl) => pl.type !== 'metro') },
+    ),
+    R(
+      'edu.completed',
+      /^have you (already |now )?graduated\b|\b(have|has) you (already |now )?(completed|finished|graduated from) (your |all your )(\w+ )?(studies|degree|course|university|education|programme|program)\b|\bconfirm (that )?you have (already )?(completed|finished|graduated)\b|\b(degree|qualification|studies|course)\b.{0,20}\b(completed|complete|achieved|awarded|finished) or (still )?(predicted|expected|ongoing|in progress|pending)\b/,
+      { kinds: CHOICE },
+    ),
     R(
       'edu.enrolled',
-      /\benrol+(ment|ed) status\b|\b(are|were) you (currently )?(enrol+ed|a (current )?student)\b|\bcurrent(ly)? (enrol+ed|study status|student status)\b|\b(study|student) status\b|^(are|were) you (currently |presently |now )?(a |an )?(current |full ?time )?(undergrad\w*|post ?grad\w*|graduate|masters?|phd|doctoral) student\b/,
+      /\benrol+(ment|ed) status\b|\b(are|were) you (currently )?(enrol+ed|a (current )?student)\b|\bcurrent(ly)? (enrol+ed|study status|student status)\b|\b(study|student) status\b|^(are|were) you (currently |presently |now )?(a |an )?(current |full ?time )?(undergrad\w*|post ?grad\w*|graduate|masters?|phd|doctoral) student\b|^(are|were) you (currently |presently |now )?(studying|pursuing|undertaking|doing|completing|enrol+ed (in|on))( or (studying|completing|undertaking|pursuing))? (for )?(a |an |towards a )?(course of study at )?(\w+ ){0,3}(degree|m ?sc|m ?a|mba|ph ?d|masters?|bachelor\w*|post ?grad\w*|undergrad\w*|qualification|degree level)\b/,
       {
         kinds: CHOICE.concat(['textarea']),
         // "Are you currently an undergraduate student?" is about your level; "…expected graduation" is a date.
-        not: /\bgraduat(?!e students?\b)|\byear\b|\bdegree subject\b|\bmajor\b|\b(which|what|name of (the|your)) (university|school|college|institution)\b/,
+        not: /(?<!\bpost )\bgraduat(?!e students?\b)|\byear\b|\bdegree subject\b|\bmajor\b|\b(which|what|name of (the|your)) (university|school|college|institution)\b/,
       },
     ),
     R('edu.year', YEAR_ASKED, { kinds: CHOICE, not: /graduat|\b(19|20)\d{2}\b|\bnext\b|\bwill be\b/ }),
     R(
       'edu.year',
-      /\b(current |academic )?year of (study|studies|university|uni|college|degree|course|your (degree|course|studies|programme|program))\b|\b(what|which) year (of (your )?(study|studies|university|uni|degree|course|programme|program) )?are you (currently )?in\b|\bstudy year\b|\bcurrent year\b.*\b(study|studies|university|degree|course)\b|\byear in (school|university|college)\b|\bclass standing\b|\bacademic standing\b/,
+      /\b(school|academic|study|class) year (you will have )?(completed|finished) by\b|\b(current |academic )?year of (study|studies|university|uni|college|degree|course|your (degree|course|studies|programme|program))\b|\b(what|which) year (of (your )?(study|studies|university|uni|degree|course|programme|program) )?are you (currently )?in\b|\bstudy year\b|\bcurrent year\b.*\b(study|studies|university|degree|course)\b|\byear in (school|university|college)\b|\bclass standing\b|\bacademic standing\b/,
       {
         // "If you are in your first year of studies and yet to receive your results, please type 'N/A'" asks for results.
-        not: /graduat|\bstart|\bbegan|\bbegin|\bcomplet|\bfinish|\bentry|\bentered|high school|secondary|a levels?\b|gcse|\bresults?\b|\bgrades?\b|\bmarks\b/,
+        not: /graduat|\bstart(?!s? of (summer|spring|autumn|fall|winter))|\bbegan|\bbegin(?!ning of (summer|spring|autumn|fall|winter))|\b(?<!year )complet|\b(?<!year )finish|\bentry|\bentered|high school|secondary|a levels?\b|gcse|\bresults?\b|\bgrades?\b|\bmarks\b/,
       },
     ),
     // "Which university are you enrolled in, or from which institution did you receive your most recent degree?"
     R(
       'edu.school',
-      /^(which|what) (university|school|college|institution)\b|^name of (the |your )?(university|college)\b|^educator$|^educational (establishment|institution|provider)$/,
+      /^(which|what) (university|school|college|institution)\b|\b(confirm|tell us|select|choose|state|indicate) (which|what) (university|school|college|institution)\b|^name of (the |your )?(university|college)\b|^educator$|^educational (establishment|institution|provider)$/,
       {
         not: /\b(university|college) degree\b|\b(university|college|school) (course|programme|program|subject)s?\b|\bschool (type|diploma|grades?|did you attend)\b|type of school|\bgraduat\w* (year|date)|\byear\b|\bgpa\b|\bcity\b|\bcountry\b|\blocation\b/,
       },
@@ -3460,7 +4061,7 @@
       'edu.school',
       /\bschool\b|universit|college|institut(e|ion)|alma mater|academy|hochschule|\becole\b|universidad/,
       {
-        not: /high school (diploma|graduate|completion)|degree|major|minor|gpa|\byear\b|\bdates?\b|\bstart|\bend\b|graduat|\blocation\b|\bcity\b|(?<!\b(please|kindly) )\bstate\b|country|^(did|have|has|are|do|does|were|was|will|would|can|is) you\b|e ?mail|address|transcript|meals|type of school|school type|kind of school|fee paying|state school|grammar school|grading|\bscale\b|\bcourses?\b/,
+        not: /high school (diploma|graduate|completion)|degree|major|minor|gpa|\byear\b|\bdates?\b|\bstart|\bend\b|(?<!\b(under|post ?))graduat|\blocation\b|\bcity\b|(?<!\b(please|kindly) )\bstate\b|country|^(did|have|has|are|do|does|were|was|will|would|can|is) you\b|e ?mail|address|transcript|meals|type of school|school type|kind of school|fee paying|state school|grammar school|grading|\bscale\b|\bcourses?\b/,
       },
     ),
     // "State/City/Region of School", "School Location", "City of university": where that school is.
@@ -3537,14 +4138,15 @@
     R(
       'edu.gpaScale',
       /\b(gpa|grading|grade|marking) (scale|system)\b|\bscale (used|of your gpa)\b|\b(which|what) scale\b|\b(maximum|max|highest) possible (score|gpa|grade)\b/,
-      { not: /\bon an? \d|\bout of\b|\bnormali[sz]ed\b/ },
+      // "What is your cumulative GPA on the scale used by your local school/university?" asks for the GPA.
+      { not: /\bon an? \d|\bout of\b|\bnormali[sz]ed\b|\bon (the|a|your) (\w+ )?scale\b/ },
     ),
     R(
       'edu.gpa',
       /\bgpa\b|grade point|\bcgpa\b|cumulative (grade|average)|grade average|\bgrades?\b/,
       // "Number of GCSEs at grade 9-7" is a count, not your grade.
       {
-        not: /test score|credit score|maximum|max possible|highest possible|grading scale|scale used|\bgpa scale\b|\bnumber of\b|\bhow many\b/,
+        not: /test score|credit score|maximum|max possible|highest possible|grading scale|(?<!\bon (the|a|your) )scale used|\bgpa scale\b|\bnumber of\b|\bhow many\b/,
       },
     ),
     // "A-level results", "Highers / Advanced Highers results": a school entry's grades.
@@ -3593,6 +4195,8 @@
       /\bfull ?name|\byour name\b|\blegal name\b|\bname\b|\bnom complet|\bnombre completo|\bvoller name|\bvor(name)? (und|&) nachname|\bnombre y apellido|\bprenom (et|&) nom\b|\bnom (et|&) prenom|\bnome (e|&) cognome/,
       {
         not: NAME_NOT,
+        // Teamtailor's "Email address without domain" (placeholder "name") is an address, not a name.
+        notAny: /\be ?mails?\b/,
         yieldsTo: ['name.first', 'name.last', 'name.middle', 'name.preferred'],
       },
     ),
@@ -3619,7 +4223,8 @@
     ),
     // Not someone else's, nor a second address of yours ("Alternate Email": the same one again says nothing).
     R('email', /e ?mail|courriel|correo|\bmail\b/, {
-      not: /referr|reference|recruiter|manager|supervisor|emergency|friend|hiring|newsletter|marketing|subscribe|\b(alternate|alternative|secondary|additional|backup|second) e ?mail\b/,
+      not: /referr|reference|recruiter|manager|supervisor|emergency|friend|hiring|newsletter|marketing|subscribe|\b(alternate|alternative|secondary|additional|backup|second) e ?mail\b|\bwithout (the |a |your )?domain\b/,
+      notAny: OTHERS_EMAIL,
     }),
     R(
       'account.username',
@@ -3674,7 +4279,7 @@
     ),
     R(
       'location',
-      /\blocation\b|city ?(and|&)? ?(state|country)|where are you (currently )?(based|located|living)|current (city|location|residence)|based in|place of residence|city of residence|where do you live|^residence$/,
+      /\blocation\b|city ?(and|&)? ?(state|country)|where are you (currently )?(based|located|living)|current (city|location|residence)|based in|place of residence|city of residence|where do you live|^residence$|\bwhere (will|would) you (live|be living|reside|be based) (during|while|for)\b/,
       {
         not: /preferred|desired|willing|relocat|office|prefer|which location|work location|job location|interested|position location|hope|want|open to|employer|company|organi[sz]ation/,
       },
@@ -3721,6 +4326,13 @@
       /nationality|citizenship|citizen of|country of (citizenship|nationality)|staatsangehorigkeit|nacionalidad|\bnationalite\b|\bnazionalita\b/,
       { not: /other (countr|nationalit|citizenship)|\bdual\b|previous|\bformer|second (nationality|citizenship)/ },
     ),
+    // "This position requires access to… U.S. export controls…" over "A United States citizen or national / Green Card
+    // holder / refugee / asylee / None of the above": which kind of US person you are, from your nationality.
+    R('nationality', /\bexport controls?\b|\bus persons?\b|\bitar\b/, {
+      kinds: CHOICE,
+      test: (desc) =>
+        (desc.options || []).some((o) => /\b(citizen|national|green card|permanent resid\w*)\b/i.test(o.text || '')),
+    }),
     R('address.country', /\bcountr(y|ies)\b|\bnation\b|\bland\b|\bpais\b|\bpays\b/, {
       not: /code|phone|dial|calling|(?<!\bcountr(y|ies) (or |and )?)\bregion\b|citizen|nationality|birth|issu|passport|origin|visa|other than|which countries|\btax\b/,
     }),
@@ -3814,11 +4426,11 @@
     // Nor an essay that mentions them ("Describe a product you built… the tech stack used", "What unique skills would
     // you bring?") or a kind of them the list doesn't say ("What are some AI specific technologies…?"): the AI's.
     R('skills', /\bskills?\b|technologies|tech(nical)? stack|competenc|expertise|\btools\b|proficienc(y|ies)/, {
-      not: /language|\bdo you\b|have you|rate your|years|\blevel\b|how (proficient|experienced|comfortable|much|long)|\bwhether\b|\bdisclose\b|\bai tools\b|\banything else\b|\bfeel free\b|\bbest fit\b|^(describe|tell (us|me)|explain|share|walk us through|give (us )?an example)\b|\bwould you bring\b|\bunique\b|\byou (built|developed|created|designed|made)\b|\b(ai|ml|machine learning|cloud|web|mobile|front ?end|back ?end|devops|security)( specific)? (technologies|tools|skills)\b/,
+      not: /\bwhy\b|\bgood fit\b|\bhope to (develop|gain|learn|build)\b|\bwords? (minimum|maximum|limit|max)\b|language|\bdo you\b|have you|rate your|years|\blevel\b|how (proficient|experienced|comfortable|much|long)|\bwhether\b|\bdisclose\b|\bai tools\b|\banything else\b|\bfeel free\b|\bbest fit\b|^(describe|tell (us|me)|explain|share|walk us through|give (us )?an example)\b|\bwould you bring\b|\bunique\b|\byou (built|developed|created|designed|made)\b|\b(ai|ml|machine learning|cloud|web|mobile|front ?end|back ?end|devops|security)( specific)? (technologies|tools|skills)\b/,
     }),
     R(
       'languages',
-      /languages? (spoken|you speak|proficienc|known|fluency)|which languages?\b|spoken languages|^languages?$|language skill|languages do you speak|\blanguages?\b.*\b(fluent|speak|proficient)\b|\bfluent in\b|\b(additional|other|foreign) languages?\b|\b(do|can) you speak\b|\bspeak (\w+ )?(at a |to a )?(fluent|native|business|professional)\b/,
+      /languages? (spoken|you speak|proficienc|known|fluency)|which languages?\b|spoken languages|^languages?$|language skill|languages do you speak|\blanguages?\b.*\b(fluent|fluency|speak|proficient)\b|\bfluent in\b|\b(additional|other|foreign) languages?\b|\b(do|can) you speak\b|\bspeak (\w+ )?(at a |to a )?(fluent|native|business|professional)\b/,
       { not: /programming|coding|scripting|computer|software/ },
     ),
   ];
@@ -3891,10 +4503,12 @@
     countriesAsked,
     followUpAnswer,
     eduLevelOf,
+    entryLevels,
     degreeClassOf,
     uploadApplies,
     uploadAlso,
     gradeHeld,
+    leftEmpty,
     placeCountry,
     languagesNamed,
     isAcknowledgement,

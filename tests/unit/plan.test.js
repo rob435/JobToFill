@@ -218,7 +218,9 @@ test('formatting for text boxes', () => {
   p.personal.dob = '1815-12-10';
   assert.equal(f('dob', {}, { placeholderRaw: 'DD/MM/YYYY' }), '10/12/1815');
   assert.equal(f('dob', {}, { placeholderRaw: 'mm-dd-yyyy' }), '12-10-1815');
-  assert.equal(f('dob', {}, {}), '12/10/1815');
+  // The page doesn't say which comes first (no region, no country's site): spelled out, never 12 October.
+  assert.equal(f('dob', {}, {}), '10 December 1815');
+  assert.equal(f('dob', {}, { lang: 'en-US' }), '12/10/1815');
   p.address.country = 'United States';
   p.address.state = 'California';
   assert.equal(f('address.state', {}, { maxLength: 2 }), 'CA');
@@ -1473,7 +1475,8 @@ test('round 2 (Maven / CRA): "If you selected …" boxes, first of your family, 
   assert.equal(matcher.formatForText(v, desc('Earliest availability to start at CRA (not binding)')), '28 June 2027');
   assert.equal(matcher.formatForText(v, desc({ label: 'Start date', placeholder: 'Pick date...' })), '06/28/2027');
   assert.equal(matcher.formatForText(v, desc({ label: 'When can you start? (DD/MM/YYYY)' })), '28/06/2027');
-  assert.equal(matcher.formatForText(v, desc('Available from')), '06/28/2027', 'a short label keeps the usual format');
+  // A short label on a page that doesn't say how it writes dates (redalpine's Personio on a .com): spelled out.
+  assert.equal(matcher.formatForText(v, desc('Available from')), '28 June 2027');
   // No format on the page: its language or country decides day or month first (Personio on a German site).
   const on = (extra) => ({ ...desc('Available from'), ...extra });
   assert.equal(matcher.formatForText(v, on({ lang: 'de', host: 'acme.jobs.personio.de' })), '28.06.2027');
@@ -1481,7 +1484,8 @@ test('round 2 (Maven / CRA): "If you selected …" boxes, first of your family, 
   assert.equal(matcher.formatForText(v, on({ lang: 'en-GB', host: 'careers.example.com' })), '28/06/2027');
   assert.equal(matcher.formatForText(v, on({ lang: 'en', host: 'job-boards.eu.greenhouse.io' })), '28/06/2027');
   assert.equal(matcher.formatForText(v, on({ lang: 'en-US', host: 'acme.co.uk' })), '06/28/2027', 'the page says US');
-  assert.equal(matcher.formatForText(v, on({ lang: 'en', host: 'jobs.lever.co' })), '06/28/2027');
+  assert.equal(matcher.formatForText(v, on({ lang: 'en', host: 'jobs.lever.co' })), '28 June 2027');
+  assert.equal(matcher.formatForText(v, on({ lang: 'en', host: 'redalpine.jobs.personio.com' })), '28 June 2027');
   assert.equal(matcher.formatForText(v, on({ lang: 'ja', host: 'example.jp' })), '2027-06-28');
 });
 
@@ -2204,6 +2208,20 @@ test('Teamtailor: "Start Date" after the graduation year and degree class is not
   ]);
 });
 
+test('Teamtailor: "Start Date" whose help asks when you could start is your start date, wherever it stands', () => {
+  const help = 'Please indicate the earliest date you would be available to start with us.';
+  const plan = matcher.plan(
+    [
+      desc('University: Required', { kind: 'combo' }),
+      desc('Expected/Achieved Degree Classification Required', { kind: 'combo' }),
+      desc({ label: 'Start Date Required', describedby: help }, { kind: 'date', inputType: 'date' }),
+      desc({ label: 'Start date', describedby: 'The date you began this course' }, { kind: 'date', inputType: 'date' }),
+    ],
+    glasgow(),
+  );
+  assert.deepEqual(types(plan), ['edu.school#0', 'edu.classification#0', 'job.startDate', 'edu.start#0']);
+});
+
 /* ------------------------------------------- live survey: a British student in Glasgow */
 
 function glaswegian() {
@@ -2716,7 +2734,10 @@ test('degree subjects: "Computing Science" is "Computer Science", never "Science
   const stem = 'STEM (Science, Technology, Engineering, Maths)';
   assert.equal(pick('Physics', stem, 'Humanities', 'Business'), stem);
   assert.equal(pick('Computer Science', 'Science', 'Computer Engineering', 'Arts'), 'Science', 'only a catch-all fits');
-  assert.equal(pick('History', 'Mathematics', 'Science', 'Other'), null, 'never "Other" or a wrong subject');
+  // A subject the list doesn't have is its "Other", never a wrong subject; a list without one is left for you.
+  assert.equal(pick('History', 'Mathematics', 'Science', 'Other'), 'Other');
+  assert.equal(pick('History', 'Mathematics', 'Science'), null);
+  assert.equal(pick('Economics', 'Physics', 'Finance', 'Other (Non-Technical)', 'Other'), 'Other (Non-Technical)');
   // A text box gets the subject as written.
   p.education[0].field = 'Computing Science';
   assert.equal(ask(p, 'edu.field', 'Degree subject', { kind: 'text' }).text, 'Computing Science');
@@ -3431,4 +3452,870 @@ test('Jane Street: when the degree began, full-time start, a second major, inter
   const codes = ['Canada (+1)', 'Guernsey (+44)', 'Isle of Man (+44)', 'Jersey (+44)', 'United Kingdom (+44)'];
   assert.equal(type('', 'combo', codes), 'phone.countryCode');
   assert.equal(type('Phone', 'combo', codes), 'phone.countryCode');
+});
+
+test('Phenom (Marsh): Workday’s degree and subject lists, a spring week’s dates, "How did you hear" for Trackr', () => {
+  const { DEGREES, FIELDS, SOURCES } = require('../fixtures/src/phenom-data.mjs');
+  const p = computingScientist();
+  const list = (rows) => rows.map(([text, value]) => ({ text, value }));
+  const pick = (type, question, rows, index) => {
+    const options = list(rows);
+    const v = ask(p, type, question, { kind: 'select', options, index });
+    const i = v ? matcher.matchOption(options, v) : -1;
+    return i < 0 ? null : options[i].text;
+  };
+  assert.equal(pick('edu.degree', 'Degree', DEGREES, 0), 'Bachelor of Science');
+  // "Computer and Information Science" (there is no "Computer Science"), never the catch-all "Science" beside it.
+  assert.equal(pick('edu.field', 'Field of study', FIELDS, 0), 'Computer and Information Science');
+  // The school entry: "High School Graduate", never "Baccalaureat" (the French one) for Advanced Highers.
+  assert.equal(pick('edu.degree', 'Degree', DEGREES, 1), 'High School Graduate');
+  const school = (degree, ...options) => {
+    p.education[1].degree = degree;
+    return pick(
+      'edu.degree',
+      'Degree',
+      options.map((o) => [o, o]),
+      1,
+    );
+  };
+  assert.equal(school('A-levels', 'GED', 'GCSE', 'High School Diploma', 'Bachelor of Arts'), 'High School Diploma');
+  assert.equal(school('A-levels', 'International Baccalaureate', 'A-Levels', 'High School'), 'A-Levels');
+  assert.equal(school('Baccalauréat', 'Baccalaureat', 'High School Graduate'), 'Baccalaureat');
+  assert.equal(school('IB Diploma', 'Baccalaureat', 'International Baccalaureate'), 'International Baccalaureate');
+
+  // A job site the list doesn't name is left for you: "Referral- Client/Vendor/Other" is a referral, not "Other".
+  p.job.referralSource = 'Trackr';
+  assert.equal(
+    pick(
+      'job.referralSource',
+      'How did you hear about us?',
+      SOURCES.map((s) => [s, s]),
+    ),
+    null,
+  );
+  p.job.referralSource = '';
+  assert.equal(
+    pick(
+      'job.referralSource',
+      'How did you hear about us?',
+      SOURCES.map((s) => [s, s]),
+    ),
+    'LinkedIn',
+  );
+
+  // A spring week (March to March) ends the month after: forms turn down a "To" that isn't after "From".
+  p.experience = [
+    Object.assign(fields.blankExperience(), {
+      company: 'Barclays',
+      title: 'Technology Developer Spring Week',
+      startDate: '2026-03',
+      endDate: '2026-03',
+    }),
+    Object.assign(fields.blankExperience(), {
+      company: 'Glasgow Uni Esports',
+      startDate: '2025-12',
+      endDate: '2025-12',
+    }),
+    Object.assign(fields.blankExperience(), { company: 'Tesco', startDate: '2024-06', endDate: '2024-09' }),
+  ];
+  const end = (index, part) => {
+    const v = ask(p, 'exp.end', 'To', { index, part });
+    return part ? v.text : matcher.formatForText(v, desc({ label: 'To', placeholder: 'MM/YYYY' }));
+  };
+  assert.equal(end(0), '04/2026');
+  assert.equal(end(0, 'month'), '4');
+  assert.equal(end(1), '01/2026', 'December ends in January');
+  assert.equal(end(2), '09/2024', 'a longer stint keeps its end');
+  assert.equal(ask(p, 'exp.start', 'From', { index: 0 }).text, '2026-03');
+});
+
+test('an upload that only says how to upload takes its meaning from the text before it (Phenom’s attachments)', () => {
+  const file = (signals) => {
+    const r = matcher.classify(desc(signals, { kind: 'file', inputType: 'file' }));
+    return r ? r.type : null;
+  };
+  const how = { label: 'Select file', question: 'Upload either DOC, DOCX, RTF, PDF, or TXT file types (1MB max)' };
+  assert.equal(
+    file({
+      ...how,
+      nearby: 'An optional cover letter (or any other documents relevant to your application) can be uploaded here.',
+    }),
+    'file.coverLetter',
+  );
+  assert.equal(file({ ...how, nearby: 'Additional documents' }), null, 'other documents are never the CV’s');
+  assert.equal(file(how), 'file.resume', 'nothing said: the CV, as before');
+});
+
+test('Phenom (Marsh): its questionnaire after the entries — local-scale GPA, N/A for no Master’s, fluency, interviews', () => {
+  const p = computingScientist(); // a 2:1, and Advanced Highers at school
+  p.languages = 'English, French';
+  p.job.adjustments = 'No';
+  const area = (question) => desc({ label: question }, { kind: 'textarea', inputType: 'textarea' });
+  const page = [
+    desc('School or University'),
+    desc('School or University'),
+    desc({ label: 'Select file', nearby: 'Please upload a copy of your cover letter.' }, { kind: 'file' }),
+    desc(
+      'What year will you / did you graduate from your most recent study? Please use the following format: MM/YYYY (e.g. 09/2025)',
+      { inputType: 'date' },
+    ),
+    area('What is your cumulative undergraduate (Bachelor) GPA on the scale used by your local school/university?'),
+    area(
+      'What is your cumulative graduate (Master) GPA on the scale used by your local school/university?  Please indicate N/A if you do not have a graduate GPA.',
+    ),
+    desc(
+      { label: 'Please list any languages in which you have native or business level fluency.' },
+      { kind: 'checkboxes', options: opts('Danish', 'English', 'French', 'German', 'Other') },
+    ),
+    area('Do you require any special requirements if you are invited to attend an interview?'),
+  ];
+  const filled = fillPage(page, p);
+  assert.deepEqual(filled.slice(0, 2), ['University of Glasgow', 'Hillhead High School']);
+  assert.equal(matcher.plan(page, p).results[2].type, 'file.coverLetter');
+  // Your degree's date, not the school entry's above: a question of its own after the entries is your first entry's.
+  assert.equal(filled[3], '2027-06-01');
+  assert.match(filled[4], /^2:1\b/, 'the class on your own scale, never a GPA made up from it');
+  assert.equal(filled[5], 'N/A', 'no Master’s');
+  assert.deepEqual(matcher.plan(page, p).results[6].type, 'languages');
+  assert.equal(filled[7], 'No');
+  // What the GPA scale is (a list) stays a question about the scale.
+  assert.equal(matcher.classify(desc('What GPA scale is used by your university?')).type, 'edu.gpaScale');
+  assert.equal(matcher.classify(area('Please state any reasonable adjustments you require')), null, 'what they are');
+});
+
+test('live survey (niche forms): referrer boxes that ask for N/A, "applied before? If yes…" boxes, connections', () => {
+  const p = computingScientist();
+  p.job.referralSource = 'Trackr';
+  p.job.otherOffers = 'No';
+  Object.assign(p.compliance, { previouslyApplied: 'No', relatives: 'No' });
+  const text = (question) => {
+    const r = matcher.classify(desc(question));
+    const v = r && ask(p, r.type, question, { kind: 'text' });
+    return v ? v.text : null;
+  };
+  assert.equal(
+    text('Please provide the name and team of your referrer. if you haven’t been referred please state n/a'),
+    'N/A',
+  );
+  assert.equal(
+    text('If you were referred by a Graham Capital employee, please enter their name. If not, write N/A.'),
+    'N/A',
+  );
+  assert.equal(text('Referrer’s name'), null, 'no word to give for "not referred"');
+  p.job.referralSource = 'Employee referral';
+  assert.equal(text('If you were referred by an employee, please enter their name. If not, write N/A.'), null, 'yours');
+  assert.equal(
+    text('Have you ever applied for Graham employment before? If yes, please list dates and position.'),
+    'No',
+  );
+  assert.equal(matcher.classify(desc('If yes, when did you apply?')), null, 'its follow-up');
+  assert.equal(text('Other Processes/Offers/Timelines'), 'No');
+  const connected = opts(
+    'Work - Former Co-Worker',
+    'School/University',
+    'Friend',
+    'Other (please specify)',
+    'Not Applicable',
+  );
+  const q = 'Are you connected to any current employees of Rothesay? If yes, please confirm how you are connected.';
+  const v = ask(p, matcher.classify(desc(q, { kind: 'select', options: connected })).type, q, { kind: 'select' });
+  assert.equal(connected[matcher.matchOption(connected, v)].text, 'Not Applicable');
+});
+
+test('niche-form dry runs: uploads that name nothing never get the CV a second time; CV readers are no uploads', () => {
+  const p = computingScientist();
+  const file = (signals) => desc(signals, { kind: 'file', inputType: 'file' });
+  const page = [
+    file({ label: 'Cover letter', aria: 'Upload Cover letter', id: 'doc-input-cover-letter' }),
+    file({ label: 'CV', aria: 'Upload CV', id: 'doc-input-cv' }),
+    file({ label: 'Employment reference ( Optional )', aria: 'Upload Employment reference' }),
+    file({ label: 'Other ( Optional )', aria: 'Upload Other' }),
+    file({ label: 'Attach', id: 'additional_upload' }),
+  ];
+  assert.deepEqual(
+    matcher.plan(page, p).results.map((r) => r && r.type),
+    ['file.coverLetter', 'file.resume', null, null, null],
+  );
+  // Dayforce's CV box says "Attachment", its id "…_files_resume": still the CV's.
+  const dayforce = [file({ label: 'Attachment', id: 'jobPostingApplication_files_resume' }), file({ label: 'Resume' })];
+  assert.deepEqual(
+    matcher.plan(dayforce, p).results.map((r) => r && r.type),
+    ['file.resume', 'file.resume'],
+  );
+  // CharlieHR's "AUTOFILL FOR SPEED, save time by uploading your cv" box (named "user_cv") reads the CV into the form.
+  const charlie = file({
+    label: 'From Device',
+    name: 'user_cv',
+    nearby: 'AUTOFILL FOR SPEED save time by uploading your cv',
+  });
+  assert.equal(matcher.classify(charlie), null);
+  assert.equal(
+    matcher.classify(file({ label: 'from Device', name: 'user_cv', nearby: 'Upload CV *' })).type,
+    'file.resume',
+  );
+});
+
+test('niche-form dry runs: statements by country, a requirement said back, US clearances and US persons, religion', () => {
+  const p = computingScientist(); // British
+  // DN Capital: the UK statement (whatever its brackets say), never Germany's.
+  const where = [
+    'I have the right to work in the UK (post-Brexit does not apply automatically for EU-citizens)',
+    'I have the right to work in Germany',
+    'Neither - I require support with getting the visa (we can help but your preferred start date might need to be 6 months out)',
+  ];
+  const q = 'Where do you have the right to work? (Select all that apply)';
+  const v = ask(p, 'job.authorized', q, { kind: 'checkboxes', options: opts(...where) });
+  assert.deepEqual(matcher.matchAll(opts(...where), v), [0]);
+  p.personal.nationality = 'Indian';
+  p.job.workCountries = 'India';
+  assert.deepEqual(
+    matcher.matchAll(opts(...where), ask(p, 'job.authorized', q, { kind: 'checkboxes', options: opts(...where) })),
+    [2],
+  );
+  p.personal.nationality = 'British';
+  p.job.workCountries = '';
+  // Capgemini: eligible for clearance is the statement that meets the requirement, not the one that fails it.
+  p.job.clearanceEligible = 'Yes';
+  const lived = [
+    'I have lived in the UK for the last 5 years and have not spent more than 6 months (consecutively or in total) outside of the UK',
+    'I have lived in the UK for the last 5 years but have spent more than 6 months (consecutively or in total) outside of the UK.',
+    'I have not lived in the UK for the last 5 years but have not spent more than 6 months (consecutively or in total) outside of the UK.',
+    'I have not lived in the UK for the last 5 years and have spent more than 6 months (consecutively or in total) outside of the UK.',
+  ];
+  const sc =
+    'Security Clearance Eligibility Some of our roles require security clearance. To meet the eligibility requirements, you must have lived in the UK for the last 5 years and not have spent more than 6 months (either consecutively or in total) outside of the UK during that period.';
+  assert.equal(choose(p, 'job.clearanceEligible', sc, lived), lived[0]);
+  // A US clearance needs US citizenship; eligible is never "I hold an active one".
+  const us =
+    'Clearance Eligibility - Do you presently hold an active U.S. security clearance, or are you eligible to obtain one?';
+  const usOptions = ['Yes, I hold an active U.S. security clearance', 'Yes, I’m eligible to obtain one', 'No'];
+  assert.equal(choose(p, 'job.clearanceEligible', us, usOptions), 'No');
+  assert.equal(
+    choose(p, 'job.clearanceEligible', 'Are you eligible for SC clearance?', usOptions),
+    'Yes, I’m eligible to obtain one',
+  );
+  // "…subject to U.S. export controls": which kind of US person, from your nationality.
+  const persons = [
+    'A person lawfully admitted for permanent residence of the United States (i.e. Green Card holder)',
+    'A person admitted as a refugee to the United States under 8 U.S.C. 1157',
+    'A United States citizen or national',
+    'None of the above',
+  ];
+  const exportQ =
+    'This position requires access to information and technology that is subject to U.S. export controls. Your responses to the questions below will be used solely to determine your eligibility';
+  assert.equal(
+    matcher.classify(desc({ question: exportQ }, { kind: 'radio', options: opts(...persons) })).type,
+    'nationality',
+  );
+  assert.equal(choose(p, 'nationality', exportQ, persons, { kind: 'radio' }), 'None of the above');
+  p.personal.nationality = 'American';
+  assert.equal(choose(p, 'nationality', exportQ, persons, { kind: 'radio' }), 'A United States citizen or national');
+  // "No religion or belief" is "Non Religious", never "Not Specified".
+  p.eeo.religion = 'No religion or belief';
+  assert.equal(
+    choose(p, 'eeo.religion', 'Religion', ['Atheism', 'Christianity', 'Non Religious', 'Not Specified']),
+    'Non Religious',
+  );
+  assert.equal(choose(p, 'eeo.religion', 'Religion', ['Christianity', 'Not Specified', 'Other']), null);
+});
+
+test('niche-form dry runs: "How did you hear?" — no rival site, examples in brackets, "Which One?", "Please specify"', () => {
+  const p = computingScientist();
+  p.job.referralSource = 'Trackr';
+  const hear = (...o) => choose(p, 'job.referralSource', 'How did you hear about us?', o);
+  // Chicago Trading Co: another site's own posting is never Trackr's.
+  assert.equal(hear('LinkedIn Job Posting', 'Handshake Job Posting', 'Company Website', 'Other'), 'Other');
+  // Aurora: an example in brackets names no site.
+  assert.equal(
+    hear('LinkedIn', 'Other Job Board (e.g. University Job Board, etc.)', 'Friend', 'Other'),
+    'Other Job Board (e.g. University Job Board, etc.)',
+  );
+  assert.equal(hear('LinkedIn', 'Job Board (Indeed, LinkedIn, etc.)', 'Other'), 'Job Board (Indeed, LinkedIn, etc.)');
+  p.job.referralSource = 'Bright Network';
+  assert.equal(hear('LinkedIn', 'Bright Network Job Posting', 'Other'), 'Bright Network Job Posting');
+  p.job.referralSource = 'Trackr';
+  // The follow-ups: "Please specify" (where you heard, once "Other" is chosen), "Which One?" the same question.
+  const page = [
+    desc({ label: 'How did you hear about us?' }, { kind: 'select', options: opts('LinkedIn', 'Job Board', 'Other') }),
+    desc('Please specify'),
+    desc({ label: 'Which One?' }, { kind: 'select', options: opts('Google for Jobs', 'Indeed', 'Milkround', 'Other') }),
+    desc("If you selected 'A friend or relative', please put their full name below."),
+  ];
+  const { results } = matcher.plan(page, p);
+  assert.deepEqual(
+    results.map((r) => r && r.type && r.type + (r.part ? ':' + r.part : '')),
+    ['job.referralSource', 'job.referralSource:specify', 'job.referralSource', null],
+  );
+  assert.equal(results[1].follows, 0);
+  assert.equal(ask(p, 'job.referralSource', 'Please specify', { part: 'specify' }).text, 'Trackr');
+  assert.deepEqual(fillPage(page, p).slice(0, 3), ['Job Board', 'Trackr', 'Other']);
+});
+
+test('Eastdil (BambooHR): each A-level in its own box, A* not A, a BSc’s level, the university, “(if applicable)”', () => {
+  const p = computingScientist();
+  p.education[1] = Object.assign(fields.blankEducation(), {
+    school: 'Highbury Grove School',
+    degree: 'A-Levels',
+    field: 'Mathematics, Further Mathematics and Economics',
+    gpa: 'A*A*A',
+    startDate: '2021-09',
+    endDate: '2023-06',
+  });
+  const grades = ['A*', 'A', 'B', 'C', 'D', 'E', 'U'];
+  const yn = ['Yes', 'No'];
+  const radio = (label, options) => desc({ question: label }, { kind: 'radio', options: opts(...options) });
+  const page = [
+    desc(
+      { label: 'Highest Education Obtained' },
+      {
+        kind: 'combo',
+        options: opts(
+          'GED or Equivalent',
+          'High School',
+          'Some College',
+          'College - Associates',
+          'College - Bachelor of Arts',
+          'College - Bachelor of Fine Arts',
+          'College - Bachelor of Science',
+          'College - Master of Arts',
+          'Other',
+        ),
+      },
+    ),
+    desc('College/University'),
+    desc('Undergraduate University'),
+    desc('Undergraduate Degree'),
+    desc('Postgraduate University (if applicable)'),
+    desc('Postgraduate Degree (if applicable)'),
+    radio(
+      'Did you complete UK A-levels? Yes or No. If yes, please provide your A-Level subjects and grades in the next six questions, starting with your highest grade and working downwards.',
+      yn,
+    ),
+    desc('A-Level Subject 1'),
+    radio('A-Level Grade 1', grades),
+    desc('A-Level Subject 2'),
+    radio('A-Level Grade 2', grades),
+    desc('A-Level Subject 3'),
+    radio('A-Level Grade 3', grades),
+    desc('A-Level Subject 4'),
+    radio('A-Level Grade 4', grades),
+    desc(
+      "If you didn't complete UK A-levels, please provide your equivalent high school qualification and results (e.g., US High School Diploma – GPA 3.8/4.0; International Baccalaureate – 38/45).",
+    ),
+  ];
+  // "Obtained": a degree still under way isn't, so "Some College".
+  assert.deepEqual(fillPage(page, p), [
+    'Some College',
+    'University of Glasgow',
+    'University of Glasgow',
+    'BSc',
+    'N/A',
+    'N/A',
+    'Yes',
+    'Mathematics',
+    'A*',
+    'Further Mathematics',
+    'A*',
+    'Economics',
+    'A',
+    null,
+    null,
+    null,
+  ]);
+  // The fourth A-level and the equivalent are empty on purpose: not missing from the profile, not the AI's.
+  const q = (i) => ({ question: util.normalize(matcher.questionText(page[i])) });
+  assert.ok(fields.leftEmpty('edu.field', p, q(13)));
+  assert.ok(fields.leftEmpty('edu.gpa', p, q(14)));
+  assert.ok(fields.leftEmpty('edu.equivalent', p, q(15)));
+  assert.ok(!fields.leftEmpty('edu.field', p, q(7)));
+  // Advanced Highers: "No", the A-level boxes aren't yours, and the equivalent box takes them.
+  p.education[1] = computingScientist().education[1];
+  const highers = fillPage(page, p);
+  assert.deepEqual(highers.slice(6), [
+    'No',
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    'Advanced Highers in Mathematics, Physics, Computing Science – AAB',
+  ]);
+  assert.ok(fields.leftEmpty('edu.gpa', p, q(8)));
+  assert.ok(!fields.leftEmpty('edu.equivalent', p, q(15)));
+  // No school entry at all: nothing to say either way.
+  p.education = p.education.slice(0, 1);
+  assert.equal(ask(p, 'edu.qualification', 'Did you complete UK A-levels?', { kind: 'radio' }), null);
+  // A finished BSc is a Bachelor of Science, never the "… of Arts" listed first.
+  p.education[0].endDate = '2025-06';
+  assert.equal(fillPage(page.slice(0, 1), p)[0], 'College - Bachelor of Science');
+});
+
+test('highest education: what you hold while a degree is under way, your degree when the question means it', () => {
+  const p = computingScientist();
+  p.education[1].degree = 'A-Levels';
+  const levels = ['High School', 'Bachelors', 'Masters', 'PhD'];
+  const at = (q, list) => choose(p, 'edu.level', q, list, { today: TODAY });
+  // Menzies' social-mobility list, "…qualification you hold": the A-levels row, not a degree not yet held.
+  const menzies = [
+    '1-4 O levels/CSEs/GCSEs (any grades), Entry Level',
+    '5+ O levels (passes)/CSEs (grade1)/GCSEs (grades A*-C), School Certificate, 1 A level/2-3 AS Levels/VCEs',
+    'Apprenticeship',
+    '2+ A levels/VCEs, 4+ AS levels, Higher School Certificate',
+    'Degree level or above',
+    'No qualifications',
+  ];
+  assert.equal(at('What is the highest level of qualification you hold?', menzies), menzies[3]);
+  assert.equal(at('Highest Education Obtained', levels), 'High School');
+  // Asked what you're studying for, or with no word on holding it: your degree.
+  assert.equal(at('What is the highest degree level you are currently pursuing?', levels), 'Bachelors');
+  assert.equal(at('Highest level of education', levels), 'Bachelors');
+  assert.equal(at('What is (or will be by October 2027) your highest level of education?', levels), 'Bachelors');
+  // Graduated: what you hold is the degree.
+  p.education[0].endDate = '2025-06';
+  assert.equal(at('What is the highest level of qualification you hold?', menzies), 'Degree level or above');
+});
+
+test('school grades and degree disciplines: "A*" is not "A", a BSc is a Bachelor of Science, "A*" keeps its star', () => {
+  const grade = (text) => fields.val(text, { kind: 'grade' });
+  assert.equal(matcher.matchOption(opts('A*', 'A', 'B'), grade('A')), 1);
+  assert.equal(matcher.matchOption(opts('A* (Distinction)', 'A (Merit)'), grade('A*')), 0);
+  assert.equal(matcher.matchOption(opts('Above average', 'B'), grade('A')), -1);
+  assert.equal(util.cleanLabel('A*'), 'A*');
+  assert.equal(util.cleanLabel('D**'), 'D**');
+  assert.equal(util.cleanLabel('First name *'), 'First name');
+  assert.equal(util.cleanLabel('Name:*'), 'Name');
+  const degree = (text) => fields.val(text, { kind: 'degree' });
+  const levels = opts('College - Bachelor of Arts', 'College - Bachelor of Science', 'College - Master of Science');
+  assert.equal(matcher.matchOption(levels, degree('BSc')), 1);
+  assert.equal(matcher.matchOption(levels, degree('BA')), 0);
+  assert.equal(matcher.matchOption(levels, degree('MSc')), 2);
+  // An option naming yours among others is as good: "Bachelor’s degree (BA, BSc, BEng)".
+  const kinds = opts('Bachelor’s degree (BA, BSc, BEng)', 'Master’s degree (MA, MSc)');
+  assert.equal(matcher.matchOption(kinds, degree('BSc')), 0);
+  // A GPA or a class is no list of grades.
+  const p = computingScientist();
+  assert.equal(ask(p, 'edu.gpa', 'University grade 1').text, '2:1');
+});
+
+test('niche-form dry runs: graduation after an unrecognised box, degree titles, qualifications with grades and dates', () => {
+  const p = computingScientist();
+  // Chicago Trading Co: Greenhouse's education block, "Alternate Email", then the graduation questions: the degree's.
+  const page = [
+    desc('School'),
+    desc('Degree'),
+    desc('Discipline'),
+    desc('End date month'),
+    desc('End date year'),
+    desc('Alternate Email'),
+    desc('What is your expected graduation month?'),
+    desc('What is your expected graduation year?'),
+  ];
+  const { results } = matcher.plan(page, p);
+  assert.deepEqual(
+    results.slice(6).map((r) => [r.type, r.index]),
+    [
+      ['edu.end', 0],
+      ['edu.end', 0],
+    ],
+  );
+  // Capgemini's "exact degree title"; a course in a text box keeps "in".
+  assert.equal(
+    ask(p, 'edu.degree', 'Please state your exact degree title', { kind: 'textarea' }).text,
+    'BSc Computing Science',
+  );
+  assert.equal(
+    ask(p, 'edu.degree', 'What degree course are you studying?', { kind: 'text' }).text,
+    'BSc in Computing Science',
+  );
+  // DN Capital: every degree with its dates and grade; the school too when the question isn't about higher education.
+  const dn =
+    'Please state your higher educational qualifications, including (current) grade and starting and (expected) graduating date';
+  assert.equal(matcher.classify(desc({ label: dn }, { kind: 'textarea', inputType: 'textarea' })).type, 'edu.summary');
+  assert.equal(
+    ask(p, 'edu.summary', dn, { kind: 'textarea', today: TODAY }).text,
+    'BSc Computing Science, University of Glasgow, September 2023 – June 2027 (expected), predicted 2:1',
+  );
+  assert.equal(
+    ask(p, 'edu.summary', 'Please list your qualifications and grades', { kind: 'textarea', today: TODAY }).text.split(
+      '\n',
+    )[1],
+    'Advanced Highers (Mathematics, Physics, Computing Science), Hillhead High School, August 2017 – June 2023, AAB',
+  );
+  // Dayforce's "G.P.A." is a number box: a 2:1 stays out (never "21"), and isn't missing from the profile either.
+  const gpa = { kind: 'number', question: 'g p a' };
+  assert.equal(ask(p, 'edu.gpa', 'G.P.A.', { kind: 'number' }), null);
+  assert.ok(fields.leftEmpty('edu.gpa', p, gpa));
+});
+
+test('niche-form dry runs: dates — M/d/yyyy, a picker under “Year”, graduating before, completed or predicted', () => {
+  const p = computingScientist();
+  p.job.startDate = '2027-06-28';
+  const write = (type, label, extra = {}) => {
+    const d = desc(
+      { label, placeholder: extra.placeholder || '' },
+      { kind: 'text', placeholderRaw: extra.placeholder || '', ...extra },
+    );
+    const { results, context } = matcher.plan([d], p);
+    const r = results[0];
+    const v = fields.resolve(r.type, p, {
+      ...context,
+      jobContext: true,
+      part: r.part,
+      kind: 'text',
+      today: TODAY,
+      question: util.normalize(matcher.questionText(d)),
+    });
+    return [r.type, matcher.formatForText(v, d)];
+  };
+  // Microsoft Forms' format with single letters is a whole date, not a year (Pharus).
+  assert.deepEqual(
+    write('job.startDate', '8. Earliest Start Data avaliable Date.', { placeholder: 'Please input date (M/d/yyyy)' }),
+    ['job.startDate', '06/28/2027'],
+  );
+  // Ashby's "Expected Graduation Year" over a "Pick date..." box: the date, June, never 1 January.
+  assert.deepEqual(write('edu.end', 'Expected Graduation Year', { placeholder: 'Pick date...' }), [
+    'edu.end',
+    '06/01/2027',
+  ]);
+  const yn = ['Yes', 'No'];
+  // Aurora: "graduating" is not "a graduate".
+  assert.equal(choose(p, 'edu.end', 'Are you graduating before October 2027?', yn, { today: TODAY }), 'Yes');
+  assert.equal(
+    matcher.classify(
+      desc({ question: 'Are you graduating before October 2027?' }, { kind: 'radio', options: opts(...yn) }),
+    ).type,
+    'edu.end',
+  );
+  // Capgemini: completed or predicted, and the month and year "if you selected predicted".
+  const cap = (q, list) => {
+    const d = desc({ question: q }, { kind: 'radio', options: opts(...list) });
+    const r = matcher.classify(d);
+    return r && choose(p, r.type, q, list, { kind: 'radio', today: TODAY, part: matcher.plan([d], p).results[0].part });
+  };
+  const months = [
+    'N/A',
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+  assert.equal(
+    cap("Is your undergraduate or integrated master's degree completed or still predicted?", [
+      'Completed',
+      'Predicted',
+    ]),
+    'Predicted',
+  );
+  assert.equal(
+    cap('If you selected predicted Status, which month will you complete this degree qualification?', months),
+    'June',
+  );
+  assert.equal(
+    cap('If you selected predicted Status, which year will you complete this degree qualification?', [
+      'N/A',
+      '2026',
+      '2027',
+      '2028',
+    ]),
+    '2027',
+  );
+  p.education[0].endDate = '2025-06';
+  assert.equal(
+    cap("Is your undergraduate or integrated master's degree completed or still predicted?", [
+      'Completed',
+      'Predicted',
+    ]),
+    'Completed',
+  );
+  assert.equal(
+    cap('If you selected predicted Status, which month will you complete this degree qualification?', months),
+    'N/A',
+  );
+  // Clarity: the year of study you will have finished by the start of summer 2027.
+  p.education[0].startDate = '2024-09';
+  p.education[0].endDate = '2028-06';
+  const standing = ['Freshman', 'Sophomore', 'Junior', 'Senior'];
+  assert.equal(cap('School Year completed by the beginning of Summer 2027', standing), 'Junior');
+  // Isio: the instruction after the question ("If your university if not listed, select other.") is no follow-up.
+  const isio =
+    'Using the list provided, please confirm which university you are currently studying or where you completed your most recent degree. If your university if not listed, select other.';
+  assert.equal(
+    matcher.classify(desc({ label: isio }, { kind: 'combo', options: opts('University of Glasgow', 'Other') })).type,
+    'edu.school',
+  );
+});
+
+test('niche-form dry runs: legal rights to work, the type of right you hold, a citizen’s visa boxes, dual nationality', () => {
+  const p = glaswegian();
+  const typeOf = (q, kind = 'radio', list) =>
+    (matcher.classify(desc({ question: q }, { kind, options: list ? opts(...list) : null })) || {}).type || null;
+  // Arma: "rights", not just "right".
+  const arma = 'Do you possess the legal rights to work in the UK? Please confirm one of the below answers';
+  const rights = [
+    'I have the right to work in the UK',
+    'I do not have the right to work in the UK and will require a visa',
+  ];
+  assert.equal(typeOf(arma, 'radio', rights), 'job.authorized');
+  assert.equal(choose(p, 'job.authorized', arma, rights), rights[0]);
+  // IK Partners: a British citizen's right is citizenship, whatever else the list offers.
+  const ik = 'What type of right to work in the UK do you hold?';
+  const kinds = [
+    'Citizenship/Nationality/Permanent Residency',
+    'European Pre-settle/Settle Status',
+    'Student/Graduate Visa',
+    'I need a company sponsorship',
+  ];
+  assert.equal(typeOf(ik, 'checkboxes', kinds), 'job.rightType');
+  assert.equal(choose(p, 'job.rightType', ik, kinds, { kind: 'checkboxes' }), kinds[0]);
+  // Peel Hunt and Arma's boxes: N/A when they say so for those needing no visa; the citizenship for a visa type.
+  const peel =
+    'If you do require a visa or are currently on a visa, please provide details of your current visa and requirements. If you do not require a visa, please type N/A';
+  assert.equal(ask(p, 'job.sponsorship', peel, { kind: 'text' }).text, 'N/A');
+  const armaType =
+    'If you answered that you have the right to work in the UK, please confirm what visa type you have i.e. pre-settled status or a specific visa, please include the expiry date of this visa. If you answered that you will require a visa to work in the UK, please type n/a';
+  assert.equal(ask(p, 'job.sponsorship', armaType, { kind: 'textarea' }).text, 'British citizen (no visa needed)');
+  // Someone on a visa is not told "N/A": that is theirs to write.
+  p.personal.nationality = 'Indian';
+  assert.notEqual((ask(p, 'job.sponsorship', peel, { kind: 'text' }) || {}).text, 'N/A');
+  assert.equal(ask(p, 'job.rightType', ik, { kind: 'checkboxes', options: opts(...kinds) }), null);
+  p.personal.nationality = 'British';
+  // Capgemini, Cambridge Consultants: one nationality is "No"; citizenships held before aren't in the profile.
+  const yn = ['Yes', 'No'];
+  assert.equal(typeOf('Do you hold dual nationality?', 'radio', yn), 'personal.dualNationality');
+  assert.equal(choose(p, 'personal.dualNationality', 'Do you hold dual nationality?', yn), 'No');
+  const other = 'Do you currently hold any other (dual) nationality or citizenships?';
+  assert.equal(choose(p, 'personal.dualNationality', other, yn), 'No');
+  assert.equal(
+    choose(p, 'personal.dualNationality', 'Have you previously held any other (dual) nationality or citizenships?', yn),
+    null,
+  );
+  p.personal.nationality = 'British, Irish';
+  assert.equal(choose(p, 'personal.dualNationality', 'Do you hold dual nationality?', yn), 'Yes');
+  // Capgemini: "employed by … before" is having worked there.
+  assert.equal(
+    typeOf('Have you been employed by Capgemini Group before?', 'combobox'),
+    'compliance.previouslyEmployed',
+  );
+});
+
+test('niche-form dry runs: "If so" in the same box, N/A unless Other, "or type None", and lists answered "Other"/"None"', () => {
+  const p = computingScientist();
+  Object.assign(p.job, { otherOffers: 'No', adjustments: 'No', referralSource: 'Trackr', locations: 'London' });
+  const typeOf = (q, kind = 'radio', list) =>
+    (matcher.classify(desc({ question: q }, { kind, options: list ? opts(...list) : null })) || {}).type || null;
+  // Nominal: the question and its "If so…" in one box take your answer; a box of its own starting "If so" doesn't.
+  const nominal = 'Do you have any pending offers or deadlines we should know about? If so, what companies and dates?';
+  assert.equal(typeOf(nominal, 'textarea'), 'job.otherOffers');
+  assert.equal(ask(p, 'job.otherOffers', nominal, { kind: 'textarea' }).text, 'No');
+  assert.equal(typeOf('If so, which companies and what are the deadlines?', 'textarea'), null);
+  // Menzies, Cirrus Logic.
+  const yn = ['Yes', 'No'];
+  assert.equal(
+    typeOf('Do you require any special requirements that we may need to be aware of?', 'radio', yn),
+    'job.adjustments',
+  );
+  assert.equal(typeOf('Were you referred by a current Cirrus Logic employee?', 'radio', yn), 'job.referred');
+  assert.equal(choose(p, 'job.referred', 'Were you referred by a current Cirrus Logic employee?', yn), 'No');
+  const cirrus = 'Please enter the name of the person who referred you or type, "None"';
+  assert.equal(typeOf(cirrus, 'textarea'), 'job.referrer');
+  assert.equal(ask(p, 'job.referrer', cirrus, { kind: 'textarea' }).text, 'None');
+  // Maven: "…or write N/A if you selected another answer" after a list follows it (content/main.js reads its choice).
+  const page = [
+    desc({ label: 'Discipline' }, { kind: 'select', options: opts('Computer Science', 'Mathematics', 'Other') }),
+    desc(
+      "If you selected 'Other' for the above question, please specify here or write N/A if you selected another answer",
+    ),
+  ];
+  const { results } = matcher.plan(page, p);
+  assert.deepEqual([results[1].type, results[1].follows], ['na', 0]);
+  assert.equal(fields.resolve('na', p, {}).text, 'N/A');
+  // Lists without your answer: their "Other" or "None", never a wrong one.
+  p.education[0].field = 'Economics';
+  assert.equal(
+    choose(p, 'edu.field', 'Of the following options, please select your declared major', [
+      'Physics',
+      'Mathematics',
+      'Statistics',
+      'Computer Science',
+      'Other',
+    ]),
+    'Other',
+  );
+  assert.equal(
+    choose(
+      p,
+      'edu.end',
+      'What is your anticipated graduation date?',
+      ['Fall 2027', 'Spring 2028', 'Fall 2028', 'Other'],
+      { today: TODAY },
+    ),
+    'Other',
+  );
+  p.languages = 'English, French';
+  const aurora =
+    "Do you speak any non-European languages (native or to a professional level - C1 or above)? Please select 'None' if you do not.";
+  assert.deepEqual(
+    matcher.matchAll(
+      opts('Japanese', 'Hindi', 'Mandarin', 'None', 'Other'),
+      ask(p, 'languages', aurora, { kind: 'checkboxes' }),
+    ),
+    [3],
+  );
+  // Ashton Fire's first-choice office; FDM's countries: London's.
+  const ashton = ['Buncrana', 'Birmingham', 'Edinburgh', 'Glasgow', 'Manchester', 'London'];
+  assert.equal(typeOf('Please indicate your first choice office location', 'radio', ashton), 'job.locations');
+  assert.equal(
+    choose(p, 'job.locations', 'Please indicate your first choice office location', ashton, { kind: 'radio' }),
+    'London',
+  );
+  assert.equal(
+    choose(p, 'job.locations', 'Which FDM Location are you interested in working at?', [
+      'Canada',
+      'Ireland',
+      'UK',
+      'USA',
+      'None',
+    ]),
+    'UK',
+  );
+  assert.equal(
+    choose(p, 'job.locations', 'Preferred location', ['Scotland', 'Wales']),
+    null,
+    'never another nation of the UK',
+  );
+  // The second choice is your second city, never the first again.
+  const second = 'Please indicate your second choice office location';
+  assert.equal(choose(p, 'job.locations', second, ashton, { kind: 'radio' }), null);
+  p.job.locations = 'London, Manchester';
+  assert.equal(choose(p, 'job.locations', second, ashton, { kind: 'radio' }), 'Manchester');
+});
+
+test('niche-form dry runs: opt-ins left alone, one-box addresses, "Known As", a bare "Title", and the smaller gaps', () => {
+  const p = computingScientist();
+  Object.assign(p.address, {
+    line1: '12 Gower Street',
+    city: 'London',
+    state: '',
+    postalCode: 'WC1E 6BT',
+    country: 'United Kingdom',
+  });
+  p.education[0] = Object.assign(p.education[0], { field: 'Economics', location: 'London, UK' });
+  p.languages = 'English, French';
+  p.personal.firstName = 'Robin';
+  const typeOf = (q, kind = 'radio', list) =>
+    (
+      matcher.classify(
+        desc(
+          { question: q, label: kind === 'checkbox' ? q : '' },
+          { kind, options: list ? opts(...list) : kind === 'checkbox' ? opts(q) : null },
+        ),
+      ) || {}
+    ).type || null;
+  // Opt-ins: recognised (so never sent to the AI), and nothing to fill.
+  for (const [q, kind, list] of [
+    ['Yes, Arma Partners can add me to the talent pool and contact me about future job opportunities.', 'checkbox'],
+    ['Would you like to receive job alerts from us?', 'radio', ['Yes', 'No']],
+    ['Sms Consent', 'select', ['Yes', 'No']],
+    ['Do you agree to be contacted via WhatsApp?', 'combobox', ['Yes', 'No']],
+    ['You agree to receive information regarding FDM news and events.', 'checkbox'],
+  ])
+    assert.equal(typeOf(q, kind, list), 'optIn', q);
+  assert.equal(fields.resolve('optIn', p, {}), null);
+  assert.ok(fields.DEFS.optIn.leave);
+  assert.equal(
+    typeOf('Are you interested in other roles at Acme?', 'radio', ['Yes', 'No']),
+    null,
+    'a question, not an opt-in',
+  );
+  // DV Trading's "Terms & Conditions" ("&" is dropped from the words) is an acknowledgement.
+  assert.equal(typeOf('Terms & Conditions', 'combobox', ['I agree', 'I disagree']), 'consent');
+  // The form's only address box gets all of it; up to the postcode when the region and country are asked apart.
+  const fill = (page) => fillPage(page, p);
+  assert.deepEqual(fill([desc('First Name'), desc('Primary Mailing Address')]), [
+    p.personal.firstName,
+    '12 Gower Street, London, WC1E 6BT, United Kingdom',
+  ]);
+  assert.deepEqual(
+    fill([desc('Address'), desc({ label: 'Country' }, { kind: 'select', options: opts('United Kingdom', 'France') })]),
+    ['12 Gower Street, London WC1E 6BT', 'United Kingdom'],
+  );
+  assert.deepEqual(fill([desc('Address'), desc('City'), desc('Post Code')]), ['12 Gower Street', 'London', 'WC1E 6BT']);
+  // OC&C's "Known As": your (legal) first name. Cambridge Associates' lone "Title": Mr / Ms; T Capital's after
+  // "Company": the job's.
+  assert.equal(ask(p, 'name.preferred', 'Known As', { kind: 'text' }).text, p.personal.firstName);
+  const lone = matcher.plan(
+    [desc({ label: 'Other Attachment' }, { kind: 'file' }), desc('Title'), desc('Address')],
+    p,
+  ).results;
+  assert.equal(lone[1].type, 'name.prefix');
+  const job = matcher.plan([desc('Company'), desc('Title'), desc('Start date')], p).results;
+  assert.equal(job[1].type, 'exp.title');
+  // Teamtailor's "Email address without domain" is a colleague's, not yours, even in a type="email" box; so are a
+  // referrer's, a manager's and an emergency contact's. A second address of yours says nothing new.
+  assert.notEqual(typeOf('Email address without domain', 'text'), 'email');
+  for (const q of ['Email address without domain', 'Referrer’s email', 'Manager email', 'Emergency contact email'])
+    assert.equal(typeOf(q, 'email'), null, q);
+  assert.equal(typeOf('Alternate email', 'email'), null);
+  assert.equal(typeOf('Email address', 'email'), 'email');
+  assert.equal(typeOf('E-mail (your hiring manager will contact you here)', 'email'), 'email');
+  // Aurora, BBB, FDM, Isio, Capgemini, Appian, Menzies.
+  const yn = ['Yes', 'No'];
+  const answer = (q, kind = 'radio') => {
+    const t = typeOf(q, kind, yn);
+    return t && choose(p, t, q, yn, { kind, today: TODAY });
+  };
+  assert.equal(answer('Please confirm that you speak English to a professional level (native or C1 or above)'), 'Yes');
+  assert.equal(answer('Are you currently studying or have you completed your most recent degree in the UK?'), 'Yes');
+  assert.equal(answer('Are you currently studying or completing a course of study at degree level or above?'), 'Yes');
+  assert.equal(answer('Are you currently or have you ever attended university?'), 'Yes');
+  assert.equal(answer('Are you studying a MSc or other post graduate qualification?'), 'No');
+  assert.equal(
+    answer(
+      'Are you currently studying for, or have you completed, a postgraduate qualification other than a masters degree?',
+    ),
+    'No',
+  );
+  assert.equal(
+    answer(
+      'Are you currently pursuing a Major in one of the following disciplines: Computer Science or Computer Engineering',
+      'combobox',
+    ),
+    'No',
+  );
+  assert.equal(typeOf('If successful, where will you live during your employment?', 'text'), 'location');
+  assert.equal(
+    typeOf(
+      'Have you ever been in the care of a local authority at any stage in your life, regardless of the duration?',
+      'radio',
+      yn,
+    ),
+    'eeo.careLeaver',
+  );
+});
+
+test('diversity questions in text boxes: your ethnicity as you gave it, a disability yes/no, never a description', () => {
+  const p = computingScientist();
+  Object.assign(p.eeo, { race: 'White – British', disability: 'No' });
+  const typeOf = (q, kind) => (matcher.classify(desc({ label: q }, { kind, inputType: kind })) || {}).type || null;
+  assert.equal(typeOf('How would you describe your ethnic origin?', 'text'), 'eeo.race');
+  assert.equal(
+    ask(p, 'eeo.race', 'How would you describe your ethnic origin?', { kind: 'text' }).text,
+    'White – British',
+  );
+  const ik = 'Would you consider yourself having any type of impairment? If yes, please describe.';
+  assert.equal(typeOf(ik, 'textarea'), 'eeo.disability');
+  assert.equal(ask(p, 'eeo.disability', ik, { kind: 'textarea' }).text, 'No');
+  assert.equal(typeOf('Please describe your disability', 'textarea'), null, 'what it is is yours to say');
+  assert.equal(typeOf('Please describe any adjustments you need', 'textarea'), null);
 });

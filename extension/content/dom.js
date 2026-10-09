@@ -76,14 +76,16 @@
   // A drop zone's instructions ("Click to upload or drag and drop here", "PDF, max 5MB") say nothing about
   // what the upload is for: the label is further out.
   const UPLOAD_WORDS = new Set(
-    'click tap here to or and upload uploads attach browse choose select add drag drop your a an the files file document documents max maximum size mb kb limit up of pdf doc docx txt rtf odt accepted formats types supported only'.split(
+    'click tap here to or and upload uploads attach browse choose select add drag drop your a an the files file document documents max maximum size mb kb limit up of pdf doc docx txt rtf odt html htm jpg jpeg png accepted allowed permitted format formats type types extension extensions supported only either less than under input no selected chosen from device computer desktop'.split(
       ' ',
     ),
   );
+  // "Upload either DOC, DOCX, RTF, PDF, or TXT file types (1MB max)" (Phenom), "Choose File* No file selected" and
+  // "file-input" (BambooHR), "from Device" (CharlieHR's source menu) are boilerplate too.
   const isUploadBoilerplate = (t) =>
     U.normalize(t)
       .split(' ')
-      .every((w) => !w || UPLOAD_WORDS.has(w) || /^\d+$/.test(w));
+      .every((w) => !w || UPLOAD_WORDS.has(w) || /^\d+(mb|kb|gb)?$/.test(w));
 
   /** The root of a rich-text editor: editable itself, inside nothing editable (its paragraphs are not fields). */
   function isEditor(el) {
@@ -253,6 +255,12 @@
     return out.replace(/\s+/g, ' ').trim();
   }
 
+  /** Not display: none nor visibility: hidden (whatever its size). */
+  function shown(node) {
+    const style = node.ownerDocument.defaultView.getComputedStyle(node);
+    return style.display !== 'none' && style.visibility !== 'hidden';
+  }
+
   /**
    * The text a person sees: not what CSS hides ("Select an option" once a dropdown shows its choice) or keeps for
    * screen readers only (a 1px clipped "Select an option").
@@ -272,14 +280,26 @@
     return (rootNode.getElementById && rootNode.getElementById(id)) || el.ownerDocument.getElementById(id);
   }
 
+  /**
+   * A status message a box points to, not its name: Phenom's date boxes are "labelled" by an aria-live region that
+   * says "Date picker closed. No date currently selected." (or nothing yet), beside a `<label for>` saying "From".
+   */
+  const isStatus = (ref) =>
+    ref.hasAttribute('aria-live') || /^(status|alert|log)$/.test(ref.getAttribute('role') || '');
+
   /** `outside`: only what lies outside the control: select2's combobox is "labelled" by its own selection ("Italy"). */
   function explicitLabel(el, outside) {
     const parts = [];
+    const notes = [];
     for (const id of (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)) {
       const ref = byId(el, id);
-      if (ref && ref !== el && !(outside && el.contains(ref))) parts.push(textOf(ref));
+      if (!ref || ref === el || (outside && el.contains(ref)) || isStatus(ref)) continue;
+      // A note hidden from view that the label points at too (Microsoft Forms' "Single line text." after each
+      // question) only counts when nothing else names the field.
+      (ref.getAttribute('aria-hidden') === 'true' ? notes : parts).push(textOf(ref));
     }
-    if (!parts.length) for (const l of labelsOf(el)) if (!machineLabel(l, el)) parts.push(textOf(l));
+    if (!parts.some(Boolean)) parts.push(...notes);
+    if (!parts.some(Boolean)) for (const l of labelsOf(el)) if (!machineLabel(l, el)) parts.push(textOf(l));
     return U.cleanLabel(parts.filter(Boolean).join(' '));
   }
 
@@ -335,6 +355,40 @@
       }
     }
     return '';
+  }
+
+  // How a label marks its field required: a "*" or Lever's "✱" at either end, "(required)" (Personio's "* (required)"),
+  // a closing "Required" (Teamtailor's screen-reader text).
+  const REQUIRED_TEXT = /^\s*[*✱]|[*✱]\s*$|\s[*✱](\s|$)|\(\s*required\s*\)|\brequired\.?\s*$/i;
+  const REQUIRED_MARK =
+    '.required, [class*="required" i], [aria-label^="required" i], [data-automation-id="requiredStar"], [data-asterisk]';
+
+  /**
+   * Is a field required: the attribute or aria-required (on it or around it), or a mark on its label, its group's
+   * legend or what labels it (Microsoft Forms' "Required to answer" star)?
+   */
+  function isRequired(field) {
+    const el = field.el;
+    const members = field.members || [el];
+    if (members.some((m) => m.required || m.getAttribute('aria-required') === 'true')) return true;
+    if (el.closest && el.closest('[aria-required="true"]')) return true;
+    const group = el.closest && el.closest('fieldset, [role="radiogroup"], [role="group"]');
+    // A radio's or checkbox's own label is an option ("A*"), not its question.
+    const labels = field.kind === 'radio' || field.kind === 'checkboxes' ? [] : [...labelsOf(el)];
+    for (const owner of [el, group].filter(Boolean)) {
+      for (const id of (owner.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)) {
+        const l = byId(owner, id);
+        if (l) labels.push(l);
+      }
+    }
+    const legend = group && group.querySelector(':scope > legend');
+    if (legend) labels.push(legend);
+    return labels.some(
+      (l) =>
+        REQUIRED_TEXT.test(l.textContent || '') ||
+        /^required$/i.test(l.getAttribute('title') || '') ||
+        !!l.querySelector(REQUIRED_MARK),
+    );
   }
 
   /** Hidden helper inputs (react-select's required shim, the checkbox behind ARIA buttons) aren't fields. */
@@ -427,6 +481,8 @@
     const start = members.length > 1 ? commonAncestor(members) : first;
     if (!start) return '';
     const skip = (n) => set.has(n) || (n.localName === 'label' && n.control && set.has(n.control));
+    // A container that starts with its question (see questionFirst): that, without the options after it.
+    if (members.length > 1 && questionFirst(start)) return U.cleanLabel(textOf(start.firstElementChild), 300);
     if (members.length > 1 && foreignControls(start, set) === 0) {
       // Text inside the group container that is not an option label, e.g. a heading.
       const own = textOf(start, skip);
@@ -458,7 +514,29 @@
         .map((l) => textOf(l))
         .join(' '),
     );
-    return visible || explicitLabel(el) || el.getAttribute('aria-label') || own || nextText(el) || el.value || '';
+    return (
+      visible ||
+      explicitLabel(el) ||
+      el.getAttribute('aria-label') ||
+      own ||
+      nextText(el) ||
+      wrapperText(el) ||
+      el.value ||
+      ''
+    );
+  }
+
+  /**
+   * The text of the smallest wrapper around a box with no label, holding nothing else to fill: an MUI checkbox's
+   * "<span><span class="MuiCheckbox-root"><input></span>3.51 to 3.99</span>" (Aluna's GPA bands).
+   */
+  function wrapperText(el) {
+    for (let a = el.parentElement, i = 0; a && i < 3; a = a.parentElement, i++) {
+      if (countedIn(a).some((c) => c !== el)) return '';
+      const t = U.cleanLabel(textOf(a), 200);
+      if (t) return t.length <= 120 ? t : '';
+    }
+    return '';
   }
 
   const optionValue = (el) =>
@@ -466,16 +544,37 @@
       ? el.value
       : el.getAttribute('data-option') || el.getAttribute('data-value') || el.getAttribute('value') || '';
 
+  /** The help a control points to (aria-describedby), else the help set between its label and it. */
   function describedBy(el) {
-    return (el.getAttribute('aria-describedby') || '')
-      .split(/\s+/)
-      .filter(Boolean)
+    const ids = (el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+    if (!ids.length) return hintAfterLabel(el);
+    return ids
       .map((id) => {
         const ref = byId(el, id);
         return ref ? textOf(ref) : '';
       })
       .join(' ')
       .slice(0, 200);
+  }
+
+  /**
+   * The text between a control's own <label> and the control, pointed to by nothing: Teamtailor's "Start Date", then
+   * "Please indicate the earliest date you would be available to start with us.", then the date box. Empty when a
+   * field comes between them, or the label comes after the control (a checkbox's) or wraps it.
+   */
+  function hintAfterLabel(el) {
+    const label = el.labels && el.labels[0];
+    if (!label || label.contains(el)) return '';
+    const parts = [];
+    for (let node = el, depth = 0; node && depth < 3; node = node.parentElement, depth++) {
+      if (node !== el && node.contains(label)) return '';
+      for (let c = node.previousElementSibling; c; c = c.previousElementSibling) {
+        if (c === label || c.contains(label)) return U.cleanLabel(parts.reverse().join(' '), 200);
+        if (c.matches(CONTROL_SELECTOR) || c.querySelector(CONTROL_SELECTOR)) return '';
+        if (!SKIP_TEXT_TAGS.has(c.localName) && shown(c)) parts.push(visibleText(c));
+      }
+    }
+    return '';
   }
 
   /**
@@ -534,6 +633,34 @@
     return button ? U.cleanLabel(button.getAttribute('attachment-label') || explicitLabel(button)) : '';
   }
 
+  /**
+   * What an upload that only says how to upload ("Select file", "Upload either DOC, DOCX… (1MB max)") is for: the text
+   * just before it, looking out from the upload through the blocks around it that hold no other field, back to the
+   * field before it. Phenom puts it in a label beside the widget's column ("Please upload a copy of your cover
+   * letter.") or in paragraphs above the whole widget ("Additional attachments : An optional cover letter (or any other
+   * documents relevant to your application) can be uploaded here."); Workday under a heading and a note
+   * ("Resume/CV/Transcripts (transcripts are required for all US applications)").
+   */
+  function uploadContext(el) {
+    const me = new Set([el]);
+    for (let node = el, i = 0; node && i < 12; i++) {
+      const said = [];
+      for (let sib = node.previousElementSibling, k = 0; sib && k < 4; sib = sib.previousElementSibling, k++) {
+        if (sib.matches(CONTROL_SELECTOR) || sib.querySelector(CONTROL_SELECTOR)) break;
+        // A button says what it does ("Upload your CV" opening CharlieHR's CV reader), not what the upload is for.
+        if (sib.matches('button, [role="button"]')) continue;
+        const t = U.cleanLabel(textOf(sib), 200);
+        if (t) said.unshift(t);
+      }
+      const t = said.join(' ');
+      if (t && !isUploadBoilerplate(t)) return U.cleanLabel(t, 300);
+      const parent = node.parentElement;
+      if (!parent || parent === el.ownerDocument.body || foreignControls(parent, me) > 0) break;
+      node = parent;
+    }
+    return '';
+  }
+
   const HEADING = 'h2, h3, h4, h5, h6, legend, [role="heading"]';
 
   /**
@@ -541,6 +668,9 @@
    * among the children of one of its ancestors. A box labelled just "Subject" or "Grade" under "A-levels" asks
    * about A-levels, not your degree.
    */
+  // A legend that is the form's own key, not words: Phenom's "QUESTIONNAIRE-3-2288" and "secondaryJsqData".
+  const machineName = (t) => !/\s/.test(t) && /\d|[a-z][A-Z]|_/.test(t);
+
   function sectionHeading(el) {
     let node = el;
     for (let i = 0; i < 8; i++) {
@@ -553,11 +683,19 @@
         else if (!c.querySelector(CONTROL_SELECTOR)) found = c.querySelector(HEADING) || found;
       }
       const t = found ? U.cleanLabel(textOf(found), 120) : '';
-      if (t) return t;
+      if (t && !machineName(t)) return t;
+      if (parent.matches(SECTION_END)) break;
       node = parent;
     }
     return '';
   }
+
+  // A tab's panel or a dialog holds its own sections: what is outside is another part of the page (Ashby's job
+  // details "Location", "Employment Type", "Department" beside the Application tab).
+  const SECTION_END = '[role="tabpanel"], [role="dialog"], [role="alertdialog"], dialog';
+
+  // A form's step bar or navigation, never instructions: Phenom's "My information My experience Application…".
+  const STEP_BAR = 'nav, [role="navigation"], [role="toolbar"], [role="tablist"], [role="menubar"]';
 
   /**
    * The instructions right under the heading of a section a control sits in: the text between that heading and the
@@ -582,10 +720,20 @@
           parts = [head && all.includes(head) ? all.slice(all.lastIndexOf(head) + head.length) : ''];
           open = true;
         } else if (field || c.matches('label') || c.querySelector('label')) open = false;
-        else if (open) parts.push(textOf(c));
+        // What a person reads: never a script's source (Trakstar's reCAPTCHA set-up) or a hidden error template
+        // (Eploy's "Sorry, the email address you have supplied is already registered…").
+        else if (
+          open &&
+          !SKIP_TEXT_TAGS.has(c.localName) &&
+          shown(c) &&
+          !c.matches(STEP_BAR) &&
+          !c.querySelector(STEP_BAR)
+        )
+          parts.push(visibleText(c));
       }
       const t = parts ? U.cleanLabel(parts.join(' '), 400) : '';
       if (t) return t;
+      if (parent.matches(SECTION_END)) break;
       node = parent;
     }
     return '';
@@ -621,7 +769,22 @@
       el.getAttribute('aria-haspopup') === 'listbox' ||
       // Workday's search prompts ("School or University", "Country / Territory Phone Code"): a bare input whose
       // text is wiped unless a suggestion is picked.
-      el.getAttribute('data-uxi-widget-type') === 'selectinput'
+      el.getAttribute('data-uxi-widget-type') === 'selectinput' ||
+      suggestsBeside(el)
+    );
+  }
+
+  /**
+   * A box with no ARIA whose suggestions open in a dropdown beside it and whose pick goes into a hidden input there
+   * (Lever's "Current location": typed text is wiped unless a suggestion is picked).
+   */
+  function suggestsBeside(el) {
+    const parent = el.parentElement;
+    return (
+      !!parent &&
+      el.localName === 'input' &&
+      !!parent.querySelector(':scope > input[type="hidden"]') &&
+      !!parent.querySelector(':scope > [class*="dropdown" i]:not(select)')
     );
   }
 
@@ -717,11 +880,17 @@
     if (tag === 'textarea') return 'textarea';
     if (tag === 'input') {
       const type = (el.getAttribute('type') || 'text').toLowerCase();
-      // A search box inside a combobox (ARIA 1.1's pattern: select2's and Choices' multi-selects) is the box that
-      // dropdown is typed into, not a site search.
+      // A search box inside a combobox (ARIA 1.1's pattern: select2's and Choices' multi-selects), or one that is a
+      // form's combobox itself (Ant Design 5's Select on Dayforce), is the box that dropdown is typed into, not a site
+      // search: that one sits in the header or a search landmark.
       if (type === 'search' && el.parentElement && el.parentElement.closest('[role="combobox"]')) return 'combobox';
+      if (type === 'search' && el.getAttribute('role') === 'combobox' && popupOf(el) === 'listbox')
+        return el.closest('header, nav, [role="banner"], [role="navigation"], [role="search"]') ? null : 'combobox';
       if (SKIP_INPUT_TYPES.has(type)) return null;
       if (PASS_THROUGH_TYPES.has(type)) return type;
+      // A text box that is a spin button takes a number (Ant Design's InputNumber, Dayforce's "G.P.A."): typing "2:1"
+      // there leaves "21".
+      if (type === 'text' && el.getAttribute('role') === 'spinbutton') return 'number';
       // chosen's box, which only searches the options of the <select> it stands in for, is a dropdown too.
       return isComboInput(el) || standsFor(el) ? 'combobox' : 'text';
     }
@@ -777,11 +946,30 @@
     );
   }
 
+  /**
+   * The hidden <select> a form's menu button sets (BambooHR's "Country United States" button, aria-haspopup="true",
+   * whose menu of role="menuitem" rows is only made when it opens): the button's widget holds it and nothing else
+   * a person fills. It carries the <label for> and the chosen id, but no option text. Null for any other button.
+   */
+  function menuSelectOf(el) {
+    if (!/^(true|menu)$/.test(popupOf(el)) || !el.matches('button, [role="button"]') || !el.closest('form'))
+      return null;
+    for (let a = el.parentElement, i = 0; a && i < 4; a = a.parentElement, i++) {
+      const others = Array.from(a.querySelectorAll(`${COUNTED_SELECTOR}, [aria-haspopup]`)).some(
+        (c) => c !== el && c.localName !== 'select' && isVisible(c),
+      );
+      if (others) return null;
+      const select = Array.from(a.querySelectorAll('select')).find((s) => !isVisible(s));
+      if (select) return select;
+    }
+    return null;
+  }
+
   function collectControls(rootNode, out) {
     const doc = rootNode.ownerDocument || rootNode;
     const walker = doc.createTreeWalker(rootNode, NodeFilter.SHOW_ELEMENT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-      if (n.matches(CONTROL_SELECTOR) || isChoiceMenu(n)) out.push(n);
+      if (n.matches(CONTROL_SELECTOR) || isChoiceMenu(n) || menuSelectOf(n)) out.push(n);
       if (n.shadowRoot) collectControls(n.shadowRoot, out);
     }
     return out;
@@ -834,16 +1022,36 @@
   }
 
   /**
+   * A container that starts with its question, then holds nothing but nameless checkboxes (Aluna's "What's your
+   * cumulative GPA?" over MUI checkboxes "4", "3.51 to 3.99"…).
+   */
+  function questionFirst(a) {
+    const first = a.firstElementChild;
+    if (!first || first.matches(COUNTED_SELECTOR) || first.querySelector(COUNTED_SELECTOR)) return false;
+    const q = U.cleanLabel(textOf(first), 300);
+    const controls = countedIn(a);
+    return (
+      !!q &&
+      q.length <= 300 &&
+      controls.length >= 2 &&
+      controls.every((c) => c.localName === 'input' && c.type === 'checkbox' && !c.hasAttribute('name'))
+    );
+  }
+
+  /**
    * Checkboxes without names in a container a label names (Ant Design's Checkbox.Group: `<label for="apply_offices">`
    * over `<div id="apply_offices">` of "London", "New York"…) or that is a role="group": one checklist, unless its
    * options read like statements (as for fieldsetCheckboxes).
    */
   function labelledCheckboxes(el) {
     let a = el.parentElement;
-    for (let i = 0; a && i < 4; i++, a = a.parentElement) {
-      if (a.getAttribute('role') !== 'group' && !containerLabel(a)) continue;
+    // Gem's sit four wrappers below their question ("If you have held a U.S. security clearance in the past, what
+    // clearance level have you held?" over "Confidential", "Secret"…); a wrapper holding other fields ends the search.
+    for (let i = 0; a && i < 6; i++, a = a.parentElement) {
       const controls = countedIn(a);
-      if (controls.length < 2 || !controls.every((c) => c.localName === 'input' && c.type === 'checkbox')) return null;
+      if (!controls.every((c) => c.localName === 'input' && c.type === 'checkbox')) return null;
+      if (a.getAttribute('role') !== 'group' && !containerLabel(a) && !questionFirst(a)) continue;
+      if (controls.length < 2) return null;
       const lengths = controls.map((c) => optionLabel(c).length);
       if (lengths.some((n) => n > 120) || lengths.filter((n) => n > 60).length * 2 >= lengths.length) return null;
       return controls.filter((m) => isUsable(m, 'checkbox'));
@@ -900,9 +1108,15 @@
     } else {
       const combo = kind === 'combo' || kind === 'combobox';
       const native = combo ? standsFor(el) : null;
-      // A dropdown widget is labelled by the <label> of the <select> it stands in for (select2, chosen, Choices).
-      s.label = explicitLabel(el, combo) || (native ? explicitLabel(native) : '');
+      const held = kind === 'combo' ? menuSelectOf(el) : null;
+      // A dropdown widget is labelled by the <label> of the <select> it stands in for (select2, chosen, Choices), or
+      // of the one it sets (BambooHR).
+      s.label = explicitLabel(el, combo) || (native || held ? explicitLabel(native || held) : '');
       s.aria = el.getAttribute('aria-label') || '';
+      // BambooHR names its button after the label and the choice ("Country United States"): the choice is no question.
+      const shown = held ? U.cleanLabel(visibleText(el)) : '';
+      if (shown && s.aria.length > shown.length && s.aria.endsWith(shown))
+        s.aria = s.aria.slice(0, -shown.length).trim();
       s.placeholder = desc.placeholderRaw;
       s.name = el.getAttribute('name') || '';
       s.id = el.id || '';
@@ -933,6 +1147,8 @@
         if (kind === 'file' || kind === 'checkbox') s.question = group;
         else s.group = group;
       }
+      if (kind === 'file' && [s.label, s.aria, s.question].every((t) => !t || isUploadBoilerplate(t)))
+        s.nearby = uploadContext(el) || s.nearby;
       if (kind === 'checkbox') {
         if (!s.label && isAriaChoice(el)) s.label = U.cleanLabel(textOf(el));
         desc.options = [{ text: s.label || s.aria || '', value: optionValue(el) }];
@@ -1028,6 +1244,8 @@
     visibleText,
     deepActiveElement,
     standsFor,
+    suggestsBeside,
+    isRequired,
     dateSegments,
     shownValue,
     valueList,

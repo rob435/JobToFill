@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8" />
+    <title>Pharus – Summer Internship 2026 (Microsoft Forms)</title>
+    <style>
+      body { font: 15px/1.4 'Segoe UI', system-ui, sans-serif; margin: 32px auto; max-width: 680px; }
+      [data-automation-id='questionItem'] { margin: 0 0 28px; }
+      [data-automation-id='questionTitle'] { display: block; font-weight: 600; margin-bottom: 8px; }
+      [data-automation-id='requiredStar']::after { content: ' *'; color: #a4262c; }
+      .css-90 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+      input[type='text'] { padding: 6px; width: 320px; }
+      label { display: block; margin: 4px 0; }
+      .error { color: #a4262c; font-size: 13px; }
+      #state { background: #f4f4f4; padding: 8px; font-size: 12px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <!--
+      Microsoft Forms (Pharus' application): each question's title is a heading with its number ("1."), its text and a
+      required star, followed by a note for screen readers, hidden from view, saying what kind of answer it takes
+      ("Single line text.", "Single choice.", "Date."). Every box's aria-labelledby names both the title and that note,
+      and a text box's own aria-label is just "Single line text". The date is a Fluent UI DatePicker: a text box
+      (role="combobox", aria-haspopup="dialog") whose placeholder says "Please input date (M/d/yyyy)"; on blur it reads
+      what was typed in that order and writes it back as M/d/yyyy, or clears it and says it isn't a valid date.
+    -->
+    <h1>Pharus – Summer Internship 2026</h1>
+    <div id="question-list"></div>
+    <button type="button">Submit</button>
+    <pre id="state"></pre>
+    <script>
+      const state = {};
+      const show = () => (document.getElementById('state').textContent = JSON.stringify(state, null, 2));
+      const list = document.getElementById('question-list');
+      let n = 0;
+      const el = (html) => {
+        const t = document.createElement('template');
+        t.innerHTML = html.trim();
+        return t.content.firstElementChild;
+      };
+      const title = (id, text, kind) => `<div id="QuestionId_${id}"><div><span data-automation-id="questionTitle"><span aria-level="2" role="heading"><span data-automation-id="questionOrdinal" aria-hidden="false">${++n}.</span><span class="text-format-content ">${text}</span><span aria-hidden="false" role="note" aria-label="Required to answer" data-automation-id="requiredStar"></span></span><span><span class="css-90" id="QuestionInfo_${id}" aria-hidden="true">${kind}. </span></span><span role="log" aria-live="polite"></span></span></div></div>`;
+
+      function text(id, label, key) {
+        const q = el(`<div data-automation-id="questionItem">${title(id, label, 'Single line text')}<div><span><input aria-label="Single line text" maxlength="4000" placeholder="Enter your answer" aria-labelledby="QuestionId_${id} QuestionInfo_${id}" spellcheck="true" data-automation-id="textInput" /></span></div></div>`);
+        const input = q.querySelector('input');
+        state[key] = '';
+        input.addEventListener('input', () => { state[key] = input.value; show(); });
+        return q;
+      }
+
+      function choice(id, label, key, options) {
+        const q = el(`<div data-automation-id="questionItem">${title(id, label, 'Single choice')}<div><div role="radiogroup" aria-labelledby="QuestionId_${id} QuestionInfo_${id}">${options
+          .map((o, i) => `<div data-automation-id="choiceItem"><label><span data-automation-value="${o}" data-automation-id="radio"><input aria-posinset="${i + 1}" aria-setsize="${options.length}" name="${id}" aria-labelledby="Opt_${id}_${i}" aria-checked="false" role="radio" type="radio" value="${o}" /></span><span aria-label="${o}" id="Opt_${id}_${i}" class="text-format-content">${o}</span></label></div>`)
+          .join('')}</div></div></div>`);
+        state[key] = '';
+        q.querySelectorAll('input').forEach((r) =>
+          r.addEventListener('change', () => {
+            q.querySelectorAll('input').forEach((x) => x.setAttribute('aria-checked', String(x.checked)));
+            state[key] = r.value;
+            show();
+          }),
+        );
+        return q;
+      }
+
+      function date(id, label, key) {
+        const q = el(`<div data-automation-id="questionItem">${title(id, label, 'Date')}<div><div class="ms-DatePicker" data-automation-id="dateContainer"><div class="ms-TextField"><input type="text" id="DatePicker0-label" role="combobox" aria-expanded="false" aria-haspopup="dialog" placeholder="Please input date (M/d/yyyy)" aria-labelledby="QuestionId_${id} QuestionInfo_${id}" data-is-focusable="true" aria-label="Date picker" aria-describedby="TextFieldDescription3" aria-invalid="false" /></div><span id="TextFieldDescription3"><div aria-live="assertive" class="error"></div></span></div></div></div>`);
+        const input = q.querySelector('input');
+        const error = q.querySelector('.error');
+        state[key] = '';
+        // Fluent's parseDateFromString for en-US: month, day, year, in that order.
+        input.addEventListener('blur', () => {
+          const m = input.value.trim().match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/);
+          const d = m && new Date(+m[3], +m[1] - 1, +m[2]);
+          const ok = d && d.getMonth() === +m[1] - 1 && d.getDate() === +m[2];
+          if (input.value && !ok) {
+            input.value = '';
+            error.textContent = 'Invalid date format.';
+            input.setAttribute('aria-invalid', 'true');
+            state[key] = '';
+          } else if (ok) {
+            input.value = `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+            error.textContent = '';
+            input.setAttribute('aria-invalid', 'false');
+            state[key] = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          }
+          show();
+        });
+        return q;
+      }
+
+      list.append(
+        text('raa3a4202b17041ca88ed04b5db57bf8e', 'Full Name', 'name'),
+        text('rc2543f7589254f73abced480ec682d9b', 'Personal Email', 'email'),
+        choice('rbf6c64b9d11b46fca6eb523da440fe75', 'Do you currently have a right to work in the UK?&nbsp;', 'rightToWork', ['Yes', 'No']),
+        date('rd85dfbb182004b618329585b7e758c65', 'Earliest Start Data avaliable', 'start'),
+      );
+      show();
+    </script>
+  </body>
+</html>

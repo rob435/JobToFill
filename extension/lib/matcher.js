@@ -41,6 +41,9 @@
   const SHORT_VALUE =
     /^(name\.|edu\.(school|degree|field|gpa|classification|location|country|start|end)|exp\.(company|title|location|country)|address\.|location$|email$|phone|links\.|nationality$|pronouns$|job\.(currentCompany|currentTitle|salary|yearsExperience|startDate|referralSource)$)/;
   // Types a Yes/No question never asks for ("Has a bonding company ever denied you?" is not your employer).
+  // A box about a referee: its id ("jobPostingApplication_reference_0_email") or the section it sits in ("References").
+  const REFEREE_ID = /\breferences?\b|\breferees?\b/;
+  const REFEREE_SECTION = /^(\w+ )?(references?|referees?)( (details|information|\d+))?$/;
   const NEVER_YES_NO =
     /^(name\.|edu\.(school|degree|field|gpa|classification|location|country)|exp\.(company|title|location|country)|address\.|location$|email$|phone|links\.|nationality$|pronouns$|account\.|job\.current(Company|Title)$)/;
   // "Are you related to anyone working here? If yes, list their name": a yes/no question, whatever the box.
@@ -57,7 +60,13 @@
   // graduation is not listed, please specify.", "If latest field of study is not listed…" (IMC), "If residing in
   // another country, please specify.": the box for an answer the list didn't have.
   const OTHER_FOLLOW_UP =
-    /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|^(if|when) you (have )?(selected|chose|picked|ticked|checked) (?!yes\b)|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b|\bif (it|yours|your \w+( \w+)?) (is|was) not (listed|shown|in the list|found|available)\b|\bif (\w+ ){1,6}?(is|are|was|were) not (listed|shown|in (the|this|our) (list|options|dropdown))\b|\bif (\w+ ){1,6}?(isn t|aren t|wasn t|weren t) (listed|shown|in (the|this) list)\b|\bif (\w+ ){1,6}?(does not|doesn t|do not|don t) (appear|show up)\b|\bif (\w+ ){1,6}?not in (the|this) list\b|\bif (residing|living|based|located|studying) (in |at )?(another|a different) \w+\b|\bnot listed (above|below)\b.*\b(specify|enter|type|provide|state)\b|\bif not (listed|shown|in the list|found|available)\b|^(any )?other (university|school|college|institution|degree|subject|major|course)\b|\b(university|school|college|institution|degree|subject|major|course) (name )?other$/;
+    /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|^(if|when) you (have )?(selected|chose|picked|ticked|checked) (?!yes\b|predicted\b|expected\b)|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b|\bif (it|yours|your \w+( \w+)?) (is|was) not (listed|shown|in the list|found|available)\b|\bif (\w+ ){1,6}?(is|are|was|were) not (listed|shown|in (the|this|our) (list|options|dropdown))\b|\bif (\w+ ){1,6}?(isn t|aren t|wasn t|weren t) (listed|shown|in (the|this) list)\b|\bif (\w+ ){1,6}?(does not|doesn t|do not|don t) (appear|show up)\b|\bif (\w+ ){1,6}?not in (the|this) list\b|\bif (residing|living|based|located|studying) (in |at )?(another|a different) \w+\b|\bnot listed (above|below)\b.*\b(specify|enter|type|provide|state)\b|\bif not (listed|shown|in the list|found|available)\b|^(any )?other (university|school|college|institution|degree|subject|major|course)\b|\b(university|school|college|institution|degree|subject|major|course) (name )?other$/;
+  // "…please specify here or write N/A if you selected another answer": N/A unless the list above is on "Other".
+  const NA_UNLESS_OTHER =
+    /\b(write|enter|type|put|input) (n a|na|none|not applicable)\b.*\bif (you (have )?(selected|chose|picked|answered|gave) )?(another|a different|any other) (answer|option|response)\b|\bif (you (have )?(selected|chose|picked|answered|gave) )?(another|a different) (answer|option|response)\b.*\b(write|enter|type|put|input) (n a|na|none|not applicable)\b/;
+  // A bare "Please specify" / "If other, please tell us where": the box for the answer a list above didn't have.
+  const SPECIFY =
+    /^(please )?(specify|explain|state)\b|^(if )?other\b|\bselected other\b|^(please )?(tell us|let us know) (where|which|more)\b/;
   const EMAIL_TYPES = new Set(['email', 'email.school', 'account.username']);
   // Field types a lone checkbox can answer: "I am authorized to work in the US", "I have read the
   // privacy notice", or one option of a checklist ("London" under "Which offices…?").
@@ -68,6 +77,7 @@
     'job.over18',
     'exp.current',
     'consent',
+    'optIn',
     'edu.end', // "I confirm that I will graduate in 2027": ticked only when your date says so
     'job.locations',
     'skills',
@@ -81,23 +91,42 @@
   // what the question asks for.
   const EXAMPLES = /\b(for example|for instance|e g|such as)\b.*$/;
 
+  // A paragraph's sentences: "…of any individual. We recognise that… If you are invited for an interview, are…".
+  const SENTENCE_END = /(?<=[.?!])\s+(?=["'“(]?[A-Z0-9])/;
+  const FOCUS_KEYS = new Set(['label', 'question', 'aria', 'nearby']);
+
+  /**
+   * The sentence a long, several-sentence question asks (its last question, else its last sentence), or ''. The rest
+   * is preamble: "We are committed to ensuring that the firm removes any unnecessary barriers…" says nothing about
+   * your employer.
+   */
+  function focusOf(raw) {
+    const sentences = raw.split(SENTENCE_END).filter((t) => t.trim());
+    if (sentences.length < 2 || raw.split(/\s+/).length < 20) return '';
+    const asks = sentences.filter((t) => /\?\s*$/.test(t.trim()));
+    return norm(asks.length ? asks[asks.length - 1] : sentences[sentences.length - 1]);
+  }
+
   function signalTexts(desc) {
     const out = [];
     const s = desc.signals || {};
     for (const key of Object.keys(WEIGHTS)) {
       if (!s[key]) continue;
       // "Mobile Number (+CountryCode)", "(country code + number)": that plus is a word.
-      let text = norm(
-        String(s[key])
-          .slice(0, 300)
-          .replace(/\+\s*(?=country|((phone|mobile) )?number)/gi, ' plus '),
-      );
+      const raw = String(s[key])
+        .slice(0, 300)
+        .replace(/\+\s*(?=country|((phone|mobile) )?number)/gi, ' plus ');
+      let text = norm(raw);
       const m = text.match(EXAMPLES);
       if (m && text.slice(0, m.index).split(' ').length > 6) text = text.slice(0, m.index).trim();
-      if (text) out.push({ key, text, weight: WEIGHTS[key] });
+      const focus = FOCUS_KEYS.has(key) ? focusOf(raw) : '';
+      if (text) out.push({ key, text, weight: WEIGHTS[key], focus });
     }
     return out;
   }
+
+  // Answers never asked in the preamble of a paragraph: a name, an employer, a school, a list of skills.
+  const PREAMBLE_NEVER = (type) => SHORT_VALUE.test(type) || type === 'skills' || type === 'languages';
 
   function kindAllowed(rule, desc) {
     if (desc.kind === 'checkbox') return CHECKBOX_TYPES.has(rule.type);
@@ -158,7 +187,9 @@
       return { type: 'compliance.declarations', part: null, score: 1, source: 'options' };
     // "Which university…? Please select "Other" if yours is not listed" is the question, not its follow-up box.
     const asked = String(s.question || s.label || s.aria || s.nearby || '');
-    const head = asked.split('?')[0];
+    // The question's first sentence: Isio's "…confirm which university you are currently studying… If your university
+    // if not listed, select other." asks for the university; the instruction after it is no follow-up.
+    const head = asked.split(/\?|\.\s/)[0];
     if (OTHER_FOLLOW_UP.test(norm(head.split(' ').length >= 4 ? head : asked))) return null;
     // A Yes/No question is never answered with a name, a school or a link.
     const yesNoAsked = YES_NO_QUESTION.test(norm(s.question || s.label || s.aria || ''));
@@ -166,6 +197,14 @@
     const byType = new Map();
     const ruledOut = new Set();
     let best = null;
+    // A referee's details (Dayforce's "References" block: "First Name", "Email" with ids "…_reference_0_email") are
+    // someone else's: recognised, and left for you (never your own, nor the AI's guess).
+    if (
+      desc.kind !== 'file' &&
+      (REFEREE_ID.test(norm([s.id, s.name].filter(Boolean).join(' '))) ||
+        [s.section, s.group].some((t) => REFEREE_SECTION.test(norm(t))))
+    )
+      return { type: 'referee', part: null, score: 1, source: 'section' };
     for (const rule of F().RULES) {
       if (!kindAllowed(rule, desc)) continue;
       // A strong signal naming something else ("cover letter" on an "Attach" button) rules this type out, unless what
@@ -181,19 +220,32 @@
       let score = 0;
       let hits = 0;
       let hitText = '';
+      let hitKey = '';
       for (const s of signals) {
         if (!rule.re.test(s.text) || (rule.not && rule.not.test(s.text))) continue;
+        // Only in a long question's preamble, not in what it asks: half as telling, and never a short answer.
+        const preamble = !!s.focus && !rule.re.test(s.focus);
+        // A list's options settle it ("…U.S. export controls… A United States citizen or national / None…"); a box
+        // has only the words.
+        if (preamble && PREAMBLE_NEVER(rule.type) && !desc.options) continue;
+        const weight = preamble ? s.weight / 2 : s.weight;
         hits++;
-        if (s.weight > score) {
-          score = s.weight;
+        if (weight > score) {
+          score = weight;
           hitText = s.text;
+          hitKey = s.key;
         }
       }
       if (!hits) continue;
       if (rule.test && !rule.test(desc, hitText)) continue;
       // An essay box ("Do you have coding experience? … GitHub links welcomed", "Think of something in
       // your academic life…") wants an answer, not a name, school or URL.
-      if (desc.kind === 'textarea' && SHORT_VALUE.test(rule.type) && hitText.split(' ').length > 12) continue;
+      // A grade asked in full in a text area is still a grade ("What is your cumulative undergraduate (Bachelor) GPA on
+      // the scale used by your local school/university?", Phenom's text questions).
+      const gradeAsked =
+        rule.type === 'edu.gpa' && /^(what (is|was) your|please (state|provide|enter)( your)?)\b/.test(hitText);
+      if (desc.kind === 'textarea' && SHORT_VALUE.test(rule.type) && hitText.split(' ').length > 12 && !gradeAsked)
+        continue;
       // "Inizio offers a full suite of services… have you interviewed with another agency? If so, provide agency
       // name" is never your name, whatever the box.
       if (/^name\./.test(rule.type) && hitText.split(' ').length > 14) continue;
@@ -207,7 +259,7 @@
       if ((rule.type === 'job.availability' || rule.type === 'contact.preference') && yesNoOptions(desc)) continue;
       if (rule.type === 'languages' && yesNoOptions(desc) && !F().languagesNamed(hitText).length) continue;
       score += 0.05 * (hits - 1);
-      const candidate = { type: rule.type, part: rule.part || null, score, source: 'rule', rule };
+      const candidate = { type: rule.type, part: rule.part || null, score, source: 'rule', rule, key: hitKey };
       const prev = byType.get(rule.type);
       if (!prev || score > prev.score) byType.set(rule.type, candidate);
       if (!best || score > best.score + 1e-9) best = candidate;
@@ -222,6 +274,14 @@
     if (['edu.degree', 'edu.level', 'edu.gpa'].includes(best.type) && looksLikeDegreeClasses(desc.options))
       return refine({ type: 'edu.classification', part: null, score: best.score, source: 'options' }, desc);
 
+    // A generic date whose own help says whose it is (Teamtailor's "Start Date", then "Please indicate the earliest
+    // date you would be available to start with us."): that one.
+    if (best.type.startsWith('gen.')) {
+      const own = [...byType.values()].find(
+        (c) => c.key === 'describedby' && F().DATE_TYPES.has(c.type) && !c.type.startsWith('gen.'),
+      );
+      if (own) best = { ...own, score: best.score };
+    }
     // "Name" labels a first/last pair more often than a full-name box: let specifics win.
     if (best.rule.yieldsTo) {
       for (const type of best.rule.yieldsTo) {
@@ -353,6 +413,11 @@
     const text = [s.label, s.aria, s.placeholder, s.name, s.id, s.attrs, s.nearby, s.title]
       .map((t) => norm(t).replace(/\b\d+ (months?|years?|days?)\b/g, ''))
       .join(' | ');
+    // A date picker's box ("Pick date..." under Ashby's "Expected Graduation Year") takes a whole date: June 2027,
+    // not 1 January.
+    if (/\b(pick|select|choose) (a )?date\b/.test(norm(desc.placeholderRaw || s.placeholder))) return null;
+    // A whole date's format: Microsoft Forms' "Please input date (M/d/yyyy)", "d.m.yyyy", "yyyy-m-d", "m/yyyy".
+    if (/\b(m{1,2} d{1,2}|d{1,2} m{1,2}) y{2,4}\b|\by{4} m{1,2} d{1,2}\b|\bm{1,2} y{4}\b/.test(text)) return null;
     const hasMonth = /\bmonth\b|\bmm\b|\bmonat\b|\bmes\b|\bmois\b/.test(text);
     const hasYear = /\byear\b|\byyyy\b|\byy\b|\bjahr\b|\bano\b|\bannee\b/.test(text);
     const hasDay = /\bday\b|\bdd\b/.test(text);
@@ -570,6 +635,39 @@
       }
     });
 
+    // "Please specify" / "If you have selected other, please tell us where" right after "How did you hear about us?":
+    // where you heard, once that list's choice is "Other" (content/main.js checks it); "Which One?" right after it
+    // (Eploy's "Job Board" → "Google for Jobs / Indeed / … / Other") is the same question.
+    results.forEach((r, i) => {
+      const prev = results.slice(Math.max(0, i - 2), i).findIndex((x) => x && x.type === 'job.referralSource');
+      if (prev < 0 || (r && r.type)) return;
+      const q = norm(questionText(descs[i]));
+      const at = Math.max(0, i - 2) + prev;
+      // Never the box for one named answer ("If you selected 'A friend or relative', please put their full name").
+      const named =
+        /\b(name|friend|relative|employee|referr\w*|colleague|event|which (event|university|school))\b/.test(q);
+      if (
+        ['text', 'textarea'].includes(descs[i].kind) &&
+        !named &&
+        (SPECIFY.test(q) || /^if (you (have )?(selected|chose|picked|ticked) )?other\b|^other\b/.test(q))
+      )
+        results[i] = { type: 'job.referralSource', part: 'specify', score: 1, source: 'follow-up', follows: at };
+      else if (
+        LIST_KINDS.includes(descs[i].kind) &&
+        /^(which one|which|please (select|specify)|specify|source)$/.test(q)
+      )
+        results[i] = { type: 'job.referralSource', part: null, score: 1, source: 'follow-up' };
+    });
+
+    // Maven's "If you selected 'Other' for the above question, please specify here or write N/A if you selected another
+    // answer" after a list: "N/A" unless that list is on "Other" (content/main.js checks), when it is left for you.
+    results.forEach((r, i) => {
+      if ((r && r.type) || !['text', 'textarea'].includes(descs[i].kind)) return;
+      if (!NA_UNLESS_OTHER.test(norm(questionText(descs[i])))) return;
+      const before = [i - 1, i - 2].find((j) => j >= 0 && LIST_KINDS.includes(descs[j].kind));
+      if (before != null) results[i] = { type: 'na', part: null, score: 1, source: 'follow-up', follows: before };
+    });
+
     // "If you selected a response to the prior question other than "none of the above"…" right after a sanctions
     // question (its options unseen in a closed dropdown): that question's follow-up.
     results.forEach((r, i) => {
@@ -578,6 +676,43 @@
       if (results.slice(Math.max(0, i - 2), i).some((x) => x && x.type === 'compliance.sanctions'))
         results[i] = { type: 'compliance.sanctions', part: null, score: 1, source: 'follow-up' };
     });
+
+    // An upload that says it is for your CV ("Resume*", "Upload CV") is where it goes: one that names it nowhere, not
+    // even in its id ("file-input", "Other", "Additional Files"), never gets it a second time. Dayforce's "Attachment"
+    // (id …_files_resume) is still the CV's.
+    const namesCv = (d, weight) =>
+      signalTexts(d).some((t) => t.weight >= weight && /\b(resumes?|cvs?|curriculum|lebenslauf)\b/.test(t.text));
+    if (results.some((r, i) => r && r.type === 'file.resume' && namesCv(descs[i], 0.75)))
+      results.forEach((r, i) => {
+        if (r && r.type === 'file.resume' && !namesCv(descs[i], 0))
+          Object.assign(r, { type: null, dropped: 'file.resume' });
+      });
+
+    // A bare "Title" with no job's fields around it (Cambridge Associates', between the uploads and the address) is
+    // Mr / Ms; after "Company" (T Capital's) it is the job's.
+    results.forEach((r, i) => {
+      if (!r || r.type !== 'exp.title' || norm(questionText(descs[i])) !== 'title') return;
+      const near = results
+        .slice(Math.max(0, i - 2), i + 3)
+        .some((x) => x && x !== r && x.type && (/^exp\./.test(x.type) || /^(job\.currentCompany|gen\.)/.test(x.type)));
+      if (!near) Object.assign(r, { type: 'name.prefix', dropped: 'exp.title' });
+    });
+
+    // Appian's "Primary Mailing Address": one box for the whole address when the form has no city or postcode box; not
+    // its region and country when it asks for those apart (Cambridge Associates' "Country", "District / Region").
+    if (!results.some((r) => r && ['address.city', 'address.postalCode', 'address.full'].includes(r.type))) {
+      const apart = results.some((r) => r && ['address.country', 'address.state'].includes(r.type));
+      results.forEach((r, i) => {
+        const q = norm(questionText(descs[i]));
+        if (
+          r &&
+          r.type === 'address.line1' &&
+          descs[i].kind === 'text' &&
+          !/\b(line|street|house|building|flat|1)\b/.test(q)
+        )
+          r.part = apart ? 'withCity' : 'oneLine';
+      });
+    }
 
     const state = {
       edu: { index: -1, seen: new Set(), run: new Set() },
@@ -657,6 +792,23 @@
         r.type = null;
         continue;
       }
+      // Capgemini's "Is your postgraduate degree completed or still predicted?", then "If you selected Predicted Status,
+      // which month will you complete this qualification?": that degree's month, nothing without one.
+      if (
+        r.type === 'edu.end' &&
+        /^if you (selected|chose) (predicted|expected)\b/.test(norm(questionText(descs[i])))
+      ) {
+        const k = [1, 2, 3].map((n) => i - n).find((j) => j >= 0 && results[j] && results[j].type === 'edu.completed');
+        const level = k != null ? F().eduLevelOf(norm(questionText(descs[k]))) : null;
+        if (level) {
+          const at = ((profile && profile.education) || []).findIndex((e) => F().entryLevels(e).includes(level));
+          if (at < 0) Object.assign(r, { type: null, dropped: 'edu.end' });
+          else r.index = at;
+          prev = null;
+          detached = null;
+          continue;
+        }
+      }
       const g = groupOf(r.type);
       // "Name of secondary school" or "Undergraduate GPA" is answered from the entry at that level, wherever it is.
       if (!g || (g === 'edu' && F().eduLevelOf(norm(questionText(descs[i]))))) {
@@ -692,11 +844,17 @@
       // entry; a second "School" box starts the next one.
       const sameLabel =
         norm(questionText(descs[i])) === st.leadLabel || norm(questionText(descs[i])).split(' ').length <= 3;
+      // So is a question of its own after the entries, even one the last entry hasn't had: "What year will you / did
+      // you graduate from your most recent study?" among Phenom's screening questions is your degree's, not the school
+      // entry's above them.
+      // Chicago Trading Co's "What is your expected graduation month?" after Greenhouse's education block (an
+      // unrecognised "Alternate Email" between them) asks again what the entry had: still your degree, not a new entry.
+      const ownQuestion = st.index >= 0 && key !== st.lead && norm(questionText(descs[i])).split(' ').length >= 6;
       if (
         !detached &&
-        prev !== g &&
-        st.seen.has(key) &&
-        (key !== st.lead || runLength(results, i, g) < 2 || !sameLabel)
+        ((prev !== g &&
+          ((st.seen.has(key) && (key !== st.lead || runLength(results, i, g) < 2 || !sameLabel)) || ownQuestion)) ||
+          (ownQuestion && st.seen.has(key)))
       )
         detached = g;
       if (detached === g) {
@@ -767,7 +925,7 @@
   }
 
   const DECLINE =
-    /\bdecline|prefer not|not (wish|want) to|(don t|do not|does not) wish|(don t|do not) want to|rather not|not to (say|answer|disclose|self identify|specify|provide|state|respond)|choose not|not disclose|undisclosed|wish not to/;
+    /\bdecline|prefer not|\bnot (specified|disclosed|stated|declared)\b|not (wish|want) to|(don t|do not|does not) wish|(don t|do not) want to|rather not|not to (say|answer|disclose|self identify|specify|provide|state|respond)|choose not|not disclose|undisclosed|wish not to/;
 
   /** Map an answer or option to yes / no / decline / male / female / nonbinary, if it is one. */
   function canonicalOf(text) {
@@ -818,6 +976,37 @@
     ],
   ];
 
+  // School-leaving qualifications that are not one another: Advanced Highers are never "Baccalaureat" (the French
+  // one) nor A-levels "GED"; a plain "High School Graduate" or "Secondary School" fits any of them.
+  const SCHOOL_QUALIFICATIONS = [
+    ['alevel', /\ba ?levels?\b|\bas levels?\b|\bpre ?u\b/],
+    ['highers', /\b(advanced )?highers\b/],
+    ['ib', /\bib( diploma)?\b|\binternational baccalaureate\b/],
+    ['eb', /\beuropean baccalaureate\b/],
+    ['bac', /\bbaccalaureat\b|\bbac\b/],
+    ['gcse', /\b(i ?)?gcses?\b/],
+    ['btec', /\bbtecs?\b/],
+    ['leaving', /\bleaving cert\w*/],
+    ['abitur', /\babitur\b/],
+    ['matura', /\bmatura\b/],
+    ['ged', /\bged\b/],
+  ];
+  const schoolQualifications = (n) => SCHOOL_QUALIFICATIONS.filter(([, re]) => re.test(n)).map(([q]) => q);
+
+  // What a bachelor's or master's is in: "BSc" and "Bachelor of Science", "BA" and "Bachelor of Arts".
+  const DISCIPLINES = [
+    ['science', /\b[bm] ?sc?\b|\bm ?sci\b|\bof science\b/],
+    ['arts', /\b[bm] ?a\b|\bab\b|\bof arts\b/],
+    ['fine arts', /\b[bm] ?fa\b|\bof fine arts\b/],
+    ['engineering', /\b[bm] ?eng\b|\bof engineering\b/],
+    ['business', /\b[bm] ?ba\b|\bbusiness administration\b/],
+    ['law', /\bll ?[bm]\b|\bof laws?\b/],
+    ['commerce', /\b[bm] ?com\b|\bof commerce\b/],
+    ['technology', /\b[bm] ?tech\b|\bof technology\b/],
+    ['education', /\b[bm] ?ed\b|\bof education\b/],
+  ];
+  const disciplines = (n) => DISCIPLINES.filter(([, re]) => re.test(n)).map(([d]) => d);
+
   function degreeGroup(n) {
     // A Scottish "MA (Hons)" is a first degree.
     if (/\bm ?a\b/.test(n) && /\bhons\b|\bhonours\b/.test(n) && !/\bmaster/.test(n)) return 'bachelor';
@@ -857,19 +1046,39 @@
 
   function bestText(opts, cands, v) {
     const wantDegree = v.kind === 'degree' ? degreeGroup(cands[0] || '') : null;
+    const mine = wantDegree === 'highschool' ? schoolQualifications(cands[0] || '') : [];
+    const field = wantDegree === 'bachelor' || wantDegree === 'master' ? disciplines(cands[0] || '') : [];
     const primary = U.tokens(cands[0] || '');
     const near = (v.near || []).map(norm).filter(Boolean);
     let best = null;
     for (const o of opts) {
       let score = 0;
       for (const c of cands) score = Math.max(score, textScore(o, c));
-      if (wantDegree && degreeGroup(o.n) === wantDegree) score = Math.max(score, 75 + score * 0.2);
+      const theirs = mine.length ? schoolQualifications(o.n) : [];
+      const otherQualification = theirs.length && !theirs.some((q) => mine.includes(q));
+      if (wantDegree && degreeGroup(o.n) === wantDegree && !otherQualification) {
+        score = Math.max(score, 75 + score * 0.2);
+        // BambooHR's "College - Bachelor of Science" for a BSc, never "College - Bachelor of Arts" listed first; a
+        // "Bachelor's (BA, BSc)" that names yours among others is as good.
+        const theirs = field.length ? disciplines(o.n) : [];
+        if (theirs.length) score += theirs.some((d) => field.includes(d)) ? 6 : -6;
+      }
+      // A degree of any kind ("Degree level or above", "University degree") for one you hold, below a closer match.
+      else if (
+        ['bachelor', 'master', 'doctorate'].includes(wantDegree) &&
+        !degreeGroup(o.n) &&
+        /\bdegree\b/.test(o.n) &&
+        !/\b(no|some|without|partial)\b/.test(o.n)
+      )
+        score = Math.max(score, 70);
       // "Integrated Masters Degree" for an MEng, "Masters Degree" for an MSc.
       if (wantDegree === 'master' && /\bintegrated\b/.test(o.n) !== isIntegratedMasters(cands[0] || '')) score -= 10;
       // Break ties toward the option that shares the most words with the main spelling.
       if (score > 0) score += jaccard(U.tokens(o.n), primary) * 5;
-      // "San Francisco, California" rather than "San Francisco, Cebu": the option names your state or country.
-      if (score > 0 && near.some((n) => (' ' + o.n + ' ').includes(' ' + n + ' '))) score += 8;
+      // "San Francisco, California" rather than "San Francisco, Cebu": the option names your state or country; the
+      // more telling the place it names, the better ("12 Gower Street, London…" over "…, Walsall, … United Kingdom").
+      const k = near.findIndex((n) => (' ' + o.n + ' ').includes(' ' + n + ' '));
+      if (score > 0 && k >= 0) score += 8 + (near.length - k) * 0.5;
       if (!best || score > best.score) best = { i: o.i, score };
     }
     return best;
@@ -1259,11 +1468,16 @@
    */
   function bestSubject(opts, v, cands) {
     const primary = U.tokens(cands[0] || '');
+    const spellings = cands.map((c) => U.tokens(c)).filter((t) => t.length >= 2);
     let best = null;
     let generic = null;
     for (const o of opts) {
       let score = 0;
       for (const c of cands) score = Math.max(score, textScore(o, c));
+      // Every word of a spelling, with others between: "Computer and Information Science" for Computer Science
+      // (Workday's list has no "Computer Science"), never the catch-all "Science" beside it.
+      const words = new Set(U.tokens(o.n));
+      if (spellings.some((t) => t.every((w) => words.has(w)))) score = Math.max(score, 55);
       for (const m of o.text.matchAll(/\(([^)]+)\)/g))
         if (m[1].split(/\s*[,;/&]\s*|\s+and\s+/).some((part) => cands.includes(norm(part))))
           score = Math.max(score, 75);
@@ -1276,6 +1490,38 @@
       } else if (!best || score > best.score) best = pick;
     }
     return (best || generic || { i: -1 }).i;
+  }
+
+  // Words that turn the next few around: "have not spent", "never lived".
+  const NEGATOR = /^(not|never|no|without|neither|nor)$/;
+
+  /**
+   * The statement among several that agrees with a requirement: "you must have lived in the UK for the last 5 years
+   * and not have spent more than 6 months… outside of the UK" is "I have lived in the UK for the last 5 years and have
+   * not spent more than 6 months…", never "…but have spent…" or "I have not lived…". Each word both say counts for
+   * when it is said the same way (negated or not) and against when it isn't. -1 unless one statement agrees best.
+   */
+  function agreeing(opts, requirement) {
+    if (opts.length < 3 || !opts.every((o) => o.n.split(' ').length >= 8)) return -1;
+    const polarity = (text) => {
+      const words = norm(text).split(' ');
+      const out = new Map();
+      words.forEach((w, k) => {
+        if (w.length < 4 || NEGATOR.test(w)) return;
+        const negated = words.slice(Math.max(0, k - 3), k).some((x) => NEGATOR.test(x));
+        if (!out.has(w)) out.set(w, negated);
+      });
+      return out;
+    };
+    const want = polarity(requirement);
+    const scored = opts
+      .map((o) => {
+        let s = 0;
+        for (const [w, negated] of polarity(o.text)) if (want.has(w)) s += want.get(w) === negated ? 1 : -1;
+        return { i: o.i, s };
+      })
+      .sort((a, b) => b.s - a.s);
+    return scored[0].s > scored[1].s ? scored[0].i : -1;
   }
 
   /** Every option a list value ("London, New York") picks, in the list's order. */
@@ -1331,16 +1577,18 @@
         .filter(Boolean);
     const picks = [];
     for (const item of items) {
-      const idx = matchOption(options, typeof item === 'string' ? F().val(item) : item);
+      const idx = matchOptionAs(options, typeof item === 'string' ? F().val(item) : item);
       if (idx >= 0 && !picks.includes(idx)) picks.push(idx);
     }
-    return picks;
+    // None of them listed: the value's fallback ("None" for languages the list doesn't have).
+    const none = !picks.length && v.fallback && v.fallback.length ? fallbackOption(options, v) : -1;
+    return none >= 0 ? [none] : picks;
   }
 
   /* ------------------------------------------- statements and slots, one by one */
 
   // Values whose options are each judged against your profile: sanctions statements, interview slots.
-  const JUDGED = new Set(['sanctions', 'availability']);
+  const JUDGED = new Set(['sanctions', 'availability', 'rights']);
   // "None of the above", "None of these apply to me", "Not applicable".
   const NONE_OPTION =
     /^(none|neither|n a|not applicable)\b|\bnone of (the above|these|the following|them)\b|\b(do(es)?|did) not apply\b|\bnot applicable\b/;
@@ -1402,9 +1650,27 @@
     return pick ? [pick.o.i] : [];
   }
 
+  /**
+   * The statements of a right-to-work list each about a country ("I have the right to work in the UK (post-Brexit does
+   * not apply…)", "…in Germany", "Neither…"): those about countries you have the right to work in, whatever words in
+   * brackets say; else the one that says you have none.
+   */
+  function rightsPicks(opts, v, all) {
+    const judged = opts.map((o) => ({
+      o,
+      codes: JTF.geo.countriesNamed(norm(o.text.replace(/\([^)]*\)/g, ' '))),
+      negative: /^(no|not|neither|none)\b|^i (do not|don t|am not|have no|cannot|can t)\b/.test(o.n),
+    }));
+    const yes = judged.filter((x) => x.codes.length && !x.negative && x.codes.every((c) => v.rights.includes(c)));
+    if (yes.length) return (all ? yes : yes.slice(0, 1)).map((x) => x.o.i);
+    const none = judged.find((x) => x.negative && !x.codes.length) || judged.find((x) => NONE_OPTION.test(x.o.n));
+    return none ? [none.o.i] : [];
+  }
+
   function judgedPicks(opts, v, all) {
     if (!opts.length) return [];
     if (v.kind === 'availability') return slotPicks(opts, v, all);
+    if (v.kind === 'rights') return rightsPicks(opts, v, all);
     const picks = sanctionPicks(opts, v);
     return all ? picks : picks.slice(0, 1);
   }
@@ -1429,6 +1695,27 @@
    * options: [{ text, value, disabled }]. Returns the index into `options`, or -1.
    */
   function matchOption(options, v) {
+    const i = matchOptionAs(options, v);
+    return i < 0 && v && v.fallback && v.fallback.length ? fallbackOption(options, v) : i;
+  }
+
+  /**
+   * Nothing fits: the value's own fallback ("Other" for a job site the list doesn't name, "Other (Non-Technical)" for
+   * Economics among engineering subjects, "None" for languages the list doesn't have), an option that is just that:
+   * "Other (please specify)", never one that has it among other things ("Referral- Client/Vendor/Other").
+   */
+  function fallbackOption(options, v) {
+    const asIs = v.fallback.map(norm);
+    // Numbered or lettered lists count: "6) Other (please explain)".
+    const just = (o) => norm(o.text).replace(/^(\d{1,2}|[a-h]) /, '');
+    const plain = options.map((o) => (asIs.some((f) => just(o).startsWith(f)) ? o : { text: '', value: '' }));
+    return matchOptionAs(
+      plain,
+      Object.assign({}, v, { candidates: v.fallback, fallback: null, kind: 'text', canonical: null }),
+    );
+  }
+
+  function matchOptionAs(options, v) {
     if (!v || !options || !options.length) return -1;
     // A list ("London, New York") answers a single choice with its first item that is offered.
     if (v.kind === 'list') {
@@ -1446,6 +1733,13 @@
     if (JUDGED.has(v.kind)) {
       const picks = judgedPicks(opts, v, false);
       return picks.length ? picks[0] : -1;
+    }
+
+    // One school grade: "A*" is not "A", though both read "a" once punctuation is stripped. "A* (Distinction)" is A*.
+    if (v.kind === 'grade') {
+      const want = v.text.toUpperCase();
+      const hit = opts.find((o) => (o.text.toUpperCase().match(/^([A-GU]\*{0,2}|[1-9])(?![\w*])/) || [])[1] === want);
+      return hit ? hit.i : -1;
     }
 
     // Notice periods against "< 1 Month" / "1-2 Months" / "4 weeks": compared in weeks (before spellings:
@@ -1556,6 +1850,12 @@
       if (mine.length) return mine[0].i;
     }
 
+    // A Yes to a requirement the question spells out, over statements of what you have done: the one that says it back.
+    if (v.requirement && v.canonical === 'yes') {
+      const r = agreeing(pool, v.requirement);
+      if (r >= 0) return r;
+    }
+
     if (v.canonical) {
       const hits = pool.filter((o) => canonicalOf(o.text) === v.canonical);
       if (hits.length === 1) return hits[0].i;
@@ -1569,14 +1869,7 @@
     }
 
     const best = bestText(opts, cands, v);
-    if (best && best.score >= 45) return best.i;
-    // Nothing fits: the value's own fallback ("Other" for a job site the list doesn't name).
-    if (v.fallback && v.fallback.length)
-      return matchOption(
-        options,
-        Object.assign({}, v, { candidates: v.fallback, fallback: null, kind: 'text', canonical: null }),
-      );
-    return -1;
+    return best && best.score >= 45 ? best.i : -1;
   }
 
   /* --------------------------------------------------------------- formatting */
@@ -1593,6 +1886,11 @@
    * English page on a .com stays month first, as most US-built job sites expect.
    */
   function dateOrder(desc) {
+    return pageDateOrder(desc) || 'mdy';
+  }
+
+  /** The order the page's language or site says dates go in, or null when neither says (lang="en" on a .com). */
+  function pageDateOrder(desc) {
     const lang = String(desc.lang || '').toLowerCase();
     const [code, region = ''] = lang.split(/[-_]/);
     if (region === 'us' || region === 'ph') return 'mdy';
@@ -1602,7 +1900,7 @@
     const host = String(desc.host || '').toLowerCase();
     if (/\.(de|at|ch|pl|cz|sk|fi|no|dk|ru|tr)$/.test(host)) return 'dmy.';
     if (/\.(uk|ie|eu|fr|es|it|nl|be|pt|lu|au|nz|in|hk|sg|za|ae)$|\.eu\./.test(host)) return 'dmy';
-    return 'mdy';
+    return null;
   }
 
   function formatDate(v, desc) {
@@ -1638,7 +1936,9 @@
     const calendar = v.kind === 'date' && desc.popup === 'dialog';
 
     // A question in a plain text box with no format hint ("Earliest availability to start at CRA (not binding)")
-    // reads best spelled out: "28 June 2027", which nobody takes for 6 February. Date pickers have a placeholder.
+    // reads best spelled out: "28 June 2027", which nobody takes for 6 February. Date pickers have a placeholder. So
+    // does a short one's day when the page doesn't say how it writes dates (Personio's "Available from" on a .com):
+    // "06/2027" can't be misread, "06/07/2027" can.
     const question = U.cleanLabel(s.label || s.question || s.aria || '');
     if (
       v.kind === 'date' &&
@@ -1647,7 +1947,7 @@
       !calendar &&
       !hint &&
       !DATE_PATTERN.test(label) &&
-      question.split(/\s+/).length >= 4
+      (question.split(/\s+/).length >= 4 || (d.day && !pageDateOrder(desc)))
     ) {
       const month = U.monthName(d.month).replace(/^./, (c) => c.toUpperCase());
       return d.day ? `${d.day} ${month} ${y}` : `${month} ${y}`;

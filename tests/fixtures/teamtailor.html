@@ -120,6 +120,21 @@
         <label for="candidate_phone">Phone</label>
         <input type="tel" name="candidate[phone]" id="candidate_phone" />
       </div>
+      <!-- The address: a combobox over suggestions from Teamtailor's location search (Google Places), each a
+           role="option" button; picking one looks up the place and fills the hidden inputs beside the box. Typed text
+           that wasn't picked from the list leaves them empty (the form then asks you to choose an address). -->
+      <div class="question" id="id_19823120" data-controller="forms--inputs--location">
+        <label for="candidate_location">Address<sup data-asterisk="true" aria-hidden="true">*</sup><span class="sr-only">Required</span></label>
+        <div class="relative">
+          <input name="candidate[location][query]" autocomplete="street-address" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="id_19823120-location-listbox" aria-haspopup="listbox" aria-invalid="false" value="" maxlength="200" placeholder="Start typing your address" type="text" id="candidate_location" />
+          <input name="candidate[location][place_id]" type="hidden" id="candidate_place_id" value="" />
+          <input name="candidate[location][address]" type="hidden" id="candidate_address" value="" />
+          <input name="candidate[location][city]" type="hidden" id="candidate_city" value="" />
+          <input name="candidate[location][country]" type="hidden" id="candidate_country" value="" />
+          <input name="candidate[location][zip]" type="hidden" id="candidate_zip" value="" />
+          <div class="flex flex-col suggestions" role="listbox" id="id_19823120-location-listbox" aria-hidden="true" style="display: none"></div>
+        </div>
+      </div>
       <div class="question">
         <label for="candidate_resume_remote_url">Upload CV<sup data-asterisk="true" aria-hidden="true">*</sup><span class="sr-only">Required</span></label>
         <input type="file" name="candidate[resume]" id="candidate_resume_remote_url" />
@@ -136,6 +151,76 @@
       </div>
     </form>
     <pre id="state"></pre>
+    <script>
+      // Teamtailor's forms--inputs--location controller, replayed: the search answers 300 ms after typing stops, a pick
+      // looks the place up (another 200 ms) and fills the hidden inputs.
+      (() => {
+        const PLACES = [
+          ['12 Gower Street, London, WC1E 6DP, United Kingdom', 'London', 'WC1E 6DP', 'GB'],
+          ['12 Gower Street, Walsall, WS2 9AS, United Kingdom', 'Walsall', 'WS2 9AS', 'GB'],
+          ["12 Gower St, St John's NL A1C 1N1, Canada", "St John's", 'A1C 1N1', 'CA'],
+          ['12 Gower St, London ON N6H 2E6, Canada', 'London', 'N6H 2E6', 'CA'],
+          ['12 Gower St, Toronto ON M4B 1E3, Canada', 'Toronto', 'M4B 1E3', 'CA'],
+          ['1 Market St, San Francisco, CA 94105, USA', 'San Francisco', '94105', 'US'],
+          ['1 Market St, Camden, NJ 08102, USA', 'Camden', '08102', 'US'],
+        ];
+        const words = (t) => t.toLowerCase().replace(/\bst\b/g, 'street').split(/[^a-z0-9']+/).filter(Boolean);
+        const input = document.getElementById('candidate_location');
+        const list = document.getElementById('id_19823120-location-listbox');
+        const hidden = ['place_id', 'address', 'city', 'country', 'zip'].map((k) => document.getElementById(`candidate_${k}`));
+        const open = (on) => {
+          list.style.display = on ? 'flex' : 'none';
+          list.setAttribute('aria-hidden', String(!on));
+          input.setAttribute('aria-expanded', String(on));
+        };
+        const select = (place) =>
+          setTimeout(() => {
+            [place[0], place[0], place[1], place[3], place[2]].forEach((v, i) => (hidden[i].value = i ? v : `place-${PLACES.indexOf(place)}`));
+            input.value = place[0];
+            open(false);
+          }, 200);
+        let timer = null;
+        input.addEventListener('input', () => {
+          hidden.forEach((h) => (h.value = ''));
+          clearTimeout(timer);
+          timer = setTimeout(() => {
+            // The street (its number and name) must match; the rest ranks what does.
+            const q = words(input.value);
+            const street = q.slice(0, 3);
+            const found = PLACES.filter((p) => street.every((w) => words(p[0]).includes(w)))
+              .map((p) => [p, q.filter((w) => words(p[0]).includes(w)).length])
+              .sort((a, b) => b[1] - a[1])
+              .map(([p]) => p);
+            list.innerHTML = '';
+            found.slice(0, 5).forEach((place, i) => {
+              const b = document.createElement('button');
+              Object.assign(b, { type: 'button', id: `id_19823120-location-listbox-option-${i}`, tabIndex: -1 });
+              b.setAttribute('role', 'option');
+              b.setAttribute('aria-selected', 'false');
+              b.dataset.description = place[0];
+              b.innerHTML = `<span class="whitespace-normal">${place[0]}</span>`;
+              b.addEventListener('mousedown', (e) => e.preventDefault());
+              b.addEventListener('click', () => select(place));
+              list.append(b);
+            });
+            open(found.length > 0);
+          }, 300);
+        });
+        input.addEventListener('keydown', (e) => {
+          const opts = Array.from(list.children);
+          const at = opts.findIndex((o) => o.getAttribute('aria-selected') === 'true');
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            const next = Math.max(0, Math.min(opts.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1)));
+            opts.forEach((o, i) => o.setAttribute('aria-selected', String(i === next)));
+            e.preventDefault();
+          } else if (e.key === 'Enter' && at >= 0) {
+            opts[at].click();
+            e.preventDefault();
+          } else if (e.key === 'Escape') open(false);
+        });
+        input.addEventListener('blur', () => setTimeout(() => open(false), 150));
+      })();
+    </script>
     <script>
       const UNIVERSITIES = [
         'Birmingham City University', 'Brunel University of London', 'Cardiff University',

@@ -114,6 +114,10 @@ test('Lever-style form: div labels, url fields, radio custom question, EEO', asy
   assert.equal(await value(page, 'input[name=name]'), 'Ada Lovelace');
   assert.equal(await value(page, 'input[name=email]'), 'ada@example.com');
   assert.equal(await value(page, 'input[name=org]'), 'Analytical Engines Inc');
+  // "Current location" is kept only once a suggestion is picked: the right San Francisco, not Cebu's.
+  assert.equal(await value(page, '#location-input'), 'San Francisco, CA, USA');
+  assert.match(await value(page, '#selected-location'), /"name":"San Francisco, CA, USA"/);
+  assert.equal(await page.$eval('.dropdown-container', (d) => d.style.display), 'none', 'the suggestions are closed');
   assert.equal(await value(page, 'input[name="urls[LinkedIn]"]'), 'https://www.linkedin.com/in/ada');
   assert.equal(await value(page, 'input[name="urls[GitHub]"]'), 'https://github.com/ada');
   assert.equal(await value(page, 'input[name="urls[Portfolio]"]'), 'https://ada.dev');
@@ -522,6 +526,33 @@ test('tricky page: honeypots, existing values, custom radios, checkbox lists, ra
   assert.equal(await value(page, '#dob'), '1990-12-10');
   assert.equal(await value(page, '#start'), '2026-11-02');
   assert.equal(await value(page, '#fav'), '');
+  // The help over the form is what a person reads there: no script source, no hidden error template.
+  const help = await h.bg(
+    async (id) => {
+      const [res] = await globalThis.JTF.api.scripting.executeScript({
+        target: { tabId: id },
+        func: () => globalThis.JTF.dom.collect(document).find((f) => f.el.id === 'lastname').desc.signals.sectionHelp,
+      });
+      return res.result;
+    },
+    await h.tabId(page),
+  );
+  assert.equal(help, 'Fields marked * are required.');
+  // Aluna's GPA bands, nameless checkboxes with no <label>: one question, the band of a 3.9.
+  assert.deepEqual(await page.$$eval('.gpa input', (boxes) => boxes.map((b) => b.checked)), [
+    false,
+    true,
+    false,
+    false,
+  ]);
+  // A referee's boxes and a talent-pool opt-in are left, and not reported missing from your profile.
+  assert.equal(await value(page, '#ref_name'), '');
+  assert.equal(await value(page, '#ref_email'), '');
+  assert.equal(await checked(page, '#pool'), false);
+  assert.ok(!r.missing.some((m) => /referee|opt-in/i.test(m)), JSON.stringify(r.missing));
+  // "…or write N/A if you selected another answer" after a list on Mathematics.
+  assert.equal(await selectedText(page, '#subject'), 'Mathematics');
+  assert.equal(await value(page, '#subject_other'), 'N/A');
   assert.ok(r.skipped >= 1);
   assert.ok(r.missing.includes('Twitter / X'));
 
@@ -532,6 +563,15 @@ test('tricky page: honeypots, existing values, custom radios, checkbox lists, ra
   assert.equal(await checked(page, '#auth'), false);
   assert.equal(await selectedText(page, '#country_default'), 'Canada');
   assert.equal(await value(page, '#pre'), 'Augusta');
+  await page.close();
+});
+
+test('the box for an answer the list lacks stays empty once the list is on "Other"', async () => {
+  const page = await h.open('tricky.html');
+  await typeInto(page, '#subject', 'Other');
+  await h.fill(page);
+  assert.equal(await selectedText(page, '#subject'), 'Other', 'your choice is kept');
+  assert.equal(await value(page, '#subject_other'), '', 'never "N/A" for the subject you are to name');
   await page.close();
 });
 
@@ -809,9 +849,12 @@ test('Jobvite-style uploads: file inputs parked in popups at the end of the page
   await page.close();
 });
 
-test('Gem-style form: span labels, "Click to upload" drop zones, radios without a name', async () => {
+test('Gem-style form: span labels, "Click to upload" drop zones, radios and checkboxes without a name', async () => {
+  const original = await h.profile();
+  await h.setProfile({ job: { ...original.job, clearance: 'None' } });
   const page = await h.open('gem.html');
   const r = await h.fill(page);
+  await h.setProfile({ job: original.job });
   assert.equal(r.error, undefined);
   assert.equal(await value(page, '#first'), 'Ada');
   assert.equal(await fileName(page, '#resume'), 'Ada_Lovelace_CV.pdf');
@@ -820,6 +863,9 @@ test('Gem-style form: span labels, "Click to upload" drop zones, radios without 
   assert.equal(await checked(page, '#auth-no'), false);
   assert.equal(await checked(page, '#spons-no'), true);
   assert.equal(await checked(page, '#spons-yes'), false);
+  // Nominal's clearance levels are one question: "N/A - have never held…" for someone who holds none.
+  assert.equal(await checked(page, '#clr-na'), true);
+  for (const id of ['#clr-confidential', '#clr-secret', '#clr-top']) assert.equal(await checked(page, id), false, id);
   await page.close();
 });
 
@@ -882,6 +928,47 @@ test('Oracle-style country comboboxes and nickname boxes: aliases, mouse-only an
     assert.equal(await value(page, '#preferred-name'), 'Ada Lovelace', 'legal name, never the profile nickname');
     assert.equal(await value(page, '#preferred-full'), 'Ada Lovelace');
     assert.equal(await value(page, '#legal-first'), 'Ada');
+    await page.close();
+  } finally {
+    await h.setProfile(original);
+  }
+});
+
+test('Microsoft Forms: questions read without their hidden "Single line text." notes; a M/d/yyyy date picker', async () => {
+  const original = await h.profile();
+  await h.setProfile({
+    personal: { firstName: 'Robin', lastName: 'Li', nationality: 'British' },
+    contact: { email: 'robin@example.com' },
+    address: { city: 'Glasgow', country: 'United Kingdom' },
+    job: { authorized: 'Yes', sponsorship: 'No', startDate: '2027-06-28' },
+  });
+  try {
+    const page = await h.open('msforms.html');
+    const r = await h.fill(page);
+    assert.equal(r.error, undefined);
+    const s = JSON.parse(await text(page, '#state'));
+    assert.deepEqual(s, { name: 'Robin Li', email: 'robin@example.com', rightToWork: 'Yes', start: '2027-06-28' });
+    assert.equal(await value(page, '#DatePicker0-label'), '6/28/2027');
+    const questions = await h.bg(
+      async (id) => {
+        const [res] = await globalThis.JTF.api.scripting.executeScript({
+          target: { tabId: id },
+          func: () =>
+            globalThis.JTF.dom
+              .collect(document)
+              .map((f) => [f.desc.signals.label || f.desc.signals.question, globalThis.JTF.dom.isRequired(f)]),
+        });
+        return res.result;
+      },
+      await h.tabId(page),
+    );
+    // Each is required: its title carries Microsoft Forms' "Required to answer" star.
+    assert.deepEqual(questions, [
+      ['1. Full Name', true],
+      ['2. Personal Email', true],
+      ['3. Do you currently have a right to work in the UK?', true],
+      ['4. Earliest Start Data avaliable', true],
+    ]);
     await page.close();
   } finally {
     await h.setProfile(original);

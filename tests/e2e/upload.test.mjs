@@ -30,3 +30,18 @@ test('a CV parse that wipes the form afterwards does not lose the answers', asyn
   assert.ok(summary.filled >= 5);
   await page.close();
 });
+
+test('Eploy: an "Upload CV" that opens a dialog with its own Upload File button is closed again, the form filled', async () => {
+  const page = await h.open('eploy.html');
+  const summary = await h.fill(page);
+  assert.equal(summary.error, undefined);
+  const s = JSON.parse(await page.$eval('#state', (el) => el.textContent));
+  assert.deepEqual(s, {
+    forenames: 'Ada',
+    surname: 'Lovelace',
+    email: 'ada@example.com',
+    cv: 'No file uploaded', // never sent for you: its "Upload File" button is yours to press
+    dialog: false, // and the dialog isn't left over the form
+  });
+  await page.close();
+});

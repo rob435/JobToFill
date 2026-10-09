@@ -213,10 +213,10 @@ test('single checkboxes: yes/no questions, acknowledgements, one option of a che
     'consent',
   );
   assert.equal(box({ label: 'I have read and understood the candidate privacy notice' }), 'consent');
-  // …but marketing and talent-pool opt-ins never are.
+  // …but marketing and talent-pool opt-ins never are: they are opt-ins, left for you.
   assert.equal(box({ label: 'Email me job alerts' }), null);
-  assert.equal(box({ label: 'I agree to receive marketing emails' }), null);
-  assert.equal(box({ label: 'I consent to being contacted about future opportunities' }), null);
+  assert.equal(box({ label: 'I agree to receive marketing emails' }), 'optIn');
+  assert.equal(box({ label: 'I consent to being contacted about future opportunities' }), 'optIn');
   assert.equal(box({ label: 'Join our talent community' }), null);
   assert.equal(
     box({ label: 'London', question: 'Which other locations are you interested in relocating to?' }),
@@ -421,13 +421,14 @@ test('contact and identity questions that only look like personal fields', () =>
     typeOf(desc({ question: label }, { kind: kind || 'text', options: options ? opts(...options) : null }));
   assert.equal(ask('Business phone'), null);
   assert.equal(ask('Company phone number'), null);
-  assert.equal(ask('I consent to receive SMS text messages to my phone', 'checkbox'), null);
+  assert.equal(ask('I consent to receive SMS text messages to my phone', 'checkbox'), 'optIn');
   assert.equal(ask('State'), 'address.state');
   assert.equal(ask('Please state your notice period'), 'job.noticePeriod');
   assert.equal(ask('Please state any reasonable adjustments you require', 'textarea'), null);
   assert.equal(ask('Nationality', 'select'), 'nationality');
-  assert.equal(ask('Do you hold any other citizenships?', 'select', ['Yes', 'No']), null);
-  assert.equal(ask('Dual nationality'), null);
+  // Not your nationality: whether you hold another (No with one in your profile).
+  assert.equal(ask('Do you hold any other citizenships?', 'select', ['Yes', 'No']), 'personal.dualNationality');
+  assert.equal(ask('Dual nationality'), 'personal.dualNationality');
   assert.equal(ask('Pronouns'), 'pronouns');
   assert.equal(ask('How do you pronounce your name?'), null, 'neither your pronouns nor your name');
   assert.equal(ask('Name pronunciation'), null);
@@ -537,11 +538,12 @@ test('real screening questions from graduate application forms', () => {
     ),
     null,
   );
+  // Never a subject: Yes or No, from whether yours is one of those named (Appian).
   assert.equal(
     ask(
       'Are you currently pursuing a Major in one of the following disciplines: Computer Science or Computer Engineering',
     ),
-    null,
+    'edu.majorIn',
   );
   assert.equal(
     ask('Do you have a GitHub profile? Please share the link', 'text'),
@@ -907,7 +909,7 @@ test('round 2 (Ashby / Gemini): combined uploads, acknowledgement checklists, SM
       'radio',
       ['Yes - I consent to receiving text messages', 'No - I do not consent to receiving text messages'],
     ),
-    null,
+    'optIn',
   );
   assert.equal(ask({ label: 'Interview Recording Consent' }, 'radio', ['Yes', 'No']), 'consent');
   assert.equal(
@@ -1068,7 +1070,7 @@ test('round 2 (Pinpoint DE / UK law): school-leaving grades, "please state", pro
       'DECLARATION OF CONSENT FOR INCLUSION IN THE APPLICANT DATABASE I consent to Cinven storing my data for future vacancies',
       'combobox',
     ),
-    null,
+    'optIn',
   );
   assert.equal(ask('Which firm/organisation do you currently work for?'), 'job.currentCompany');
   assert.equal(
@@ -1436,7 +1438,7 @@ test('live survey (British student in Glasgow): residence, commuting, UK visa an
   );
   assert.equal(ask('Do you hold British citizenship?'), 'citizen');
   assert.equal(ask('Do you have a British passport?'), 'citizen');
-  assert.equal(ask('Do you hold any other citizenships?'), null);
+  assert.equal(ask('Do you hold any other citizenships?'), 'personal.dualNationality');
   // The sanctions questions are not citizenship yes/no questions: they are sanctions declarations.
   assert.equal(
     ask(

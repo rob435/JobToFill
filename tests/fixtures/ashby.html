@@ -67,7 +67,13 @@
   <body>
     <h1>Senior Engineer</h1>
     <!-- Modelled on jobs.ashbyhq.com: labels point at ids that don't exist, Yes/No are toggle buttons over a
-         hidden checkbox, checkbox groups are fieldsets titled by a <label>. -->
+         hidden checkbox, checkbox groups are fieldsets titled by a <label>. The job's details sit beside the
+         Overview / Application tabs, the form in the Application tab's panel. -->
+    <div>
+    <div class="job-details"><div><h2>Location</h2><p>HQ (San Francisco, CA)</p></div><div><h2>Department</h2><p><span>Engineering</span></p></div></div>
+    <div>
+    <nav role="tablist"><a id="job-overview" role="tab" aria-selected="false" href="#">Overview</a><a id="job-application-form" role="tab" aria-selected="true" href="#">Application</a></nav>
+    <div role="tabpanel" aria-labelledby="job-application-form" id="form">
     <div id="app">
       <!-- "Autofill from resume": Ashby parses this upload and rewrites the form with what it reads. -->
       <div class="entry autofill-pane">
@@ -172,6 +178,9 @@
         <button type="button" role="checkbox" aria-checked="false" id="news"></button>
         <label for="news">Send me news about future openings</label>
       </div>
+    </div>
+    </div>
+    </div>
     </div>
     <pre id="state"></pre>
     <script>
