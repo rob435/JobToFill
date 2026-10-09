@@ -55,11 +55,13 @@ function mockAi() {
   const calls = [];
   // Set `fail.status` to answer every request with that HTTP error instead.
   const fail = { status: 0 };
+  // Set `gate.letter` to a promise to hold the cover letter's reply until it settles.
+  const gate = { letter: null };
   let drafts = 0;
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));
-    req.on('end', () => {
+    req.on('end', async () => {
       const json = JSON.parse(body || '{}');
       const system = (json.messages && json.messages[0] && json.messages[0].content) || '';
       calls.push({ path: req.url, auth: req.headers.authorization, json });
@@ -77,8 +79,10 @@ function mockAi() {
           keywords: ['reconcile trades', 'breaks', 'Python', 'data quality', 'VBA'],
           requirements: ['Python or SQL'],
         };
-      else if (/write job application cover letters/.test(system)) reply = LETTER(drafts++ === 0 ? '90,000' : '40,000');
-      else if (/strict fact-checker/.test(system)) reply = { unsupported: [] };
+      else if (/write job application cover letters/.test(system)) {
+        if (gate.letter) await gate.letter;
+        reply = LETTER(drafts++ === 0 ? '90,000' : '40,000');
+      } else if (/strict fact-checker/.test(system)) reply = { unsupported: [] };
       else if (/compare an application page/.test(system))
         reply = { same: true, confidence: 0.9, reason: 'same title' };
       else if (/tailor a candidate’s CV/.test(system)) reply = CV;
@@ -93,7 +97,7 @@ function mockAi() {
       );
     });
   });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, calls, fail })));
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, calls, fail, gate })));
 }
 
 async function cvPdf() {
@@ -309,6 +313,42 @@ test('studio: a rejected key is explained, and Try again carries on once it work
   await apply.close();
 });
 
+test('studio: the CV can be tailored while the letter is still being written, and is saved with it', async () => {
+  let release;
+  ai.gate.letter = new Promise((resolve) => (release = resolve));
+  const apply = await h.open('letters/apply.html?cv=meanwhile');
+  const studio = await h.extPage(`studio/studio.html?tab=${await h.tabId(apply)}`);
+  const call = studio.call;
+  try {
+    await until(call, () => !!document.querySelector('#previous'), null, 30000);
+    await call(() =>
+      [...document.querySelectorAll('#previous button')].find((b) => b.textContent === 'Write a new one').click(),
+    );
+    // Once the job is read, the CV card is there: no need to wait for the letter.
+    await until(call, () => !document.querySelector('#cv-card').hidden, null, 30000);
+    assert.equal(await call(() => document.querySelector('#editor').hidden), true, 'the letter is still being written');
+    await call(() => document.querySelector('#cv-make').click());
+    await until(call, () => !document.querySelector('#cv-result').hidden, null, 20000);
+    assert.equal(await call(() => document.querySelector('#editor').hidden), true, 'the CV came first');
+    assert.equal(await call(() => document.querySelector('#tab-cv').getAttribute('aria-selected')), 'true');
+    assert.equal(await call(() => document.querySelector('#stop').hidden), false, 'the letter carries on');
+
+    release();
+    await until(call, () => !document.querySelector('#editor').hidden, null, 30000);
+    assert.equal(await call(() => document.querySelector('#error').hidden), true);
+    // The letter's save took the CV made while it was written.
+    const saved = await h.bg(async () => (await globalThis.JTF.store.getLetters())[0]);
+    assert.match(saved.url, /cv=meanwhile/);
+    assert.ok(saved.cv && saved.cv.name === 'ada_lovelace_cv_acme_capital.pdf', JSON.stringify(saved.cv));
+    assert.equal(saved.useCv, false, 'uploaded only once you choose it');
+  } finally {
+    ai.gate.letter = null;
+    if (release) release();
+    await studio.close();
+    await apply.close();
+  }
+});
+
 test('job context: the job page a tab showed before is remembered, also in tabs it opens', async () => {
   const page = await h.open('letters/posting.html');
   const posting = page.url();
@@ -412,6 +452,12 @@ test('settings: Claude, OpenRouter and DeepSeek each keep their own key and mode
           saved: document.querySelector('[name=ai-key]').closest('label').querySelector('small.muted').textContent,
           backup: document.querySelector('[name=ai-backup-keys]').checked,
           fallback: document.querySelector('[name=ai-fallback]').checked,
+          fast: [document.querySelector('[name=ai-fast]')].map((f) => ({
+            shown: !f.closest('label').hidden,
+            enabled: !f.disabled,
+            checked: f.checked,
+            note: f.closest('label').nextElementSibling.textContent,
+          }))[0],
         };
       });
     assert.equal((await read()).providers[0], 'anthropic', 'Claude comes first');
@@ -429,6 +475,7 @@ test('settings: Claude, OpenRouter and DeepSeek each keep their own key and mode
     now = await read();
     assert.equal(now.typed, null, 'no box to type in for a model from the list');
     assert.match(now.note, /^The best letters and answers for the money: about 5¢ a letter\.$/);
+    assert.equal(now.fast.shown, false, 'fast mode is Claude’s own');
 
     await type('ai-provider', 'deepseek');
     await until(async () => (await read()).key === '', null, null, 5000);
@@ -440,6 +487,8 @@ test('settings: Claude, OpenRouter and DeepSeek each keep their own key and mode
     now = await read();
     assert.equal(now.choice, 'claude-sonnet-5-5');
     assert.match(now.note, /all|best/);
+    assert.deepEqual([now.fast.shown, now.fast.enabled], [true, false], 'Sonnet has no fast mode');
+    assert.match(now.fast.note, /Only Claude Opus has a fast mode/);
     await type('ai-key', 'sk-ant-e2e');
     // A model that isn't on the list: "Another model…" opens a box for its id.
     await type('ai-model-choice', '\u0000another');
@@ -447,6 +496,19 @@ test('settings: Claude, OpenRouter and DeepSeek each keep their own key and mode
     assert.equal(now.typed, '', 'the box opens empty');
     assert.match(now.note, /Any model id/);
     await type('ai-model', 'claude-opus-5');
+    now = await read();
+    assert.deepEqual([now.fast.shown, now.fast.enabled], [true, true], 'Opus 5 has one');
+    assert.match(now.fast.note, /research preview/);
+    await settings.call(() => document.querySelector('[name=ai-fast]').click());
+    await until(() => h.bg(async () => (await globalThis.JTF.store.getSettings()).ai.fast === true), null, null, 5000);
+    // Back to Sonnet: the switch shows off, but the choice is kept for Opus.
+    await type('ai-model-choice', 'claude-sonnet-5-5');
+    now = await read();
+    assert.deepEqual([now.fast.enabled, now.fast.checked], [false, false]);
+    assert.equal(await h.bg(async () => (await globalThis.JTF.store.getSettings()).ai.fast), true);
+    await type('ai-model-choice', '\u0000another');
+    await type('ai-model', 'claude-opus-5');
+    assert.deepEqual([(await read()).fast.enabled, (await read()).fast.checked], [true, true]);
     await until(async () => /Claude \(Anthropic\), OpenRouter, DeepSeek/.test((await read()).saved), null, null, 5000);
 
     await type('ai-provider', 'openrouter');
@@ -475,6 +537,7 @@ test('settings: Claude, OpenRouter and DeepSeek each keep their own key and mode
     assert.equal(state.config.fallback.provider, 'anthropic', 'Claude stands in first');
     assert.equal(state.config.fallback.model, 'claude-opus-5');
     assert.equal(state.config.fallback.apiKey, 'sk-ant-e2e');
+    assert.equal(state.config.fallback.fast, true, 'standing in, Claude Opus keeps its fast mode');
     assert.deepEqual(state.backup, {
       ...before.keys,
       anthropic: 'sk-ant-e2e',

@@ -17,7 +17,7 @@ DEEPSEEK_API_KEY=sk-… node tests/eval/run.mjs --provider deepseek --model deep
 AI_API_KEY=… node tests/eval/run.mjs --provider custom --base-url https://api.example.com/v1 --model some-model
 ```
 
-`--suite answers|letters|all`, `--split train|test|all`, `--cases N` (the first N of each suite), `--reps N` (each case N times), `--concurrency 4`, `--label name`, `--out dir`. A missing key stops it before any call. Errors in one case (a malformed reply, a rate limit) are recorded and the run goes on; Ctrl-C stops it and keeps what's done.
+`--suite answers|letters|all`, `--split train|test|all`, `--cases N` (the first N of each suite), `--reps N` (each case N times), `--concurrency 4`, `--label name`, `--out dir`, `--fast` (Claude Opus's fast mode, with `--provider anthropic --model claude-opus-5-5`: compare its time and cost with a run without it). A missing key stops it before any call. Errors in one case (a malformed reply, a rate limit) are recorded and the run goes on; Ctrl-C stops it and keeps what's done.
 
 Each run writes `tests/eval/runs/<time>-<label or model>/` (not committed): `config.json`, `cassette.jsonl` (every call: messages, options, reply, usage, time), `results.json` (every case and question, graded) and `summary.json`, then prints its scoreboard line.
 

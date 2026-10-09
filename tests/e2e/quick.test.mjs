@@ -254,6 +254,13 @@ test('quick apply: your details go in at once, a Fill meanwhile leaves the CV to
   const page = await h.open('letters/apply-full.html?job=R-1234');
   try {
     await quickStart(page);
+    // The CV is tailored while the letter is still being written, not after it.
+    await until(
+      async () => ai.calls.some((c) => /tailor a candidate’s CV/.test(c.json.messages[0].content)),
+      null,
+      null,
+      30000,
+    );
     // Before the letter is written: the details are in, the privacy notice acknowledged (whatever the setting
     // says), the job-alerts opt-in left alone, and the CV and letter fields kept free for what's coming.
     await until(page.evaluate.bind(page), () => document.querySelector('#first').value === 'Ada');

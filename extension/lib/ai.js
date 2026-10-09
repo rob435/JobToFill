@@ -35,6 +35,8 @@
         'claude-sonnet-5-5': [2, 10, 0.2],
         'claude-opus-5-5': [4, 20, 0.2],
       },
+      // Fast mode, a research preview: the same Opus writing up to 2.5× as fast, every token at twice the price.
+      fast: { models: ['claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8'], beta: 'fast-mode-2026-02-01', price: 2 },
       maxTokens: 32000,
     },
     openrouter: {
@@ -77,12 +79,14 @@
   const RETRY_DELAYS = [1500, 4000];
 
   class AIError extends Error {
-    constructor(message, { status, retry, code } = {}) {
+    constructor(message, { status, retry, code, detail } = {}) {
       super(message);
       this.name = 'AIError';
       this.status = status;
       this.retry = !!retry;
       this.code = code || null;
+      // The provider's own words ("`temperature` is not supported for this model"), for deciding what to retry.
+      this.detail = detail || '';
     }
   }
 
@@ -124,18 +128,28 @@
     return s ? s.note.charAt(0).toUpperCase() + s.note.slice(1) + '.' : '';
   }
 
+  /** Does this provider's model have a fast mode (Claude Opus 5.5 does; Sonnet and Haiku don't)? */
+  function hasFastMode(provider, model) {
+    const p = PROVIDERS[provider];
+    return !!(p && p.fast) && p.fast.models.includes(String(model || '').trim() || p.model);
+  }
+
   const apiOf = (c) => (PROVIDERS[c.provider] && PROVIDERS[c.provider].api) || 'openai';
 
-  function headers(c) {
+  function headers(c, body) {
     const key = String(c.apiKey).trim();
     // Anthropic's API answers an extension page only when it says it calls from a browser on purpose.
-    if (apiOf(c) === 'anthropic')
-      return {
+    if (apiOf(c) === 'anthropic') {
+      const h = {
         'Content-Type': 'application/json',
         'x-api-key': key,
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       };
+      // Fast mode is a beta: its header goes with the requests that ask for it, and only those.
+      if (body && body.speed) h['anthropic-beta'] = PROVIDERS[c.provider].fast.beta;
+      return h;
+    }
     const h = { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` };
     // OpenRouter's optional app attribution.
     if (/openrouter\.ai/.test(c.base))
@@ -143,16 +157,19 @@
     return h;
   }
 
-  /** What a call cost in US dollars, from the provider's price list (Claude), or undefined. */
+  /** A call's cost in US dollars from the provider's price list (Claude, fast mode at its premium), or undefined. */
   function costOf(c, u) {
-    const p = PROVIDERS[c.provider] && PROVIDERS[c.provider].prices && PROVIDERS[c.provider].prices[c.model];
+    const provider = PROVIDERS[c.provider];
+    const p = provider && provider.prices && provider.prices[c.model];
     if (!p) return undefined;
     const [input, output, read] = p;
+    const premium = u.speed === 'fast' && provider.fast ? provider.fast.price : 1;
     return (
-      ((u.input_tokens || 0) * input +
-        (u.cache_creation_input_tokens || 0) * input * 1.25 +
-        (u.cache_read_input_tokens || 0) * read +
-        (u.output_tokens || 0) * output) /
+      (premium *
+        ((u.input_tokens || 0) * input +
+          (u.cache_creation_input_tokens || 0) * input * 1.25 +
+          (u.cache_read_input_tokens || 0) * read +
+          (u.output_tokens || 0) * output)) /
       1e6
     );
   }
@@ -161,6 +178,19 @@
   const EFFORT = { none: 'low', low: 'low', medium: 'medium', high: 'high' };
   // Room for Claude's thinking on top of the reply the caller budgets for.
   const THINKING_ROOM = 4000;
+
+  /**
+   * Thinking switched off, as each Claude model spells it, for requests that ask for no reasoning (extraction,
+   * fact checks, the letter itself): thinking first only makes them slower, as on OpenRouter, where the same
+   * models get `reasoning: { enabled: false }`. Sonnet 5.5 calls it "between_tools" (there are no tools here, so
+   * it doesn't think at all); Opus 5.5, Fable and Mythos always think, so low effort is the least they do; other
+   * models take "disabled". A model that spells it another way refuses it once and is asked without it after.
+   */
+  function thinkingOff(model) {
+    if (/^claude-sonnet-5-5\b/.test(model)) return { type: 'between_tools' };
+    if (/^claude-(opus-5-5|fable|mythos)\b/.test(model)) return null;
+    return { type: 'disabled' };
+  }
 
   /**
    * How each API is spoken: where a chat goes, the request body, and the reply as { text, length (cut off by the
@@ -193,7 +223,7 @@
       path: '/messages',
       // System messages become the system prompt, cached with the start of the conversation: the answers' batches,
       // fix rounds and a letter's drafts share it. Claude sets its own sampling, so there is no temperature, and
-      // thinking is asked for as effort. JSON is what every prompt here asks for in words.
+      // thinking is asked for as effort (or switched off). JSON is what every prompt here asks for in words.
       request(c, { messages, maxTokens, reasoning, cap }) {
         const system = messages
           .filter((m) => m.role === 'system')
@@ -208,6 +238,9 @@
             .filter((m) => m.role !== 'system')
             .map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content) })),
         };
+        const off = !reasoning || reasoning === 'none' ? thinkingOff(c.model) : null;
+        if (off) body.thinking = off;
+        if (c.fast && hasFastMode(c.provider, c.model)) body.speed = 'fast';
         if (system) body.system = [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }];
         return body;
       },
@@ -229,6 +262,8 @@
             completion_tokens: u.output_tokens || 0,
             cached_tokens: read,
             cost: costOf(c, u),
+            // "fast" when fast mode wrote it; "standard" when it was asked for but the key can't use it yet.
+            ...(u.speed ? { speed: u.speed } : {}),
           },
           model: (data && data.model) || c.model,
         };
@@ -236,42 +271,28 @@
     },
   };
 
-  /** What went wrong, in words a person can act on. */
+  /** What went wrong, in words a person can act on (with the provider's own words kept as `detail`). */
   function explain(status, body, c) {
     const detail = String((body && body.error && (body.error.message || body.error)) || body || '').slice(0, 300);
+    const err = (message, o = {}) => new AIError(message, { status, detail, ...o });
     if (status === 401 || status === 403)
-      return new AIError(`${c.label} rejected the API key. Check it in Settings › Cover letters.`, {
-        status,
-        code: 'key',
-      });
+      return err(`${c.label} rejected the API key. Check it in Settings › Cover letters.`, { code: 'key' });
     // Anthropic says so in a 400: "Your credit balance is too low to access the Anthropic API."
     if (status === 402 || (status === 400 && /credit balance/i.test(detail)))
-      return new AIError(`Your ${c.label} account is out of credit. Top it up, then try again.`, {
-        status,
-        code: 'credit',
-      });
+      return err(`Your ${c.label} account is out of credit. Top it up, then try again.`, { code: 'credit' });
     // A setting the model won't take ("`temperature` is not supported for this model") isn't a missing model.
-    const setting = /temperature|top_p|response_format|reasoning|max_tokens|thinking/i.test(detail);
+    const setting = /temperature|top_p|response_format|reasoning|max_tokens|thinking|effort|speed/i.test(detail);
     if (
       status === 404 ||
       (status === 400 && !setting && /model/i.test(detail) && /not|invalid|exist|support/i.test(detail))
     )
-      return new AIError(
-        `${c.label} doesn’t offer the model “${c.model}”. Pick another one in Settings › Cover letters.`,
-        {
-          status,
-          code: 'model',
-        },
-      );
-    if (status === 429)
-      return new AIError(`${c.label} is rate-limiting requests. Try again in a minute.`, {
-        status,
-        retry: true,
-        code: 'rate',
+      return err(`${c.label} doesn’t offer the model “${c.model}”. Pick another one in Settings › Cover letters.`, {
+        code: 'model',
       });
-    if (status >= 500)
-      return new AIError(`${c.label} had a problem (${status}). Try again shortly.`, { status, retry: true });
-    return new AIError(`${c.label} returned an error (${status})${detail ? ': ' + detail : ''}`, { status });
+    if (status === 429)
+      return err(`${c.label} is rate-limiting requests. Try again in a minute.`, { retry: true, code: 'rate' });
+    if (status >= 500) return err(`${c.label} had a problem (${status}). Try again shortly.`, { retry: true });
+    return err(`${c.label} returned an error (${status})${detail ? ': ' + detail : ''}`);
   }
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -326,7 +347,7 @@
       try {
         res = await fetchImpl(`${c.base}${WIRES[apiOf(c)].path}`, {
           method: 'POST',
-          headers: headers(c),
+          headers: headers(c, body),
           body: JSON.stringify(body),
           signal: controller.signal,
           credentials: 'omit',
@@ -359,6 +380,27 @@
     }
   }
 
+  // Settings a model may refuse, each with what its 400 says ("`temperature` is not supported for this model",
+  // "thinking.type.disabled is not supported for this model", no JSON mode, no effort on Haiku 4.5, no fast mode
+  // for this key yet): it is asked again without that one. Thinking comes before effort, since its refusal names both.
+  const OPTIONAL = [
+    ['response_format', /response_format|json/i],
+    ['reasoning', /reasoning/i],
+    ['temperature', /temperature/i],
+    ['thinking', /thinking/i],
+    ['output_config', /effort|output_config/i],
+    ['speed', /speed|fast/i],
+  ];
+  // What each model refused this session, so later calls leave it out instead of paying for the same 400 again.
+  const refused = new Map();
+
+  /** The setting a 400 (or, for fast mode, a 403) says the model won't take, if the request has it. */
+  function refusedSetting(err, body) {
+    if (!(err instanceof AIError) || (err.status !== 400 && err.status !== 403)) return null;
+    const hit = OPTIONAL.find(([k, re]) => k in body && re.test(err.detail || err.message));
+    return hit && (err.status === 400 || hit[0] === 'speed') ? hit[0] : null;
+  }
+
   /** One chat completion from one provider (see chat()). */
   async function chatWith(
     config,
@@ -371,6 +413,8 @@
     const cap = (PROVIDERS[c.provider] && PROVIDERS[c.provider].maxTokens) || 16000;
     const wire = WIRES[apiOf(c)];
     const body = wire.request(c, { messages, json, temperature, maxTokens, reasoning, cap });
+    const id = `${c.base} ${c.model}`;
+    for (const k of refused.get(id) || []) delete body[k];
 
     let lastErr;
     for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
@@ -391,20 +435,16 @@
       } catch (err) {
         lastErr = err;
         if (signal && signal.aborted) throw err;
-        // Some providers don't support JSON mode; the prompt asks for JSON anyway.
-        if (err.status === 400 && body.response_format && /response_format|json/i.test(err.message)) {
-          delete body.response_format;
+        const setting = refusedSetting(err, body);
+        if (setting) {
+          delete body[setting];
+          refused.set(id, new Set(refused.get(id)).add(setting));
           attempt--;
           continue;
         }
-        if (err.status === 400 && body.reasoning && /reasoning/i.test(err.message)) {
-          delete body.reasoning;
-          attempt--;
-          continue;
-        }
-        // Newer models fix their own sampling (Claude Opus 5.5 rejects any temperature): ask again without it.
-        if (err.status === 400 && 'temperature' in body && /temperature/i.test(err.message)) {
-          delete body.temperature;
+        // Fast mode has a rate limit of its own: when it runs out, carry on at the usual speed rather than wait.
+        if (err.code === 'rate' && body.speed) {
+          delete body.speed;
           attempt--;
           continue;
         }
@@ -447,7 +487,9 @@
       temperature: 0,
     });
     if (!r.json || r.json.ok !== true) throw new AIError('The model answered, but not as expected.');
-    return { ok: true, model: r.model, ms: Date.now() - started };
+    // Whether fast mode wrote it: false when it was asked for but this key can't use it yet.
+    const fast = !r.fallback && !!config.fast && hasFastMode(config.provider, resolve(config).model);
+    return { ok: true, model: r.model, ms: Date.now() - started, ...(fast ? { fast: r.usage.speed === 'fast' } : {}) };
   }
 
   /** Model ids the provider offers (OpenRouter lists them without a key; Anthropic needs one). */
@@ -475,6 +517,7 @@
     parseJson,
     suggestions,
     describe,
+    hasFastMode,
   };
   JTF.ai = ai;
   if (typeof module === 'object' && module.exports) module.exports = ai;

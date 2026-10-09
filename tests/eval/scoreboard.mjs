@@ -24,13 +24,14 @@ export function scoreboardRows(runs, { split } = {}) {
   const rows = [];
   for (const { summary } of runs) {
     const run = summary.run || {};
+    const name = `${run.label || run.model}${run.fast && !run.label ? ' (fast)' : ''}`;
     for (const [suite, all] of Object.entries(summary.suites || {})) {
       const s = split && split !== run.split ? all.bySplit && all.bySplit[split] : all;
       if (!s) continue;
       const answers = suite === 'answers';
       const cost = s.cost || {};
       rows.push({
-        run: `${run.label || run.model}${run.replayOf ? ' (replay)' : ''}${summary.partial ? ' (partial)' : ''}`,
+        run: `${name}${run.replayOf ? ' (replay)' : ''}${summary.partial ? ' (partial)' : ''}`,
         suite,
         split: split || run.split,
         // Rows are cases × reps.
