@@ -74,6 +74,10 @@ test('Teamtailor (Alloyed): the "University:" menu gets Glasgow, never Glasgow C
   );
   assert.equal(await value(page, '#candidate_first_name'), 'Ada');
   assert.equal(await fileName(page, '#candidate_resume_remote_url'), 'Ada_Lovelace_CV.pdf');
+  // The address is picked from its suggestions (typed text alone leaves the place empty), and the list is closed.
+  assert.equal(await value(page, '#candidate_location'), '1 Market St, San Francisco, CA 94105, USA');
+  assert.equal(await value(page, '#candidate_city'), 'San Francisco');
+  assert.equal(await page.$eval('#candidate_location', (i) => i.getAttribute('aria-expanded')), 'false');
 
   // Filling again changes nothing: a menu button showing its choice has a value, not "Select an option".
   const before = await state(page);
@@ -81,6 +85,28 @@ test('Teamtailor (Alloyed): the "University:" menu gets Glasgow, never Glasgow C
   assert.equal(refill.filled, 0, JSON.stringify(refill));
   assert.deepEqual(await state(page), before);
   await page.close();
+});
+
+test('Teamtailor: the address suggestion in your city, never the same street elsewhere', async () => {
+  await h.setProfile({
+    address: {
+      line1: '12 Gower Street',
+      line2: '',
+      city: 'London',
+      state: 'Greater London',
+      postalCode: 'WC1E 6BT',
+      country: 'United Kingdom',
+    },
+  });
+  try {
+    const page = await h.open('teamtailor.html');
+    await h.fill(page);
+    assert.equal(await value(page, '#candidate_location'), '12 Gower Street, London, WC1E 6DP, United Kingdom');
+    assert.equal(await value(page, '#candidate_city'), 'London', 'not Walsall’s Gower Street');
+    await page.close();
+  } finally {
+    await h.setProfile({ address: PROFILE.address });
+  }
 });
 
 test('Teamtailor: a classification written as the GPA ("2:1") still picks the class; GPA bands never do', async () => {

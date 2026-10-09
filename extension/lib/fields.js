@@ -1926,6 +1926,21 @@
       ? val('N/A', { otherwise: true, canonical: null })
       : null;
 
+  /**
+   * An address for a suggestions list: searched as line 1 and the city (no flat number: "Apt 5" is in no suggestion),
+   * matched on line 1, and preferring options that name your city, postcode, region or country (matcher.bestText).
+   */
+  function nearHome(v, p) {
+    if (!v) return v;
+    const a = p.address;
+    v.near = [a.city, a.postalCode, a.state, a.country].filter((t) => !U.isBlank(t));
+    if (!U.isBlank(a.line1)) {
+      v.candidates = [...new Set([v.text, a.line1])];
+      v.search = [a.line1, a.city].filter((t) => !U.isBlank(t)).join(', ');
+    }
+    return v;
+  }
+
   /* -------------------------------------------------------------- definitions */
 
   const at = (path, wrap) => (p) => (wrap || val)(U.getPath(p, path));
@@ -2509,13 +2524,14 @@
               .join(', '),
           );
         }
-        return val(p.address.line1);
+        return nearHome(val(p.address.line1), p);
       },
     },
     'address.line2': simple('Address line 2', 'address.line2'),
     'address.street': {
       label: 'Street address',
-      get: (p) => val([p.address.line1, p.address.line2].filter((s) => !U.isBlank(s)).join(', ')),
+      // An address search (Teamtailor's) lists every "12 Gower Street": the one in your city, postcode or country.
+      get: (p) => nearHome(val([p.address.line1, p.address.line2].filter((s) => !U.isBlank(s)).join(', ')), p),
     },
     'address.full': {
       label: 'Full address',
@@ -2837,6 +2853,8 @@
     // where you heard about the job is no referral. A referral's name is yours to give.
     // Never ticked or chosen for you, nor counted missing, nor sent to the AI.
     optIn: { label: 'Opt-in', get: () => null, leave: true, derived: true },
+    // A referee's name, email or phone: not in your profile, and never yours.
+    referee: { label: 'Referee details', get: () => null, leave: true, derived: true },
     // A box for the answer a list above didn't have, "or write N/A if you selected another answer" (see matcher.plan).
     na: { label: 'N/A for another answer', get: () => val('N/A', { otherwise: true, canonical: null }), derived: true },
     // "Were you referred by a current Cirrus Logic employee?": from where you heard of the job.

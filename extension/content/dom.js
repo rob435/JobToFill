@@ -684,7 +684,22 @@
       el.getAttribute('aria-haspopup') === 'listbox' ||
       // Workday's search prompts ("School or University", "Country / Territory Phone Code"): a bare input whose
       // text is wiped unless a suggestion is picked.
-      el.getAttribute('data-uxi-widget-type') === 'selectinput'
+      el.getAttribute('data-uxi-widget-type') === 'selectinput' ||
+      suggestsBeside(el)
+    );
+  }
+
+  /**
+   * A box with no ARIA whose suggestions open in a dropdown beside it and whose pick goes into a hidden input there
+   * (Lever's "Current location": typed text is wiped unless a suggestion is picked).
+   */
+  function suggestsBeside(el) {
+    const parent = el.parentElement;
+    return (
+      !!parent &&
+      el.localName === 'input' &&
+      !!parent.querySelector(':scope > input[type="hidden"]') &&
+      !!parent.querySelector(':scope > [class*="dropdown" i]:not(select)')
     );
   }
 
@@ -1124,6 +1139,7 @@
     visibleText,
     deepActiveElement,
     standsFor,
+    suggestsBeside,
     dateSegments,
     shownValue,
     valueList,

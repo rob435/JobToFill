@@ -33,6 +33,12 @@
         <div class="application-label">Current company</div>
         <div class="application-field"><input type="text" name="org"></div>
       </li>
+      <!-- Lever's "Current location": no ARIA; suggestions from its location search in a dropdown beside the box. A
+           pick fills the hidden selectedLocation; leaving the box without one empties it. -->
+      <li class="application-question">
+        <div class="application-label">Current location</div>
+        <div class="application-field"><input class="location-input" data-qa="location-input" id="location-input" type="text" maxlength="100" name="location"><input id="selected-location" type="hidden" name="selectedLocation"><div class="momentum-body flex flex-column dropdown-container" style="display: none;"><div class="dropdown-results width-full cursor-pointer"></div><div class="dropdown-no-results" style="display: none;">No location found. Try entering a different location</div><div class="dropdown-loading-results" style="display: none;"><span>Loading</span></div></div></div>
+      </li>
     </ul>
     <h4>Links</h4>
     <ul>
@@ -67,5 +73,55 @@
     </ul>
     <button type="submit">Submit application</button>
   </form>
+  <script>
+    (() => {
+      const PLACES = [
+        'London, Greater London, England, GBR', 'London, ON, CAN', 'London, OH, USA', 'Glasgow, Glasgow City, Scotland, GBR',
+        'Glasgow, KY, USA', 'San Francisco, CA, USA', 'San Francisco, Cebu, PHL', 'New York, NY, USA',
+      ];
+      const input = document.getElementById('location-input');
+      const hidden = document.getElementById('selected-location');
+      const box = input.parentElement.querySelector('.dropdown-container');
+      const results = box.querySelector('.dropdown-results');
+      const loading = box.querySelector('.dropdown-loading-results');
+      const none = box.querySelector('.dropdown-no-results');
+      let timer = null;
+      input.addEventListener('input', () => {
+        hidden.value = '';
+        clearTimeout(timer);
+        if (!input.value.trim()) return (box.style.display = 'none');
+        box.style.display = 'flex';
+        loading.style.display = 'block';
+        results.innerHTML = '';
+        none.style.display = 'none';
+        // The location search answers a moment later, by the place's name (the words before the first comma).
+        timer = setTimeout(() => {
+          const city = input.value.split(',')[0].trim().toLowerCase();
+          const found = PLACES.filter((p) => p.toLowerCase().startsWith(city));
+          loading.style.display = 'none';
+          none.style.display = found.length ? 'none' : 'block';
+          found.forEach((place, i) => {
+            const row = document.createElement('div');
+            row.className = 'break-word dropdown-location width-full py1 px2';
+            row.id = `location-${i}`;
+            row.textContent = place;
+            row.addEventListener('mousedown', (e) => e.preventDefault());
+            row.addEventListener('click', () => {
+              input.value = place;
+              hidden.value = JSON.stringify({ name: place, id: String(i) });
+              box.style.display = 'none';
+            });
+            results.append(row);
+          });
+        }, 300);
+      });
+      input.addEventListener('blur', () =>
+        setTimeout(() => {
+          box.style.display = 'none';
+          if (!hidden.value || JSON.parse(hidden.value).name !== input.value) input.value = '';
+        }, 150),
+      );
+    })();
+  </script>
 </body>
 </html>

@@ -114,6 +114,10 @@ test('Lever-style form: div labels, url fields, radio custom question, EEO', asy
   assert.equal(await value(page, 'input[name=name]'), 'Ada Lovelace');
   assert.equal(await value(page, 'input[name=email]'), 'ada@example.com');
   assert.equal(await value(page, 'input[name=org]'), 'Analytical Engines Inc');
+  // "Current location" is kept only once a suggestion is picked: the right San Francisco, not Cebu's.
+  assert.equal(await value(page, '#location-input'), 'San Francisco, CA, USA');
+  assert.match(await value(page, '#selected-location'), /"name":"San Francisco, CA, USA"/);
+  assert.equal(await page.$eval('.dropdown-container', (d) => d.style.display), 'none', 'the suggestions are closed');
   assert.equal(await value(page, 'input[name="urls[LinkedIn]"]'), 'https://www.linkedin.com/in/ada');
   assert.equal(await value(page, 'input[name="urls[GitHub]"]'), 'https://github.com/ada');
   assert.equal(await value(page, 'input[name="urls[Portfolio]"]'), 'https://ada.dev');
@@ -534,6 +538,11 @@ test('tricky page: honeypots, existing values, custom radios, checkbox lists, ra
     await h.tabId(page),
   );
   assert.equal(help, 'Fields marked * are required.');
+  // A referee's boxes and a talent-pool opt-in are left, and not reported missing from your profile.
+  assert.equal(await value(page, '#ref_name'), '');
+  assert.equal(await value(page, '#ref_email'), '');
+  assert.equal(await checked(page, '#pool'), false);
+  assert.ok(!r.missing.some((m) => /referee|opt-in/i.test(m)), JSON.stringify(r.missing));
   // "…or write N/A if you selected another answer" after a list on Mathematics.
   assert.equal(await selectedText(page, '#subject'), 'Mathematics');
   assert.equal(await value(page, '#subject_other'), 'N/A');

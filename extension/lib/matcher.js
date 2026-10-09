@@ -41,6 +41,9 @@
   const SHORT_VALUE =
     /^(name\.|edu\.(school|degree|field|gpa|classification|location|country|start|end)|exp\.(company|title|location|country)|address\.|location$|email$|phone|links\.|nationality$|pronouns$|job\.(currentCompany|currentTitle|salary|yearsExperience|startDate|referralSource)$)/;
   // Types a Yes/No question never asks for ("Has a bonding company ever denied you?" is not your employer).
+  // A box about a referee: its id ("jobPostingApplication_reference_0_email") or the section it sits in ("References").
+  const REFEREE_ID = /\breferences?\b|\breferees?\b/;
+  const REFEREE_SECTION = /^(\w+ )?(references?|referees?)( (details|information|\d+))?$/;
   const NEVER_YES_NO =
     /^(name\.|edu\.(school|degree|field|gpa|classification|location|country)|exp\.(company|title|location|country)|address\.|location$|email$|phone|links\.|nationality$|pronouns$|account\.|job\.current(Company|Title)$)/;
   // "Are you related to anyone working here? If yes, list their name": a yes/no question, whatever the box.
@@ -194,6 +197,14 @@
     const byType = new Map();
     const ruledOut = new Set();
     let best = null;
+    // A referee's details (Dayforce's "References" block: "First Name", "Email" with ids "…_reference_0_email") are
+    // someone else's: recognised, and left for you (never your own, nor the AI's guess).
+    if (
+      desc.kind !== 'file' &&
+      (REFEREE_ID.test(norm([s.id, s.name].filter(Boolean).join(' '))) ||
+        [s.section, s.group].some((t) => REFEREE_SECTION.test(norm(t))))
+    )
+      return { type: 'referee', part: null, score: 1, source: 'section' };
     for (const rule of F().RULES) {
       if (!kindAllowed(rule, desc)) continue;
       // A strong signal naming something else ("cover letter" on an "Attach" button) rules this type out, unless what
@@ -1054,8 +1065,10 @@
       if (wantDegree === 'master' && /\bintegrated\b/.test(o.n) !== isIntegratedMasters(cands[0] || '')) score -= 10;
       // Break ties toward the option that shares the most words with the main spelling.
       if (score > 0) score += jaccard(U.tokens(o.n), primary) * 5;
-      // "San Francisco, California" rather than "San Francisco, Cebu": the option names your state or country.
-      if (score > 0 && near.some((n) => (' ' + o.n + ' ').includes(' ' + n + ' '))) score += 8;
+      // "San Francisco, California" rather than "San Francisco, Cebu": the option names your state or country; the
+      // more telling the place it names, the better ("12 Gower Street, London…" over "…, Walsall, … United Kingdom").
+      const k = near.findIndex((n) => (' ' + o.n + ' ').includes(' ' + n + ' '));
+      if (score > 0 && k >= 0) score += 8 + (near.length - k) * 0.5;
       if (!best || score > best.score) best = { i: o.i, score };
     }
     return best;

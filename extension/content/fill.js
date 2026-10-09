@@ -686,7 +686,7 @@
   const SEARCH_WAIT = 2500;
 
   const LISTBOX_LIKE =
-    '[role="listbox"], ul[class*="listbox" i], ul[class*="result" i], ul[class*="option" i], ul[class*="dropdown" i], ul[class*="suggest" i], ul[class*="autocomplete" i], [class*="listbox-results" i], [class*="listbox-drop" i], [class*="dropdown-menu" i], [class*="select-menu" i], [class*="cx-select" i][class*="list" i], [class*="select__menu" i]';
+    '[role="listbox"], ul[class*="listbox" i], ul[class*="result" i], ul[class*="option" i], ul[class*="dropdown" i], ul[class*="suggest" i], ul[class*="autocomplete" i], [class*="listbox-results" i], [class*="listbox-drop" i], [class*="dropdown-menu" i], [class*="dropdown-results" i], [class*="select-menu" i], [class*="cx-select" i][class*="list" i], [class*="select__menu" i]';
 
   /**
    * The row of chips a Workday prompt shows for what was picked ("Italy (+39)"), or any list of nothing but picked
@@ -776,7 +776,8 @@
       !!el.closest(
         '[role="combobox"], [class*="select" i], [class*="combobox" i], [class*="dropdown" i], [class*="listbox" i]',
       ) ||
-      !!dom().standsFor(el);
+      !!dom().standsFor(el) ||
+      dom().suggestsBeside(el);
     // A menu button's menu (BambooHR's role="menu" of role="menuitem" rows, appended to <body> when it opens).
     const selector = comboLike
       ? /^(true|menu)$/.test(el.getAttribute('aria-haspopup') || '')
@@ -991,7 +992,9 @@
     const want = JTF.util.normalize(text);
     if (!want) return true;
     const have = JTF.util.normalize(el.value);
-    if (have === want) return true;
+    // What was typed is no pick, even when it reads the same as the option (SuccessFactors' "United Kingdom" pick-list
+    // shows the typed text and still says "Country of Residence is required").
+    if (have === want && have !== JTF.util.normalize(typed || '')) return true;
     // Widgets that show a shorter form of the option ("United Kingdom" for "United Kingdom (GB)").
     if (have.length >= 3 && have !== JTF.util.normalize(typed || '') && (want.includes(have) || have.includes(want)))
       return true;
@@ -1694,9 +1697,32 @@
    * picker) is caught and cancelled, so no dialog opens. Returns { status: 'filled', confirmed } once the file is
    * in (confirmed: the tile shows its name), or { status: 'nomatch' } when no file box turned up.
    */
+  const DIALOG = '[role="dialog"], [aria-modal="true"], dialog[open]';
+  const shownDialogs = (page) => Array.from(page.querySelectorAll(DIALOG)).filter((d) => dom().isVisible(d));
+  const CLOSE_TEXT = /^(close|cancel|dismiss|x|×|✕)$/i;
+
+  /** Close dialogs a click opened: Escape, then each one's own Close button (never a submit). */
+  async function closeDialogs(page, opened) {
+    key(page.activeElement || page.body, 'Escape');
+    await sleep(200);
+    for (const d of opened) {
+      if (!d.isConnected || !dom().isVisible(d)) continue;
+      const close = Array.from(d.querySelectorAll('button, [role="button"], a')).find(
+        (b) =>
+          !b.matches('[type="submit"], input') &&
+          [b.getAttribute('aria-label'), b.getAttribute('title'), dom().textOf(b)].some((t) =>
+            CLOSE_TEXT.test((t || '').trim()),
+          ),
+      );
+      if (close) pointerClick(close);
+    }
+    await sleep(200);
+  }
+
   async function attachVia(trigger, doc, opts) {
     const page = trigger.el.ownerDocument;
     const visibleItems = new Set(Array.from(page.querySelectorAll(MENU_ITEMS)).filter((el) => dom().isVisible(el)));
+    const dialogsBefore = new Set(shownDialogs(page));
     const earlier = new Set(page.querySelectorAll('input[type="file"]'));
     let input = null;
     const catchPicker = (e) => {
@@ -1725,8 +1751,12 @@
       page.removeEventListener('click', catchPicker, true);
     }
     if (!input) {
+      // A dialog that opened instead (Eploy's "Upload CV", a page in a frame whose file only goes in with its own
+      // "Upload File" button, which is never pressed for you) is closed again: that upload is yours.
+      const opened = shownDialogs(page).filter((d) => !dialogsBefore.has(d));
+      if (opened.length) await closeDialogs(page, opened);
       // Close a menu that offered nothing usable.
-      if (Array.from(page.querySelectorAll(MENU_ITEMS)).some((el) => !visibleItems.has(el) && dom().isVisible(el)))
+      else if (Array.from(page.querySelectorAll(MENU_ITEMS)).some((el) => !visibleItems.has(el) && dom().isVisible(el)))
         key(page.activeElement || page.body, 'Escape');
       return { status: 'nomatch' };
     }
