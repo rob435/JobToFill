@@ -220,6 +220,7 @@
       let score = 0;
       let hits = 0;
       let hitText = '';
+      let hitKey = '';
       for (const s of signals) {
         if (!rule.re.test(s.text) || (rule.not && rule.not.test(s.text))) continue;
         // Only in a long question's preamble, not in what it asks: half as telling, and never a short answer.
@@ -232,6 +233,7 @@
         if (weight > score) {
           score = weight;
           hitText = s.text;
+          hitKey = s.key;
         }
       }
       if (!hits) continue;
@@ -257,7 +259,7 @@
       if ((rule.type === 'job.availability' || rule.type === 'contact.preference') && yesNoOptions(desc)) continue;
       if (rule.type === 'languages' && yesNoOptions(desc) && !F().languagesNamed(hitText).length) continue;
       score += 0.05 * (hits - 1);
-      const candidate = { type: rule.type, part: rule.part || null, score, source: 'rule', rule };
+      const candidate = { type: rule.type, part: rule.part || null, score, source: 'rule', rule, key: hitKey };
       const prev = byType.get(rule.type);
       if (!prev || score > prev.score) byType.set(rule.type, candidate);
       if (!best || score > best.score + 1e-9) best = candidate;
@@ -272,6 +274,14 @@
     if (['edu.degree', 'edu.level', 'edu.gpa'].includes(best.type) && looksLikeDegreeClasses(desc.options))
       return refine({ type: 'edu.classification', part: null, score: best.score, source: 'options' }, desc);
 
+    // A generic date whose own help says whose it is (Teamtailor's "Start Date", then "Please indicate the earliest
+    // date you would be available to start with us."): that one.
+    if (best.type.startsWith('gen.')) {
+      const own = [...byType.values()].find(
+        (c) => c.key === 'describedby' && F().DATE_TYPES.has(c.type) && !c.type.startsWith('gen.'),
+      );
+      if (own) best = { ...own, score: best.score };
+    }
     // "Name" labels a first/last pair more often than a full-name box: let specifics win.
     if (best.rule.yieldsTo) {
       for (const type of best.rule.yieldsTo) {

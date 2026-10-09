@@ -2208,6 +2208,20 @@ test('Teamtailor: "Start Date" after the graduation year and degree class is not
   ]);
 });
 
+test('Teamtailor: "Start Date" whose help asks when you could start is your start date, wherever it stands', () => {
+  const help = 'Please indicate the earliest date you would be available to start with us.';
+  const plan = matcher.plan(
+    [
+      desc('University: Required', { kind: 'combo' }),
+      desc('Expected/Achieved Degree Classification Required', { kind: 'combo' }),
+      desc({ label: 'Start Date Required', describedby: help }, { kind: 'date', inputType: 'date' }),
+      desc({ label: 'Start date', describedby: 'The date you began this course' }, { kind: 'date', inputType: 'date' }),
+    ],
+    glasgow(),
+  );
+  assert.deepEqual(types(plan), ['edu.school#0', 'edu.classification#0', 'job.startDate', 'edu.start#0']);
+});
+
 /* ------------------------------------------- live survey: a British student in Glasgow */
 
 function glaswegian() {
@@ -4247,8 +4261,14 @@ test('niche-form dry runs: opt-ins left alone, one-box addresses, "Known As", a 
   assert.equal(lone[1].type, 'name.prefix');
   const job = matcher.plan([desc('Company'), desc('Title'), desc('Start date')], p).results;
   assert.equal(job[1].type, 'exp.title');
-  // Teamtailor's "Email address without domain" is a colleague's, not yours.
+  // Teamtailor's "Email address without domain" is a colleague's, not yours, even in a type="email" box; so are a
+  // referrer's, a manager's and an emergency contact's. A second address of yours says nothing new.
   assert.notEqual(typeOf('Email address without domain', 'text'), 'email');
+  for (const q of ['Email address without domain', 'Referrer’s email', 'Manager email', 'Emergency contact email'])
+    assert.equal(typeOf(q, 'email'), null, q);
+  assert.equal(typeOf('Alternate email', 'email'), null);
+  assert.equal(typeOf('Email address', 'email'), 'email');
+  assert.equal(typeOf('E-mail (your hiring manager will contact you here)', 'email'), 'email');
   // Aurora, BBB, FDM, Isio, Capgemini, Appian, Menzies.
   const yn = ['Yes', 'No'];
   const answer = (q, kind = 'radio') => {

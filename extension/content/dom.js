@@ -255,16 +255,16 @@
     return out.replace(/\s+/g, ' ').trim();
   }
 
-  /**
-   * The text a person sees: not what CSS hides ("Select an option" once a dropdown shows its choice) or keeps for
-   * screen readers only (a 1px clipped "Select an option").
-   */
   /** Not display: none nor visibility: hidden (whatever its size). */
   function shown(node) {
     const style = node.ownerDocument.defaultView.getComputedStyle(node);
     return style.display !== 'none' && style.visibility !== 'hidden';
   }
 
+  /**
+   * The text a person sees: not what CSS hides ("Select an option" once a dropdown shows its choice) or keeps for
+   * screen readers only (a 1px clipped "Select an option").
+   */
   function visibleText(node) {
     const win = node.ownerDocument.defaultView;
     return textOf(node, (n) => {
@@ -544,16 +544,37 @@
       ? el.value
       : el.getAttribute('data-option') || el.getAttribute('data-value') || el.getAttribute('value') || '';
 
+  /** The help a control points to (aria-describedby), else the help set between its label and it. */
   function describedBy(el) {
-    return (el.getAttribute('aria-describedby') || '')
-      .split(/\s+/)
-      .filter(Boolean)
+    const ids = (el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+    if (!ids.length) return hintAfterLabel(el);
+    return ids
       .map((id) => {
         const ref = byId(el, id);
         return ref ? textOf(ref) : '';
       })
       .join(' ')
       .slice(0, 200);
+  }
+
+  /**
+   * The text between a control's own <label> and the control, pointed to by nothing: Teamtailor's "Start Date", then
+   * "Please indicate the earliest date you would be available to start with us.", then the date box. Empty when a
+   * field comes between them, or the label comes after the control (a checkbox's) or wraps it.
+   */
+  function hintAfterLabel(el) {
+    const label = el.labels && el.labels[0];
+    if (!label || label.contains(el)) return '';
+    const parts = [];
+    for (let node = el, depth = 0; node && depth < 3; node = node.parentElement, depth++) {
+      if (node !== el && node.contains(label)) return '';
+      for (let c = node.previousElementSibling; c; c = c.previousElementSibling) {
+        if (c === label || c.contains(label)) return U.cleanLabel(parts.reverse().join(' '), 200);
+        if (c.matches(CONTROL_SELECTOR) || c.querySelector(CONTROL_SELECTOR)) return '';
+        if (!SKIP_TEXT_TAGS.has(c.localName) && shown(c)) parts.push(visibleText(c));
+      }
+    }
+    return '';
   }
 
   /**
@@ -663,10 +684,15 @@
       }
       const t = found ? U.cleanLabel(textOf(found), 120) : '';
       if (t && !machineName(t)) return t;
+      if (parent.matches(SECTION_END)) break;
       node = parent;
     }
     return '';
   }
+
+  // A tab's panel or a dialog holds its own sections: what is outside is another part of the page (Ashby's job
+  // details "Location", "Employment Type", "Department" beside the Application tab).
+  const SECTION_END = '[role="tabpanel"], [role="dialog"], [role="alertdialog"], dialog';
 
   // A form's step bar or navigation, never instructions: Phenom's "My information My experience Application…".
   const STEP_BAR = 'nav, [role="navigation"], [role="toolbar"], [role="tablist"], [role="menubar"]';
@@ -707,6 +733,7 @@
       }
       const t = parts ? U.cleanLabel(parts.join(' '), 400) : '';
       if (t) return t;
+      if (parent.matches(SECTION_END)) break;
       node = parent;
     }
     return '';
@@ -1018,10 +1045,13 @@
    */
   function labelledCheckboxes(el) {
     let a = el.parentElement;
-    for (let i = 0; a && i < 4; i++, a = a.parentElement) {
-      if (a.getAttribute('role') !== 'group' && !containerLabel(a) && !questionFirst(a)) continue;
+    // Gem's sit four wrappers below their question ("If you have held a U.S. security clearance in the past, what
+    // clearance level have you held?" over "Confidential", "Secret"…); a wrapper holding other fields ends the search.
+    for (let i = 0; a && i < 6; i++, a = a.parentElement) {
       const controls = countedIn(a);
-      if (controls.length < 2 || !controls.every((c) => c.localName === 'input' && c.type === 'checkbox')) return null;
+      if (!controls.every((c) => c.localName === 'input' && c.type === 'checkbox')) return null;
+      if (a.getAttribute('role') !== 'group' && !containerLabel(a) && !questionFirst(a)) continue;
+      if (controls.length < 2) return null;
       const lengths = controls.map((c) => optionLabel(c).length);
       if (lengths.some((n) => n > 120) || lengths.filter((n) => n > 60).length * 2 >= lengths.length) return null;
       return controls.filter((m) => isUsable(m, 'checkbox'));

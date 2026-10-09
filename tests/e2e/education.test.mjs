@@ -69,8 +69,8 @@ test('Teamtailor (Alloyed): the "University:" menu gets Glasgow, never Glasgow C
   );
   assert.equal(
     await value(page, '#candidate_answers_attributes_8_date'),
-    '',
-    '"Start Date" after the graduation year is not when your degree started',
+    '2026-11-02',
+    '"Start Date" whose help asks "the earliest date you would be available to start" is your start date, not your degree’s',
   );
   assert.equal(await value(page, '#candidate_first_name'), 'Ada');
   assert.equal(await fileName(page, '#candidate_resume_remote_url'), 'Ada_Lovelace_CV.pdf');

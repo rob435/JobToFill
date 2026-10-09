@@ -3423,6 +3423,11 @@
   const OTHER_PHONE =
     /\b(alternat(e|ive)|alt|secondary|second|additional|other|another|backup|2nd) (phone|mobile|telephone|tel|cell|contact|number)\b|\bif (it is |its )?different\b|(?<!\b(mobile|cell|cellular) or )\bland ?line\b(?! or (mobile|cell))/;
 
+  // Someone else's address ("Referrer's email", "Emergency contact email", Teamtailor's "Email address without domain":
+  // a colleague's work address) or a second one of yours: never yours, even in a type="email" box.
+  const OTHERS_EMAIL =
+    /\b(referr\w*|referee|recruiter|manager|supervisor|emergency|friend|colleague|parent|guardian)\b.{0,40}\be ?mail\b|\be ?mail\b.{0,30}\bof (your |the |a )?(referr\w*|referee|recruiter|manager|supervisor|emergency contact|friend|colleague|parent|guardian)\b|\b(alternate|alternative|secondary|additional|backup|second) e ?mail\b|\bwithout (the |a |your )?domain\b/;
+
   // Order matters only for ties: put specific rules (and long questions that
   // mention other keywords, like "authorized to work in the country…") first.
   const RULES = [
@@ -4218,8 +4223,8 @@
     ),
     // Not someone else's, nor a second address of yours ("Alternate Email": the same one again says nothing).
     R('email', /e ?mail|courriel|correo|\bmail\b/, {
-      // Teamtailor's "Let's recruit together" widget: "Email address without domain" is a colleague's work address.
       not: /referr|reference|recruiter|manager|supervisor|emergency|friend|hiring|newsletter|marketing|subscribe|\b(alternate|alternative|secondary|additional|backup|second) e ?mail\b|\bwithout (the |a |your )?domain\b/,
+      notAny: OTHERS_EMAIL,
     }),
     R(
       'account.username',

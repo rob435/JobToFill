@@ -568,7 +568,7 @@ test('tricky page: honeypots, existing values, custom radios, checkbox lists, ra
 
 test('the box for an answer the list lacks stays empty once the list is on "Other"', async () => {
   const page = await h.open('tricky.html');
-  await page.selectOption('#subject', 'Other');
+  await typeInto(page, '#subject', 'Other');
   await h.fill(page);
   assert.equal(await selectedText(page, '#subject'), 'Other', 'your choice is kept');
   assert.equal(await value(page, '#subject_other'), '', 'never "N/A" for the subject you are to name');
@@ -849,9 +849,12 @@ test('Jobvite-style uploads: file inputs parked in popups at the end of the page
   await page.close();
 });
 
-test('Gem-style form: span labels, "Click to upload" drop zones, radios without a name', async () => {
+test('Gem-style form: span labels, "Click to upload" drop zones, radios and checkboxes without a name', async () => {
+  const original = await h.profile();
+  await h.setProfile({ job: { ...original.job, clearance: 'None' } });
   const page = await h.open('gem.html');
   const r = await h.fill(page);
+  await h.setProfile({ job: original.job });
   assert.equal(r.error, undefined);
   assert.equal(await value(page, '#first'), 'Ada');
   assert.equal(await fileName(page, '#resume'), 'Ada_Lovelace_CV.pdf');
@@ -860,6 +863,9 @@ test('Gem-style form: span labels, "Click to upload" drop zones, radios without 
   assert.equal(await checked(page, '#auth-no'), false);
   assert.equal(await checked(page, '#spons-no'), true);
   assert.equal(await checked(page, '#spons-yes'), false);
+  // Nominal's clearance levels are one question: "N/A - have never held…" for someone who holds none.
+  assert.equal(await checked(page, '#clr-na'), true);
+  for (const id of ['#clr-confidential', '#clr-secret', '#clr-top']) assert.equal(await checked(page, id), false, id);
   await page.close();
 });
 
