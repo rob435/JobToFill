@@ -28,11 +28,11 @@ export function keysOf(fields) {
 /**
  * What a fill leaves in a field, from lib/decide.js page(): { outcome: 'fill', text } (a value typed or an option
  * picked, an upload's document types), or 'ai' (left empty for the AI), or 'empty' (left for you, or missing from the
- * profile), with the action that decided it.
+ * profile), with the action that decided it ('withheld' when only the AI's limits keep it from the AI).
  */
 export function outcomeOf(entry) {
   if (entry.action === 'fill' || entry.action === 'upload') return { outcome: 'fill', text: entry.text || '' };
-  return { outcome: entry.ai ? 'ai' : 'empty', why: entry.action };
+  return { outcome: entry.ai ? 'ai' : 'empty', why: entry.withheld ? 'withheld' : entry.action };
 }
 
 /**
@@ -61,13 +61,29 @@ export function verdict(expect, got) {
 const VERDICTS = ['right', 'wrong', 'missed', 'routed', 'unscored'];
 
 /**
- * Score one form: `fields` as read now ({ question, kind, … } with `got` from outcomeOf), `expected` the form's
- * expected.json entries ({ key, expect }). Returns { counts, rows, lost }: a row per field read, with its verdict, and
- * the expected fields this reading didn't find (`lost`: a field a newer reading of the page names differently).
+ * The key an expected entry goes by in a reading of its form (`mode` 'live': the fields as captured on the site;
+ * 'pages': the saved page read again by the current dom.js), or null when that reading has no such field. `key` is the
+ * capture's; `pages` the page's where it differs (Pharus's "1. Full name" was "1. Full name Single line text." when
+ * captured); `pages: false` and `live: false` mark a field only the other reading has.
  */
-export function scoreForm(fields, expected) {
+export function keyIn(entry, mode) {
+  if (mode === 'pages') return entry.pages === false ? null : entry.pages || entry.key;
+  return entry.live === false ? null : entry.key;
+}
+
+/**
+ * Score one form: `fields` as read now ({ question, kind, … } with `got` from outcomeOf), `expected` the form's
+ * expected.json entries ({ key, pages, live, expect }), in a reading `mode` (keyIn). Returns { counts, rows, lost }: a
+ * row per field read, with its verdict, and the expected fields this reading didn't find (`lost`: a field a newer
+ * dom.js names differently, until its entry says how).
+ */
+export function scoreForm(fields, expected, mode = 'live') {
   const keys = keysOf(fields);
-  const byKey = new Map((expected || []).map((e) => [e.key, e]));
+  const byKey = new Map();
+  for (const e of expected || []) {
+    const key = keyIn(e, mode);
+    if (key != null) byKey.set(key, e);
+  }
   const counts = Object.fromEntries(VERDICTS.map((v) => [v, 0]));
   const rows = fields.map((f, i) => {
     const e = byKey.get(keys[i]);

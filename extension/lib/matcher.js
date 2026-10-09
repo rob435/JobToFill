@@ -44,6 +44,7 @@
   // A box about a referee: its id ("jobPostingApplication_reference_0_email") or the section it sits in ("References").
   const REFEREE_ID = /\breferences?\b|\breferees?\b/;
   const REFEREE_SECTION = /^(\w+ )?(references?|referees?)( (details|information|\d+))?$/;
+  const TEXT_KINDS = new Set(['text', 'textarea']);
   const NEVER_YES_NO =
     /^(name\.|edu\.(school|degree|field|gpa|classification|location|country)|exp\.(company|title|location|country)|address\.|location$|email$|phone|links\.|nationality$|pronouns$|account\.|job\.current(Company|Title)$)/;
   // "Are you related to anyone working here? If yes, list their name": a yes/no question, whatever the box.
@@ -52,6 +53,9 @@
     /^(are|do|does|did|have|has|had|is|was|were|will|would|can|could|should|may) (you|your|any|there|we|anyone|this|it)\b(?! (kindly |please )?(provide|tell|share|list|give|describe|explain|specify|enter|state|indicate|select|choose|upload|outline|advise|let us know|write|detail|name|identify|confirm (your|the|which|what|whether))\b)/;
   // "Do you have a GitHub? Please share the link" in a text box still wants the link.
   const LINK_TYPE = /^links\./;
+  // A link to your profile asked for in so many words: "a URL to your website or GitHub profile", "link to your portfolio".
+  const LINK_ASKED =
+    /\b(url|link) (to|of|for) (your|a|the) (\w+ ){0,3}(git ?hub|website|portfolio|profile|linked ?in)\b/;
   const YES_NO_TYPES = /^job\.(authorized|sponsorship|relocate|over18)$/;
   const EXPLAIN =
     /\b(outline|describe|explain|provide (details|information|more)|give (details|more)|tell us (about|more)|elaborate)\b/;
@@ -101,11 +105,18 @@
    * your employer.
    */
   function focusOf(raw) {
-    const sentences = raw.split(SENTENCE_END).filter((t) => t.trim());
-    if (sentences.length < 2 || raw.split(/\s+/).length < 20) return '';
+    const all = raw.split(SENTENCE_END).filter((t) => t.trim());
+    if (all.length < 2 || raw.split(/\s+/).length < 20) return '';
+    // An instruction after the question ("If your university is not listed, select other", Isio) is not what it asks.
+    const said = all.filter((t) => !INSTRUCTION.test(norm(t)));
+    const sentences = said.length ? said : all;
     const asks = sentences.filter((t) => /\?\s*$/.test(t.trim()));
     return norm(asks.length ? asks[asks.length - 1] : sentences[sentences.length - 1]);
   }
+
+  // What to do with a list, not what it asks: "If yours is not listed, select other", "Select all that apply".
+  const INSTRUCTION =
+    /^(if|where)\b.*\b(not listed|not shown|not (in|on) (the|this) list|other|n ?a|not applicable)\b|^(please )?(select|choose|tick|pick|check) (all|one|any|only one|as many)\b|^(this|the) (field|question) is (optional|required)\b/;
 
   function signalTexts(desc) {
     const out = [];
@@ -172,6 +183,18 @@
     return opts.length > 0 && opts.length <= 3 && opts.every((o) => canonicalOf(o.text));
   }
 
+  const SITE_SEARCH =
+    /^search\b.*\b(jobs?|job titles?|roles?|vacancies|openings|positions|keywords?|careers?|skills)\b/;
+  const LANGUAGE_NAME =
+    '(?:english|french|german|deutsch|spanish|espanol|italian|italiano|portuguese|dutch|nederlands|polish|swedish|norwegian|danish|finnish|chinese|japanese|korean|arabic|russian)';
+  const LANGUAGE_PICKER = new RegExp(
+    `^(?:select|choose|change|switch) (?:the |your )?(?:display |site |page )?language\\b|^${LANGUAGE_NAME} (?:uk|us|gb|united kingdom|united states|international)(?: ${LANGUAGE_NAME}(?: (?:uk|us|gb|united kingdom|united states|international))?)?$`,
+  );
+
+  // Teamtailor's "Already working at Isio? Let’s recruit together and find your next colleague." under the form: the
+  // colleagues' own sign-in ("Email address without domain").
+  const EMPLOYEE_CORNER = /^already (working|work) (at|for|with)\b/;
+
   /** Classify one control. Returns { type, part, score, source } or null. */
   function classify(desc) {
     const ac = fromAutocomplete(desc);
@@ -187,6 +210,12 @@
       return { type: 'compliance.declarations', part: null, score: 1, source: 'options' };
     // "Which university…? Please select "Other" if yours is not listed" is the question, not its follow-up box.
     const asked = String(s.question || s.label || s.aria || s.nearby || '');
+    // The site's own job search ("Search jobs, skills or qualifications" on BCG's careers page), language switcher
+    // ("English UK (English UK)" on Capgemini, "Select language, current: English") or corner for its own staff: never
+    // a question about you.
+    const said = norm(asked || s.placeholder || '');
+    if (SITE_SEARCH.test(said) || LANGUAGE_PICKER.test(said) || EMPLOYEE_CORNER.test(norm(s.section || '')))
+      return { type: 'page', part: null, score: 1, source: 'page' };
     // The question's first sentence: Isio's "…confirm which university you are currently studying… If your university
     // if not listed, select other." asks for the university; the instruction after it is no follow-up.
     const head = asked.split(/\?|\.\s/)[0];
@@ -226,8 +255,10 @@
         // Only in a long question's preamble, not in what it asks: half as telling, and never a short answer.
         const preamble = !!s.focus && !rule.re.test(s.focus);
         // A list's options settle it ("…U.S. export controls… A United States citizen or national / None…"); a box
-        // has only the words.
-        if (preamble && PREAMBLE_NEVER(rule.type) && !desc.options) continue;
+        // has only the words, unless they ask for a link to your profile (Netcraft's "…share either a URL to your
+        // website or GitHub profile…").
+        const asksLink = LINK_TYPE.test(rule.type) && LINK_ASKED.test(s.text);
+        if (preamble && PREAMBLE_NEVER(rule.type) && !desc.options && !asksLink) continue;
         const weight = preamble ? s.weight / 2 : s.weight;
         hits++;
         if (weight > score) {
@@ -244,7 +275,21 @@
       // the scale used by your local school/university?", Phenom's text questions).
       const gradeAsked =
         rule.type === 'edu.gpa' && /^(what (is|was) your|please (state|provide|enter)( your)?)\b/.test(hitText);
-      if (desc.kind === 'textarea' && SHORT_VALUE.test(rule.type) && hitText.split(' ').length > 12 && !gradeAsked)
+      // So is a link to your profile it asks for in so many words (Netcraft's "Please provide a sample of your code. You
+      // may share either a URL to your website or GitHub profile…"), not PDT's "Are you especially proud of any GitHub
+      // repositories or personal projects? We'd welcome links.", which wants the projects.
+      const linkAsked = LINK_TYPE.test(rule.type) && LINK_ASKED.test(hitText);
+      // And the place you studied (Capgemini's "Which university did you attend or are currently attending for your
+      // undergraduate degree?").
+      const nameAsked = /^(which|what) (university|school|college|institution)\b/.test(hitText);
+      if (
+        desc.kind === 'textarea' &&
+        SHORT_VALUE.test(rule.type) &&
+        hitText.split(' ').length > 12 &&
+        !gradeAsked &&
+        !linkAsked &&
+        !nameAsked
+      )
         continue;
       // "Inizio offers a full suite of services… have you interviewed with another agency? If so, provide agency
       // name" is never your name, whatever the box.
@@ -252,7 +297,9 @@
       // "…please outline your current right to work status, visa type and expiry date" wants more than "No".
       if (desc.kind === 'textarea' && YES_NO_TYPES.test(rule.type) && EXPLAIN.test(hitText)) continue;
       const linkBox = LINK_TYPE.test(rule.type) && !desc.options && LINK_KINDS.includes(desc.kind);
-      if (yesNo && NEVER_YES_NO.test(rule.type) && !linkBox) continue;
+      // Isio's "Do you have a name you would prefer to use?" in a text box wants the name, not a yes or no.
+      const nameBox = rule.type === 'name.preferred' && TEXT_KINDS.has(desc.kind) && !yesNoOptions(desc);
+      if (yesNo && NEVER_YES_NO.test(rule.type) && !linkBox && !nameBox) continue;
       // "AI policy … our tools" with Yes / No options is not a list of skills; "Are you fluent in French?" is.
       if (rule.type === 'skills' && yesNoOptions(desc)) continue;
       // "Are you available for an interview next week? Yes / No" names no slot to tick; "Is email OK?" no method.
@@ -640,16 +687,19 @@
     // (Eploy's "Job Board" → "Google for Jobs / Indeed / … / Other") is the same question.
     results.forEach((r, i) => {
       const prev = results.slice(Math.max(0, i - 2), i).findIndex((x) => x && x.type === 'job.referralSource');
-      if (prev < 0 || (r && r.type)) return;
       const q = norm(questionText(descs[i]));
+      // Carlsquare's "Additional Details (e.g., Referrer's Name/Event)" after "How did you hear…?" is that list's box
+      // for the answer it lacks, whatever its example names.
+      const details = /^(additional|more|further|other) (details|information)\b/.test(q);
+      if (prev < 0 || (r && r.type && !details)) return;
       const at = Math.max(0, i - 2) + prev;
       // Never the box for one named answer ("If you selected 'A friend or relative', please put their full name").
       const named =
         /\b(name|friend|relative|employee|referr\w*|colleague|event|which (event|university|school))\b/.test(q);
       if (
         ['text', 'textarea'].includes(descs[i].kind) &&
-        !named &&
-        (SPECIFY.test(q) || /^if (you (have )?(selected|chose|picked|ticked) )?other\b|^other\b/.test(q))
+        (!named || details) &&
+        (details || SPECIFY.test(q) || /^if (you (have )?(selected|chose|picked|ticked) )?other\b|^other\b/.test(q))
       )
         results[i] = { type: 'job.referralSource', part: 'specify', score: 1, source: 'follow-up', follows: at };
       else if (
@@ -657,6 +707,36 @@
         /^(which one|which|please (select|specify)|specify|source)$/.test(q)
       )
         results[i] = { type: 'job.referralSource', part: null, score: 1, source: 'follow-up' };
+    });
+
+    // "If Other, Please Specify" right after any other list the profile answers (CTC's "State (If N/A, Select Other)",
+    // SpaceX's "Citizenship Status" before "If (f) Other, please explain"): what the profile says, once that list is on
+    // "Other". Never after a diversity question (that "please specify" is the person's own words) or a password.
+    results.forEach((r, i) => {
+      if (i === 0 || !['text', 'textarea'].includes(descs[i].kind)) return;
+      // Microsoft Forms' "Other answer" box inside a choice question is that list's, whatever its question says.
+      const other = /^other\b/.test(norm(descs[i].signals.label || descs[i].signals.aria || ''));
+      if (r && r.type && !other) return;
+      const q = norm(questionText(descs[i]));
+      // "…or write N/A if you selected another answer" is the N/A pass's (below).
+      if (NA_UNLESS_OTHER.test(q)) return;
+      if (
+        !other &&
+        !SPECIFY.test(q) &&
+        !/^if (you (have )?(selected|chose|picked|ticked|answered) )?(\w )?other\b|^other\b/.test(q)
+      )
+        return;
+      const prev = results[i - 1];
+      if (!prev || !prev.type || prev.part || !LIST_KINDS.includes(descs[i - 1].kind)) return;
+      if (/^(eeo\.|account\.|cc\.|consent$|optIn$|referee$|page$|custom$|na$)/.test(prev.type)) return;
+      results[i] = {
+        type: prev.type,
+        index: prev.index,
+        part: 'specify',
+        score: 1,
+        source: 'follow-up',
+        follows: i - 1,
+      };
     });
 
     // Maven's "If you selected 'Other' for the above question, please specify here or write N/A if you selected another
@@ -723,6 +803,12 @@
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
       if (!r || !r.type) continue;
+      // A list's "please specify" box answers for the list: the same entry, never the next one.
+      if (r.part === 'specify' && r.follows != null) {
+        const list = results[r.follows];
+        if (list && list.type === r.type) r.index = list.index || 0;
+        continue;
+      }
       if (r.type === 'custom') {
         prev = null;
         continue;
@@ -782,6 +868,8 @@
         detached = null;
         continue;
       } else if (prev && (r.type === 'location' || r.type === 'address.city')) {
+        // A "City" box of its own takes the entry's city alone: its "Country" is asked apart.
+        if (r.type === 'address.city') r.part = 'city';
         r.type = prev + '.location';
       } else if (prev && r.type === 'address.country') {
         // "Country" in an education or job entry: the school's or employer's, from that entry's location.
@@ -820,7 +908,8 @@
       const st = state[g];
       const key = r.type + ':' + (r.part || '');
       // "When is your expected year of graduation? [2023 … 2032]" then a box asking the same thing: the box is for an
-      // answer the list didn't have, never the next entry.
+      // answer the list didn't have, never the next entry. Capgemini's "Please state your exact degree title" after its
+      // list of degrees asks for more than the list did, of the same degree.
       const before = results[i - 1];
       if (
         st.seen.has(key) &&
@@ -829,6 +918,11 @@
         LIST_KINDS.includes(descs[i - 1].kind) &&
         ['text', 'textarea'].includes(descs[i].kind)
       ) {
+        if (/\b(exact|full|complete|official)\b/.test(norm(questionText(descs[i])))) {
+          r.index = before.index || 0;
+          prev = g;
+          continue;
+        }
         r.dropped = r.type;
         r.type = null;
         continue;
@@ -916,9 +1010,10 @@
 
   // "No Selection" is SuccessFactors' empty choice (never the answer "No").
   function isPlaceholder(n) {
+    // Isio's "Please select if you are not applying for a role based in Northern Ireland" is an answer.
     return (
       !n ||
-      /^(select|choose|please (select|choose|specify)|pick (one|an option)|none selected|no selection|nothing selected|click to select)\b/.test(
+      /^(select|choose|please (select|choose|specify)|pick (one|an option)|none selected|no selection|nothing selected|click to select)\b(?! (if|this|when|only)\b)/.test(
         n,
       )
     );
@@ -1940,12 +2035,18 @@
     // does a short one's day when the page doesn't say how it writes dates (Personio's "Available from" on a .com):
     // "06/2027" can't be misread, "06/07/2027" can.
     const question = U.cleanLabel(s.label || s.question || s.aria || '');
+    // A placeholder that only repeats the question (Personio's "Available from") says nothing of the format.
+    const saysFormat =
+      DATE_PATTERN.test(hint) ||
+      /\d|yy|\bmm\b|\bdd\b|\b[md]\/[md]\b/i.test(hint) ||
+      DAY_PROMPT.test(prompt) ||
+      MONTH_PROMPT.test(prompt);
     if (
       v.kind === 'date' &&
       d.month &&
       (type === 'text' || type === 'textarea') &&
       !calendar &&
-      !hint &&
+      !saysFormat &&
       !DATE_PATTERN.test(label) &&
       (question.split(/\s+/).length >= 4 || (d.day && !pageDateOrder(desc)))
     ) {

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Dayforce-style application: two uploads sharing an id</title>
+  <style>
+    body { font: 14px system-ui; max-width: 720px; margin: 24px auto; }
+    .ant-form-item { margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <!-- Dayforce's "Import Resume" reads a CV into the form; its file box has the same id as the Resume Upload's below,
+       so the "Attachment:" label (for= that id) belongs to whichever box it sits beside. -->
+  <div test-id="resume-parse-section">
+    <h2>Import Resume</h2>
+    <p>Click Import Resume to add this information from your resume. You can also enter the information manually.</p>
+    <span class="ant-upload"><input id="jobPostingApplication_files_resume" type="file" accept="doc,docx,pdf,rtf" data-box="import"></span>
+  </div>
+  <form>
+    <div class="ant-form-item"><label for="first">First Name</label> <input id="first" type="text"></div>
+    <div class="ant-form-item"><label for="last">Last Name</label> <input id="last" type="text"></div>
+    <div test-id="resume-upload-section">
+      <h2>Resume Upload</h2>
+      <div class="ant-form-item">
+        <div class="ant-row">
+          <div class="ant-col ant-form-item-label"><label for="jobPostingApplication_files_resume" title="Attachment:">Attachment:</label></div>
+          <div class="ant-col ant-form-item-control">
+            <span class="ant-upload-wrapper"><div class="ant-upload"><span class="ant-upload"><input id="jobPostingApplication_files_resume" type="file" accept="doc,docx,pdf,rtf" data-box="resume"></span></div></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </form>
+</body>
+</html>

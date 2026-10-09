@@ -131,9 +131,13 @@
     '[data-automation-id="locations"] dd',
   ];
 
+  // "This role is based in our Birmingham office.", "The internship will be based in London, UK": the place, in capitals.
+  const BASED_IN =
+    /\b(?:role|position|job|internship|placement|vacancy|opportunity) (?:is|will be) based (?:in|at|out of|from) (?:our |the )?((?:[A-Z][\w'’-]*,?\s*){1,4})/;
+
   /**
    * Where the job is, for "Are you authorized to work in the country where this role is based?": what the extension
-   * already knew about the job in this tab, else the location line on the application page itself.
+   * already knew about the job in this tab, else the location line on the application page itself, else its own words.
    */
   function jobLocation(payload) {
     if (payload && payload.jobLocation) return payload.jobLocation;
@@ -154,6 +158,10 @@
         const where = ['addressLocality', 'addressRegion', 'addressCountry'].map(part).filter(Boolean).join(', ');
         if (where) return where;
       }
+      // The posting's own words: "This role is based in our Birmingham office." (Isio, on Teamtailor).
+      const said = ((document.body && document.body.textContent) || '').match(BASED_IN);
+      const where = said && said[1].replace(/[\s,]+$/, '');
+      if (where && JTF.geo.placesNamed(where).length) return where;
     } catch (err) {
       /* nothing to go by */
     }
@@ -875,38 +883,25 @@
       const field = fields[i];
       const r = results[i];
       if (JTF.fill.hasValue(field)) continue;
-      const question = JTF.matcher.questionText(field.desc);
       const prev = prevOf(i);
       const prevType = prev && prev.r && prev.r.type;
-      const asked = JTF.decide.forAi(field.desc, r, profile, context, prevType);
+      const on = JTF.decide.conditionOn(r, i);
+      const before = fields[on] ? JTF.decide.beforeOf(fields[on].desc, JTF.fill.currentValue(fields[on])) : null;
+      const asked = JTF.decide.forAi(field.desc, r, profile, context, prevType, before);
       if (!asked) continue;
-      const { guess } = asked;
-      let options = null;
-      let multiple = field.kind === 'checkboxes' || !!field.desc.multiple;
-      if (field.desc.options && field.kind !== 'checkbox')
-        options = field.desc.options
-          .filter((o) => !o.disabled)
-          .map((o) => U.cleanLabel(o.text, 200))
-          .filter((t) => t && !JTF.matcher.isPlaceholder(U.normalize(t)));
-      else if (peek && (field.kind === 'combo' || field.kind === 'combobox')) {
+      const item = JTF.decide.aiItem(field.desc, asked.guess);
+      if (!field.desc.options && peek && (field.kind === 'combo' || field.kind === 'combobox')) {
         const seen = await JTF.fill.peekOptions(field).catch(() => null);
         // A long list (countries, universities) is searched by typing the answer.
-        if (seen && seen.options.length && seen.options.length <= 150) options = seen.options;
-        if (seen && seen.multi) multiple = true;
+        if (seen && seen.options.length && seen.options.length <= 150) item.options = seen.options;
+        if (seen && seen.multi) item.multiple = true;
       }
       const id = String(i);
       state.pending.set(id, field);
       items.push({
         id,
-        question: U.cleanLabel(question, 600),
-        help: U.cleanLabel(field.desc.signals.describedby || '', 300),
-        kind: field.kind,
-        options: options && options.length ? options : null,
-        multiple,
-        maxLength: field.desc.maxLength || 0,
+        ...item,
         required: JTF.dom.isRequired(field),
-        section: U.cleanLabel(field.desc.signals.section || '', 120),
-        placeholder: U.cleanLabel(field.desc.placeholderRaw || '', 120),
         follows: prev
           ? {
               question: U.cleanLabel(JTF.matcher.questionText(prev.field.desc), 200),
@@ -916,7 +911,6 @@
                   : JTF.fill.currentValue(prev.field).slice(0, 200),
             }
           : null,
-        guess,
       });
     }
     return items;

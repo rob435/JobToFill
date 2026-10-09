@@ -4,14 +4,16 @@
 //   node tests/bench/run.mjs [--corpus DIR] [--pages] [--only 58-alloyed,82-eastdil] [--save run.json]
 //                            [--baseline run.json] [--draft] [--all]
 //
-// --pages reads each saved page again in Chromium with the current content/dom.js (scripts stripped, nothing loaded
-// from the network); without it the fields are those captured on the live site, so only the rules are measured.
+// --pages reads each saved page again in Chromium with the current content/dom.js (scripts stripped, the site's styles
+// from styles.css, nothing loaded from the network); without it the fields are those captured on the live site, so only
+// the rules are measured.
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SURVEY_PROFILE } from '../live/profile.mjs';
 import { compare, keysOf, outcomeOf, scoreForm, total } from './score.mjs';
+import { savedPage } from './saved.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -41,6 +43,8 @@ if (!existsSync(path.join(corpus, 'forms'))) {
 }
 
 const J = load();
+// What the AI round keeps back (answers.withheld), which the fill's own libraries don't load.
+for (const f of ['ai', 'letter', 'answers']) require(path.join(here, '../../extension/lib', f + '.js'));
 const hostOf = (url) => {
   try {
     return new URL(url).hostname;
@@ -70,18 +74,22 @@ const fromLive = (d, meta) => ({
 
 /**
  * Each field of a frame as a fill would leave it. `jobLocation`: where the job is, as the fill knows it from the
- * posting ("Are you authorized to work in the country where this role is based?").
+ * posting ("Are you authorized to work in the country where this role is based?"); `captured`: the descriptors whose
+ * options are the live capture's (cut at 120).
  */
-function decideFrame(descs, { partialLists, jobLocation }) {
+function decideFrame(descs, { captured, jobLocation }) {
   const context = { today: TODAY, jobContext: true, jobLocation: jobLocation || '' };
-  const entries = J.decide.page(descs, profile, { docs: DOCS, context });
+  // What the AI never sees (diversity questions, declarations; legal and vetting ones without answer guidance) stays
+  // empty, as the AI round leaves it.
+  const withheld = (item) => J.answers.withheld(item, '');
+  const entries = J.decide.page(descs, profile, { docs: DOCS, context, withheld });
   return descs.map((desc, i) => ({
     question: J.matcher.questionText(desc),
     kind: desc.kind,
     options: (desc.options || []).map((o) => o.text),
     type: entries[i].type,
     got: outcomeOf(entries[i]),
-    partial: partialLists && (desc.options || []).length >= CAPTURED_OPTIONS,
+    partial: captured.has(desc) && (desc.options || []).length >= CAPTURED_OPTIONS,
     unseen: MENU_KINDS.has(desc.kind) && !(desc.options || []).length,
   }));
 }
@@ -96,18 +104,18 @@ async function readPages(ids) {
     if (pages.has(url))
       return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: pages.get(url) });
     if (/^(chrome-extension|data|blob):/.test(url) || url.startsWith('http://localhost')) return route.continue();
-    return route.abort(); // nothing is fetched from the live sites: stylesheets and images stay out too
+    return route.abort(); // nothing is fetched from the live sites: the styles are the corpus's, images stay out
   });
   const out = new Map();
   for (const id of ids) {
     const file = path.join(corpus, 'forms', id, 'form.html');
     if (!existsSync(file)) continue;
-    // Scripts out: the saved page is the widgets' finished markup, and nothing of the site's may run.
-    const html = readFileSync(file, 'utf8')
-      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
-      .replace(/\son\w+="[^"]*"/gi, '');
+    // Scripts out (the saved page is the widgets' finished markup, and nothing of the site's may run), the site's
+    // styles in (styles.mjs), so what it hid stays hidden.
+    const styles = path.join(corpus, 'forms', id, 'styles.css');
+    const css = existsSync(styles) ? readFileSync(styles, 'utf8') : null;
     const url = `https://bench.test/${id}/`;
-    pages.set(url, html);
+    pages.set(url, savedPage(readFileSync(file, 'utf8'), css));
     const page = await h.newPage();
     await page.goto(url);
     const tabId = await h.tabId(page);
@@ -132,6 +140,32 @@ const ids = readdirSync(path.join(corpus, 'forms'))
   .filter((id) => !only || only.has(id))
   .sort();
 const pagesMode = flag('--pages');
+
+/** A form's fields as captured live, as content/dom.js describes them. */
+const liveDescs = (dir, meta) =>
+  JSON.parse(readFileSync(path.join(dir, 'live.json'), 'utf8')).frames.map((f) =>
+    (f.fields || []).map((d) => fromLive(d, meta)),
+  );
+
+/**
+ * A saved page's menus with the options the live capture read from them: a fill reads a menu's options when it opens
+ * it (react-select loads them only then; Greenhouse's came from its job board API), and a saved page has none.
+ * Returns the descriptors given options.
+ */
+function withCapturedMenus(frames, dir, meta) {
+  const live = liveDescs(dir, meta).flat();
+  const keyed = (descs) => keysOf(descs.map((d) => ({ question: J.matcher.questionText(d), kind: d.kind })));
+  const menus = new Map(keyed(live).map((k, i) => [k, live[i].options]));
+  const descs = frames.flat();
+  const given = new Set();
+  keyed(descs).forEach((k, i) => {
+    const d = descs[i];
+    if (!MENU_KINDS.has(d.kind) || (d.options || []).length || !(menus.get(k) || []).length) return;
+    d.options = menus.get(k).map((o) => ({ ...o }));
+    given.add(d);
+  });
+  return given;
+}
 const read = pagesMode ? await readPages(ids) : null;
 
 const forms = [];
@@ -144,22 +178,22 @@ for (const id of ids) {
     meta.jobLocation = page.jobLocation;
     if (flag('--write-meta')) writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 1) + '\n');
   }
-  const frames = pagesMode
-    ? page.frames.map((f) => decideFrame(f.descs, { partialLists: false, jobLocation: meta.jobLocation }))
-    : JSON.parse(readFileSync(path.join(dir, 'live.json'), 'utf8')).frames.map((f) =>
-        decideFrame(
-          (f.fields || []).map((d) => fromLive(d, meta)),
-          { partialLists: true, jobLocation: meta.jobLocation },
-        ),
-      );
+  const descs = pagesMode ? page.frames.map((f) => f.descs) : liveDescs(dir, meta);
+  const captured = pagesMode ? withCapturedMenus(descs, dir, meta) : new Set(descs.flat());
+  const frames = descs.map((d) => decideFrame(d, { captured, jobLocation: meta.jobLocation }));
   const fields = frames.flat();
   const expectedFile = path.join(dir, 'expected.json');
   const expected = existsSync(expectedFile) ? JSON.parse(readFileSync(expectedFile, 'utf8')).fields : [];
-  const scored = scoreForm(fields, expected);
+  const scored = scoreForm(fields, expected, pagesMode ? 'pages' : 'live');
   // A list cut short by the capture is scored only when it came out right; a menu whose options weren't captured, only
-  // on whether something goes in (not on which option it would land on).
+  // on whether something goes in (not on which option it would land on, nor whether one matches: AAB's office menu has
+  // no "London", so what the rules type there finds nothing and goes to the AI).
   scored.rows.forEach((row, i) => {
-    const unseen = fields[i].unseen && row.verdict === 'wrong' && row.got.outcome === 'fill' && row.expect.fill != null;
+    const unseen =
+      fields[i].unseen &&
+      row.verdict === 'wrong' &&
+      row.got.outcome === 'fill' &&
+      (row.expect.fill != null || row.expect.ai);
     if (!(fields[i].partial || unseen) || row.verdict === 'right' || row.verdict === 'unscored') return;
     scored.counts[row.verdict]--;
     scored.counts.unscored++;

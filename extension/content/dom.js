@@ -213,11 +213,24 @@
   }
 
   function labelsOf(el) {
+    let list;
     try {
-      return el.labels ? Array.from(el.labels) : [];
+      list = el.labels ? Array.from(el.labels) : [];
     } catch (err) {
       return [];
     }
+    // Two boxes sharing an id (Dayforce's "Import Resume" box and its "Resume Upload" box below): a <label for> names
+    // the one it sits beside, not whichever comes first in the page.
+    const root = el.id && el.getRootNode();
+    if (!root || !root.querySelectorAll || root.querySelectorAll(`[id="${CSS.escape(el.id)}"]`).length < 2) return list;
+    const named = Array.from(root.querySelectorAll(`label[for="${CSS.escape(el.id)}"]`));
+    return [...new Set([...list, ...named])].filter((l) => l.contains(el) || beside(l, el));
+  }
+
+  /** Does `a` sit beside `b`: within a few levels of a container that holds both? */
+  function beside(a, b) {
+    for (let x = a.parentElement, i = 0; x && i < 5; x = x.parentElement, i++) if (x.contains(b)) return true;
+    return false;
   }
 
   /* --------------------------------------------------------------- text */

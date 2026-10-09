@@ -61,3 +61,47 @@ test('bench: a form scored from the rules’ own decisions, and what changed sin
   const d = compare(before, { forms: [{ id: 'a', ...fixed }] });
   assert.deepEqual([d.better.length, d.worse.length], [1, 0]);
 });
+
+test('bench: an entry found by another key when the page is read again, or only in one reading', async () => {
+  const { scoreForm } = await score;
+  const fields = [
+    { question: '1. Full name', got: { outcome: 'fill', text: 'Alex Morgan' } },
+    { question: 'Attachment', got: { outcome: 'fill', text: 'file.resume' } },
+  ];
+  const expected = [
+    { key: '1. full name single line text.', pages: '1. full name', expect: { fill: 'Alex Morgan' } },
+    // Two boxes share an id: the capture labelled the import box "Attachment", the page read now its real box.
+    { key: 'attachment', pages: 'click import resume', expect: { empty: true } },
+    { key: 'alex_morgan_cv.pdf', pages: 'attachment', expect: { fill: 'file.resume' } },
+    { key: 'confidential', pages: false, expect: { empty: true } },
+    { key: 'if you have held a clearance', live: false, expect: { empty: true } },
+  ];
+  const pages = scoreForm(fields, expected, 'pages');
+  assert.deepEqual(pages.counts, { right: 2, wrong: 0, missed: 0, routed: 0, unscored: 0 });
+  assert.deepEqual(pages.lost, ['attachment', 'if you have held a clearance']);
+  const live = scoreForm(fields, expected);
+  assert.deepEqual(live.counts, { right: 0, wrong: 1, missed: 0, routed: 0, unscored: 1 });
+  assert.deepEqual(live.lost, ['1. full name single line text.', 'alex_morgan_cv.pdf', 'confidential']);
+});
+
+test('bench: what the AI never sees stays empty, as the AI round leaves it', () => {
+  const p = fields.createProfile('Test');
+  const descs = [
+    desc({ question: 'Marital status' }, { kind: 'radio', options: opts('Single', 'Married') }),
+    desc('Why us?', { kind: 'textarea' }),
+  ];
+  const withheld = (item) => (/marital/i.test(item.question) ? 'personal' : null);
+  const out = decide.page(descs, p, { withheld });
+  assert.deepEqual(
+    out.map((e) => [!!e.ai, e.withheld || null]),
+    [
+      [false, 'personal'],
+      [true, null],
+    ],
+  );
+  const item = decide.aiItem(descs[0], null);
+  assert.deepEqual(
+    [item.question, item.options, item.kind, item.multiple],
+    ['Marital status', ['Single', 'Married'], 'radio', false],
+  );
+});

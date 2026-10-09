@@ -35,7 +35,7 @@
   const EEO_INTL =
     /\b(geschlecht|ethnisch\w*|herkunft|behinderung|schwerbehindert\w*|religion|konfession|sexuelle orientierung|sexe|genre|origine (ethnique|sociale)|ethnique|handicap|orientation sexuelle|situation de handicap|genero|etnia|origen etnico|discapacidad|orientacion sexual|geslacht|etniciteit|afkomst|beperking|seksuele orientatie|genere|etnia|disabilita|orientamento sessuale|diversit[ae]t?)\b/;
   const CONSENT =
-    /^(i |by (ticking|checking|clicking|submitting|signing)|please (confirm|acknowledge|tick|check) (that )?(you (have )?(read|understand|agree|consent|accept|acknowledge))|acknowledg|agree|consent)|\b(i (hereby )?(confirm|agree|consent|acknowledge|accept|certify|declare|understand|authori[sz]e|attest)|declaration|signature|e ?signature|sign (here|below)|privacy (notice|policy|statement)|terms (and|&) conditions|terms of use|data protection|gdpr|i have read|ai (usage )?policy|true (and|&) (accurate|complete|correct)|accurate (and|&) complete)\b/;
+    /^(i |by (ticking|checking|clicking|submitting|signing)|please (confirm|acknowledge|tick|check) (that )?(you (have )?(read|understand|agree|consent|accept|acknowledge))|acknowledg|agree|consent)|\b(i (hereby )?(confirm|agree|consent|acknowledge|accept|certify|declare|understand|authori[sz]e|attest)|declaration|signature|e ?signature|sign (here|below)|privacy (notice|policy|statement)|terms (and|&) conditions|terms of use|data protection|gdpr|i have read|ai (usage )?policy|true (and|&) (accurate|complete|correct)|accurate (and|&) complete|information (that )?i (have )?(provided|given|supplied|submitted|entered) (is|are|was) (true|accurate|correct|complete)|(disclose|declare|confirm|state|tell us) (below )?(whether|if|how) (any )?(ai|artificial intelligence|generative ai|chatgpt|llms?)( tools?)? (was|were|has been|have been)? ?used)\b/;
   const IDENTITY =
     /\b(password|passport (number|no)|national insurance|social security|ssn|sin number|tax (id|number|identification)|driv(er|ing) licen[cs]e (number|no)|sort code|iban|account number|card number|cvv|date of birth|birth ?date|dob|student (id|number)|candidate (id|number)|employee (id|number)|ucas (id|number)|share code|visa number)\b/;
   // Sent only when the candidate's answer guidance has something to say: legal and regulatory history, health.
@@ -66,6 +66,8 @@
    * 'guidance' (legal and health questions, without answer guidance to go on).
    */
   function withheld(item, guidance) {
+    // Numbered as on Microsoft Forms ("18. I have uploaded my CV…"): the question is what follows the number.
+    item = Object.assign({}, item, { question: String(item.question || '').replace(/^\s*\d{1,3}\s*[.)]\s+/, '') });
     const text = norm([item.question, item.section, item.help].filter(Boolean).join(' '));
     const options = norm((item.options || []).join(' '));
     if (IDENTITY.test(norm(item.question))) return 'identity';

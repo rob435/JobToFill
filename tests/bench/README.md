@@ -7,8 +7,10 @@ not only to the fixtures it was written for.
 
 It runs exactly what ships: each field is decided by `lib/decide.js`, the code the fill itself decides with
 (`content/main.js`, `content/fill.js`), as the live survey's fictional applicant (`SURVEY_PROFILE` in
-`tests/live/profile.mjs`, with a CV and a cover letter, on 9 October 2026). Nothing is re-implemented and nothing is
-sent anywhere.
+`tests/live/profile.mjs`, with a CV and a cover letter, on 9 October 2026). What the fill leaves empty goes to the AI
+only as far as the AI round would take it: `answers.withheld` keeps diversity questions, declarations and (without
+answer guidance) legal and vetting questions back, so those count as left for the person. Nothing is re-implemented
+and nothing is sent anywhere.
 
 ## The corpus
 
@@ -16,6 +18,14 @@ The forms are the employers' pages, so they live in a private repository (`rob43
 beside this one (`../JobToFill-bench`), or point to it with `JTF_BENCH=/path` or `--corpus /path`. Its README says how
 it is laid out and how expected answers are written: `{ "fill": "…" }`, `{ "ai": true }`, `{ "empty": true }`,
 `{ "blank": true }` or `{ "skip": true }` for each field.
+
+A form whose page is read again (`--pages`) needs its stylesheets beside it, or every control the site hid with CSS (a
+widget's own `<select>` under its menu, a closed dialog) reads as a field. Save them once for a new form, as the sites
+serve them now; only the rules that apply to something on that page are kept (BCG's 59 MB come to 566 KB):
+
+```bash
+node tests/bench/styles.mjs --only 95-new-form      # writes forms/95-new-form/styles.css; --force to fetch again
+```
 
 ## Running it
 
@@ -29,9 +39,19 @@ npm run bench -- --draft                         # write each form's expected.dr
 ```
 
 Without `--pages` the fields are those `dom.js` read on the live site, widgets and all, so only the rules are measured;
-a list the capture cut at 120 options (countries) is scored only when it comes out right. `--pages` loads each saved
-page (scripts stripped, every network request refused) into the extension in headless Chromium and reads it again:
-`dom.js` changes count, but script-driven widgets are frozen as they were saved.
+a list the capture cut at 120 options (countries) is scored only when it comes out right, and a menu whose options
+weren't captured (react-select, Ant Design) only on whether something goes in. `--pages` loads each saved page
+(scripts stripped, its saved `styles.css` in place of the site's stylesheets, every network request refused) into the
+extension in headless Chromium and reads it again: `dom.js` changes count, but script-driven widgets are frozen as
+they were saved. A menu that loads its options when opened has none in a saved page, so it gets the ones the live
+capture read from it, as a fill gets them by opening it.
+
+The two readings don't always name a field alike: a newer `dom.js` reads a label the capture missed, or leaves out a
+note the capture kept ("Single line text." after each of Microsoft Forms' questions). An expected answer says so in its
+entry: `"pages": "<key>"` is its key in the page read again, `"pages": false` that reading has no such field (a
+reCAPTCHA frame isn't saved), and `"live": false` that the capture has none, or none that can be scored (a label it
+didn't read, options that lost their "A*"). "expected but not found" counts the entries a reading couldn't place: each
+is a key to update.
 
 ## What the numbers mean
 

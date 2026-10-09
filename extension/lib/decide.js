@@ -4,7 +4,7 @@
  * benchmark scores what the extension does:
  *   field(desc, r, profile, context, opts)   fill, upload, leave, skip, consent or missing, with the value
  *   picks(desc, v)                           the options a value picks in a list the page offers
- *   forAi(desc, r, profile, context, prev)   whether a field left empty goes to the AI, and the rules' guess
+ *   forAi(desc, r, profile, context, prev, before)  whether a field left empty goes to the AI, and the rules' guess
  *   page(descs, profile, opts)               every field of a page, as a fill would leave it
  */
 (function (root) {
@@ -20,7 +20,7 @@
   // declarations), secrets, uploads, and a cover letter (the letter writer does those).
   // Sanctions declarations and interview slots too: left for you when your profile can't tell.
   const NOT_FOR_AI =
-    /^(name\.|email$|phone|address\.|links\.|dob$|age$|pronouns$|account\.|otp$|human$|cc\.|file\.|consent$|optIn$|referee$|eeo\.|coverLetter$|job\.salary$|compliance\.sanctions$|job\.availability$)/;
+    /^(name\.|email$|phone|address\.|links\.|dob$|age$|pronouns$|account\.|otp$|human$|cc\.|file\.|consent$|optIn$|referee$|page$|eeo\.|coverLetter$|job\.salary$|compliance\.sanctions$|job\.availability$)/;
   // Boxes the AI never writes in.
   const NO_AI_KINDS = new Set(['file', 'password', 'email', 'tel', 'url']);
   // "If other, please specify" after a diversity or password question belongs to it.
@@ -28,6 +28,20 @@
   const PRIVATE_BEFORE = /^(eeo\.|account\.|cc\.)/;
   // A list on its catch-all: the box after it is for the answer the list lacks.
   const OTHER_CHOSEN = /\bother\b|\bnot listed\b|\bsomething else\b/;
+  // A follow-up's condition on the choice before it: "If yes, please provide the applicable deadline", "If your answer
+  // is yes to the above question…", "If no, …", "If other, please specify", "If your institution is not listed above,
+  // please specify below", "If you selected 'A friend or relative', please put their full name below".
+  const IF_YES =
+    /^if (yes|so)\b|^if (you (have )?(answered|selected|said|chose|chosen|ticked|checked)|your answer (is|was)) yes\b/;
+  const IF_NO = /^if (no|not)\b(?! (listed|shown|in the list))/;
+  // MS Forms' "Other answer" box (Pharus) is one too.
+  const IF_OTHER =
+    /^if (you (have )?(selected|chose|chosen|answered|picked|ticked) )?other\b|^if (\w+ ){0,4}(is|are|was|were) not (listed|shown|in the list)\b|^other (answer|response)$/;
+  const IF_PICKED = /^if you (have )?(selected|chose|chosen|answered|picked|ticked) ['"‘“]([^'"’”]{2,80})['"’”]/i;
+  const SAID_NO =
+    /^(no|none|n a|not applicable|never|i (do|did|have|am|was) not|i (don t|didn t|haven t|m not|wasn t))\b/;
+  // Lists, whose answer the page shows as the option picked.
+  const CHOICE_KINDS = new Set(['select', 'radio', 'checkbox', 'checkboxes', 'combo', 'combobox']);
 
   /** What a field's value is worked out from: the plan's entry and part, the question, the page's help, the options. */
   function contextOf(desc, r, context, extra) {
@@ -40,7 +54,14 @@
         kind: desc.kind,
         answer: r.answer,
         question: U.normalize(M().questionText(desc)),
+        // As written, for what normalising loses ("AAB or A*AA").
+        asked: M().questionText(desc),
         help: U.normalize(M().helpText(desc)),
+        // What the page calls the box, for what its words leave out ("/candidate/socialMediaGitHub").
+        names: [desc.signals && desc.signals.name, desc.signals && desc.signals.id]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase(),
         options: desc.options,
         // How the page writes "03/11" (interview slots).
         dateOrder: M().dateOrder(desc),
@@ -134,19 +155,46 @@
   }
 
   /**
-   * Does a field the fill left empty go to the AI? Null when not (an upload, contact details, diversity answers, what
-   * the profile leaves empty on purpose, a follow-up after a "No"), else { guess }: what the rules would have put
-   * there (a choice none of whose options matched it), or null. `prevType`: the type of the field before it.
+   * Does a follow-up's condition fail on what the list before it holds (`before`: its answer as the page shows it, ''
+   * for none, null when the field before is no list)? "If yes, please give details" after a "No" is no question for the
+   * AI. Nothing chosen says nothing.
    */
-  function forAi(desc, r, profile, context, prevType) {
+  function conditionFails(desc, r, before) {
+    const said = U.normalize(before || '');
+    if (!said) return false;
+    const asked = M().questionText(desc);
+    const q = U.normalize(asked);
+    // The plan's "Please specify" box for its list: only once the list is on "Other".
+    if (r && r.part === 'specify') return !OTHER_CHOSEN.test(said);
+    if (IF_YES.test(q)) return SAID_NO.test(said);
+    if (IF_NO.test(q)) return /^yes\b/.test(said);
+    if (IF_OTHER.test(q)) return !OTHER_CHOSEN.test(said);
+    const picked = String(asked).trim().match(IF_PICKED);
+    return !!picked && !said.includes(U.normalize(picked[3]));
+  }
+
+  /** What the list before a field holds, as conditionFails() takes it: null when the field before is no list. */
+  const beforeOf = (desc, text) => (desc && CHOICE_KINDS.has(desc.kind) ? text || '' : null);
+
+  /** The field a follow-up's condition is on: the list the plan says it follows, else the field before it. */
+  const conditionOn = (r, i) => (r && r.follows != null ? r.follows : i - 1);
+
+  /**
+   * Does a field the fill left empty go to the AI? Null when not (an upload, contact details, diversity answers, what
+   * the profile leaves empty on purpose, a follow-up whose condition the list before it rules out), else { guess }: what
+   * the rules would have put there (a choice none of whose options matched it), or null. `prevType`: the type of the
+   * field before it; `before`: what that field holds, when it is a list (beforeOf()).
+   */
+  function forAi(desc, r, profile, context, prevType, before = null) {
     if (NO_AI_KINDS.has(desc.kind)) return null;
     const q = U.normalize(M().questionText(desc));
     if (q.length < 3) return null;
+    if (before != null && conditionFails(desc, r, before)) return null;
     let guess = null;
     if (r && r.type === 'custom') guess = { type: 'custom', value: r.answer };
     else if (r && r.type && r.type !== 'na') {
       const def = F().DEFS[r.type];
-      if (NOT_FOR_AI.test(r.type) || !def || def.consent || def.secret || def.file) return null;
+      if (NOT_FOR_AI.test(r.type) || !def || def.consent || def.secret || def.file || def.leave) return null;
       const ctx = contextOf(desc, r, context);
       // A grade your profile holds is the rules' to give (or to leave, as a class in a GPA box that wants a number):
       // the AI never turns a 2:1 into a GPA. Nor does it answer a box left empty on purpose.
@@ -157,6 +205,33 @@
     }
     if (prevType && PRIVATE_BEFORE.test(prevType) && FOLLOW_ON.test(q)) return null;
     return { guess };
+  }
+
+  /**
+   * A question for the AI as the fill sends it (an item of answers.answer): its words, help, section and options, and
+   * what the rules made of it (`guess`: { type, value }, from forAi()). The fill adds the rest (id, the question
+   * before it, a menu's options once opened).
+   */
+  function aiItem(desc, guess) {
+    const s = desc.signals || {};
+    const options =
+      desc.options && desc.kind !== 'checkbox'
+        ? desc.options
+            .filter((o) => !o.disabled)
+            .map((o) => U.cleanLabel(o.text, 200))
+            .filter((t) => t && !M().isPlaceholder(U.normalize(t)))
+        : null;
+    return {
+      question: U.cleanLabel(M().questionText(desc), 600),
+      help: U.cleanLabel(s.describedby || '', 300),
+      kind: desc.kind,
+      options: options && options.length ? options : null,
+      multiple: desc.kind === 'checkboxes' || !!desc.multiple,
+      maxLength: desc.maxLength || 0,
+      section: U.cleanLabel(s.section || '', 120),
+      placeholder: U.cleanLabel(desc.placeholderRaw || '', 120),
+      guess: guess || null,
+    };
   }
 
   /**
@@ -182,9 +257,10 @@
   /**
    * Every field of a page as a fill would leave it, without the page: what the profile puts in each (and which of a
    * list's options), what is left for you or missing, and what goes to the AI. One entry per descriptor:
-   * { type, index, part, action, text, picked, ai, guess }, the action as field() says, or 'nomatch' (a list none of
-   * whose options is yours) or 'none' (nothing recognised). opts: { docs: the documents you have by type
-   * ('file.resume'…), consents, context (joined to the plan's) }.
+   * { type, index, part, action, text, picked, ai, guess, withheld }, the action as field() says, or 'nomatch' (a list
+   * none of whose options is yours) or 'none' (nothing recognised). opts: { docs: the documents you have by type
+   * ('file.resume'…), consents, context (joined to the plan's), withheld: (item) => why the AI never sees an
+   * aiItem() (answers.withheld), or null }.
    */
   function page(descs, profile, opts = {}) {
     const { results, context } = M().plan(descs, profile);
@@ -199,7 +275,11 @@
       const entry = { type: (r && r.type) || null, index: (r && r.index) || 0, part: (r && r.part) || null };
       if (!r || !r.type) entry.action = 'none';
       else {
-        const followed = r.follows != null && out[r.follows] ? out[r.follows].text || '' : null;
+        // What the list a follow-up box follows came to hold; unknown for a menu whose options weren't read (its
+        // pick is the page's to make), as for a fill before the menu is opened.
+        const list = r.follows != null ? descs[r.follows] : null;
+        const known = list && (list.options || []).length && out[r.follows];
+        const followed = known ? out[r.follows].text || '' : null;
         const d = field(desc, r, profile, ctx, { ctx: { consents: !!opts.consents }, followed });
         entry.action = d.action;
         if (d.action === 'upload') {
@@ -216,8 +296,12 @@
       // What a fill leaves empty goes to the AI, when it may.
       if (!['fill', 'upload'].includes(entry.action)) {
         const prev = i > 0 && results[i - 1] ? results[i - 1].type : null;
-        const ai = forAi(desc, r, profile, ctx, prev);
-        if (ai) {
+        const on = conditionOn(r, i);
+        const before = on >= 0 && out[on] ? beforeOf(descs[on], out[on].text) : null;
+        const ai = forAi(desc, r, profile, ctx, prev, before);
+        const why = ai && opts.withheld ? opts.withheld(aiItem(desc, ai.guess)) : null;
+        if (why) entry.withheld = why;
+        else if (ai) {
           entry.ai = true;
           if (ai.guess) entry.guess = ai.guess.value;
         }
@@ -227,7 +311,7 @@
     return out;
   }
 
-  const decide = { field, picks, forAi, carriedBy, page, contextOf, FOLLOW_UP };
+  const decide = { field, picks, forAi, aiItem, beforeOf, conditionOn, carriedBy, page, contextOf, FOLLOW_UP };
   JTF.decide = decide;
   if (typeof module === 'object' && module.exports) module.exports = decide;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
