@@ -37,9 +37,11 @@ const state = {
   letterPdf: null, // { bytes, url, overflow, pages }
   cv: null, // { result, pdf, tex }
   showing: 'letter',
-  controller: null,
+  controller: null, // the letter's run (Stop, Rewrite)
+  cvController: null, // the CV's tailoring, which can run beside the letter
   cost: 0,
   tokens: 0,
+  fast: false,
   fallback: null,
 };
 
@@ -67,16 +69,22 @@ function fileName(kind, ext = 'pdf') {
   return parts.filter(Boolean).join('_') + '.' + ext;
 }
 
-/** The AI call used by JTF.letter, with the running cost shown in the top bar. */
-async function chat(messages, options) {
-  const r = await ai.chat(state.config, { messages, ...options, signal: state.controller && state.controller.signal });
-  // OpenRouter reports the cost; DeepSeek's own API only the tokens.
+/**
+ * The AI call used by JTF.letter, with the running cost shown in the top bar. Stopped by the caller's signal (the
+ * CV's own, when it is tailored beside the letter), else by the letter's.
+ */
+async function chat(messages, options = {}) {
+  const signal = options.signal || (state.controller && state.controller.signal);
+  const r = await ai.chat(state.config, { ...options, messages, signal });
+  // OpenRouter and Claude report the cost; DeepSeek's own API only the tokens.
   if (r.usage && typeof r.usage.cost === 'number') state.cost += r.usage.cost;
   else if (r.usage && r.usage.total_tokens) state.tokens += r.usage.total_tokens;
+  if (r.usage && r.usage.speed === 'fast') state.fast = true;
   if (r.fallback) state.fallback = r.fallback;
   const parts = [];
   if (state.cost) parts.push(`AI cost so far: $${state.cost.toFixed(4)}`);
   if (state.tokens) parts.push(`${state.tokens.toLocaleString()} tokens`);
+  if (state.fast) parts.push('fast mode');
   if (state.fallback) parts.push(`${state.fallback.to} stood in: ${state.fallback.reason}`);
   $('#cost').textContent = parts.join(' · ');
   return r;
@@ -564,7 +572,18 @@ function onEdit() {
 
 /* ---------------------------------------------------------------- saving */
 
-async function saveEntry(extra) {
+let saving = Promise.resolve();
+
+/**
+ * Save the letter (and `extra`, such as the CV) for this application. One save at a time: the CV, tailored beside
+ * the letter, may finish while the letter's first save is under way, and must land in the same entry.
+ */
+function saveEntry(extra) {
+  saving = saving.catch(() => {}).then(() => writeEntry(extra));
+  return saving;
+}
+
+async function writeEntry(extra) {
   const pdf = state.letterPdf;
   const posting = state.job.posting;
   const entry = {
@@ -673,19 +692,17 @@ function cvExtra(use = $('#cv-use').checked) {
  * uploaded file. Returns { result, pdf, tex }: result is letter.tailor()'s { cv, check, before, after },
  * pdf is pdfdoc.cv()'s { bytes, pages, overflow, ... }, tex the same CV as a LaTeX file.
  */
-async function buildTailoredCv({ instructions = '' } = {}) {
+async function buildTailoredCv({ instructions = '', signal } = {}) {
   const master = state.kit.cvMaster && state.kit.cvMaster.sections && state.kit.cvMaster.sections.length;
   if (!master && !state.cvText)
     throw new Error(
       'JobToFill needs your CV to tailor it: paste it as LaTeX in Settings › Cover letters, or add the file in Settings › Resume & files.',
     );
-  const result = await L.tailor(chat, {
-    profile: state.profile,
-    kit: state.kit,
-    cvText: state.cvText,
-    analysis: state.analysis,
-    instructions,
-  });
+  const result = await L.tailor(
+    chat,
+    { profile: state.profile, kit: state.kit, cvText: state.cvText, analysis: state.analysis, instructions },
+    { signal },
+  );
   const pdf = await pdfdoc.cv(result.cv, { fonts: await fonts(), paper: state.kit.paper || 'a4', fit: true });
   return { result, pdf, tex: cvtex.render(result.cv) };
 }
@@ -727,14 +744,19 @@ function showTailoredCv({ result, pdf, tex }) {
   showPreview('cv');
 }
 
+/** "Tailor my CV": on its own controller, so it can run while the letter is still being written. */
 async function tailorCv() {
   const button = $('#cv-make');
   button.disabled = true;
   button.textContent = 'Tailoring…';
-  state.controller = new AbortController();
+  if (state.cvController) state.cvController.abort();
+  state.cvController = new AbortController();
   try {
-    showTailoredCv(await buildTailoredCv({ instructions: $('#instructions').value }));
-    if (state.entry) await saveEntry(cvExtra());
+    showTailoredCv(
+      await buildTailoredCv({ instructions: $('#instructions').value, signal: state.cvController.signal }),
+    );
+    // Not written yet? The letter's own save takes the CV with it.
+    if (state.result) await saveEntry(cvExtra());
   } catch (err) {
     if (err.name !== 'AbortError') alert(err.message);
   } finally {
@@ -937,6 +959,8 @@ async function run(from = 'job') {
       shareJob();
       // Runs alongside the writing: does the person meet the hard requirements?
       checkEligibility(signal);
+      // The CV needs only the job's analysis, so it can be tailored while the letter is written.
+      $('#cv-card').hidden = false;
     }
 
     current = 'write';
@@ -995,7 +1019,7 @@ async function run(from = 'job') {
       pdf.overflow ? 'still over one page' : `one page${pdf.fontSize < 11 ? `, ${pdf.fontSize} pt` : ''}`,
     );
     fillEditor();
-    await saveEntry();
+    await saveEntry(state.cv ? cvExtra() : undefined);
     $('#stop').hidden = true;
   } catch (err) {
     fail(err, current);
@@ -1038,8 +1062,8 @@ function useApplicationPage(tried) {
 }
 
 /**
- * Quick apply: find the job (falling back to the application page), read the CV, write and fit the letter,
- * tailor the CV, save both for this application, then have the background fill the whole form. No
+ * Quick apply: find the job (falling back to the application page), read the CV, write and fit the letter while
+ * the CV is tailored beside it, save both for this application, then have the background fill the whole form. No
  * confirmations. Keeps one temporary result for the "Last quick apply" page and closes this tab when done.
  */
 async function quickApply() {
@@ -1098,6 +1122,15 @@ async function quickApply() {
       );
     step('analyse', 'done', [state.analysis.role, state.analysis.company].filter(Boolean).join(' at '));
 
+    // The CV needs only the analysis: it is tailored while the letter is written, not after it. Its outcome is
+    // kept (never thrown) until the letter is done; a letter that fails stops it (see the catch below).
+    state.cv = null;
+    step('tailor', 'active');
+    const tailoring = buildTailoredCv({ signal }).then(
+      (built) => ({ built }),
+      (err) => ({ err }),
+    );
+
     current = 'write';
     await phase('write', 'writing the letter…');
     const input = {
@@ -1128,17 +1161,16 @@ async function quickApply() {
 
     current = 'tailor';
     let cvNote = '';
-    state.cv = null;
-    await phase('tailor', 'tailoring your CV…');
-    try {
-      const built = await buildTailoredCv();
+    await quickStatus('tailoring your CV…');
+    const { built, err: cvErr } = await tailoring;
+    if (built) {
       state.cv = { ...built };
       step('tailor', 'done', `${built.result.cv.changes.length} changes`);
-    } catch (err) {
-      if (err.name === 'AbortError') throw err;
-      cvNote = /needs your CV/.test(err.message)
+    } else {
+      if (cvErr.name === 'AbortError') throw cvErr;
+      cvNote = /needs your CV/.test(cvErr.message)
         ? 'No CV to tailor (add one in Settings).'
-        : `CV not tailored: ${err.message}`;
+        : `CV not tailored: ${cvErr.message}`;
       step('tailor', 'warn', cvNote);
     }
 
@@ -1189,6 +1221,8 @@ async function quickApply() {
     if (me) await api.tabs.remove(me.id);
   } catch (err) {
     if (err && err.name === 'AbortError') return;
+    // Nothing more to pay for: stop the CV if it is still being tailored beside a letter that failed.
+    state.controller.abort();
     const message = String((err && err.message) || err);
     await quickStatus(message, 'error');
     // Say so on the application page too, since the person isn't looking at this tab, and put in the usual
@@ -1226,6 +1260,8 @@ async function boot() {
   state.settings = settings;
   state.kit = await store.getKit(profile.id);
   state.config = await store.aiConfig();
+  // The PDF fonts load while the job is found and the letter written, not after (a failure shows at layout).
+  fonts().catch(() => {});
   $('#profile-name').textContent = profile.name;
   if (quick) studioTabId = ((await api.tabs.getCurrent()) || {}).id ?? null;
 

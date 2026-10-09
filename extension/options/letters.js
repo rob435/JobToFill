@@ -57,6 +57,12 @@ async function aiGroup() {
     cfg.backupKeys !== false,
     'Keep my API keys in the backup file, so they come back if JobToFill is reinstalled',
   );
+  const [fast, fastRow] = checkbox(
+    'ai-fast',
+    cfg.fast === true,
+    'Fast mode: Claude Opus writes up to 2.5× as fast, at twice the price (about 20¢ a letter)',
+  );
+  const fastNote = el('small', { className: 'muted' });
 
   const showSaved = () => {
     // In the order the provider list shows them.
@@ -69,10 +75,20 @@ async function aiGroup() {
   const picker = modelPicker({
     name: 'ai-model',
     list: (id) => ai.models({ provider: id, baseUrl: base.value.trim(), apiKey: key.value.trim() }),
-    onChange: () => saveSettings(),
+    onChange: () => (syncFast(), saveSettings()),
   });
   picker.set(cfg.provider, modelOf(cfg.provider));
   const current = () => ({ provider: provider.value, model: picker.value, baseUrl: base.value.trim() });
+  // Fast mode is Claude's, and only Opus has it: the switch says so for any other model.
+  const syncFast = () => {
+    const claude = provider.value === 'anthropic';
+    const able = ai.hasFastMode(provider.value, picker.value);
+    fastRow.hidden = fastNote.hidden = !claude;
+    fast.disabled = !able;
+    fastNote.textContent = able
+      ? 'A research preview from Anthropic. If your key can’t use it yet, Claude writes at its usual speed and Test connection says so.'
+      : 'Only Claude Opus has a fast mode: choose Claude Opus 5.5 to use it.';
+  };
   const sync = () => {
     const p = ai.PROVIDERS[provider.value];
     key.placeholder = p.keyHint || '';
@@ -80,13 +96,19 @@ async function aiGroup() {
     keyLink.href = p.keyUrl || '#';
     keyLink.textContent = p.keyUrl ? p.keyUrl.replace(/^https:\/\//, '') : '';
     showSaved();
+    syncFast();
   };
   // What's on screen belongs to the provider shown when it was typed: note it before anything waits,
   // so a quick switch of provider can't file a key or model under the wrong one.
   const saveSettings = async () => {
     const now = current();
     cfg.models = { ...cfg.models, [now.provider]: now.model };
-    await store.saveAiSettings({ ...now, fallback: fallback.checked, backupKeys: backupKeys.checked });
+    await store.saveAiSettings({
+      ...now,
+      fallback: fallback.checked,
+      backupKeys: backupKeys.checked,
+      fast: fast.checked,
+    });
     status.textContent = 'Saved.';
   };
   const saveKey = async () => {
@@ -108,7 +130,7 @@ async function aiGroup() {
     status.textContent = 'Saved.';
   });
   key.addEventListener('change', saveKey);
-  for (const input of [base, fallback, backupKeys]) input.addEventListener('change', saveSettings);
+  for (const input of [base, fallback, backupKeys, fast]) input.addEventListener('change', saveSettings);
   sync();
 
   const test = async () => {
@@ -123,7 +145,9 @@ async function aiGroup() {
     try {
       const config = await store.aiConfig();
       const r = await ai.test({ ...config, fallback: null });
-      status.textContent = `Works: ${r.model} answered in ${(r.ms / 1000).toFixed(1)} s.`;
+      status.textContent = `Works: ${r.model} answered in ${(r.ms / 1000).toFixed(1)} s${
+        r.fast === true ? ' in fast mode' : ''
+      }.${r.fast === false ? ' Fast mode wasn’t available to this key, so it answered at the usual speed.' : ''}`;
     } catch (err) {
       status.textContent = err.message;
     }
@@ -145,7 +169,7 @@ async function aiGroup() {
         saved,
       ),
     ),
-    el('div', { className: 'stack' }, fallbackRow, backupRow),
+    el('div', { className: 'stack' }, fastRow, fastNote, fallbackRow, backupRow),
     el(
       'div',
       { className: 'row spaced' },

@@ -331,6 +331,14 @@ test('runner: a missing key fails fast and names the variable', async () => {
     { OPENROUTER_API_KEY: 'sk-or-1' },
   );
   assert.deepEqual(c, { provider: 'openrouter', model: 'anthropic/claude-sonnet-5.5', baseUrl: '', apiKey: 'sk-or-1' });
+  // --fast measures Claude Opus's fast mode, so it refuses a model without one rather than quietly run without it.
+  const env = { ANTHROPIC_API_KEY: 'sk-ant-1' };
+  assert.throws(
+    () => providerConfig(JTF, { provider: 'anthropic', model: 'claude-sonnet-5-5', fast: true }, env),
+    /--fast/,
+  );
+  assert.equal(providerConfig(JTF, { provider: 'anthropic', model: 'claude-opus-5-5', fast: true }, env).fast, true);
+  assert.equal('fast' in providerConfig(JTF, { provider: 'anthropic', model: 'claude-opus-5-5' }, env), false);
 });
 
 test('runner: the command line replays a run offline and prints the scoreboard', async () => {

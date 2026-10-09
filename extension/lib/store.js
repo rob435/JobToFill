@@ -44,8 +44,9 @@
     passwordStrategy: 'generate',
     logApplications: true,
     // models: the model chosen for each provider; fallback: use another provider you have a key for when
-    // this one is out of credit or down; backupKeys: keep the API keys in the backup file.
-    ai: { provider: 'openrouter', model: '', baseUrl: '', models: {}, fallback: true, backupKeys: true },
+    // this one is out of credit or down; backupKeys: keep the API keys in the backup file; fast: Claude Opus's fast
+    // mode (twice the price).
+    ai: { provider: 'openrouter', model: '', baseUrl: '', models: {}, fallback: true, backupKeys: true, fast: false },
     searchHistory: false,
     // Questions the rules leave empty are answered by the AI (when a key is set up) as part of each fill.
     aiAnswers: true,
@@ -245,7 +246,7 @@
     await area().remove('aiKey');
   });
 
-  /** Change the AI settings: { provider, model, baseUrl, fallback, backupKeys }; the model is kept per provider. */
+  /** Change the AI settings: { provider, model, baseUrl, fallback, backupKeys, fast }; models are kept per provider. */
   const saveAiSettings = exclusive(async function saveAiSettings(patch) {
     const settings = await getSettings();
     const prev = aiSettings(settings);
@@ -273,15 +274,19 @@
   async function aiConfig() {
     const [settings, keys] = await Promise.all([getSettings(), getAiKeys()]);
     const ai = aiSettings(settings);
+    // Fast mode is Claude's (Opus only): ai.js leaves it out for any other provider or model.
+    const fast = ai.fast === true ? { fast: true } : {};
     const config = {
       provider: ai.provider,
       model: modelFor(ai, ai.provider),
       // The address is only for "Other" providers; Claude, OpenRouter and DeepSeek have their own.
       baseUrl: ai.provider === 'custom' ? ai.baseUrl || '' : '',
       apiKey: keys[ai.provider] || '',
+      ...fast,
     };
     const other = ai.fallback !== false && FALLBACK_ORDER.find((id) => id !== ai.provider && keys[id]);
-    if (other) config.fallback = { provider: other, model: modelFor(ai, other), baseUrl: '', apiKey: keys[other] };
+    if (other)
+      config.fallback = { provider: other, model: modelFor(ai, other), baseUrl: '', apiKey: keys[other], ...fast };
     return config;
   }
 

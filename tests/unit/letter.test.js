@@ -442,6 +442,124 @@ test('ai: Claude’s refusals, cut-off replies, empty credit and its model list'
   assert.equal(listed.seen[0].headers['x-api-key'], 'sk-ant-test');
 });
 
+test('ai: Claude doesn’t think first unless asked to, spelt the way each model takes it', async () => {
+  const sent = async (model, options = {}) => {
+    const fetch = fakeFetch([claudeReply('{"ok": true}')]);
+    await ai.chat({ ...claude, model }, { messages: [{ role: 'user', content: 'x' }], json: true, fetch, ...options });
+    return fetch.seen[0].body;
+  };
+  assert.deepEqual((await sent('')).thinking, { type: 'between_tools' }, 'Sonnet 5.5, the default');
+  assert.deepEqual((await sent('claude-haiku-5-5')).thinking, { type: 'disabled' });
+  assert.deepEqual((await sent('claude-opus-4-8')).thinking, { type: 'disabled' });
+  const opus = await sent('claude-opus-5-5');
+  assert.equal('thinking' in opus, false, 'Opus 5.5 always thinks: low effort is the least');
+  assert.deepEqual(opus.output_config, { effort: 'low' });
+  assert.deepEqual((await sent('', { reasoning: 'none' })).thinking, { type: 'between_tools' }, 'none is none too');
+  const writing = await sent('claude-haiku-5-5', { reasoning: 'medium' });
+  assert.equal('thinking' in writing, false, 'asked to reason: it thinks, as much as the effort says');
+  assert.deepEqual(writing.output_config, { effort: 'medium' });
+});
+
+test('ai: a setting a Claude model refuses is left out, then and on every later call', async () => {
+  const refuse = (message) => ({
+    status: 400,
+    body: { type: 'error', error: { type: 'invalid_request_error', message } },
+  });
+  // A model that turns thinking off another way, in the words Sonnet 5.5 uses.
+  let fetch = fakeFetch([
+    refuse(
+      '"thinking.type.disabled" is not supported for this model. Use "thinking.type.between_tools" for the lowest thinking setting, or "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.',
+    ),
+    claudeReply('{"ok": true}'),
+  ]);
+  const later = { ...claude, model: 'claude-sonnet-6' };
+  const r = await ai.chat(later, { messages: [], json: true, fetch });
+  assert.deepEqual(r.json, { ok: true });
+  assert.deepEqual(fetch.seen[0].body.thinking, { type: 'disabled' });
+  assert.equal('thinking' in fetch.seen[1].body, false, 'asked again without it');
+  assert.deepEqual(fetch.seen[1].body.output_config, { effort: 'low' }, 'the effort it also names stays');
+  fetch = fakeFetch([claudeReply('{"ok": true}')]);
+  await ai.chat(later, { messages: [], json: true, fetch });
+  assert.equal(fetch.seen.length, 1, 'no second 400');
+  assert.equal('thinking' in fetch.seen[0].body, false);
+
+  // Haiku 4.5 takes no effort at all.
+  fetch = fakeFetch([refuse('output_config.effort: not supported on this model'), claudeReply('{"ok": true}')]);
+  await ai.chat({ ...claude, model: 'claude-haiku-4-5' }, { messages: [], json: true, fetch });
+  assert.equal('output_config' in fetch.seen[1].body, false);
+  assert.deepEqual(fetch.seen[1].body.thinking, { type: 'disabled' });
+
+  // A 400 about something else is still an error, not a setting to drop.
+  fetch = fakeFetch([refuse('messages: text content blocks must be non-empty')]);
+  await assert.rejects(ai.chat({ ...claude, model: 'claude-haiku-5-5' }, { messages: [], fetch }), /non-empty/);
+  assert.equal(fetch.seen.length, 1);
+});
+
+test('ai: fast mode on Claude Opus: asked for with its beta, priced at its premium, dropped when unavailable', async () => {
+  const fastOpus = { ...claude, model: 'claude-opus-5-5', fast: true };
+  const fastReply = (text) => {
+    const r = claudeReply(text, { model: 'claude-opus-5-5' });
+    r.body.usage = { ...r.body.usage, speed: 'fast' };
+    return r;
+  };
+  let fetch = fakeFetch([fastReply('{"ok": true}')]);
+  let r = await ai.chat(fastOpus, { messages: [{ role: 'user', content: 'x' }], json: true, fetch });
+  assert.equal(fetch.seen[0].body.speed, 'fast');
+  assert.equal(fetch.seen[0].headers['anthropic-beta'], 'fast-mode-2026-02-01');
+  assert.equal(r.usage.speed, 'fast');
+  assert.equal(r.usage.cost, (2 * (1000 * 4 + 2000 * 0.2 + 500 * 20)) / 1e6, 'twice the price');
+
+  // Only Opus has it; and only when it's switched on.
+  for (const config of [
+    { ...claude, fast: true },
+    { ...claude, model: 'claude-haiku-5-5', fast: true },
+    { ...claude, model: 'claude-opus-5-5' },
+  ]) {
+    fetch = fakeFetch([claudeReply('{"ok": true}')]);
+    r = await ai.chat(config, { messages: [], json: true, fetch });
+    assert.equal('speed' in fetch.seen[0].body, false, config.model);
+    assert.equal(fetch.seen[0].headers['anthropic-beta'], undefined);
+    assert.equal(r.usage.speed, undefined);
+  }
+  assert.equal(ai.hasFastMode('anthropic', 'claude-opus-5-5'), true);
+  assert.equal(ai.hasFastMode('anthropic', ''), false, 'the default is Sonnet');
+  assert.equal(ai.hasFastMode('openrouter', 'anthropic/claude-opus-5.5'), false, 'Anthropic’s own API only');
+
+  // Its own rate limit used up: on at the usual speed straight away, without the beta.
+  fetch = fakeFetch([{ status: 429, body: { error: { message: 'rate_limit_error' } } }, claudeReply('{"ok": true}')]);
+  const started = Date.now();
+  r = await ai.chat(fastOpus, { messages: [], json: true, fetch });
+  assert.deepEqual(r.json, { ok: true });
+  assert.ok(Date.now() - started < 1000, 'no waiting');
+  assert.equal('speed' in fetch.seen[1].body, false);
+  assert.equal(fetch.seen[1].headers['anthropic-beta'], undefined);
+  fetch = fakeFetch([fastReply('{"ok": true}')]);
+  await ai.chat(fastOpus, { messages: [], json: true, fetch });
+  assert.equal(fetch.seen[0].body.speed, 'fast', 'a rate limit passes: the next call is fast again');
+
+  // A key that can't use it yet: the usual speed, the setting left out from then on, and Test connection says so.
+  const notYet = { ...fastOpus, model: 'claude-opus-5' };
+  fetch = fakeFetch([
+    {
+      status: 403,
+      body: { error: { type: 'permission_error', message: 'Fast mode is not available to this organization.' } },
+    },
+    claudeReply('{"ok": true}'),
+    claudeReply('{"ok": true}'),
+  ]);
+  const t = await ai.test(notYet, { fetch });
+  assert.equal(t.fast, false);
+  assert.equal('speed' in fetch.seen[1].body, false);
+  await ai.chat(notYet, { messages: [], json: true, fetch });
+  assert.equal(fetch.seen.length, 3, 'no second refusal');
+  assert.equal('speed' in fetch.seen[2].body, false);
+  assert.equal((await ai.test(fastOpus, { fetch: fakeFetch([fastReply('{"ok": true}')]) })).fast, true);
+  assert.equal('fast' in (await ai.test(claude, { fetch: fakeFetch([claudeReply('{"ok": true}')]) })), false);
+  // A wrong key is still a wrong key.
+  fetch = fakeFetch([{ status: 403, body: { error: { type: 'permission_error', message: 'Invalid API key' } } }]);
+  await assert.rejects(ai.chat(fastOpus, { messages: [], fetch }), /rejected the API key/);
+});
+
 test('ai: the models each provider suggests, said in words', () => {
   assert.deepEqual(
     ai.suggestions('anthropic').map((m) => m.id),

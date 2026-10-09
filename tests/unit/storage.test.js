@@ -468,6 +468,16 @@ test('store: each AI provider keeps its own key and model; another key stands in
     ['anthropic', 'claude-haiku-5-5', 'sk-ant-test', ''],
   );
   assert.equal(config.fallback.provider, 'openrouter');
+  assert.equal('fast' in config, false, 'fast mode is off unless switched on');
+
+  // Fast mode travels with the config, the stand-in's too; ai.js uses it only for a Claude model that has it.
+  await store.saveAiSettings({ fast: true });
+  config = await store.aiConfig();
+  assert.deepEqual([config.fast, config.fallback.fast], [true, true]);
+  await store.saveAiSettings({ provider: 'openrouter' });
+  assert.equal((await store.aiConfig()).fallback.model, 'claude-haiku-5-5', 'switching provider keeps it');
+  await store.saveAiSettings({ fast: false });
+  assert.equal('fast' in (await store.aiConfig()), false);
 });
 
 test('store: a chosen letter follows its application across pages, not to other jobs', async () => {

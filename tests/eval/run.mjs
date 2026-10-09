@@ -3,8 +3,8 @@
 // with config.json, cassette.jsonl (the calls), results.json (per case and question) and summary.json.
 //
 //   node tests/eval/run.mjs --suite answers|letters|all --provider anthropic|openrouter|deepseek|custom --model <id>
-//        [--base-url https://…] [--split train|test|all] [--cases N] [--reps N] [--concurrency 4] [--label name]
-//        [--judge] [--out dir]
+//        [--base-url https://…] [--fast] [--split train|test|all] [--cases N] [--reps N] [--concurrency 4]
+//        [--label name] [--judge] [--out dir]
 //   node tests/eval/run.mjs --replay <runDir> [--replay-loose] [--judge]   the recorded replies, no provider
 //   node tests/eval/run.mjs --provider fake --model oracle|null            scripted replies: a harness check
 //
@@ -47,7 +47,7 @@ export function parseArgs(argv) {
 }
 
 /** The provider config the extension would build, with the key from the environment; throws what's missing. */
-export function providerConfig(JTF, { provider, model, baseUrl }, env = process.env) {
+export function providerConfig(JTF, { provider, model, baseUrl, fast }, env = process.env) {
   if (!KEYS[provider])
     throw new Error(`Unknown provider “${provider}”: anthropic, openrouter, deepseek, custom or fake.`);
   const label = JTF.ai.PROVIDERS[provider].label;
@@ -55,6 +55,10 @@ export function providerConfig(JTF, { provider, model, baseUrl }, env = process.
   if (!config.apiKey.trim()) throw new Error(`Set ${KEYS[provider]} to run against ${label}.`);
   const bad = JTF.ai.problem(config);
   if (bad) throw new Error(`${label}: ${bad}${provider === 'custom' ? ' (--base-url, --model)' : ''}`);
+  // The extension leaves fast mode out for a model without one; a run asked to measure it shouldn't.
+  if (fast && !JTF.ai.hasFastMode(provider, model))
+    throw new Error('--fast is Claude Opus’s fast mode: --provider anthropic --model claude-opus-5-5.');
+  if (fast) config.fast = true;
   return config;
 }
 
@@ -160,7 +164,7 @@ export function summarise(rows) {
 }
 
 /**
- * Run the suites. Options: suite, split, cases (per suite), reps, concurrency, label, provider, model, baseUrl,
+ * Run the suites. Options: suite, split, cases (per suite), reps, concurrency, label, provider, model, baseUrl, fast,
  * replay (a run directory), loose, judge, out (runs directory), chat (a stand-in model, for tests), judgeClient,
  * env, signal, log. Returns { dir, results, summary }.
  */
@@ -191,7 +195,7 @@ export async function runEval(opts = {}) {
   } else {
     const config = providerConfig(
       JTF,
-      { provider: o.provider || 'openrouter', model: o.model, baseUrl: o.baseUrl },
+      { provider: o.provider || 'openrouter', model: o.model, baseUrl: o.baseUrl, fast: o.fast },
       env,
     );
     const resolved = JTF.ai.resolve(config);
@@ -202,7 +206,10 @@ export async function runEval(opts = {}) {
   if (opts.chat) base = opts.chat;
   const tape = source ? await readCassette(opts.replay) : null;
 
-  const name = opts.replay ? `replay-${slug(source.label || source.model)}` : slug(o.label || model);
+  const fast = source ? !!source.fast : !!o.fast;
+  const name = opts.replay
+    ? `replay-${slug(source.label || source.model)}`
+    : slug(o.label || `${model}${fast ? '-fast' : ''}`);
   const dir = path.join(o.out || RUNS, `${new Date().toISOString().replace(/[:.]/g, '-')}-${name}`);
   await mkdir(dir, { recursive: true });
   const config = {
@@ -213,6 +220,7 @@ export async function runEval(opts = {}) {
     concurrency: +o.concurrency || 4,
     provider: source ? source.provider : o.provider || (opts.chat ? 'stand-in' : 'openrouter'),
     model,
+    fast,
     baseUrl: source ? source.baseUrl : baseUrl,
     label: o.label || null,
     judge: !!o.judge,
@@ -372,6 +380,7 @@ async function main() {
     replay: args.replay && args.replay !== true ? args.replay : undefined,
     loose: args['replay-loose'] ? true : undefined,
     judge: args.judge ? true : undefined,
+    fast: args.fast ? true : undefined,
     out: args.out,
     signal: controller.signal,
   });
