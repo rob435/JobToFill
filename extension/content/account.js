@@ -139,21 +139,8 @@
       .filter((c) => c.text);
   }
 
-  /** Is a field required: the attribute, aria-required, or a "*" / "Required" on its label? */
-  function isRequired(field) {
-    const el = field.el;
-    const members = field.members || [el];
-    if (members.some((m) => m.required || m.getAttribute('aria-required') === 'true')) return true;
-    const labels = [...Array.from(el.labels || [])];
-    for (const id of (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)) {
-      const l = el.ownerDocument.getElementById(id);
-      if (l) labels.push(l);
-    }
-    return labels.some(
-      (l) =>
-        /\*/.test(l.textContent) || /^required$/i.test(l.getAttribute('title') || '') || !!l.querySelector('.required'),
-    );
-  }
+  /** Is a field required: the attribute, aria-required, or a "*" / "Required" on its label (dom.isRequired)? */
+  const isRequired = (field) => JTF.dom.isRequired(field);
 
   /**
    * Rows marked required that hold no box to fill: SuccessFactors' "Terms of Use: Read and acknowledge the data

@@ -538,6 +538,13 @@ test('tricky page: honeypots, existing values, custom radios, checkbox lists, ra
     await h.tabId(page),
   );
   assert.equal(help, 'Fields marked * are required.');
+  // Aluna's GPA bands, nameless checkboxes with no <label>: one question, the band of a 3.9.
+  assert.deepEqual(await page.$$eval('.gpa input', (boxes) => boxes.map((b) => b.checked)), [
+    false,
+    true,
+    false,
+    false,
+  ]);
   // A referee's boxes and a talent-pool opt-in are left, and not reported missing from your profile.
   assert.equal(await value(page, '#ref_name'), '');
   assert.equal(await value(page, '#ref_email'), '');
@@ -940,17 +947,21 @@ test('Microsoft Forms: questions read without their hidden "Single line text." n
       async (id) => {
         const [res] = await globalThis.JTF.api.scripting.executeScript({
           target: { tabId: id },
-          func: () => globalThis.JTF.dom.collect(document).map((f) => f.desc.signals.label || f.desc.signals.question),
+          func: () =>
+            globalThis.JTF.dom
+              .collect(document)
+              .map((f) => [f.desc.signals.label || f.desc.signals.question, globalThis.JTF.dom.isRequired(f)]),
         });
         return res.result;
       },
       await h.tabId(page),
     );
+    // Each is required: its title carries Microsoft Forms' "Required to answer" star.
     assert.deepEqual(questions, [
-      '1. Full Name',
-      '2. Personal Email',
-      '3. Do you currently have a right to work in the UK?',
-      '4. Earliest Start Data avaliable',
+      ['1. Full Name', true],
+      ['2. Personal Email', true],
+      ['3. Do you currently have a right to work in the UK?', true],
+      ['4. Earliest Start Data avaliable', true],
     ]);
     await page.close();
   } finally {

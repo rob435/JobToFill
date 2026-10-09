@@ -975,11 +975,7 @@
         options: options && options.length ? options : null,
         multiple,
         maxLength: field.desc.maxLength || 0,
-        required: !!(
-          field.el.required ||
-          field.el.getAttribute('aria-required') === 'true' ||
-          /\*\s*$/.test(field.desc.signals.label || field.desc.signals.question || '')
-        ),
+        required: JTF.dom.isRequired(field),
         section: U.cleanLabel(field.desc.signals.section || '', 120),
         placeholder: U.cleanLabel(field.desc.placeholderRaw || '', 120),
         follows: prev

@@ -357,6 +357,40 @@
     return '';
   }
 
+  // How a label marks its field required: a "*" or Lever's "✱" at either end, "(required)" (Personio's "* (required)"),
+  // a closing "Required" (Teamtailor's screen-reader text).
+  const REQUIRED_TEXT = /^\s*[*✱]|[*✱]\s*$|\s[*✱](\s|$)|\(\s*required\s*\)|\brequired\.?\s*$/i;
+  const REQUIRED_MARK =
+    '.required, [class*="required" i], [aria-label^="required" i], [data-automation-id="requiredStar"], [data-asterisk]';
+
+  /**
+   * Is a field required: the attribute or aria-required (on it or around it), or a mark on its label, its group's
+   * legend or what labels it (Microsoft Forms' "Required to answer" star)?
+   */
+  function isRequired(field) {
+    const el = field.el;
+    const members = field.members || [el];
+    if (members.some((m) => m.required || m.getAttribute('aria-required') === 'true')) return true;
+    if (el.closest && el.closest('[aria-required="true"]')) return true;
+    const group = el.closest && el.closest('fieldset, [role="radiogroup"], [role="group"]');
+    // A radio's or checkbox's own label is an option ("A*"), not its question.
+    const labels = field.kind === 'radio' || field.kind === 'checkboxes' ? [] : [...labelsOf(el)];
+    for (const owner of [el, group].filter(Boolean)) {
+      for (const id of (owner.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)) {
+        const l = byId(owner, id);
+        if (l) labels.push(l);
+      }
+    }
+    const legend = group && group.querySelector(':scope > legend');
+    if (legend) labels.push(legend);
+    return labels.some(
+      (l) =>
+        REQUIRED_TEXT.test(l.textContent || '') ||
+        /^required$/i.test(l.getAttribute('title') || '') ||
+        !!l.querySelector(REQUIRED_MARK),
+    );
+  }
+
   /** Hidden helper inputs (react-select's required shim, the checkbox behind ARIA buttons) aren't fields. */
   function isShim(c) {
     // The hidden <select> behind a dropdown widget is the widget's, not a field beside it.
@@ -447,6 +481,8 @@
     const start = members.length > 1 ? commonAncestor(members) : first;
     if (!start) return '';
     const skip = (n) => set.has(n) || (n.localName === 'label' && n.control && set.has(n.control));
+    // A container that starts with its question (see questionFirst): that, without the options after it.
+    if (members.length > 1 && questionFirst(start)) return U.cleanLabel(textOf(start.firstElementChild), 300);
     if (members.length > 1 && foreignControls(start, set) === 0) {
       // Text inside the group container that is not an option label, e.g. a heading.
       const own = textOf(start, skip);
@@ -478,7 +514,29 @@
         .map((l) => textOf(l))
         .join(' '),
     );
-    return visible || explicitLabel(el) || el.getAttribute('aria-label') || own || nextText(el) || el.value || '';
+    return (
+      visible ||
+      explicitLabel(el) ||
+      el.getAttribute('aria-label') ||
+      own ||
+      nextText(el) ||
+      wrapperText(el) ||
+      el.value ||
+      ''
+    );
+  }
+
+  /**
+   * The text of the smallest wrapper around a box with no label, holding nothing else to fill: an MUI checkbox's
+   * "<span><span class="MuiCheckbox-root"><input></span>3.51 to 3.99</span>" (Aluna's GPA bands).
+   */
+  function wrapperText(el) {
+    for (let a = el.parentElement, i = 0; a && i < 3; a = a.parentElement, i++) {
+      if (countedIn(a).some((c) => c !== el)) return '';
+      const t = U.cleanLabel(textOf(a), 200);
+      if (t) return t.length <= 120 ? t : '';
+    }
+    return '';
   }
 
   const optionValue = (el) =>
@@ -937,6 +995,23 @@
   }
 
   /**
+   * A container that starts with its question, then holds nothing but nameless checkboxes (Aluna's "What's your
+   * cumulative GPA?" over MUI checkboxes "4", "3.51 to 3.99"…).
+   */
+  function questionFirst(a) {
+    const first = a.firstElementChild;
+    if (!first || first.matches(COUNTED_SELECTOR) || first.querySelector(COUNTED_SELECTOR)) return false;
+    const q = U.cleanLabel(textOf(first), 300);
+    const controls = countedIn(a);
+    return (
+      !!q &&
+      q.length <= 300 &&
+      controls.length >= 2 &&
+      controls.every((c) => c.localName === 'input' && c.type === 'checkbox' && !c.hasAttribute('name'))
+    );
+  }
+
+  /**
    * Checkboxes without names in a container a label names (Ant Design's Checkbox.Group: `<label for="apply_offices">`
    * over `<div id="apply_offices">` of "London", "New York"…) or that is a role="group": one checklist, unless its
    * options read like statements (as for fieldsetCheckboxes).
@@ -944,7 +1019,7 @@
   function labelledCheckboxes(el) {
     let a = el.parentElement;
     for (let i = 0; a && i < 4; i++, a = a.parentElement) {
-      if (a.getAttribute('role') !== 'group' && !containerLabel(a)) continue;
+      if (a.getAttribute('role') !== 'group' && !containerLabel(a) && !questionFirst(a)) continue;
       const controls = countedIn(a);
       if (controls.length < 2 || !controls.every((c) => c.localName === 'input' && c.type === 'checkbox')) return null;
       const lengths = controls.map((c) => optionLabel(c).length);
@@ -1140,6 +1215,7 @@
     deepActiveElement,
     standsFor,
     suggestsBeside,
+    isRequired,
     dateSegments,
     shownValue,
     valueList,
