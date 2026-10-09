@@ -218,7 +218,9 @@ test('formatting for text boxes', () => {
   p.personal.dob = '1815-12-10';
   assert.equal(f('dob', {}, { placeholderRaw: 'DD/MM/YYYY' }), '10/12/1815');
   assert.equal(f('dob', {}, { placeholderRaw: 'mm-dd-yyyy' }), '12-10-1815');
-  assert.equal(f('dob', {}, {}), '12/10/1815');
+  // The page doesn't say which comes first (no region, no country's site): spelled out, never 12 October.
+  assert.equal(f('dob', {}, {}), '10 December 1815');
+  assert.equal(f('dob', {}, { lang: 'en-US' }), '12/10/1815');
   p.address.country = 'United States';
   p.address.state = 'California';
   assert.equal(f('address.state', {}, { maxLength: 2 }), 'CA');
@@ -1473,7 +1475,8 @@ test('round 2 (Maven / CRA): "If you selected …" boxes, first of your family, 
   assert.equal(matcher.formatForText(v, desc('Earliest availability to start at CRA (not binding)')), '28 June 2027');
   assert.equal(matcher.formatForText(v, desc({ label: 'Start date', placeholder: 'Pick date...' })), '06/28/2027');
   assert.equal(matcher.formatForText(v, desc({ label: 'When can you start? (DD/MM/YYYY)' })), '28/06/2027');
-  assert.equal(matcher.formatForText(v, desc('Available from')), '06/28/2027', 'a short label keeps the usual format');
+  // A short label on a page that doesn't say how it writes dates (redalpine's Personio on a .com): spelled out.
+  assert.equal(matcher.formatForText(v, desc('Available from')), '28 June 2027');
   // No format on the page: its language or country decides day or month first (Personio on a German site).
   const on = (extra) => ({ ...desc('Available from'), ...extra });
   assert.equal(matcher.formatForText(v, on({ lang: 'de', host: 'acme.jobs.personio.de' })), '28.06.2027');
@@ -1481,7 +1484,8 @@ test('round 2 (Maven / CRA): "If you selected …" boxes, first of your family, 
   assert.equal(matcher.formatForText(v, on({ lang: 'en-GB', host: 'careers.example.com' })), '28/06/2027');
   assert.equal(matcher.formatForText(v, on({ lang: 'en', host: 'job-boards.eu.greenhouse.io' })), '28/06/2027');
   assert.equal(matcher.formatForText(v, on({ lang: 'en-US', host: 'acme.co.uk' })), '06/28/2027', 'the page says US');
-  assert.equal(matcher.formatForText(v, on({ lang: 'en', host: 'jobs.lever.co' })), '06/28/2027');
+  assert.equal(matcher.formatForText(v, on({ lang: 'en', host: 'jobs.lever.co' })), '28 June 2027');
+  assert.equal(matcher.formatForText(v, on({ lang: 'en', host: 'redalpine.jobs.personio.com' })), '28 June 2027');
   assert.equal(matcher.formatForText(v, on({ lang: 'ja', host: 'example.jp' })), '2027-06-28');
 });
 
@@ -3782,8 +3786,9 @@ test('Eastdil (BambooHR): each A-level in its own box, A* not A, a BSc’s level
       "If you didn't complete UK A-levels, please provide your equivalent high school qualification and results (e.g., US High School Diploma – GPA 3.8/4.0; International Baccalaureate – 38/45).",
     ),
   ];
+  // "Obtained": a degree still under way isn't, so "Some College".
   assert.deepEqual(fillPage(page, p), [
-    'College - Bachelor of Science',
+    'Some College',
     'University of Glasgow',
     'University of Glasgow',
     'BSc',
@@ -3826,6 +3831,34 @@ test('Eastdil (BambooHR): each A-level in its own box, A* not A, a BSc’s level
   // No school entry at all: nothing to say either way.
   p.education = p.education.slice(0, 1);
   assert.equal(ask(p, 'edu.qualification', 'Did you complete UK A-levels?', { kind: 'radio' }), null);
+  // A finished BSc is a Bachelor of Science, never the "… of Arts" listed first.
+  p.education[0].endDate = '2025-06';
+  assert.equal(fillPage(page.slice(0, 1), p)[0], 'College - Bachelor of Science');
+});
+
+test('highest education: what you hold while a degree is under way, your degree when the question means it', () => {
+  const p = computingScientist();
+  p.education[1].degree = 'A-Levels';
+  const levels = ['High School', 'Bachelors', 'Masters', 'PhD'];
+  const at = (q, list) => choose(p, 'edu.level', q, list, { today: TODAY });
+  // Menzies' social-mobility list, "…qualification you hold": the A-levels row, not a degree not yet held.
+  const menzies = [
+    '1-4 O levels/CSEs/GCSEs (any grades), Entry Level',
+    '5+ O levels (passes)/CSEs (grade1)/GCSEs (grades A*-C), School Certificate, 1 A level/2-3 AS Levels/VCEs',
+    'Apprenticeship',
+    '2+ A levels/VCEs, 4+ AS levels, Higher School Certificate',
+    'Degree level or above',
+    'No qualifications',
+  ];
+  assert.equal(at('What is the highest level of qualification you hold?', menzies), menzies[3]);
+  assert.equal(at('Highest Education Obtained', levels), 'High School');
+  // Asked what you're studying for, or with no word on holding it: your degree.
+  assert.equal(at('What is the highest degree level you are currently pursuing?', levels), 'Bachelors');
+  assert.equal(at('Highest level of education', levels), 'Bachelors');
+  assert.equal(at('What is (or will be by October 2027) your highest level of education?', levels), 'Bachelors');
+  // Graduated: what you hold is the degree.
+  p.education[0].endDate = '2025-06';
+  assert.equal(at('What is the highest level of qualification you hold?', menzies), 'Degree level or above');
 });
 
 test('school grades and degree disciplines: "A*" is not "A", a BSc is a Bachelor of Science, "A*" keeps its star', () => {
@@ -3848,4 +3881,160 @@ test('school grades and degree disciplines: "A*" is not "A", a BSc is a Bachelor
   // A GPA or a class is no list of grades.
   const p = computingScientist();
   assert.equal(ask(p, 'edu.gpa', 'University grade 1').text, '2:1');
+});
+
+test('niche-form dry runs: graduation after an unrecognised box, degree titles, qualifications with grades and dates', () => {
+  const p = computingScientist();
+  // Chicago Trading Co: Greenhouse's education block, "Alternate Email", then the graduation questions: the degree's.
+  const page = [
+    desc('School'),
+    desc('Degree'),
+    desc('Discipline'),
+    desc('End date month'),
+    desc('End date year'),
+    desc('Alternate Email'),
+    desc('What is your expected graduation month?'),
+    desc('What is your expected graduation year?'),
+  ];
+  const { results } = matcher.plan(page, p);
+  assert.deepEqual(
+    results.slice(6).map((r) => [r.type, r.index]),
+    [
+      ['edu.end', 0],
+      ['edu.end', 0],
+    ],
+  );
+  // Capgemini's "exact degree title"; a course in a text box keeps "in".
+  assert.equal(
+    ask(p, 'edu.degree', 'Please state your exact degree title', { kind: 'textarea' }).text,
+    'BSc Computing Science',
+  );
+  assert.equal(
+    ask(p, 'edu.degree', 'What degree course are you studying?', { kind: 'text' }).text,
+    'BSc in Computing Science',
+  );
+  // DN Capital: every degree with its dates and grade; the school too when the question isn't about higher education.
+  const dn =
+    'Please state your higher educational qualifications, including (current) grade and starting and (expected) graduating date';
+  assert.equal(matcher.classify(desc({ label: dn }, { kind: 'textarea', inputType: 'textarea' })).type, 'edu.summary');
+  assert.equal(
+    ask(p, 'edu.summary', dn, { kind: 'textarea', today: TODAY }).text,
+    'BSc Computing Science, University of Glasgow, September 2023 – June 2027 (expected), predicted 2:1',
+  );
+  assert.equal(
+    ask(p, 'edu.summary', 'Please list your qualifications and grades', { kind: 'textarea', today: TODAY }).text.split(
+      '\n',
+    )[1],
+    'Advanced Highers (Mathematics, Physics, Computing Science), Hillhead High School, August 2017 – June 2023, AAB',
+  );
+  // Dayforce's "G.P.A." is a number box: a 2:1 stays out (never "21"), and isn't missing from the profile either.
+  const gpa = { kind: 'number', question: 'g p a' };
+  assert.equal(ask(p, 'edu.gpa', 'G.P.A.', { kind: 'number' }), null);
+  assert.ok(fields.leftEmpty('edu.gpa', p, gpa));
+});
+
+test('niche-form dry runs: dates — M/d/yyyy, a picker under “Year”, graduating before, completed or predicted', () => {
+  const p = computingScientist();
+  p.job.startDate = '2027-06-28';
+  const write = (type, label, extra = {}) => {
+    const d = desc(
+      { label, placeholder: extra.placeholder || '' },
+      { kind: 'text', placeholderRaw: extra.placeholder || '', ...extra },
+    );
+    const { results, context } = matcher.plan([d], p);
+    const r = results[0];
+    const v = fields.resolve(r.type, p, {
+      ...context,
+      jobContext: true,
+      part: r.part,
+      kind: 'text',
+      today: TODAY,
+      question: util.normalize(matcher.questionText(d)),
+    });
+    return [r.type, matcher.formatForText(v, d)];
+  };
+  // Microsoft Forms' format with single letters is a whole date, not a year (Pharus).
+  assert.deepEqual(
+    write('job.startDate', '8. Earliest Start Data avaliable Date.', { placeholder: 'Please input date (M/d/yyyy)' }),
+    ['job.startDate', '06/28/2027'],
+  );
+  // Ashby's "Expected Graduation Year" over a "Pick date..." box: the date, June, never 1 January.
+  assert.deepEqual(write('edu.end', 'Expected Graduation Year', { placeholder: 'Pick date...' }), [
+    'edu.end',
+    '06/01/2027',
+  ]);
+  const yn = ['Yes', 'No'];
+  // Aurora: "graduating" is not "a graduate".
+  assert.equal(choose(p, 'edu.end', 'Are you graduating before October 2027?', yn, { today: TODAY }), 'Yes');
+  assert.equal(
+    matcher.classify(
+      desc({ question: 'Are you graduating before October 2027?' }, { kind: 'radio', options: opts(...yn) }),
+    ).type,
+    'edu.end',
+  );
+  // Capgemini: completed or predicted, and the month and year "if you selected predicted".
+  const cap = (q, list) => {
+    const d = desc({ question: q }, { kind: 'radio', options: opts(...list) });
+    const r = matcher.classify(d);
+    return r && choose(p, r.type, q, list, { kind: 'radio', today: TODAY, part: matcher.plan([d], p).results[0].part });
+  };
+  const months = [
+    'N/A',
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+  assert.equal(
+    cap("Is your undergraduate or integrated master's degree completed or still predicted?", [
+      'Completed',
+      'Predicted',
+    ]),
+    'Predicted',
+  );
+  assert.equal(
+    cap('If you selected predicted Status, which month will you complete this degree qualification?', months),
+    'June',
+  );
+  assert.equal(
+    cap('If you selected predicted Status, which year will you complete this degree qualification?', [
+      'N/A',
+      '2026',
+      '2027',
+      '2028',
+    ]),
+    '2027',
+  );
+  p.education[0].endDate = '2025-06';
+  assert.equal(
+    cap("Is your undergraduate or integrated master's degree completed or still predicted?", [
+      'Completed',
+      'Predicted',
+    ]),
+    'Completed',
+  );
+  assert.equal(
+    cap('If you selected predicted Status, which month will you complete this degree qualification?', months),
+    'N/A',
+  );
+  // Clarity: the year of study you will have finished by the start of summer 2027.
+  p.education[0].startDate = '2024-09';
+  p.education[0].endDate = '2028-06';
+  const standing = ['Freshman', 'Sophomore', 'Junior', 'Senior'];
+  assert.equal(cap('School Year completed by the beginning of Summer 2027', standing), 'Junior');
+  // Isio: the instruction after the question ("If your university if not listed, select other.") is no follow-up.
+  const isio =
+    'Using the list provided, please confirm which university you are currently studying or where you completed your most recent degree. If your university if not listed, select other.';
+  assert.equal(
+    matcher.classify(desc({ label: isio }, { kind: 'combo', options: opts('University of Glasgow', 'Other') })).type,
+    'edu.school',
+  );
 });

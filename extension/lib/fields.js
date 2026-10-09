@@ -1318,6 +1318,28 @@
     return val('Yes', { candidates: [...words, 'Yes', 'Currently enrolled', 'Enrolled'] });
   }
 
+  // "Highest Education Obtained", "…qualification you hold": what you have finished. "…currently pursuing" is not.
+  const HELD = /\b(obtained|held|hold|completed|attained|achieved|awarded|earned|gained)\b/;
+  const UNDER_WAY = /\b(pursuing|studying|current(ly)?|expected|will be|working towards|in progress)\b/;
+  const SOME_COLLEGE =
+    /\bsome (college|university|uni)\b|\bcurrently (studying|enrolled)\b|\b(in progress|ongoing|working towards|studying towards)\b/;
+
+  /**
+   * Your highest education: your degree, or while it is still under way and the question asks what you hold or
+   * obtained (BambooHR's "Highest Education Obtained", Menzies' "…qualification you hold"), "Some College" where the
+   * list has it, else your finished school qualification (A-levels).
+   */
+  function highestLevel(p, ctx) {
+    const list = p.education || [];
+    if (!list.length) return null;
+    const q = (ctx && ctx.question) || '';
+    const enrolled = enrolment(p, ctx && ctx.today);
+    if (!HELD.test(q) || UNDER_WAY.test(q) || !enrolled || enrolled.canonical !== 'yes')
+      return degreeVal(list[0].degree);
+    const school = list.find((e) => JTF.matcher.degreeGroup(U.normalize(e.degree)) === 'highschool');
+    return Object.assign(degreeVal((school || list[0]).degree), { named: SOME_COLLEGE });
+  }
+
   function degreeVal(text) {
     return val(text, { kind: 'degree' });
   }
@@ -2075,6 +2097,8 @@
   function leftEmpty(type, p, ctx) {
     const q = (ctx && ctx.question) || '';
     if (type === 'edu.equivalent') return qualsOf(q).some((x) => heldQuals(p).includes(x));
+    // A grade you hold that the box can't take (a 2:1 in a number box): never converted, nor missing.
+    if (gradeHeld(type, p, ctx) && !resolve(type, p, ctx)) return true;
     if (!['edu.field', 'edu.gpa', 'edu.classification'].includes(type)) return false;
     const { e, level } = entryAt(p, 'education', ctx || {});
     if (!e) return false;
@@ -2096,6 +2120,39 @@
       return e.endDate;
     const next = start.year * 12 + start.month; // the month after, counted from January of year 0
     return `${Math.floor(next / 12)}-${U.pad2((next % 12) + 1)}`;
+  }
+
+  const DEGREE_TITLE = /\b(exact|full) (degree )?(title|name)\b|\bdegree (title|name)\b|\btitle of (your )?degree\b/;
+
+  /**
+   * "Please state your higher educational qualifications, including (current) grade and starting and (expected)
+   * graduating date" (DN Capital): one line per degree (school entries too when the question isn't about higher
+   * education), "BSc Economics, University College London, September 2024 – June 2027 (expected), predicted 2:1".
+   */
+  function qualificationsSummary(p, ctx) {
+    const q = ctx.question || '';
+    const higher = /\b(higher|university|degree|tertiary|undergraduate|post ?graduate)\b/.test(q);
+    const now = ctx.today || new Date();
+    const when = (raw) => {
+      const d = U.parseDate(raw);
+      const month = d && d.month ? U.monthName(d.month) : '';
+      return d ? [month.charAt(0).toUpperCase() + month.slice(1), d.year].filter(Boolean).join(' ') : '';
+    };
+    const lines = (p.education || [])
+      .filter((e) => !U.isBlank(e.school) || !U.isBlank(e.degree))
+      .filter((e) => !higher || JTF.matcher.degreeGroup(U.normalize(e.degree)) !== 'highschool')
+      .map((e) => {
+        const end = U.parseDate(e.endDate);
+        const ongoing = !!end && end.year * 12 + (end.month || 6) - 1 >= now.getFullYear() * 12 + now.getMonth();
+        // "BSc Economics"; "A-Levels (Mathematics, Further Mathematics, Economics)".
+        const field = U.isBlank(e.field) ? '' : /,/.test(e.field) ? `(${e.field})` : e.field;
+        const title = [e.degree, field].filter((t) => !U.isBlank(t)).join(' ');
+        const dates = [when(e.startDate), when(e.endDate)].filter(Boolean).join(' – ');
+        const grade = !U.isBlank(e.classification) ? e.classification : e.gpa;
+        const graded = U.isBlank(grade) ? '' : ongoing && !/predict|expect/i.test(grade) ? `predicted ${grade}` : grade;
+        return [title, e.school, dates && (ongoing ? `${dates} (expected)` : dates), graded].filter(Boolean).join(', ');
+      });
+    return lines.length ? val(lines.join('\n')) : null;
   }
 
   function entry(label, list, key, kind) {
@@ -2122,6 +2179,17 @@
           return null;
         if (kind === 'date') {
           if (key === 'endDate' && e.current) return null;
+          // Capgemini's "If you selected predicted Status, which month will you complete this degree qualification?"
+          // [N/A | January…]: N/A once it's finished.
+          if (
+            key === 'endDate' &&
+            /^if you (selected|chose|answered|said) (predicted|expected)\b/.test(ctx.question || '')
+          ) {
+            const end = U.parseDate(e.endDate);
+            const now = ctx.today || new Date();
+            if (end && end.year * 12 + (end.month || 6) - 1 < now.getFullYear() * 12 + now.getMonth())
+              return val('N/A', { otherwise: true, canonical: null, candidates: ['N/A', 'Not applicable'] });
+          }
           const typical = key === 'endDate' ? 6 : 9;
           const raw = key === 'endDate' ? endAfterStart(e) : e[key];
           const v = windowAnswer(raw, ctx.question, typical) || dateVal(raw, ctx.part, typical);
@@ -2136,13 +2204,17 @@
         if (kind === 'bool') return val(e[key] ? 'Yes' : 'No');
         if (kind === 'degree') {
           // "What degree course are you studying?" in a text box wants "BSc in Mathematics", not just "BSc".
+          const q = ctx.question || '';
           const withSubject =
             LONG_TEXT.includes(ctx.kind) &&
-            /\b(course|subject|studying|major)\b/.test(ctx.question || '') &&
             !U.isBlank(e.degree) &&
             !U.isBlank(e.field) &&
             !U.normalize(e.degree).includes(U.normalize(e.field));
-          return degreeVal(withSubject ? `${e.degree} in ${e.field}` : e[key]);
+          // Capgemini's "Please state your exact degree title": "BSc Economics".
+          if (withSubject && DEGREE_TITLE.test(q)) return degreeVal(`${e.degree} ${e.field}`);
+          return degreeVal(
+            withSubject && /\b(course|subject|studying|major)\b/.test(q) ? `${e.degree} in ${e.field}` : e[key],
+          );
         }
         if (kind === 'number') return numberVal(e[key]);
         // "A-Level Grade 2" / "A-Level Subject 2" (Eastdil): the second of your grades or subjects, or nothing.
@@ -2874,7 +2946,7 @@
       },
     },
 
-    'edu.level': { label: 'Highest education', get: (p) => degreeVal(((p.education || [])[0] || {}).degree) },
+    'edu.level': { label: 'Highest education', get: highestLevel },
     // A school is matched by the words that tell institutions apart: never "Glasgow Caledonian" for "Glasgow".
     'edu.school': entry('School / university', 'education', 'school', 'school'),
     'edu.degree': entry('Degree', 'education', 'degree', 'degree'),
@@ -2892,18 +2964,36 @@
     'edu.end': entry('Graduation date', 'education', 'endDate', 'date'),
     'edu.year': {
       label: 'Year of study',
-      get: (p, ctx) => (YEAR_ASKED.test(ctx.question || '') ? yearAnswer(p, ctx) : studyYear(p, ctx.today)),
+      get(p, ctx) {
+        const q = ctx.question || '';
+        if (YEAR_ASKED.test(q)) return yearAnswer(p, ctx);
+        // Clarity's "School Year completed by the beginning of Summer 2027": the year you are in just before then.
+        const by = q.match(/\b(completed|finished) by (?:the )?(?:(beginning|start|end) of )?(.+?(?:19|20)\d{2})\b/);
+        const span = by && JTF.matcher.optionSpan(by[3]);
+        if (!span) return studyYear(p, ctx.today);
+        const m = (by[2] === 'end' ? span[1] + 1 : span[0]) - 1;
+        return studyYear(p, new Date(Math.floor(m / 12), m % 12, 15));
+      },
     },
     'edu.enrolled': { label: 'Currently enrolled', get: (p, ctx) => enrolment(p, ctx.today, ctx.question) },
     // "Can you confirm you have completed your studies?", "Have you graduated?": the other way round from enrolled.
     'edu.completed': {
       label: 'Studies completed',
       get(p, ctx) {
-        const enrolled = enrolment(p, ctx.today);
-        return enrolled && val(enrolled.canonical === 'yes' ? 'No' : 'Yes');
+        // "Is your postgraduate degree completed or still predicted?": that degree's, nothing without one.
+        const level = eduLevelOf(ctx.question || '');
+        const at = level ? (p.education || []).filter((e) => entryLevels(e).includes(level)) : null;
+        if (at && !at.length) return null;
+        const enrolled = enrolment(at ? { education: at } : p, ctx.today);
+        if (!enrolled) return null;
+        // Capgemini's "…degree completed or still predicted?" [Completed | Predicted].
+        return enrolled.canonical === 'yes'
+          ? val('No', { candidates: ['No', 'Predicted', 'Expected', 'In progress', 'Ongoing', 'Still studying'] })
+          : val('Yes', { candidates: ['Yes', 'Completed', 'Achieved', 'Graduated', 'Awarded'] });
       },
     },
 
+    'edu.summary': { label: 'Qualifications (summary)', get: qualificationsSummary, derived: true },
     // "Did you complete UK A-levels?", and the box for an equivalent if you didn't.
     'edu.qualification': { label: 'School qualification held (yes/no)', get: qualificationHeld },
     'edu.equivalent': { label: 'Equivalent school qualification', get: equivalentQualification, derived: true },
@@ -3652,16 +3742,18 @@
     R(
       'edu.level',
       /highest (level of )?(completed |finished |attained )?(education|degree|qualification|academic)|education(al)? (level|attainment|background|qualification)|level of (education|study|degree)/,
-      { not: /fields? of study|\bsubjects?\b|\bmajors?\b|\bdisciplines?\b|\bparents?\b|guardian|mother|father/ },
+      {
+        not: /fields? of study|\bsubjects?\b|\bmajors?\b|\bdisciplines?\b|\bparents?\b|guardian|mother|father|\bqualifications\b.*\b(including|with)\b.*\b(grades?|results?|dates?)\b/,
+      },
     ),
     R(
       'edu.end',
-      /\bgraduat(ion|ed|e|ing)\b|expected graduation|completion (date|year)|year of (graduation|completion|passing)|class of|passing year|year (graduated|completed)|\b(course|degree|studies|programme|program) (finish|end|complete)s?\b|\b(finish|finishing|complete|completing|end|ending) (your |my |the )?(most recent |latest |current )?(university |college |undergraduate |current |academic )?(course|degree|studies|programme|program)\b|\bend (date |year )?of (your |the )?(course|degree|studies)\b|\bleav(e|ing) (academia|university|full time education)\b|\b(finish|finished|complete|completed|leave|left) (high school|secondary school|secondary education|sixth form|(your )?a levels?)\b/,
+      /\bgraduat(ion|ed|e|ing)\b|expected graduation|completion (date|year)|year of (graduation|completion|passing)|class of|passing year|(?<!\b(school|academic|study|class) )year (graduated|completed)|\b(course|degree|studies|programme|program) (finish|end|complete)s?\b|\b(finish|finishing|complete|completing|end|ending) (your |my |the |this )?(most recent |latest |current )?(university |college |undergraduate |current |academic )?(course|degree|studies|programme|program|qualification)\b|\bend (date |year )?of (your |the )?(course|degree|studies)\b|\bleav(e|ing) (academia|university|full time education)\b|\b(finish|finished|complete|completed|leave|left) (high school|secondary school|secondary education|sixth form|(your )?a levels?)\b/,
       {
         // "undergraduate" no longer matches (\b), so "graduation year (undergraduate degrees…)" is still a date.
         // "Graduate Engineer / Summer Internship" is a job for graduates, not a date. "What year did you graduate from
         // high school?" is your school's date (eduLevelOf), "Do you expect to graduate with honours?" about the class.
-        not: /^(did|have) you|^are you (a |an )?(recent |new |high school |college |university )?(graduate|grad|undergrad)|\b(after|before|once) (completing|finishing)\b|\binterested in\b|\bopportunit|post ?grad|\bgraduate (degree|school|program|student)|\bgraduate (engineer|analyst|scheme|role|position|job|programme|trainee|consultant|developer|intake|associate|internship)s?\b|\bgpa\b|\bgrades?\b|\bwith (first class )?(honou?rs|distinction|merit|a (first|2 ?1|2 ?2))\b/,
+        not: /^(did|have) you|^are you (a |an )?(recent |new |high school |college |university )?(graduate|grad|undergrad)s?\b|\b(after|before|once) (completing|finishing)\b|\binterested in\b|\bopportunit|post ?grad|\bgraduate (degree|school|program|student)|\bgraduate (engineer|analyst|scheme|role|position|job|programme|trainee|consultant|developer|intake|associate|internship)s?\b|\bgpa\b|\bgrades?\b|\bwith (first class )?(honou?rs|distinction|merit|a (first|2 ?1|2 ?2))\b/,
       },
     ),
     // "What year did you begin your undergraduate (e.g. Bachelor's) degree?", "When did you start your studies?".
@@ -3669,6 +3761,13 @@
       'edu.start',
       /\b(year|date|when)\b.*\b(did|do|will) you (begin|start|commence|enrol+|enter)\b.*\b(degree|studies|course|program(me)?|universit\w*|college|undergrad\w*|bachelor\w*|master\w*|ph ?d|doctora\w*)\b|\b(began|started|commenced) (your )?(\w+ )?(degree|studies|course|program(me)?)\b/,
       { not: /\b(job|employment|work|internship|placement|role|position)\b/ },
+    ),
+    // DN Capital's "Please state your higher educational qualifications, including (current) grade and starting and
+    // (expected) graduating date": every degree with its grade and dates.
+    R(
+      'edu.summary',
+      /\b(state|list|give|provide|detail|enter|summari[sz]e)\b.{0,30}\b(qualifications|degrees)\b.*\b(grades?|results?|classifications?|dates?|graduat\w*)\b/,
+      { kinds: LONG_TEXT },
     ),
     // "Did you complete UK A-levels? Yes or No. If yes, please provide your A-Level subjects…" (Eastdil).
     R(
@@ -3684,7 +3783,7 @@
     ),
     R(
       'edu.completed',
-      /^have you (already |now )?graduated\b|\b(have|has) you (already |now )?(completed|finished|graduated from) (your |all your )(\w+ )?(studies|degree|course|university|education|programme|program)\b|\bconfirm (that )?you have (already )?(completed|finished|graduated)\b/,
+      /^have you (already |now )?graduated\b|\b(have|has) you (already |now )?(completed|finished|graduated from) (your |all your )(\w+ )?(studies|degree|course|university|education|programme|program)\b|\bconfirm (that )?you have (already )?(completed|finished|graduated)\b|\b(degree|qualification|studies|course)\b.{0,20}\b(completed|complete|achieved|awarded|finished) or (still )?(predicted|expected|ongoing|in progress|pending)\b/,
       { kinds: CHOICE },
     ),
     R(
@@ -3699,16 +3798,16 @@
     R('edu.year', YEAR_ASKED, { kinds: CHOICE, not: /graduat|\b(19|20)\d{2}\b|\bnext\b|\bwill be\b/ }),
     R(
       'edu.year',
-      /\b(current |academic )?year of (study|studies|university|uni|college|degree|course|your (degree|course|studies|programme|program))\b|\b(what|which) year (of (your )?(study|studies|university|uni|degree|course|programme|program) )?are you (currently )?in\b|\bstudy year\b|\bcurrent year\b.*\b(study|studies|university|degree|course)\b|\byear in (school|university|college)\b|\bclass standing\b|\bacademic standing\b/,
+      /\b(school|academic|study|class) year (you will have )?(completed|finished) by\b|\b(current |academic )?year of (study|studies|university|uni|college|degree|course|your (degree|course|studies|programme|program))\b|\b(what|which) year (of (your )?(study|studies|university|uni|degree|course|programme|program) )?are you (currently )?in\b|\bstudy year\b|\bcurrent year\b.*\b(study|studies|university|degree|course)\b|\byear in (school|university|college)\b|\bclass standing\b|\bacademic standing\b/,
       {
         // "If you are in your first year of studies and yet to receive your results, please type 'N/A'" asks for results.
-        not: /graduat|\bstart|\bbegan|\bbegin|\bcomplet|\bfinish|\bentry|\bentered|high school|secondary|a levels?\b|gcse|\bresults?\b|\bgrades?\b|\bmarks\b/,
+        not: /graduat|\bstart(?!s? of (summer|spring|autumn|fall|winter))|\bbegan|\bbegin(?!ning of (summer|spring|autumn|fall|winter))|\b(?<!year )complet|\b(?<!year )finish|\bentry|\bentered|high school|secondary|a levels?\b|gcse|\bresults?\b|\bgrades?\b|\bmarks\b/,
       },
     ),
     // "Which university are you enrolled in, or from which institution did you receive your most recent degree?"
     R(
       'edu.school',
-      /^(which|what) (university|school|college|institution)\b|^name of (the |your )?(university|college)\b|^educator$|^educational (establishment|institution|provider)$/,
+      /^(which|what) (university|school|college|institution)\b|\b(confirm|tell us|select|choose|state|indicate) (which|what) (university|school|college|institution)\b|^name of (the |your )?(university|college)\b|^educator$|^educational (establishment|institution|provider)$/,
       {
         not: /\b(university|college) degree\b|\b(university|college|school) (course|programme|program|subject)s?\b|\bschool (type|diploma|grades?|did you attend)\b|type of school|\bgraduat\w* (year|date)|\byear\b|\bgpa\b|\bcity\b|\bcountry\b|\blocation\b/,
       },
@@ -4157,6 +4256,7 @@
     countriesAsked,
     followUpAnswer,
     eduLevelOf,
+    entryLevels,
     degreeClassOf,
     uploadApplies,
     uploadAlso,

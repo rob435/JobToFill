@@ -48,13 +48,13 @@
       clientX: rect.left + rect.width / 2,
       clientY: rect.top + rect.height / 2,
     };
-    // As a mouse sends them: a click with no click count (detail 0) is what Enter on a button makes, and BambooHR's
-    // menu buttons leave those to their keyboard handling.
-    const pointer = { ...init, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+    // With a click count, as a mouse's: a click with none (detail 0) is what Enter on a button makes, and BambooHR's
+    // menu buttons leave those to their keyboard handling. No pointerType: Radix Select takes a "mouse" pointerdown
+    // as a press-and-drag that picks on release, and a click from anything else as a plain click.
     const mouse = { ...init, detail: 1 };
-    el.dispatchEvent(new PointerEvent('pointerdown', { ...pointer, buttons: 1 }));
+    el.dispatchEvent(new PointerEvent('pointerdown', { ...init, buttons: 1 }));
     el.dispatchEvent(new MouseEvent('mousedown', { ...mouse, buttons: 1 }));
-    el.dispatchEvent(new PointerEvent('pointerup', pointer));
+    el.dispatchEvent(new PointerEvent('pointerup', init));
     el.dispatchEvent(new MouseEvent('mouseup', mouse));
     el.dispatchEvent(new MouseEvent('click', mouse));
   }

@@ -82,6 +82,7 @@ test('antd form, UK student: virtual lists, the IP-chosen Italy and +39 put righ
     linkedin: 'https://www.linkedin.com/in/robin-li',
     university: 'University of Glasgow', // options loaded 400 ms after each search, a Spin meanwhile
     degree: 'Bachelor’s degree (BA, BSc, BEng)',
+    // No gpa: a 2:1 never goes into a number box (it would read 21), and isn't turned into a GPA.
     graduationDate: '2027-06-01', // typed as 01/06/2027 into a DD/MM/YYYY picker
     offices: ['London', 'New York'],
     officesConsidered: ['London', 'New York'],
@@ -135,6 +136,7 @@ test('antd form, US profile: +1 and the United States, then the State question t
     linkedin: 'https://www.linkedin.com/in/ada',
     university: 'University of Cambridge',
     degree: 'Bachelor’s degree (BA, BSc, BEng)',
+    gpa: 3.9,
     graduationDate: '2016-06-01',
     offices: ['New York'],
     officesConsidered: ['New York'],

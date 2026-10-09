@@ -88,8 +88,8 @@ test('BambooHR: menu-button dropdowns, the County that appears for the UK, each 
     resume: 'robin_li_cv.pdf',
     dateAvailable: '06/28/2027',
     linkedinUrl: 'https://www.linkedin.com/in/robin-li',
-    // A BSc is a Bachelor of Science, never the "College - Bachelor of Arts" listed first.
-    educationLevel: 'College - Bachelor of Science',
+    // "Obtained": a BSc still under way isn't yet.
+    educationLevel: 'Some College',
     educationInstitutionName: 'University of Glasgow',
     undergraduateUniversity: 'University of Glasgow',
     undergraduateDegree: 'BSc',
@@ -143,6 +143,7 @@ test('BambooHR: a US profile keeps the United States and picks its State', async
     const { page, s } = await fill();
     assert.equal(s.country, 'United States');
     assert.equal(s.state, 'California');
+    // A BSc she holds is a Bachelor of Science, never the "College - Bachelor of Arts" listed first.
     assert.equal(s.educationLevel, 'College - Bachelor of Science');
     assert.equal(s.open, 0);
     await page.close();

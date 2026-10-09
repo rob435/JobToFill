@@ -57,7 +57,7 @@
   // graduation is not listed, please specify.", "If latest field of study is not listed…" (IMC), "If residing in
   // another country, please specify.": the box for an answer the list didn't have.
   const OTHER_FOLLOW_UP =
-    /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|^(if|when) you (have )?(selected|chose|picked|ticked|checked) (?!yes\b)|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b|\bif (it|yours|your \w+( \w+)?) (is|was) not (listed|shown|in the list|found|available)\b|\bif (\w+ ){1,6}?(is|are|was|were) not (listed|shown|in (the|this|our) (list|options|dropdown))\b|\bif (\w+ ){1,6}?(isn t|aren t|wasn t|weren t) (listed|shown|in (the|this) list)\b|\bif (\w+ ){1,6}?(does not|doesn t|do not|don t) (appear|show up)\b|\bif (\w+ ){1,6}?not in (the|this) list\b|\bif (residing|living|based|located|studying) (in |at )?(another|a different) \w+\b|\bnot listed (above|below)\b.*\b(specify|enter|type|provide|state)\b|\bif not (listed|shown|in the list|found|available)\b|^(any )?other (university|school|college|institution|degree|subject|major|course)\b|\b(university|school|college|institution|degree|subject|major|course) (name )?other$/;
+    /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|^(if|when) you (have )?(selected|chose|picked|ticked|checked) (?!yes\b|predicted\b|expected\b)|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b|\bif (it|yours|your \w+( \w+)?) (is|was) not (listed|shown|in the list|found|available)\b|\bif (\w+ ){1,6}?(is|are|was|were) not (listed|shown|in (the|this|our) (list|options|dropdown))\b|\bif (\w+ ){1,6}?(isn t|aren t|wasn t|weren t) (listed|shown|in (the|this) list)\b|\bif (\w+ ){1,6}?(does not|doesn t|do not|don t) (appear|show up)\b|\bif (\w+ ){1,6}?not in (the|this) list\b|\bif (residing|living|based|located|studying) (in |at )?(another|a different) \w+\b|\bnot listed (above|below)\b.*\b(specify|enter|type|provide|state)\b|\bif not (listed|shown|in the list|found|available)\b|^(any )?other (university|school|college|institution|degree|subject|major|course)\b|\b(university|school|college|institution|degree|subject|major|course) (name )?other$/;
   // A bare "Please specify" / "If other, please tell us where": the box for the answer a list above didn't have.
   const SPECIFY =
     /^(please )?(specify|explain|state)\b|^(if )?other\b|\bselected other\b|^(please )?(tell us|let us know) (where|which|more)\b/;
@@ -180,7 +180,9 @@
       return { type: 'compliance.declarations', part: null, score: 1, source: 'options' };
     // "Which university…? Please select "Other" if yours is not listed" is the question, not its follow-up box.
     const asked = String(s.question || s.label || s.aria || s.nearby || '');
-    const head = asked.split('?')[0];
+    // The question's first sentence: Isio's "…confirm which university you are currently studying… If your university
+    // if not listed, select other." asks for the university; the instruction after it is no follow-up.
+    const head = asked.split(/\?|\.\s/)[0];
     if (OTHER_FOLLOW_UP.test(norm(head.split(' ').length >= 4 ? head : asked))) return null;
     // A Yes/No question is never answered with a name, a school or a link.
     const yesNoAsked = YES_NO_QUESTION.test(norm(s.question || s.label || s.aria || ''));
@@ -386,6 +388,11 @@
     const text = [s.label, s.aria, s.placeholder, s.name, s.id, s.attrs, s.nearby, s.title]
       .map((t) => norm(t).replace(/\b\d+ (months?|years?|days?)\b/g, ''))
       .join(' | ');
+    // A date picker's box ("Pick date..." under Ashby's "Expected Graduation Year") takes a whole date: June 2027,
+    // not 1 January.
+    if (/\b(pick|select|choose) (a )?date\b/.test(norm(desc.placeholderRaw || s.placeholder))) return null;
+    // A whole date's format: Microsoft Forms' "Please input date (M/d/yyyy)", "d.m.yyyy", "yyyy-m-d", "m/yyyy".
+    if (/\b(m{1,2} d{1,2}|d{1,2} m{1,2}) y{2,4}\b|\by{4} m{1,2} d{1,2}\b|\bm{1,2} y{4}\b/.test(text)) return null;
     const hasMonth = /\bmonth\b|\bmm\b|\bmonat\b|\bmes\b|\bmois\b/.test(text);
     const hasYear = /\byear\b|\byyyy\b|\byy\b|\bjahr\b|\bano\b|\bannee\b/.test(text);
     const hasDay = /\bday\b|\bdd\b/.test(text);
@@ -725,6 +732,23 @@
         r.type = null;
         continue;
       }
+      // Capgemini's "Is your postgraduate degree completed or still predicted?", then "If you selected Predicted Status,
+      // which month will you complete this qualification?": that degree's month, nothing without one.
+      if (
+        r.type === 'edu.end' &&
+        /^if you (selected|chose) (predicted|expected)\b/.test(norm(questionText(descs[i])))
+      ) {
+        const k = [1, 2, 3].map((n) => i - n).find((j) => j >= 0 && results[j] && results[j].type === 'edu.completed');
+        const level = k != null ? F().eduLevelOf(norm(questionText(descs[k]))) : null;
+        if (level) {
+          const at = ((profile && profile.education) || []).findIndex((e) => F().entryLevels(e).includes(level));
+          if (at < 0) Object.assign(r, { type: null, dropped: 'edu.end' });
+          else r.index = at;
+          prev = null;
+          detached = null;
+          continue;
+        }
+      }
       const g = groupOf(r.type);
       // "Name of secondary school" or "Undergraduate GPA" is answered from the entry at that level, wherever it is.
       if (!g || (g === 'edu' && F().eduLevelOf(norm(questionText(descs[i]))))) {
@@ -763,11 +787,14 @@
       // So is a question of its own after the entries, even one the last entry hasn't had: "What year will you / did
       // you graduate from your most recent study?" among Phenom's screening questions is your degree's, not the school
       // entry's above them.
+      // Chicago Trading Co's "What is your expected graduation month?" after Greenhouse's education block (an
+      // unrecognised "Alternate Email" between them) asks again what the entry had: still your degree, not a new entry.
       const ownQuestion = st.index >= 0 && key !== st.lead && norm(questionText(descs[i])).split(' ').length >= 6;
       if (
         !detached &&
-        prev !== g &&
-        ((st.seen.has(key) && (key !== st.lead || runLength(results, i, g) < 2 || !sameLabel)) || ownQuestion)
+        ((prev !== g &&
+          ((st.seen.has(key) && (key !== st.lead || runLength(results, i, g) < 2 || !sameLabel)) || ownQuestion)) ||
+          (ownQuestion && st.seen.has(key)))
       )
         detached = g;
       if (detached === g) {
@@ -976,6 +1003,14 @@
         const theirs = field.length ? disciplines(o.n) : [];
         if (theirs.length) score += theirs.some((d) => field.includes(d)) ? 6 : -6;
       }
+      // A degree of any kind ("Degree level or above", "University degree") for one you hold, below a closer match.
+      else if (
+        ['bachelor', 'master', 'doctorate'].includes(wantDegree) &&
+        !degreeGroup(o.n) &&
+        /\bdegree\b/.test(o.n) &&
+        !/\b(no|some|without|partial)\b/.test(o.n)
+      )
+        score = Math.max(score, 70);
       // "Integrated Masters Degree" for an MEng, "Masters Degree" for an MSc.
       if (wantDegree === 'master' && /\bintegrated\b/.test(o.n) !== isIntegratedMasters(cands[0] || '')) score -= 10;
       // Break ties toward the option that shares the most words with the main spelling.
@@ -1779,6 +1814,11 @@
    * English page on a .com stays month first, as most US-built job sites expect.
    */
   function dateOrder(desc) {
+    return pageDateOrder(desc) || 'mdy';
+  }
+
+  /** The order the page's language or site says dates go in, or null when neither says (lang="en" on a .com). */
+  function pageDateOrder(desc) {
     const lang = String(desc.lang || '').toLowerCase();
     const [code, region = ''] = lang.split(/[-_]/);
     if (region === 'us' || region === 'ph') return 'mdy';
@@ -1788,7 +1828,7 @@
     const host = String(desc.host || '').toLowerCase();
     if (/\.(de|at|ch|pl|cz|sk|fi|no|dk|ru|tr)$/.test(host)) return 'dmy.';
     if (/\.(uk|ie|eu|fr|es|it|nl|be|pt|lu|au|nz|in|hk|sg|za|ae)$|\.eu\./.test(host)) return 'dmy';
-    return 'mdy';
+    return null;
   }
 
   function formatDate(v, desc) {
@@ -1824,7 +1864,9 @@
     const calendar = v.kind === 'date' && desc.popup === 'dialog';
 
     // A question in a plain text box with no format hint ("Earliest availability to start at CRA (not binding)")
-    // reads best spelled out: "28 June 2027", which nobody takes for 6 February. Date pickers have a placeholder.
+    // reads best spelled out: "28 June 2027", which nobody takes for 6 February. Date pickers have a placeholder. So
+    // does a short one's day when the page doesn't say how it writes dates (Personio's "Available from" on a .com):
+    // "06/2027" can't be misread, "06/07/2027" can.
     const question = U.cleanLabel(s.label || s.question || s.aria || '');
     if (
       v.kind === 'date' &&
@@ -1833,7 +1875,7 @@
       !calendar &&
       !hint &&
       !DATE_PATTERN.test(label) &&
-      question.split(/\s+/).length >= 4
+      (question.split(/\s+/).length >= 4 || (d.day && !pageDateOrder(desc)))
     ) {
       const month = U.monthName(d.month).replace(/^./, (c) => c.toUpperCase());
       return d.day ? `${d.day} ${month} ${y}` : `${month} ${y}`;

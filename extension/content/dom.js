@@ -768,6 +768,9 @@
         return el.closest('header, nav, [role="banner"], [role="navigation"], [role="search"]') ? null : 'combobox';
       if (SKIP_INPUT_TYPES.has(type)) return null;
       if (PASS_THROUGH_TYPES.has(type)) return type;
+      // A text box that is a spin button takes a number (Ant Design's InputNumber, Dayforce's "G.P.A."): typing "2:1"
+      // there leaves "21".
+      if (type === 'text' && el.getAttribute('role') === 'spinbutton') return 'number';
       // chosen's box, which only searches the options of the <select> it stands in for, is a dropdown too.
       return isComboInput(el) || standsFor(el) ? 'combobox' : 'text';
     }

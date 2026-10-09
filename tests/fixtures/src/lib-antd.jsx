@@ -342,6 +342,10 @@ function App() {
         <Form.Item name="degree" label="Degree" rules={[required('Please select your degree')]}>
           <Select options={DEGREES} placeholder="Select" />
         </Form.Item>
+        {/* Dayforce's "G.P.A.": an InputNumber, whose box is a role="spinbutton" text input that drops a ":". */}
+        <Form.Item name="gpa" label="G.P.A.">
+          <InputNumber min={0} max={5} step={0.1} style={{ width: 120 }} />
+        </Form.Item>
         {RANGE ? (
           <Form.Item name="studyDates" label="Dates of study" rules={[required('Please enter your dates of study')]}>
             <DatePicker.RangePicker format="DD/MM/YYYY" style={{ width: '100%' }} />
