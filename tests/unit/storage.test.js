@@ -453,6 +453,21 @@ test('store: each AI provider keeps its own key and model; another key stands in
 
   await store.saveAiSettings({ fallback: false });
   assert.equal((await store.aiConfig()).fallback, undefined);
+
+  // A Claude key is kept like the others, goes into the backup, and is the first to stand in.
+  await store.saveAiSettings({ fallback: true });
+  await store.setAiKey('sk-ant-test', 'anthropic');
+  assert.equal(await store.getAiKey('anthropic'), 'sk-ant-test');
+  assert.equal((await store.exportData({ keys: true })).aiKeys.anthropic, 'sk-ant-test');
+  config = await store.aiConfig();
+  assert.equal(config.fallback.provider, 'anthropic', 'Claude stands in for OpenRouter before DeepSeek');
+  await store.saveAiSettings({ provider: 'anthropic', model: 'claude-haiku-5-5' });
+  config = await store.aiConfig();
+  assert.deepEqual(
+    [config.provider, config.model, config.apiKey, config.baseUrl],
+    ['anthropic', 'claude-haiku-5-5', 'sk-ant-test', ''],
+  );
+  assert.equal(config.fallback.provider, 'openrouter');
 });
 
 test('store: a chosen letter follows its application across pages, not to other jobs', async () => {

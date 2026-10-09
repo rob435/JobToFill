@@ -1,20 +1,54 @@
 /*
- * JobToFill — chat client for the cover letter and CV writer.
- * Speaks the OpenAI-compatible chat completions API that OpenRouter, DeepSeek and most other
- * providers offer. Calls are made from the extension's own pages (no service worker time limits),
- * with the person's own API key; nothing goes anywhere else.
+ * JobToFill — chat client for the cover letter and CV writer and the AI answers.
+ * Speaks Anthropic's Messages API (Claude) and the OpenAI-compatible chat completions API that OpenRouter,
+ * DeepSeek and most other providers offer. Calls are made from the extension's own pages and background, with the
+ * person's own API key; nothing goes anywhere else.
  */
 (function (root) {
   'use strict';
   const JTF = (root.JTF = root.JTF || {});
 
+  // What a letter costs, roughly: about 10k tokens in and 3k out over the analysis, the draft and the fact check
+  // (tests/eval measures it). Shown beside each model so the choice is plain.
+  const CLAUDE = {
+    haiku: ['Claude Haiku 5.5', 'fast and the cheapest: well under 1¢ a letter'],
+    sonnet: ['Claude Sonnet 5.5', 'the best letters and answers for the money: about 5¢ a letter'],
+    opus: ['Claude Opus 5.5', 'the most capable, a little slower: about 10¢ a letter'],
+  };
+
   const PROVIDERS = {
+    anthropic: {
+      label: 'Claude (Anthropic)',
+      api: 'anthropic',
+      base: 'https://api.anthropic.com/v1',
+      model: 'claude-sonnet-5-5',
+      keyUrl: 'https://console.anthropic.com/settings/keys',
+      keyHint: 'sk-ant-…',
+      suggest: [
+        { id: 'claude-sonnet-5-5', name: CLAUDE.sonnet[0], note: CLAUDE.sonnet[1] },
+        { id: 'claude-haiku-5-5', name: CLAUDE.haiku[0], note: CLAUDE.haiku[1] },
+        { id: 'claude-opus-5-5', name: CLAUDE.opus[0], note: CLAUDE.opus[1] },
+      ],
+      // US dollars per million tokens: input, output, cache read (a cache write is 1.25× input).
+      prices: {
+        'claude-haiku-5-5': [0.1, 0.5, 0.01],
+        'claude-sonnet-5-5': [2, 10, 0.2],
+        'claude-opus-5-5': [4, 20, 0.2],
+      },
+      maxTokens: 32000,
+    },
     openrouter: {
       label: 'OpenRouter',
       base: 'https://openrouter.ai/api/v1',
       model: 'deepseek/deepseek-v4.1-flash',
       keyUrl: 'https://openrouter.ai/settings/keys',
       keyHint: 'sk-or-…',
+      suggest: [
+        { id: 'deepseek/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', note: 'cheap and quick: under 1¢ a letter' },
+        { id: 'anthropic/claude-haiku-5.5', name: CLAUDE.haiku[0], note: CLAUDE.haiku[1] },
+        { id: 'anthropic/claude-sonnet-5.5', name: CLAUDE.sonnet[0], note: CLAUDE.sonnet[1] },
+        { id: 'anthropic/claude-opus-5.5', name: CLAUDE.opus[0], note: CLAUDE.opus[1] },
+      ],
     },
     deepseek: {
       label: 'DeepSeek',
@@ -22,8 +56,10 @@
       model: 'deepseek-chat',
       keyUrl: 'https://platform.deepseek.com/api_keys',
       keyHint: 'sk-…',
-      // deepseek-chat answers straight away; deepseek-reasoner thinks first (slower, dearer).
-      models: ['deepseek-chat', 'deepseek-reasoner'],
+      suggest: [
+        { id: 'deepseek-chat', name: 'DeepSeek Chat', note: 'answers straight away' },
+        { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', note: 'thinks first: slower and dearer' },
+      ],
       // Longest reply the API accepts.
       maxTokens: 8192,
     },
@@ -79,13 +115,126 @@
     return null;
   }
 
+  /** The model ids a provider suggests, each with its name and what it's good for (the settings' model list). */
+  const suggestions = (provider) => (PROVIDERS[provider] && PROVIDERS[provider].suggest) || [];
+
+  /** What a suggested model is good for, as a sentence ("Fast and the cheapest: …"), or '' for any other id. */
+  function describe(provider, model) {
+    const s = suggestions(provider).find((m) => m.id === String(model || '').trim());
+    return s ? s.note.charAt(0).toUpperCase() + s.note.slice(1) + '.' : '';
+  }
+
+  const apiOf = (c) => (PROVIDERS[c.provider] && PROVIDERS[c.provider].api) || 'openai';
+
   function headers(c) {
-    const h = { 'Content-Type': 'application/json', Authorization: `Bearer ${String(c.apiKey).trim()}` };
+    const key = String(c.apiKey).trim();
+    // Anthropic's API answers an extension page only when it says it calls from a browser on purpose.
+    if (apiOf(c) === 'anthropic')
+      return {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      };
+    const h = { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` };
     // OpenRouter's optional app attribution.
     if (/openrouter\.ai/.test(c.base))
       Object.assign(h, { 'HTTP-Referer': 'https://github.com/rob435/JobToFill', 'X-Title': 'JobToFill' });
     return h;
   }
+
+  /** What a call cost in US dollars, from the provider's price list (Claude), or undefined. */
+  function costOf(c, u) {
+    const p = PROVIDERS[c.provider] && PROVIDERS[c.provider].prices && PROVIDERS[c.provider].prices[c.model];
+    if (!p) return undefined;
+    const [input, output, read] = p;
+    return (
+      ((u.input_tokens || 0) * input +
+        (u.cache_creation_input_tokens || 0) * input * 1.25 +
+        (u.cache_read_input_tokens || 0) * read +
+        (u.output_tokens || 0) * output) /
+      1e6
+    );
+  }
+
+  // How much thinking a request asks for, as Claude's effort: extraction needs little, writing can take more.
+  const EFFORT = { none: 'low', low: 'low', medium: 'medium', high: 'high' };
+  // Room for Claude's thinking on top of the reply the caller budgets for.
+  const THINKING_ROOM = 4000;
+
+  /**
+   * How each API is spoken: where a chat goes, the request body, and the reply as { text, length (cut off by the
+   * token limit), usage, model }. OpenAI-compatible APIs and Anthropic's Messages API.
+   */
+  const WIRES = {
+    openai: {
+      path: '/chat/completions',
+      request(c, { messages, json, temperature, maxTokens, reasoning, cap }) {
+        const body = { model: c.model, messages, temperature, max_tokens: Math.min(maxTokens, cap) };
+        if (json) body.response_format = { type: 'json_object' };
+        // Reasoning models think before answering. Extraction needs none (it only costs time); writing
+        // can ask for a little. Only OpenRouter takes this setting; other providers pick by model.
+        if (/openrouter\.ai/.test(c.base))
+          body.reasoning =
+            !reasoning || reasoning === 'none' ? { enabled: false } : { effort: reasoning, exclude: true };
+        return body;
+      },
+      reply(data, c) {
+        const choice = (data && data.choices && data.choices[0]) || {};
+        return {
+          text: (choice.message && choice.message.content) || '',
+          length: choice.finish_reason === 'length',
+          usage: data && data.usage,
+          model: (data && data.model) || c.model,
+        };
+      },
+    },
+    anthropic: {
+      path: '/messages',
+      // System messages become the system prompt, cached with the start of the conversation: the answers' batches,
+      // fix rounds and a letter's drafts share it. Claude sets its own sampling, so there is no temperature, and
+      // thinking is asked for as effort. JSON is what every prompt here asks for in words.
+      request(c, { messages, maxTokens, reasoning, cap }) {
+        const system = messages
+          .filter((m) => m.role === 'system')
+          .map((m) => String(m.content))
+          .join('\n\n');
+        const body = {
+          model: c.model,
+          max_tokens: Math.min(maxTokens + THINKING_ROOM, cap),
+          output_config: { effort: EFFORT[reasoning] || 'low' },
+          cache_control: { type: 'ephemeral' },
+          messages: messages
+            .filter((m) => m.role !== 'system')
+            .map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content) })),
+        };
+        if (system) body.system = [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }];
+        return body;
+      },
+      reply(data, c) {
+        if (data && data.stop_reason === 'refusal')
+          throw new AIError(`${c.label} declined to write this. Edit the request or try another model.`, {
+            code: 'refusal',
+          });
+        const u = (data && data.usage) || {};
+        const read = u.cache_read_input_tokens || 0;
+        return {
+          text: ((data && data.content) || [])
+            .filter((b) => b.type === 'text')
+            .map((b) => b.text)
+            .join(''),
+          length: !!data && data.stop_reason === 'max_tokens',
+          usage: {
+            prompt_tokens: (u.input_tokens || 0) + read + (u.cache_creation_input_tokens || 0),
+            completion_tokens: u.output_tokens || 0,
+            cached_tokens: read,
+            cost: costOf(c, u),
+          },
+          model: (data && data.model) || c.model,
+        };
+      },
+    },
+  };
 
   /** What went wrong, in words a person can act on. */
   function explain(status, body, c) {
@@ -95,12 +244,18 @@
         status,
         code: 'key',
       });
-    if (status === 402)
+    // Anthropic says so in a 400: "Your credit balance is too low to access the Anthropic API."
+    if (status === 402 || (status === 400 && /credit balance/i.test(detail)))
       return new AIError(`Your ${c.label} account is out of credit. Top it up, then try again.`, {
         status,
         code: 'credit',
       });
-    if (status === 404 || (status === 400 && /model/i.test(detail) && /not|invalid|exist|support/i.test(detail)))
+    // A setting the model won't take ("`temperature` is not supported for this model") isn't a missing model.
+    const setting = /temperature|top_p|response_format|reasoning|max_tokens|thinking/i.test(detail);
+    if (
+      status === 404 ||
+      (status === 400 && !setting && /model/i.test(detail) && /not|invalid|exist|support/i.test(detail))
+    )
       return new AIError(
         `${c.label} doesn’t offer the model “${c.model}”. Pick another one in Settings › Cover letters.`,
         {
@@ -169,7 +324,7 @@
     try {
       let res;
       try {
-        res = await fetchImpl(`${c.base}/chat/completions`, {
+        res = await fetchImpl(`${c.base}${WIRES[apiOf(c)].path}`, {
           method: 'POST',
           headers: headers(c),
           body: JSON.stringify(body),
@@ -214,30 +369,23 @@
     if (bad) throw new AIError(bad, { code: 'setup' });
     const doFetch = fetchImpl || root.fetch.bind(root);
     const cap = (PROVIDERS[c.provider] && PROVIDERS[c.provider].maxTokens) || 16000;
-    const body = { model: c.model, messages, temperature, max_tokens: Math.min(maxTokens, cap) };
-    if (json) body.response_format = { type: 'json_object' };
-    // Reasoning models think before answering. Extraction needs none (it only costs time); writing
-    // can ask for a little. Only OpenRouter takes this setting; other providers pick by model.
-    if (/openrouter\.ai/.test(c.base))
-      body.reasoning = !reasoning || reasoning === 'none' ? { enabled: false } : { effort: reasoning, exclude: true };
+    const wire = WIRES[apiOf(c)];
+    const body = wire.request(c, { messages, json, temperature, maxTokens, reasoning, cap });
 
     let lastErr;
     for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
       try {
-        const data = await post(c, body, signal, doFetch);
-        const choice = (data && data.choices && data.choices[0]) || {};
-        const text = (choice.message && choice.message.content) || '';
-        const usage = data && data.usage;
+        const { text, length, usage, model } = wire.reply(await post(c, body, signal, doFetch), c);
         if (!text.trim()) {
           // Thinking used up the token budget: give it more room and ask again.
-          if (choice.finish_reason === 'length') body.max_tokens = Math.min(body.max_tokens * 2, cap);
+          if (length) body.max_tokens = Math.min(body.max_tokens * 2, cap);
           throw new AIError('The model returned an empty reply.', { retry: true });
         }
-        if (!json) return { text: text.trim(), usage, model: data.model || c.model };
+        if (!json) return { text: text.trim(), usage, model };
         try {
-          return { text, json: parseJson(text), usage, model: data.model || c.model };
+          return { text, json: parseJson(text), usage, model };
         } catch (err) {
-          if (choice.finish_reason === 'length') body.max_tokens = Math.min(body.max_tokens * 2, cap);
+          if (length) body.max_tokens = Math.min(body.max_tokens * 2, cap);
           throw err;
         }
       } catch (err) {
@@ -251,6 +399,12 @@
         }
         if (err.status === 400 && body.reasoning && /reasoning/i.test(err.message)) {
           delete body.reasoning;
+          attempt--;
+          continue;
+        }
+        // Newer models fix their own sampling (Claude Opus 5.5 rejects any temperature): ask again without it.
+        if (err.status === 400 && 'temperature' in body && /temperature/i.test(err.message)) {
+          delete body.temperature;
           attempt--;
           continue;
         }
@@ -296,11 +450,11 @@
     return { ok: true, model: r.model, ms: Date.now() - started };
   }
 
-  /** Model ids the provider offers (OpenRouter lists them without a key). */
+  /** Model ids the provider offers (OpenRouter lists them without a key; Anthropic needs one). */
   async function models(config, { fetch: fetchImpl } = {}) {
     const c = resolve(config);
     const doFetch = fetchImpl || root.fetch.bind(root);
-    const res = await doFetch(`${c.base}/models`, {
+    const res = await doFetch(`${c.base}/models${apiOf(c) === 'anthropic' ? '?limit=100' : ''}`, {
       headers: c.apiKey ? headers(c) : {},
       credentials: 'omit',
     });
@@ -309,7 +463,19 @@
     return (data.data || data.models || []).map((m) => m.id || m.name).filter(Boolean);
   }
 
-  const ai = { PROVIDERS, DEFAULT_CONFIG, AIError, resolve, problem, chat, test, models, parseJson };
+  const ai = {
+    PROVIDERS,
+    DEFAULT_CONFIG,
+    AIError,
+    resolve,
+    problem,
+    chat,
+    test,
+    models,
+    parseJson,
+    suggestions,
+    describe,
+  };
   JTF.ai = ai;
   if (typeof module === 'object' && module.exports) module.exports = ai;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

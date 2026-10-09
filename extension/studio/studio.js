@@ -11,6 +11,7 @@ import {
   el,
   hasAiConsent,
   hasSiteAccess,
+  modelPicker,
   requestAiConsent,
   requestSiteAccess,
 } from '../ui/common.js';
@@ -146,11 +147,21 @@ function renderSetup(onDone) {
   );
   const cfg = state.config;
   provider.value = cfg.provider || 'openrouter';
-  $('#setup-model').value = cfg.model || '';
   $('#setup-base').value = cfg.baseUrl || '';
+  // The provider's suggested models, with what each is good for; any other id it offers can be typed.
+  const picker = modelPicker({
+    name: 'setup-model',
+    list: (id) =>
+      ai.models({
+        provider: id,
+        baseUrl: $('#setup-base').value.trim(),
+        apiKey: $('#setup-key').value.trim() || (id === cfg.provider ? cfg.apiKey : ''),
+      }),
+  });
+  $('#setup-model-field').replaceChildren(el('span', { textContent: 'Model' }), ...picker.parts);
+  picker.set(provider.value, cfg.model);
   const sync = () => {
     const p = ai.PROVIDERS[provider.value];
-    $('#setup-model').placeholder = p.model || 'model id';
     $('#setup-key').placeholder = p.keyHint || '';
     $('#setup-base-wrap').hidden = provider.value !== 'custom';
     const link = $('#setup-key-link');
@@ -159,7 +170,7 @@ function renderSetup(onDone) {
   };
   // Another provider's model and key don't carry over.
   provider.onchange = () => {
-    $('#setup-model').value = provider.value === cfg.provider ? cfg.model || '' : '';
+    picker.set(provider.value, provider.value === cfg.provider ? cfg.model : '');
     sync();
   };
   sync();
@@ -169,7 +180,7 @@ function renderSetup(onDone) {
     const status = $('#setup-status');
     const next = {
       provider: provider.value,
-      model: $('#setup-model').value.trim(),
+      model: picker.value,
       baseUrl: $('#setup-base').value.trim(),
       apiKey: $('#setup-key').value.trim() || (provider.value === cfg.provider ? cfg.apiKey : ''),
     };

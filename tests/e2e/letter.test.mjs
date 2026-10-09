@@ -381,7 +381,7 @@ test('settings: example letters are read from PDFs and the company they were for
   await settings.close();
 });
 
-test('settings: OpenRouter and DeepSeek each keep their own key and model, and the keys are backed up', async () => {
+test('settings: Claude, OpenRouter and DeepSeek each keep their own key and model, picked from a list that says what each is for', async () => {
   const before = await h.bg(async () => {
     const { store } = globalThis.JTF;
     return { settings: (await store.getSettings()).ai, keys: await store.getAiKeys() };
@@ -399,24 +399,59 @@ test('settings: OpenRouter and DeepSeek each keep their own key and model, and t
         [name, value],
       );
     const read = () =>
-      settings.call(() => ({
-        key: document.querySelector('[name=ai-key]').value,
-        model: document.querySelector('[name=ai-model]').value,
-        saved: document.querySelector('[name=ai-key]').closest('label').querySelector('small.muted').textContent,
-        backup: document.querySelector('[name=ai-backup-keys]').checked,
-        fallback: document.querySelector('[name=ai-fallback]').checked,
-      }));
+      settings.call(() => {
+        const box = document.querySelector('[name=ai-model]');
+        const choice = document.querySelector('[name=ai-model-choice]');
+        return {
+          providers: Array.from(document.querySelector('[name=ai-provider]').options, (o) => o.value),
+          key: document.querySelector('[name=ai-key]').value,
+          choice: choice.hidden ? null : choice.value,
+          choices: Array.from(choice.options, (o) => o.textContent),
+          typed: box.hidden ? null : box.value,
+          note: box.closest('label').querySelector('.model-note').textContent,
+          saved: document.querySelector('[name=ai-key]').closest('label').querySelector('small.muted').textContent,
+          backup: document.querySelector('[name=ai-backup-keys]').checked,
+          fallback: document.querySelector('[name=ai-fallback]').checked,
+        };
+      });
+    assert.equal((await read()).providers[0], 'anthropic', 'Claude comes first');
     await type('ai-provider', 'openrouter');
     await type('ai-key', 'sk-or-e2e');
-    await type('ai-model', 'deepseek/deepseek-v4.1-flash');
+    let now = await read();
+    assert.deepEqual(now.choices, [
+      'DeepSeek V4.1 Flash (default)',
+      'Claude Haiku 5.5',
+      'Claude Sonnet 5.5',
+      'Claude Opus 5.5',
+      'Another model…',
+    ]);
+    await type('ai-model-choice', 'anthropic/claude-sonnet-5.5');
+    now = await read();
+    assert.equal(now.typed, null, 'no box to type in for a model from the list');
+    assert.match(now.note, /^The best letters and answers for the money: about 5¢ a letter\.$/);
+
     await type('ai-provider', 'deepseek');
     await until(async () => (await read()).key === '', null, null, 5000);
-    assert.equal((await read()).model, '', 'DeepSeek starts with its own default model');
+    assert.equal((await read()).choice, 'deepseek-chat', 'DeepSeek starts with its own default model');
     await type('ai-key', 'sk-ds-e2e');
-    await until(async () => /OpenRouter, DeepSeek/.test((await read()).saved), null, null, 5000);
+
+    await type('ai-provider', 'anthropic');
+    await until(async () => (await read()).key === '', null, null, 5000);
+    now = await read();
+    assert.equal(now.choice, 'claude-sonnet-5-5');
+    assert.match(now.note, /all|best/);
+    await type('ai-key', 'sk-ant-e2e');
+    // A model that isn't on the list: "Another model…" opens a box for its id.
+    await type('ai-model-choice', '\u0000another');
+    now = await read();
+    assert.equal(now.typed, '', 'the box opens empty');
+    assert.match(now.note, /Any model id/);
+    await type('ai-model', 'claude-opus-5');
+    await until(async () => /Claude \(Anthropic\), OpenRouter, DeepSeek/.test((await read()).saved), null, null, 5000);
+
     await type('ai-provider', 'openrouter');
     await until(async () => (await read()).key === 'sk-or-e2e', null, null, 5000);
-    assert.equal((await read()).model, 'deepseek/deepseek-v4.1-flash');
+    assert.equal((await read()).choice, 'anthropic/claude-sonnet-5.5');
     assert.equal((await read()).backup, true, 'keys are backed up unless switched off');
     assert.equal((await read()).fallback, true);
 
@@ -425,16 +460,27 @@ test('settings: OpenRouter and DeepSeek each keep their own key and model, and t
     const again = await h.extPage('options/options.html#letters');
     await until(again.call, () => !!document.querySelector('select[name=ai-provider]'));
     assert.equal(await again.call(() => document.querySelector('[name=ai-key]').value), 'sk-or-e2e');
+    assert.equal(
+      await again.call(() => document.querySelector('[name=ai-model-choice]').value),
+      'anthropic/claude-sonnet-5.5',
+    );
     await again.close();
     const state = await h.bg(async () => {
       const { store } = globalThis.JTF;
       return { config: await store.aiConfig(), backup: (await store.exportData()).aiKeys };
     });
     assert.equal(state.config.provider, 'openrouter');
+    assert.equal(state.config.model, 'anthropic/claude-sonnet-5.5');
     assert.equal(state.config.apiKey, 'sk-or-e2e');
-    assert.equal(state.config.fallback.provider, 'deepseek');
-    assert.equal(state.config.fallback.apiKey, 'sk-ds-e2e');
-    assert.deepEqual(state.backup, { ...before.keys, openrouter: 'sk-or-e2e', deepseek: 'sk-ds-e2e' });
+    assert.equal(state.config.fallback.provider, 'anthropic', 'Claude stands in first');
+    assert.equal(state.config.fallback.model, 'claude-opus-5');
+    assert.equal(state.config.fallback.apiKey, 'sk-ant-e2e');
+    assert.deepEqual(state.backup, {
+      ...before.keys,
+      anthropic: 'sk-ant-e2e',
+      openrouter: 'sk-or-e2e',
+      deepseek: 'sk-ds-e2e',
+    });
   } finally {
     await h.bg(async (b) => {
       const { store, api } = globalThis.JTF;

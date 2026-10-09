@@ -174,6 +174,12 @@ test('Greenhouse-style form: the copy keeps the form and what was picked, withou
     fills.some((f) => f.question === 'Resume/CV' && f.type === 'file.resume' && f.status === 'filled'),
     'the upload is in the trace',
   );
+  // The page map, redacted like the rest: what was picked, never what was typed or an equal-opportunity answer.
+  assert.match(t.pageMap, /^PAGE "Senior Engineer at Acme - Greenhouse-style application" http:\/\/localhost:\d+\//);
+  assert.match(t.pageMap, /\n"Welcome back, \[first name\] \[last name\]"\n/);
+  assert.match(t.pageMap, /\n {2}f\d+ text\* "First Name" filled → name\.first ✓ fill=filled\n/);
+  assert.match(t.pageMap, /"Are you legally authorized to work in the United States\?" \[Yes \| No\] chosen "Yes"/);
+  assert.match(t.pageMap, /"Gender" \[Male \| Female \| Decline To Self Identify\] filled \(answer withheld\)/);
   await Promise.all([view.close(), page.close()]);
   await h.bg(() =>
     globalThis.JTF.passwords.update((d) => (d.credentials = d.credentials.filter((c) => c.id !== 'snap'))),
@@ -260,6 +266,7 @@ test('a form in a cross-origin frame comes after the page, in a template named a
   assert.equal(t.frames[0].fields[0].question, 'Get job alerts by email');
   assert.ok(t.frames[1].fields.some((f) => f.question === 'First Name' && f.type === 'name.first' && f.hasValue));
   assert.ok(t.frames[1].fillTrace.some((f) => f.question === 'First Name' && f.status === 'filled'));
+  assert.ok(t.pageMap.includes(`\nFRAME 1 ${frameUrl} (under i1) "Senior Engineer at Acme`), t.pageMap);
   await Promise.all([view.close(), page.close()]);
 });
 

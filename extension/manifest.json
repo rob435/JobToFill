@@ -38,6 +38,7 @@
       "lib/letter.js",
       "lib/answers.js",
       "lib/jobpage.js",
+      "lib/pagemap.js",
       "lib/doctext.js",
       "lib/otp.js",
       "lib/nylas.js",

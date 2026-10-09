@@ -69,7 +69,7 @@ Save your details once: name, contact info, address, links, education, work hist
 - **Tailor my CV.** Rewords and reorders your CV around the job's keywords, using only facts already in it. It shows keyword coverage before → after and a list of every change. If you choose to, it uploads the tailored PDF instead of your usual CV for that application. Rebuilt from your CV file, a project is just its name and what it is (its technologies are in its bullets and your Skills, not listed under the name), and achievements, skills and languages are rows with a bold label and plain text.
 - **Edit freely.** The letter is editable, the PDF preview updates as you type, and the checks re-run on your edits. Use "Rewrite" with an instruction such as "mention my chess" or "shorter".
 - **Pick up where you left off.** Coming back to a job you already wrote for offers that letter, with your edits, instead of writing a new one.
-- **Bring your own model.** DeepSeek V4.1 Flash through [OpenRouter](https://openrouter.ai) by default (about a tenth of a cent per letter, ~10 seconds), [DeepSeek's own API](https://platform.deepseek.com/api_keys) (`deepseek-chat`), or any OpenAI-compatible provider. Settings › _Cover letters_. Each provider keeps its own key and model, so you can switch back and forth. With keys for both OpenRouter and DeepSeek, the other one takes over when the one you chose is out of credit, rate-limited or down (you can switch that off).
+- **Bring your own model.** [Claude](https://console.anthropic.com/settings/keys) through Anthropic's own API: Sonnet 5.5, the all-rounder (about 5¢ a letter); Haiku 5.5, the quickest and cheapest (well under 1¢); or Opus 5.5, the most capable (about 10¢). JobToFill keeps its instructions and your material in Claude's prompt cache between the steps of a letter or a page of answers, so the repeated part costs a tenth as much. Or [OpenRouter](https://openrouter.ai) (DeepSeek V4.1 Flash by default, about a tenth of a cent per letter, or the same Claude models), [DeepSeek's own API](https://platform.deepseek.com/api_keys) (`deepseek-chat`), or any OpenAI-compatible provider. Settings › _Cover letters_ lists each provider's suggested models with what each is good for; "Another model…" takes any id the provider offers. Each provider keeps its own key and model, so you can switch back and forth. With keys for more than one, another takes over when the one you chose is out of credit, rate-limited or down (Claude first; you can switch that off).
 
 **Extra answers, from you and the AI**
 
@@ -123,6 +123,7 @@ Save your details once: name, contact info, address, links, education, work hist
 - Works inside cross-origin iframes (embedded Greenhouse boards) and open shadow DOM (web components).
 - **Show detected fields** labels every field with what JobToFill thinks it is: green means ready, amber means your profile lacks it, grey means unknown.
 - **Undo** puts back whatever was on the page before the fill.
+- **Page map.** Toolbar → _Page map_ opens, in a tab beside the page, the page as JobToFill and the AI see it: every field numbered (f1, f2…) with its question, options, what’s picked and what JobToFill takes it for (“→ name.first ✓”, “✗ no value” when your profile has no answer, “(none: for AI)” when no rule knows the question), the buttons and frames, and the form’s step, alerts and dialogs. Click a line and the page scrolls to that field and outlines it; _Only fields that need something_ cuts a long form down to what’s missing, invalid or left for the AI. _Copy for an AI chat_ and _Save as text_ give the same map with your details replaced by placeholders, as in a bug-report snapshot.
 - **Save a snapshot for a bug report.** When a form trips JobToFill up, the link at the bottom of the popup saves one HTML file: a copy of the form with your values and personal details taken out (see [Privacy](#privacy-and-security)), and a trace of what JobToFill saw and did with each field (what it took each question for, how it wrote the answer, what the page said). Attach it to a bug report and the form can be rebuilt as a test, without anyone needing your login.
 - Only empty fields are filled unless you turn on _Overwrite_, and filled fields are outlined. One exception: a country the site chose for you is put right. Workday picks the _Country / Territory_ and the phone code's country from where your connection seems to be (Italy on a VPS there); when that isn't your country it becomes yours, the chip "Italy (+39)" becomes "United Kingdom (+44)", and the address fields are filled once the page has switched to that country's (_County_ and _City_ instead of _Province_ and _City (Comune)_).
 - Light and dark mode, an automatic backup file, and import/export.
@@ -168,19 +169,20 @@ In both browsers the settings page opens on install. Fill in your profile and pi
 
 ## Using it
 
-| Do this                        | How                                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------------------- |
-| Fill the page                  | **Alt+Shift+F**, the toolbar button → _Fill this page_, or right-click → _Fill this page_   |
-| See what was detected          | Toolbar → _Show detected fields_                                                            |
-| Save answers you typed         | Toolbar → _Learn from this page_                                                            |
-| Insert one value               | Right-click a box → _Insert from profile_                                                   |
-| New password on a sign-up form | Right-click the password box → _Generate strong password_ (or just fill the page)           |
-| Undo a fill                    | _Undo_ in the popup or in the on-page toast                                                 |
-| Letter, CV and form in one go  | Toolbar → _Quick apply_ (see the result later under _Last quick apply_)                     |
-| Write a cover letter           | Toolbar → _Write cover letter_ on the application page (set up a key under _Cover letters_) |
-| Answer the questions left      | Automatic with an AI key; or the popup's _Answer them with AI_                              |
-| Emailed sign-in codes          | Automatic once your inbox is connected under _Email codes_; or right-click the box          |
-| Sign in / create an account    | Fill the portal's sign-in or sign-up page: it clicks _Sign in_ / _Create account_ for you   |
+| Do this                        | How                                                                                                 |
+| ------------------------------ | --------------------------------------------------------------------------------------------------- |
+| Fill the page                  | **Alt+Shift+F**, the toolbar button → _Fill this page_, or right-click → _Fill this page_           |
+| See what was detected          | Toolbar → _Show detected fields_                                                                    |
+| See the page as JobToFill does | Toolbar → _Page map_: every field, what it’s taken for and what’s missing; click a line to go to it |
+| Save answers you typed         | Toolbar → _Learn from this page_                                                                    |
+| Insert one value               | Right-click a box → _Insert from profile_                                                           |
+| New password on a sign-up form | Right-click the password box → _Generate strong password_ (or just fill the page)                   |
+| Undo a fill                    | _Undo_ in the popup or in the on-page toast                                                         |
+| Letter, CV and form in one go  | Toolbar → _Quick apply_ (see the result later under _Last quick apply_)                             |
+| Write a cover letter           | Toolbar → _Write cover letter_ on the application page (set up a key under _Cover letters_)         |
+| Answer the questions left      | Automatic with an AI key; or the popup's _Answer them with AI_                                      |
+| Emailed sign-in codes          | Automatic once your inbox is connected under _Email codes_; or right-click the box                  |
+| Sign in / create an account    | Fill the portal's sign-in or sign-up page: it clicks _Sign in_ / _Create account_ for you           |
 
 To change the shortcut, open `chrome://extensions/shortcuts` in Chromium browsers, or in Firefox go to `about:addons`, click ⚙, then **Manage Extension Shortcuts**. The settings page links there too.
 
@@ -211,6 +213,7 @@ The demo includes Greenhouse-, Workday- and Lever-style applications, searchable
 - **Never submits an application.** Acknowledgement and terms checkboxes are ticked and counted in the toast (switch _Tick acknowledgement boxes_ off to leave them for you; Quick apply always ticks them and tells you); marketing, newsletter and talent-pool opt-ins are never ticked. Beyond filling (which opens dropdowns, menus and upload tiles, never Dropbox or Google sign-ins), the one thing it clicks for you, with _Sign in and create job-portal accounts for me_ on, is a job portal's own sign-in or create-account button (and the _Continue_ after an emailed code) on a pure sign-in or sign-up page, as listed under [Job-portal accounts](#job-portal-accounts); on such a sign-up page it also ticks the form's own terms box, since creating the account means accepting them. Switch the setting off and it only fills.
 - **CAPTCHAs are never touched.** Nothing is filled or clicked inside a CAPTCHA, and its frames (Google reCAPTCHA, hCaptcha, Cloudflare, Arkose) are skipped entirely.
 - **Works under strict Content-Security-Policies.** The on-page toast and labels are styled through the DOM, so a site's CSP can't block them, and no page script ever sees the extension's code.
+- **Page maps stay where you put them.** _Page map_ reads the page in your browser and sends nothing anywhere; _Copy for an AI chat_ and _Save as text_ put the map, with your details replaced by placeholders and your saved logins taken out, on your clipboard or disk, for you to paste where you choose.
 - **Bug-report snapshots stay on your disk.** _Save a snapshot for a bug report_ writes one HTML file to your computer and sends nothing anywhere. Every typed value is left out, and your names, email, phone, address, postcode, date of birth, links, employers, file names, saved logins and longer written answers become placeholders wherever they appear; so do your equal-opportunity answers. Scripts are removed, and the file blocks scripts and form submission when opened. City, country, school, degree and job titles stay, because the form's own lists need them.
 - The extension needs access to all sites so it can fill application forms embedded from other domains (iframes). It only touches a page when you trigger it.
 
@@ -250,7 +253,7 @@ Implemented ✅ · Ideas for later 💡
 - Sections that only appear after clicking _Add another_ aren't added automatically yet.
 - It never solves CAPTCHAs (it waits for you), can't fill closed shadow roots, and won't run on browser pages or extension stores.
 - Signing in for you covers sign-in and sign-up forms with a password box. Email-first sign-ins (Oracle Recruiting Cloud's "Email address → Next → PIN", iCIMS's "Next", Eightfold's "Continue with email") are filled but their _Next_ is left for you; the PIN or code that follows is still typed in from your inbox. Sign-up forms with security questions (some Taleo sites) stop and say what's left to fill. SuccessFactors' older "Choose File → Upload" document dialog isn't driven; attach the file there by hand.
-- The cover letter writer and AI answers need an AI provider account (OpenRouter, DeepSeek or similar). Their checks catch invented numbers, skills, names and claims, but read the letter and every orange-outlined answer before you submit: the AI can still describe something more strongly than you would, or pick a preference you wouldn't.
+- The cover letter writer and AI answers need an AI provider account (Anthropic for Claude, OpenRouter, DeepSeek or similar). Their checks catch invented numbers, skills, names and claims, but read the letter and every orange-outlined answer before you submit: the AI can still describe something more strongly than you would, or pick a preference you wouldn't.
 - AI answers read a custom dropdown's options by opening it. Searchable lists (schools, cities) are answered by typing, so an unusual option may not be found.
 - The job description is found and checked for 97% of the live postings tested (236 graduate and internship roles from Trackr's UK, US, Hong Kong, French and German trackers, across 25+ job sites) when you open the application from the job's page, and for 86% when you land on the application directly. No posting for another job was ever accepted as the same job. Some employers (Amazon, law firm portals, SuccessFactors' newer career sites such as apply.careers.hsbc.com) send _Apply_ to a sign-in page that drops the job's ID: start from the job's page, switch on the browsing-history search, or paste the description.
 - CV text is read from text-based PDFs and Word files. Scanned (image-only) PDFs have no text to read.
@@ -270,10 +273,12 @@ extension/
     store.js           profiles, settings, documents, history, backups, cover letter material and letters
     util.js            text normalization, dates, and JTF.api (browser.* in Firefox, chrome.* elsewhere)
     discover.js        Discover: registry search, Trackr dedupe, careers crawl, job boards, verification, watchlist checks
-    ai.js              OpenAI-compatible chat client (OpenRouter, DeepSeek, custom): JSON mode, retries, errors
+    ai.js              chat client: Claude (Anthropic's Messages API, cached) and OpenAI-compatible (OpenRouter,
+                       DeepSeek, custom); the providers' suggested models, JSON, retries, fallback, errors
     letter.js          cover letter and CV prompts, and the checks every draft must pass
     answers.js         AI answers to the questions a fill leaves empty: what may be sent, limits, prompt, checks
     jobpage.js         job postings: extraction, ATS APIs, finding the description, same-job validation
+    pagemap.js         page maps: the frames' maps merged into one page, and its text outline within a budget
     doctext.js         text from PDF and Word files (your CV, example letters), no dependencies
     pdfdoc.js          PDF writer: TeX-style line breaking, embedded fonts, the letter and CV layouts
   fonts/               Latin Modern (GUST font licence) as TrueType subsets, and English hyphenation patterns
@@ -283,8 +288,10 @@ extension/
     fill.js            sets values the way frameworks notice, custom dropdowns, files and upload tiles, undo
     account.js         sign-in / sign-up / code pages: what blocks the submit, CAPTCHAs, the allowed clicks
     main.js            in-page API: fill / learn / inspect / undo / toast
+    pagemap.js         a frame's page map (injected only when one is asked for), and its refs drawn for screenshots
   ui/                  shared styles and helpers for the popup and settings page (ES modules)
   popup/               toolbar popup
+  map/                 the page map viewer: a tab's map to read, search, copy redacted, and click through to the page
   studio/              the cover letter page: find the job, write, check, preview, attach, tailor the CV
   discover/            Discover internships page: search, careers checks, watchlist
   data/firms.json      the registry Discover searches (built by scripts/firms.mjs)
@@ -332,3 +339,41 @@ node tests/live/survey.mjs --limit 20                      # the real extension 
 ```
 
 The first survey (117 live forms, 2,408 questions on Trackr's UK and US finance and tech trackers) is what the country-by-country right to work, job-site mapping, on-site and adjustments answers, and AI answers were built from. The rules now fill 1,546 of those questions (64%, up from 60%; about a third of the gain is the new profile answers, the rest is new and corrected rules), and about 30 right-to-work answers that were wrong for a British applicant on US forms are now right. Most of the 461 questions they still don't recognise are firm-specific, and those go to the AI.
+
+### Measuring the AI features
+
+`tests/eval/` runs the AI answers and the cover letter writer, exactly as they ship, on 40 live application forms (276 questions labelled by hand) and 12 postings, for any provider and model, and scores coverage, answers that should never have been given, letters that pass their checks, cost and time; Claude can grade the writing too. Every call is recorded, so a run can be re-scored without a key. Compare models or prompt changes with it before switching (`tests/eval/README.md`):
+
+```bash
+OPENROUTER_API_KEY=sk-or-… npm run eval -- --provider openrouter --model deepseek/deepseek-v4.1-flash --split train
+npm run eval:scoreboard
+```
+
+### Page maps
+
+A page map is a page as JobToFill sees it, written out for a reader who can't see the screen: an AI model reading it as text, or you in a terminal. It is an outline in reading order, through shadow DOM and into every frame, of the page's landmarks, headings and text; every field the fill scans, with a ref (`f1`, `f2`…), its question, options, what it holds and what the rules take it for; the buttons that act on the form (`b1`…, with what they do: next, back, submit, upload, accept or reject cookies…); and the frames (`i1`…). Above the outline: the page's title and address, the job site and widget libraries it is built with, the step of a multi-step form, alerts, dialogs and cookie banners.
+
+```
+PAGE "Senior Engineer at Acme - Greenhouse-style application" http://localhost:8080/greenhouse.html  lang=en  platform=greenhouse
+FIELDS 24 (4 required, 23 filled, 0 invalid)  ACTIONS 1
+# Apply for Senior Engineer
+[form]
+  f1 text* "First Name" filled → name.first ✓ fill=filled
+  f7 file "Cover Letter" no file → file.coverLetter ✗ no value fill=nothing to put
+  f11 select "Are you legally authorized to work in the United States?" [Yes | No] chosen "Yes" → job.authorized ✓ fill=filled
+  f21 select "Gender" [Male | Female | Decline To Self Identify] filled (answer withheld) → eeo.gender ✓ fill=filled
+  b1 submit "Submit Application" (submit)
+```
+
+`→ name.first ✓` says what the rules take the field for and that your profile has the answer; `✗ no value` that it hasn't, and `(none: for AI)` that no rule knows the question, so it goes to the AI. A long page is cut to a budget (24,000 characters unless you say otherwise): page text far from the form goes first, then the tail of long option lists, then navigation links. Fields and buttons are never left out, and the last line says what was.
+
+```bash
+node scripts/pagemap.mjs greenhouse.html                   # a demo form from tests/fixtures, by its name
+node scripts/pagemap.mjs https://job-boards.greenhouse.io/figma/jobs/5458801004
+node scripts/pagemap.mjs greenhouse.html --fill            # fill it with the test profile first, then map it
+node scripts/pagemap.mjs <page> --screenshot page.png      # and a full-page screenshot with every ref drawn on
+node scripts/pagemap.mjs <page> --json map.json            # the whole map as JSON (rects, rules, validity, paths…)
+node scripts/pagemap.mjs <page> --max-chars 8000 --wait 3000 --headed
+```
+
+It runs the real extension in Chromium, as the end-to-end tests do, with their test profile, and never clicks or submits anything (`--fill` fills the way the Fill button does). A map says what is picked in a field, never what is typed in it, and not which answer an equal-opportunity question has; `--values redacted` also turns your details into placeholders everywhere, as snapshots do, and `--values full` shows what is typed too (for test profiles). Passwords, file names and hidden inputs' values are never on a map. Bug-report snapshots carry the redacted map as `pageMap` in their `jtf-trace` JSON. The popup’s _Page map_ shows the same map in `map/map.html?tab=<id>` (made with `values: 'state'`, budget 60,000 characters). Clicking a line sends `jtf:pagemap-reveal` (`{ tabId, frameId, ref }`), which brings the tab forward and calls `__jtf.pageMapReveal(localRef)` in that frame to scroll the element to the middle and outline it for two seconds. _Copy for an AI chat_ and _Save as text_ use `values: 'redacted'`, whose text the background also clears of the site’s saved logins. The page map's walker (`content/pagemap.js`) goes into a page only when a map is asked for (the background's `jtf:pagemap` message), never with a fill.

@@ -260,7 +260,12 @@ function fakeFetch(responses) {
     seen.push({ url, body: init.body ? JSON.parse(init.body) : null, headers: init.headers });
     const r = responses.shift();
     if (r instanceof Error) throw r;
-    return { ok: r.status < 400, status: r.status, text: async () => JSON.stringify(r.body) };
+    return {
+      ok: r.status < 400,
+      status: r.status,
+      text: async () => JSON.stringify(r.body),
+      json: async () => r.body,
+    };
   };
   fn.seen = seen;
   return fn;
@@ -309,6 +314,144 @@ test('ai: a provider without JSON mode is asked again without it', async () => {
   assert.equal(fetch.seen[0].url, 'https://api.deepseek.com/chat/completions');
   assert.equal(fetch.seen[1].body.response_format, undefined);
   assert.equal(fetch.seen[0].body.reasoning, undefined, 'only OpenRouter gets the reasoning switch');
+});
+
+test('ai: a model that sets its own temperature is asked again without one', async () => {
+  const fetch = fakeFetch([
+    { status: 400, body: { error: { message: '`temperature` is not supported for this model.' } } },
+    reply('{"ok":true}'),
+  ]);
+  const r = await ai.chat(
+    { provider: 'openrouter', apiKey: 'k', model: 'anthropic/claude-opus-5.5' },
+    { messages: [], json: true, temperature: 0.4, fetch },
+  );
+  assert.deepEqual(r.json, { ok: true });
+  // A model the provider doesn't have is still said as much, and not asked again.
+  await assert.rejects(
+    ai.chat(cfg, {
+      messages: [],
+      fetch: fakeFetch([{ status: 400, body: { error: { message: 'The model `x/y` does not exist' } } }]),
+    }),
+    (err) => err.code === 'model' && /doesn’t offer the model/.test(err.message),
+  );
+  assert.equal(fetch.seen[0].body.temperature, 0.4);
+  assert.equal('temperature' in fetch.seen[1].body, false);
+  assert.equal(fetch.seen.length, 2);
+});
+
+const claudeReply = (text, extra) => ({
+  status: 200,
+  body: {
+    model: 'claude-sonnet-5-5',
+    stop_reason: 'end_turn',
+    content: [
+      { type: 'thinking', thinking: '', signature: 'x' },
+      { type: 'text', text },
+    ],
+    usage: { input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 2000, cache_creation_input_tokens: 0 },
+    ...extra,
+  },
+});
+const claude = { provider: 'anthropic', apiKey: ' sk-ant-test ', model: '' };
+
+test('ai: Claude through Anthropic’s Messages API, its system prompt cached, its cost counted', async () => {
+  const fetch = fakeFetch([claudeReply('{"ok": true}')]);
+  const r = await ai.chat(claude, {
+    messages: [
+      { role: 'system', content: 'Rules.' },
+      { role: 'user', content: 'Write.' },
+      { role: 'assistant', content: '{"draft": 1}' },
+      { role: 'user', content: 'Fix it.' },
+    ],
+    json: true,
+    temperature: 0.4,
+    maxTokens: 3000,
+    fetch,
+  });
+  assert.deepEqual(r.json, { ok: true });
+  const { url, headers, body } = fetch.seen[0];
+  assert.equal(url, 'https://api.anthropic.com/v1/messages');
+  assert.equal(headers['x-api-key'], 'sk-ant-test');
+  assert.equal(headers['anthropic-version'], '2023-06-01');
+  assert.equal(headers['anthropic-dangerous-direct-browser-access'], 'true');
+  assert.equal(headers.Authorization, undefined);
+  assert.equal(body.model, 'claude-sonnet-5-5', 'Sonnet unless another is chosen');
+  assert.deepEqual(body.system, [{ type: 'text', text: 'Rules.', cache_control: { type: 'ephemeral' } }]);
+  assert.deepEqual(
+    body.messages.map((m) => m.role),
+    ['user', 'assistant', 'user'],
+  );
+  assert.deepEqual(body.cache_control, { type: 'ephemeral' });
+  assert.deepEqual(body.output_config, { effort: 'low' }, 'no reasoning asked for is low effort');
+  assert.equal(body.max_tokens, 7000, 'room for thinking on top of the reply');
+  for (const k of ['temperature', 'response_format', 'reasoning']) assert.equal(k in body, false, k);
+  assert.equal(r.usage.prompt_tokens, 3000);
+  assert.equal(r.usage.completion_tokens, 500);
+  assert.equal(r.usage.cost, (1000 * 2 + 2000 * 0.2 + 500 * 10) / 1e6);
+  assert.equal(r.model, 'claude-sonnet-5-5');
+
+  const writing = fakeFetch([claudeReply('Dear team')]);
+  await ai.chat({ ...claude, model: 'claude-opus-5-5' }, { messages: [], reasoning: 'medium', fetch: writing });
+  assert.deepEqual(writing.seen[0].body.output_config, { effort: 'medium' });
+  assert.equal(writing.seen[0].body.system, undefined);
+});
+
+test('ai: Claude’s refusals, cut-off replies, empty credit and its model list', async () => {
+  const refused = fakeFetch([claudeReply('', { stop_reason: 'refusal', content: [] })]);
+  await assert.rejects(
+    ai.chat(claude, { messages: [{ role: 'user', content: 'x' }], fetch: refused }),
+    (err) => err.code === 'refusal' && /declined/.test(err.message),
+  );
+  assert.equal(refused.seen.length, 1, 'a refusal is not asked again');
+
+  const cut = fakeFetch([claudeReply('', { stop_reason: 'max_tokens', content: [] }), claudeReply('{"ok":true}')]);
+  const r = await ai.chat(claude, {
+    messages: [{ role: 'user', content: 'x' }],
+    json: true,
+    maxTokens: 1000,
+    fetch: cut,
+  });
+  assert.deepEqual(r.json, { ok: true });
+  assert.equal(cut.seen[1].body.max_tokens, cut.seen[0].body.max_tokens * 2, 'more room the second time');
+
+  const broke = fakeFetch([
+    {
+      status: 400,
+      body: {
+        type: 'error',
+        error: {
+          type: 'invalid_request_error',
+          message: 'Your credit balance is too low to access the Anthropic API.',
+        },
+      },
+    },
+    reply('{"ok":true}'),
+  ]);
+  const backed = await ai.chat(
+    { ...claude, fallback: { provider: 'openrouter', apiKey: 'sk-or' } },
+    { messages: [{ role: 'user', content: 'x' }], json: true, fetch: broke },
+  );
+  assert.deepEqual(backed.fallback.to, 'OpenRouter', 'out of credit: the other provider answers');
+  assert.match(backed.fallback.reason, /out of credit/);
+
+  const listed = fakeFetch([
+    { status: 200, body: { data: [{ id: 'claude-sonnet-5-5' }, { id: 'claude-haiku-5-5' }] } },
+  ]);
+  assert.deepEqual(await ai.models(claude, { fetch: listed }), ['claude-sonnet-5-5', 'claude-haiku-5-5']);
+  assert.equal(listed.seen[0].url, 'https://api.anthropic.com/v1/models?limit=100');
+  assert.equal(listed.seen[0].headers['x-api-key'], 'sk-ant-test');
+});
+
+test('ai: the models each provider suggests, said in words', () => {
+  assert.deepEqual(
+    ai.suggestions('anthropic').map((m) => m.id),
+    ['claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-opus-5-5'],
+  );
+  assert.ok(ai.suggestions('openrouter').some((m) => m.id === 'anthropic/claude-sonnet-5.5'));
+  assert.equal(ai.describe('anthropic', 'claude-haiku-5-5'), 'Fast and the cheapest: well under 1¢ a letter.');
+  assert.equal(ai.describe('openrouter', 'some/other-model'), '');
+  assert.deepEqual(ai.suggestions('custom'), []);
+  assert.equal(Object.keys(ai.PROVIDERS)[0], 'anthropic', 'Claude comes first in the list');
 });
 
 test('ai: custom providers need an https address', () => {

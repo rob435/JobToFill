@@ -1292,6 +1292,8 @@
         return { url: JTF.snapshot.cleanUrl(location.href), error: String((err && err.message) || err) };
       }
     },
+    /** Does this field still hold the answer the AI put there (for the page map)? */
+    aiFilled: (field) => state.aiFilled.has(field.el) && state.aiFilled.get(field.el) === JTF.fill.currentValue(field),
     /** Entries from another part of the content script (the AI assist) join the undoable fill. */
     appendHistory(entries) {
       if (entries && entries.length) state.history = state.history.concat(entries);

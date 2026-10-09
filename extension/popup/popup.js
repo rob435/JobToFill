@@ -389,6 +389,13 @@ function openLastQuick() {
   window.close();
 }
 
+/** The page map viewer for this tab, in a new tab beside it: the page as JobToFill and the AI see it. */
+function openPageMap() {
+  const url = api.runtime.getURL('map/map.html') + '?tab=' + tab.id;
+  api.tabs.create({ url, windowId: tab.windowId, index: tab.index + 1, openerTabId: tab.id });
+  window.close();
+}
+
 /** Discover: firms that keep a low profile, and the watchlist. */
 function openDiscover(hash) {
   api.tabs.create({ url: api.runtime.getURL('discover/discover.html') + (hash || '') });
@@ -518,7 +525,7 @@ async function init() {
   $('#shortcut').hidden = !shortcut;
 
   if (!tab || !/^(https?|file):/.test(tab.url || '')) {
-    for (const id of ['#fill', '#inspect', '#learn', '#write-letter', '#quick-apply', '#snapshot'])
+    for (const id of ['#fill', '#inspect', '#learn', '#pagemap', '#write-letter', '#quick-apply', '#snapshot'])
       $(id).disabled = true;
     $('#page-note').hidden = false;
   }
@@ -532,6 +539,7 @@ async function init() {
   $('#learn').addEventListener('click', learn);
   $('#snapshot').addEventListener('click', snapshot);
   $('#discover').addEventListener('click', () => openDiscover());
+  $('#pagemap').addEventListener('click', openPageMap);
   $('#watch-news-open').addEventListener('click', () => openDiscover('#watch'));
   $('#learn-save').addEventListener('click', saveLearned);
   $('#learn-close').addEventListener('click', () => ($('#learn-panel').hidden = true));

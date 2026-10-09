@@ -7,7 +7,7 @@
     "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "node --test \"tests/unit/*.test.js\"",
     "test:e2e": "node --test --test-concurrency=1 \"tests/e2e/*.test.mjs\"",
-    "test:firefox": "BROWSER=firefox node --test --test-concurrency=1 tests/e2e/fill.test.mjs tests/e2e/pages.test.mjs tests/e2e/letter.test.mjs tests/e2e/upload.test.mjs tests/e2e/answers.test.mjs tests/e2e/education.test.mjs tests/e2e/stubborn.test.mjs tests/e2e/editors.test.mjs tests/e2e/dynamic.test.mjs tests/e2e/lib-mui.test.mjs tests/e2e/lib-antd.test.mjs tests/e2e/lib-headless.test.mjs tests/e2e/lib-jquery.test.mjs tests/e2e/lib-forms.test.mjs tests/e2e/workday.test.mjs tests/e2e/screening.test.mjs tests/e2e/snapshot.test.mjs",
+    "test:firefox": "BROWSER=firefox node --test --test-concurrency=1 tests/e2e/fill.test.mjs tests/e2e/pages.test.mjs tests/e2e/letter.test.mjs tests/e2e/upload.test.mjs tests/e2e/answers.test.mjs tests/e2e/education.test.mjs tests/e2e/stubborn.test.mjs tests/e2e/editors.test.mjs tests/e2e/dynamic.test.mjs tests/e2e/lib-mui.test.mjs tests/e2e/lib-antd.test.mjs tests/e2e/lib-headless.test.mjs tests/e2e/lib-jquery.test.mjs tests/e2e/lib-forms.test.mjs tests/e2e/workday.test.mjs tests/e2e/screening.test.mjs tests/e2e/snapshot.test.mjs tests/e2e/pagemap.test.mjs tests/e2e/pagemap-ui.test.mjs",
     "lint": "eslint . && prettier --check . && node scripts/check.mjs && npm run build --silent && web-ext lint --source-dir dist/firefox --warnings-as-errors",
     "format": "prettier --write . && eslint --fix .",
     "build": "node scripts/build.mjs",
@@ -16,9 +16,14 @@
     "firefox": "web-ext run --target firefox-desktop",
     "demo": "node tests/fixtures/serve.mjs",
     "icons": "node scripts/icons.mjs",
-    "firms": "node scripts/firms.mjs"
+    "firms": "node scripts/firms.mjs",
+    "pagemap": "node scripts/pagemap.mjs",
+    "eval": "node tests/eval/run.mjs",
+    "eval:build": "node tests/eval/build.mjs",
+    "eval:scoreboard": "node tests/eval/scoreboard.mjs"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.132.1",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@eslint/js": "^10.0.1",
