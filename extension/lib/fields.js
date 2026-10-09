@@ -732,7 +732,7 @@
   // result in your school/university's grading system" (Shell's Workday): a result in your own grading system is
   // welcome too, whatever scale the GPA is on.
   const OWN_SYSTEM =
-    /\botherwise\b.{0,80}\b(results?|grades?|marks?|class(es|ification)?)\b|\b(own|local|national|home|equivalent|(school|university|college|institution|country)( s)?) (grading|marking|grade|assessment) (system|scale)\b|\b(does not|doesn t|do not|don t) use (a |the )?(gpa|grade point)\b/;
+    /\botherwise\b.{0,80}\b(results?|grades?|marks?|class(es|ification)?)\b|\b(own|local|national|home|equivalent|(school|university|college|institution|country)( s)?) (grading|marking|grade|assessment) (system|scale)\b|\b(does not|doesn t|do not|don t) use (a |the )?(gpa|grade point)\b|\bscale (used|of|at) (by |at |in )?(your )?(own |local |home )?(school|university|college|institution|country)\b/;
 
   /**
    * A GPA question: your GPA (a class written there too, unless the question wants a number). With no GPA, a "Grade"
@@ -1767,7 +1767,7 @@
 
   // "…Otherwise, enter N/A.", "If not, please write 'None'", "(enter N/A if not applicable)": a box's word for No.
   const OTHERWISE =
-    /\b(?:otherwise|if (?:not|no|none|not applicable|you (?:answered|selected|said|chose) no))\b,? (?:please )?(?:enter|write|type|put|input|insert|state|answer|fill in)(?: in)? (n a|na|none|not applicable|nil|no|nothing|0)\b|\b(?:enter|write|type|put|input|insert) (n a|na|none|not applicable|nil) (?:if|where|when) (?:not applicable|it does not apply|this does not apply|not|no|none|n a|you (?:answered|selected|said) no)\b/;
+    /\b(?:otherwise|if (?:not|no|none|not applicable|you (?:answered|selected|said|chose) no|(?:you )?(?:haven t|have not|were not|weren t|are not|aren t|did not|didn t|do not|don t)(?: \w+){1,3}))\b,? (?:please )?(?:enter|write|type|put|input|insert|state|answer|fill in)(?: in)? (n a|na|none|not applicable|nil|no|nothing|0)\b|\b(?:enter|write|type|put|input|insert|indicate|state|answer) (n a|na|none|not applicable|nil) (?:if|where|when) (?:not applicable|it does not apply|this does not apply|not|no|none|n a|you (?:answered|selected|said) no|you (?:do not|don t) have)\b/;
   const OTHERWISE_WORDS = {
     'n a': 'N/A',
     na: 'NA',
@@ -1952,6 +1952,19 @@
     return level !== 'highschool' || sameQualification((ctx && ctx.question) || '', e.degree);
   }
 
+  /**
+   * An entry's end date for a form's "To" box: a stint that starts and ends in the same month (a spring week, an
+   * insight day: "03/2026" to "03/2026") ends the month after, since forms turn down a "To" that isn't after "From".
+   */
+  function endAfterStart(e) {
+    const start = U.parseDate(e.startDate);
+    const end = U.parseDate(e.endDate);
+    if (!start || !end || !start.month || end.day || start.year !== end.year || start.month !== end.month)
+      return e.endDate;
+    const next = start.year * 12 + start.month; // the month after, counted from January of year 0
+    return `${Math.floor(next / 12)}-${U.pad2((next % 12) + 1)}`;
+  }
+
   function entry(label, list, key, kind) {
     return {
       label,
@@ -1965,7 +1978,8 @@
           return key === 'company' && i === 0 ? val(p.address.organization) : null;
         }
         const { e, level } = entryAt(p, list, ctx);
-        if (!e) return null;
+        // No studies at the level asked: "…graduate (Master) GPA? Please indicate N/A if you do not have one."
+        if (!e) return level ? otherwiseVal(ctx) : null;
         if (
           level === 'highschool' &&
           ['gpa', 'class', 'subject'].includes(kind) &&
@@ -1975,7 +1989,8 @@
         if (kind === 'date') {
           if (key === 'endDate' && e.current) return null;
           const typical = key === 'endDate' ? 6 : 9;
-          const v = windowAnswer(e[key], ctx.question, typical) || dateVal(e[key], ctx.part, typical);
+          const raw = key === 'endDate' ? endAfterStart(e) : e[key];
+          const v = windowAnswer(raw, ctx.question, typical) || dateVal(raw, ctx.part, typical);
           // Graduated already: "Expected graduation date: … / I am not currently enrolled" takes the last one.
           if (v && v.date && key === 'endDate' && list === 'education') {
             const now = ctx.today || new Date();
@@ -2425,6 +2440,18 @@
         if (words.length <= 3) v.named = new RegExp(`\\b${words.join(' ?')}\\b`);
         v.fallback = ['Other', 'Other (please specify)', 'Others', 'Something else'];
         return v;
+      },
+    },
+    // "Please provide the name and team of your referrer. If you haven't been referred please state n/a", "If you were
+    // referred by a Graham Capital employee, please enter their name. If not, write N/A.": the word it asks for, when
+    // where you heard about the job is no referral. A referral's name is yours to give.
+    'job.referrer': {
+      label: 'Who referred you',
+      get(p, ctx) {
+        const source = U.normalize(p.job.referralSource || '');
+        return /\b(referr\w*|refer|employee|friend|colleague|relative|family)\b/.test(source)
+          ? null
+          : otherwiseVal(ctx);
       },
     },
     // "What is your communication preference?", "Preferred method of contact".
@@ -2953,13 +2980,13 @@
     R('file.resume', /resume|\bcv\b|curriculum|lebenslauf|attach|upload|document|\bfile\b/, {
       kinds: ['file'],
       // "Autofill from resume" / "Apply with resume" read the file and rewrite the form: not the resume upload.
-      not: /photo|picture|image|avatar|headshot|^(?!.*\b(resume|cv)\b).*(\b(portfolio|cover)\b|transcript)|certificat|passport|\bid\b|writing sample|\b(other|additional|supporting|further) (documents?|files?|attachments?|materials?)\b|auto ?fill|automatically fill|apply with (your )?(resume|cv)|pre ?fill|parse/,
+      not: /photo|picture|image|avatar|headshot|^(?!.*\b(resume|cv)\b).*(\b(portfolio|cover)\b|transcript)|certificat|passport|\bid\b|writing sample|\b(other|additional|supporting|further) (\w+ )?(documents?|files?|attachments?|materials?)\b|auto ?fill|automatically fill|apply with (your )?(resume|cv)|pre ?fill|parse/,
       // An "Attach" button whose id or group says "cover letter" is not the resume upload.
       // So is a "Portfolio" upload, unless it also asks for the CV ("Resume / portfolio").
       // So is a code sample or a programming exercise ("If you would like to share a file of your code sample…",
       // "Write a program in C++ … Attach the file").
       notAny:
-        /^(?!.*\b(resume|cv|curriculum)\b).*(cover ?letter|motivation(al)? letter|letter of motivation|anschreiben|lettre de motivation|\b(portfolio|work samples?)\b|\b(other|additional|supporting|further) (documents?|files?|attachments?|materials?)\b|\bcode samples?\b|\bsamples? of (your )?code\b|\bwrite a (program|function|script)\b|\b(coding|programming) (exercise|task|assignment|challenge|test|question)\b|\bsource code\b|transcript)|writing sample|headshot|photo|passport/,
+        /^(?!.*\b(resume|cv|curriculum)\b).*(cover ?letter|motivation(al)? letter|letter of motivation|anschreiben|lettre de motivation|\b(portfolio|work samples?)\b|\b(other|additional|supporting|further) (\w+ )?(documents?|files?|attachments?|materials?)\b|\bcode samples?\b|\bsamples? of (your )?code\b|\bwrite a (program|function|script)\b|\b(coding|programming) (exercise|task|assignment|challenge|test|question)\b|\bsource code\b|transcript)|writing sample|headshot|photo|passport/,
       // …unless what it says names the CV too: "Resume/CV/Transcripts" above a "(transcripts are required…)" note.
       unlessAny: CV_NAMED,
     }),
@@ -3129,6 +3156,11 @@
       'job.referralSource',
       /how did you (first )?(hear|find|learn|come across|discover|get to know|connect with)|where did you (first )?(hear|find|learn|see|discover|come across)|hear(d)? about (us|this|the)|learn(ed)? about (us|this|the)|source of (application|referral|hire|candidate)|referral source|^source$|how were you referred|found (us|this|the job)/,
     ),
+    R(
+      'job.referrer',
+      /\b(name|names|details|team)\b.{0,40}\breferr(er|al)s?\b|\breferred (to us |to you )?by\b.{0,80}\b(name|names)\b|\breferr(er|al) s? (name|full name)\b/,
+      { kinds: LONG_TEXT },
+    ),
     // The list that follows "How did you first hear about BNY?" (Job Board → "Please select the specific source").
     R(
       'job.referralSource',
@@ -3154,21 +3186,27 @@
     ),
     R(
       'job.otherOffers',
-      /\b(other|competing|outstanding|existing|pending) (job |internship |employment )?offers?\b|\boffers? (from|at|with) (other|another|any other) (firms?|compan|employers?|organi)|\boffers? (and|or|&) deadlines?|\bdeadlines? (we|that we) should\b|\bany (other )?(offers|deadlines)\b|\bexploding offer|\b(upcoming|pending|current|any) (offer )?deadlines?\b|\boffer deadlines?\b|\bdecision (deadlines?|timelines?)\b|\brecruiting timelines?\b|\btimelines? (we|that we) should\b|\baccepted an? (\w+ ){0,3}offer\b|\b(holding|hold) any (\w+ )?offers?\b/,
+      /\b(other|competing|outstanding|existing|pending) (job |internship |employment )?offers?\b|\boffers? (from|at|with) (other|another|any other) (firms?|compan|employers?|organi)|\boffers? (and|or|&) deadlines?|\bdeadlines? (we|that we) should\b|\bany (other )?(offers|deadlines)\b|\bexploding offer|\b(upcoming|pending|current|any) (offer )?deadlines?\b|\boffer deadlines?\b|\bdecision (deadlines?|timelines?)\b|\brecruiting timelines?\b|\btimelines? (we|that we) should\b|\baccepted an? (\w+ ){0,3}offer\b|\b(holding|hold) any (\w+ )?offers?\b|\b(other )?(processes|interviews) (and |or )?(offers|timelines)\b/,
       { not: /\bif (yes|so)\b|\bwhich (firm|company)\b|\bwhat (firm|company)\b/ },
     ),
     // "Have you applied to Marshall Wace before?"
     R(
       'compliance.previouslyApplied',
       /\b(previously|ever|already) applied\b|\bapplied (to|for|with|at)\b.{0,60}\b(before|previously|in the past|last year|this year)\b|\bhave you applied (to|for|with)\b|\b(have|did) you (ever |previously )?(been )?interview(ed)? (with|at|for)\b(?!.*\b(affiliates?|portfolio|subsidiar\w*|group compan\w*)\b)/,
-      { kinds: CHOICE.concat(LONG_TEXT), not: /\bif (yes|so)\b|\bwhen and\b/ },
+      // "If yes, when?" after it is its follow-up; "Have you ever applied… before? If yes, please list dates and
+      // position." in one box is the question.
+      { kinds: CHOICE.concat(LONG_TEXT), not: /^if (yes|so)\b|\bwhen and\b/ },
     ),
     // "Do you require any reasonable adjustments to participate in the recruitment process?"
     R(
       'job.adjustments',
-      /\breasonable adjustments?\b|\b(require|need|request)\b.{0,40}\b(adjustments?|accommodations?|support)\b.{0,60}\b(recruitment|application|interview|assessment|selection|hiring)\b|\badjustments? (to|during|in|for) (the |our )?(recruitment|application|interview|assessment|selection)/,
+      /\breasonable adjustments?\b|\b(require|need|request)\b.{0,40}\b(adjustments?|accommodations?|support|(special|additional|access) (requirements?|arrangements?|needs|assistance))\b.{0,60}\b(recruitment|application|interview|assessment|selection|hiring)\b|\badjustments? (to|during|in|for) (the |our )?(recruitment|application|interview|assessment|selection)/,
       {
-        kinds: CHOICE,
+        // A text box asking it as a yes/no question ("Do you require any special requirements if you are invited to
+        // attend an interview?" on Phenom) takes the answer too; one asking what they are is left for you.
+        kinds: CHOICE.concat(LONG_TEXT),
+        test: (desc, text) =>
+          CHOICE.includes(desc.kind) || /^(do|does|will|would|are|is|have|has) (you|there)\b/.test(text),
         not: /essential functions|housing|\bif (yes|so)\b|please (provide|give|tell)/,
       },
     ),
@@ -3265,7 +3303,7 @@
     // Not about the company's auditors ("…employed by Ernst & Young, that engages in audit work?").
     R(
       'compliance.relatives',
-      /\b(related to|relatives?|family members?|immediate family|spouse|domestic partner|close (personal )?relationship)\b.*\b(work|works|working|worked|employ|employed|employee|employees|staff)\b|\b(know|related to) any ?one (who )?(currently )?(works?|working|employed|at)\b|\b(personal|family|romantic|intimate|close) relationships? with\b.*\b(employees?|employed|staff|work\w*|current|affiliates?|subsidiar\w*|colleagues?)\b|\b(employees?|staff)\b.*\b(with whom )?you have (a |an |any )?(personal|family|romantic|close) relationship\b/,
+      /\b(related to|relatives?|family members?|immediate family|spouse|domestic partner|close (personal )?relationship)\b.*\b(work|works|working|worked|employ|employed|employee|employees|staff)\b|\b(know|related to) any ?one (who )?(currently )?(works?|working|employed|at)\b|\b(personal|family|romantic|intimate|close) relationships? with\b.*\b(employees?|employed|staff|work\w*|current|affiliates?|subsidiar\w*|colleagues?)\b|\b(employees?|staff)\b.*\b(with whom )?you have (a |an |any )?(personal|family|romantic|close) relationship\b|\b(connected|connections?) (to|with) (any )?(current |existing )?(employees?|staff)\b/,
       {
         kinds: CHOICE.concat(LONG_TEXT),
         not: /government|public official|politically|referr|refer you|emergency|\b(ernst|ey|deloitte|pwc|pricewaterhouse\w*|kpmg|auditors?|audit)\b/,
@@ -3537,14 +3575,15 @@
     R(
       'edu.gpaScale',
       /\b(gpa|grading|grade|marking) (scale|system)\b|\bscale (used|of your gpa)\b|\b(which|what) scale\b|\b(maximum|max|highest) possible (score|gpa|grade)\b/,
-      { not: /\bon an? \d|\bout of\b|\bnormali[sz]ed\b/ },
+      // "What is your cumulative GPA on the scale used by your local school/university?" asks for the GPA.
+      { not: /\bon an? \d|\bout of\b|\bnormali[sz]ed\b|\bon (the|a|your) (\w+ )?scale\b/ },
     ),
     R(
       'edu.gpa',
       /\bgpa\b|grade point|\bcgpa\b|cumulative (grade|average)|grade average|\bgrades?\b/,
       // "Number of GCSEs at grade 9-7" is a count, not your grade.
       {
-        not: /test score|credit score|maximum|max possible|highest possible|grading scale|scale used|\bgpa scale\b|\bnumber of\b|\bhow many\b/,
+        not: /test score|credit score|maximum|max possible|highest possible|grading scale|(?<!\bon (the|a|your) )scale used|\bgpa scale\b|\bnumber of\b|\bhow many\b/,
       },
     ),
     // "A-level results", "Highers / Advanced Highers results": a school entry's grades.
@@ -3818,7 +3857,7 @@
     }),
     R(
       'languages',
-      /languages? (spoken|you speak|proficienc|known|fluency)|which languages?\b|spoken languages|^languages?$|language skill|languages do you speak|\blanguages?\b.*\b(fluent|speak|proficient)\b|\bfluent in\b|\b(additional|other|foreign) languages?\b|\b(do|can) you speak\b|\bspeak (\w+ )?(at a |to a )?(fluent|native|business|professional)\b/,
+      /languages? (spoken|you speak|proficienc|known|fluency)|which languages?\b|spoken languages|^languages?$|language skill|languages do you speak|\blanguages?\b.*\b(fluent|fluency|speak|proficient)\b|\bfluent in\b|\b(additional|other|foreign) languages?\b|\b(do|can) you speak\b|\bspeak (\w+ )?(at a |to a )?(fluent|native|business|professional)\b/,
       { not: /programming|coding|scripting|computer|software/ },
     ),
   ];

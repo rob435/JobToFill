@@ -193,7 +193,12 @@
       if (rule.test && !rule.test(desc, hitText)) continue;
       // An essay box ("Do you have coding experience? … GitHub links welcomed", "Think of something in
       // your academic life…") wants an answer, not a name, school or URL.
-      if (desc.kind === 'textarea' && SHORT_VALUE.test(rule.type) && hitText.split(' ').length > 12) continue;
+      // A grade asked in full in a text area is still a grade ("What is your cumulative undergraduate (Bachelor) GPA on
+      // the scale used by your local school/university?", Phenom's text questions).
+      const gradeAsked =
+        rule.type === 'edu.gpa' && /^(what (is|was) your|please (state|provide|enter)( your)?)\b/.test(hitText);
+      if (desc.kind === 'textarea' && SHORT_VALUE.test(rule.type) && hitText.split(' ').length > 12 && !gradeAsked)
+        continue;
       // "Inizio offers a full suite of services… have you interviewed with another agency? If so, provide agency
       // name" is never your name, whatever the box.
       if (/^name\./.test(rule.type) && hitText.split(' ').length > 14) continue;
@@ -692,11 +697,14 @@
       // entry; a second "School" box starts the next one.
       const sameLabel =
         norm(questionText(descs[i])) === st.leadLabel || norm(questionText(descs[i])).split(' ').length <= 3;
+      // So is a question of its own after the entries, even one the last entry hasn't had: "What year will you / did
+      // you graduate from your most recent study?" among Phenom's screening questions is your degree's, not the school
+      // entry's above them.
+      const ownQuestion = st.index >= 0 && key !== st.lead && norm(questionText(descs[i])).split(' ').length >= 6;
       if (
         !detached &&
         prev !== g &&
-        st.seen.has(key) &&
-        (key !== st.lead || runLength(results, i, g) < 2 || !sameLabel)
+        ((st.seen.has(key) && (key !== st.lead || runLength(results, i, g) < 2 || !sameLabel)) || ownQuestion)
       )
         detached = g;
       if (detached === g) {
@@ -818,6 +826,23 @@
     ],
   ];
 
+  // School-leaving qualifications that are not one another: Advanced Highers are never "Baccalaureat" (the French
+  // one) nor A-levels "GED"; a plain "High School Graduate" or "Secondary School" fits any of them.
+  const SCHOOL_QUALIFICATIONS = [
+    ['alevel', /\ba ?levels?\b|\bas levels?\b|\bpre ?u\b/],
+    ['highers', /\b(advanced )?highers\b/],
+    ['ib', /\bib( diploma)?\b|\binternational baccalaureate\b/],
+    ['eb', /\beuropean baccalaureate\b/],
+    ['bac', /\bbaccalaureat\b|\bbac\b/],
+    ['gcse', /\b(i ?)?gcses?\b/],
+    ['btec', /\bbtecs?\b/],
+    ['leaving', /\bleaving cert\w*/],
+    ['abitur', /\babitur\b/],
+    ['matura', /\bmatura\b/],
+    ['ged', /\bged\b/],
+  ];
+  const schoolQualifications = (n) => SCHOOL_QUALIFICATIONS.filter(([, re]) => re.test(n)).map(([q]) => q);
+
   function degreeGroup(n) {
     // A Scottish "MA (Hons)" is a first degree.
     if (/\bm ?a\b/.test(n) && /\bhons\b|\bhonours\b/.test(n) && !/\bmaster/.test(n)) return 'bachelor';
@@ -857,13 +882,17 @@
 
   function bestText(opts, cands, v) {
     const wantDegree = v.kind === 'degree' ? degreeGroup(cands[0] || '') : null;
+    const mine = wantDegree === 'highschool' ? schoolQualifications(cands[0] || '') : [];
     const primary = U.tokens(cands[0] || '');
     const near = (v.near || []).map(norm).filter(Boolean);
     let best = null;
     for (const o of opts) {
       let score = 0;
       for (const c of cands) score = Math.max(score, textScore(o, c));
-      if (wantDegree && degreeGroup(o.n) === wantDegree) score = Math.max(score, 75 + score * 0.2);
+      const theirs = mine.length ? schoolQualifications(o.n) : [];
+      const otherQualification = theirs.length && !theirs.some((q) => mine.includes(q));
+      if (wantDegree && degreeGroup(o.n) === wantDegree && !otherQualification)
+        score = Math.max(score, 75 + score * 0.2);
       // "Integrated Masters Degree" for an MEng, "Masters Degree" for an MSc.
       if (wantDegree === 'master' && /\bintegrated\b/.test(o.n) !== isIntegratedMasters(cands[0] || '')) score -= 10;
       // Break ties toward the option that shares the most words with the main spelling.
@@ -1259,11 +1288,16 @@
    */
   function bestSubject(opts, v, cands) {
     const primary = U.tokens(cands[0] || '');
+    const spellings = cands.map((c) => U.tokens(c)).filter((t) => t.length >= 2);
     let best = null;
     let generic = null;
     for (const o of opts) {
       let score = 0;
       for (const c of cands) score = Math.max(score, textScore(o, c));
+      // Every word of a spelling, with others between: "Computer and Information Science" for Computer Science
+      // (Workday's list has no "Computer Science"), never the catch-all "Science" beside it.
+      const words = new Set(U.tokens(o.n));
+      if (spellings.some((t) => t.every((w) => words.has(w)))) score = Math.max(score, 55);
       for (const m of o.text.matchAll(/\(([^)]+)\)/g))
         if (m[1].split(/\s*[,;/&]\s*|\s+and\s+/).some((part) => cands.includes(norm(part))))
           score = Math.max(score, 75);
@@ -1570,12 +1604,18 @@
 
     const best = bestText(opts, cands, v);
     if (best && best.score >= 45) return best.i;
-    // Nothing fits: the value's own fallback ("Other" for a job site the list doesn't name).
-    if (v.fallback && v.fallback.length)
+    // Nothing fits: the value's own fallback ("Other" for a job site the list doesn't name), an option that is just
+    // that: "Other (please specify)", never one that has it among other things ("Referral- Client/Vendor/Other").
+    if (v.fallback && v.fallback.length) {
+      const asIs = v.fallback.map(norm);
+      // Numbered or lettered lists count: "6) Other (please explain)".
+      const just = (o) => norm(o.text).replace(/^(\d{1,2}|[a-h]) /, '');
+      const plain = options.map((o) => (asIs.some((f) => just(o).startsWith(f)) ? o : { text: '', value: '' }));
       return matchOption(
-        options,
+        plain,
         Object.assign({}, v, { candidates: v.fallback, fallback: null, kind: 'text', canonical: null }),
       );
+    }
     return -1;
   }
 

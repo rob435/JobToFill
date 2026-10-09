@@ -76,14 +76,15 @@
   // A drop zone's instructions ("Click to upload or drag and drop here", "PDF, max 5MB") say nothing about
   // what the upload is for: the label is further out.
   const UPLOAD_WORDS = new Set(
-    'click tap here to or and upload uploads attach browse choose select add drag drop your a an the files file document documents max maximum size mb kb limit up of pdf doc docx txt rtf odt accepted formats types supported only'.split(
+    'click tap here to or and upload uploads attach browse choose select add drag drop your a an the files file document documents max maximum size mb kb limit up of pdf doc docx txt rtf odt html htm jpg jpeg png accepted allowed permitted format formats type types extension extensions supported only either less than under'.split(
       ' ',
     ),
   );
+  // "Upload either DOC, DOCX, RTF, PDF, or TXT file types (1MB max)" (Phenom) is boilerplate too.
   const isUploadBoilerplate = (t) =>
     U.normalize(t)
       .split(' ')
-      .every((w) => !w || UPLOAD_WORDS.has(w) || /^\d+$/.test(w));
+      .every((w) => !w || UPLOAD_WORDS.has(w) || /^\d+(mb|kb|gb)?$/.test(w));
 
   /** The root of a rich-text editor: editable itself, inside nothing editable (its paragraphs are not fields). */
   function isEditor(el) {
@@ -272,14 +273,21 @@
     return (rootNode.getElementById && rootNode.getElementById(id)) || el.ownerDocument.getElementById(id);
   }
 
+  /**
+   * A status message a box points to, not its name: Phenom's date boxes are "labelled" by an aria-live region that
+   * says "Date picker closed. No date currently selected." (or nothing yet), beside a `<label for>` saying "From".
+   */
+  const isStatus = (ref) =>
+    ref.hasAttribute('aria-live') || /^(status|alert|log)$/.test(ref.getAttribute('role') || '');
+
   /** `outside`: only what lies outside the control: select2's combobox is "labelled" by its own selection ("Italy"). */
   function explicitLabel(el, outside) {
     const parts = [];
     for (const id of (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)) {
       const ref = byId(el, id);
-      if (ref && ref !== el && !(outside && el.contains(ref))) parts.push(textOf(ref));
+      if (ref && ref !== el && !(outside && el.contains(ref)) && !isStatus(ref)) parts.push(textOf(ref));
     }
-    if (!parts.length) for (const l of labelsOf(el)) if (!machineLabel(l, el)) parts.push(textOf(l));
+    if (!parts.some(Boolean)) for (const l of labelsOf(el)) if (!machineLabel(l, el)) parts.push(textOf(l));
     return U.cleanLabel(parts.filter(Boolean).join(' '));
   }
 
@@ -534,6 +542,32 @@
     return button ? U.cleanLabel(button.getAttribute('attachment-label') || explicitLabel(button)) : '';
   }
 
+  /**
+   * What an upload that only says how to upload ("Select file", "Upload either DOC, DOCX… (1MB max)") is for: the text
+   * just before it, looking out from the upload through the blocks around it that hold no other field, back to the
+   * field before it. Phenom puts it in a label beside the widget's column ("Please upload a copy of your cover
+   * letter.") or in paragraphs above the whole widget ("Additional attachments : An optional cover letter (or any other
+   * documents relevant to your application) can be uploaded here."); Workday under a heading and a note
+   * ("Resume/CV/Transcripts (transcripts are required for all US applications)").
+   */
+  function uploadContext(el) {
+    const me = new Set([el]);
+    for (let node = el, i = 0; node && i < 12; i++) {
+      const said = [];
+      for (let sib = node.previousElementSibling, k = 0; sib && k < 4; sib = sib.previousElementSibling, k++) {
+        if (sib.matches(CONTROL_SELECTOR) || sib.querySelector(CONTROL_SELECTOR)) break;
+        const t = U.cleanLabel(textOf(sib), 200);
+        if (t) said.unshift(t);
+      }
+      const t = said.join(' ');
+      if (t && !isUploadBoilerplate(t)) return U.cleanLabel(t, 300);
+      const parent = node.parentElement;
+      if (!parent || parent === el.ownerDocument.body || foreignControls(parent, me) > 0) break;
+      node = parent;
+    }
+    return '';
+  }
+
   const HEADING = 'h2, h3, h4, h5, h6, legend, [role="heading"]';
 
   /**
@@ -541,6 +575,9 @@
    * among the children of one of its ancestors. A box labelled just "Subject" or "Grade" under "A-levels" asks
    * about A-levels, not your degree.
    */
+  // A legend that is the form's own key, not words: Phenom's "QUESTIONNAIRE-3-2288" and "secondaryJsqData".
+  const machineName = (t) => !/\s/.test(t) && /\d|[a-z][A-Z]|_/.test(t);
+
   function sectionHeading(el) {
     let node = el;
     for (let i = 0; i < 8; i++) {
@@ -553,7 +590,7 @@
         else if (!c.querySelector(CONTROL_SELECTOR)) found = c.querySelector(HEADING) || found;
       }
       const t = found ? U.cleanLabel(textOf(found), 120) : '';
-      if (t) return t;
+      if (t && !machineName(t)) return t;
       node = parent;
     }
     return '';
@@ -933,6 +970,8 @@
         if (kind === 'file' || kind === 'checkbox') s.question = group;
         else s.group = group;
       }
+      if (kind === 'file' && [s.label, s.aria, s.question].every((t) => !t || isUploadBoilerplate(t)))
+        s.nearby = uploadContext(el) || s.nearby;
       if (kind === 'checkbox') {
         if (!s.label && isAriaChoice(el)) s.label = U.cleanLabel(textOf(el));
         desc.options = [{ text: s.label || s.aria || '', value: optionValue(el) }];

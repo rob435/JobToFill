@@ -1452,6 +1452,126 @@
     await sleep(30);
   }
 
+  /* ---------------------------------------------------------- calendars */
+
+  // react-datepicker (Phenom, Ashby and many React forms): the box sits in .react-datepicker__input-container, its
+  // calendar (.react-datepicker) opens beside it, and each month, year or day is a cell ("Choose March 2026").
+  const CALENDAR_INPUT = '.react-datepicker__input-container';
+  const CALENDAR = '.react-datepicker';
+  const isCalendarBox = (el) => el.localName === 'input' && !!el.closest(CALENDAR_INPUT);
+  const MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+  /** The calendar a box opened: the one beside it (react-datepicker puts it next to the box), else a new one. */
+  function calendarOf(el, before) {
+    const wrapper = el.closest('.react-datepicker-wrapper') || el.closest(CALENDAR_INPUT);
+    const beside = wrapper.parentElement && wrapper.parentElement.querySelector(CALENDAR);
+    if (beside && dom().isVisible(beside, { ignoreOpacity: true })) return beside;
+    const fresh = openPopups(el.ownerDocument).present.filter((p) => !before.present.includes(p));
+    return fresh.map((p) => (p.matches(CALENDAR) ? p : p.querySelector(CALENDAR))).find(Boolean) || null;
+  }
+
+  /** The year and month a calendar shows: "month 2026-10" (its month's label), else "October 2026" (its title). */
+  function shownPeriod(cal) {
+    const month = cal.querySelector('.react-datepicker__month');
+    const m = month && /(\d{4})-(\d{2})/.exec(month.getAttribute('aria-label') || '');
+    if (m) return { year: +m[1], month: +m[2] };
+    const title = cal.querySelector('.react-datepicker__current-month, .react-datepicker-year-header');
+    const t = JTF.util.normalize(title ? title.textContent : '');
+    const y = /\b(\d{4})\b/.exec(t);
+    if (!y) return null;
+    const name = MONTH_NAMES.findIndex((n) => new RegExp(`\\b${n}`).test(t));
+    return { year: +y[1], month: name >= 0 ? name + 1 : 1 };
+  }
+
+  /** Set a calendar's own year or month <select> (Phenom's header, dropdownMode="select") the way a pick does. */
+  function chooseIn(select, index) {
+    if (index < 0 || select.selectedIndex === index) return;
+    setNativeValue(select, select.options[index].value);
+    fire(select, 'change');
+  }
+
+  /**
+   * Bring `want` ({ year, month }) into view: through the header's year and month lists when it has them, else its
+   * arrows, a month (a year, for a month picker) at a time, until the calendar shows it or stops moving.
+   */
+  async function showPeriod(el, before, want, step) {
+    const cal = () => calendarOf(el, before);
+    if (!cal()) return;
+    for (const select of cal().querySelectorAll('select')) {
+      const opts = Array.from(select.options, (o) => JTF.util.normalize(o.text));
+      if (opts.length && opts.every((t) => /^\d{4}$/.test(t))) chooseIn(select, opts.indexOf(String(want.year)));
+      else if (opts.length === 12 && opts.every((t, i) => t.startsWith(MONTH_NAMES[i])))
+        chooseIn(select, want.month - 1);
+    }
+    await sleep(30);
+    const target = step === 'year' ? want.year : want.year * 12 + want.month;
+    for (let i = 0; i < 400; i++) {
+      const shown = cal() && shownPeriod(cal());
+      if (!shown) return;
+      const at = step === 'year' ? shown.year : shown.year * 12 + shown.month;
+      if (at === target) return;
+      const back = at > target;
+      const arrow = Array.from(cal().querySelectorAll('button')).find((b) =>
+        back
+          ? /navigation--previous/.test(b.className) || /^previous\b/i.test(b.getAttribute('aria-label') || '')
+          : /navigation--next/.test(b.className) || /^next\b/i.test(b.getAttribute('aria-label') || ''),
+      );
+      if (!arrow || arrow.disabled) return;
+      pointerClick(arrow);
+      await sleep(i % 12 === 11 ? 20 : 0);
+      const now = cal() && shownPeriod(cal());
+      if (!now || (step === 'year' ? now.year : now.year * 12 + now.month) === at) return;
+    }
+  }
+
+  const cellOff = (c) => c.getAttribute('aria-disabled') === 'true' || /--disabled\b/.test(c.className);
+
+  /**
+   * Pick a date in its calendar as a person does, for a box that takes no typing: Phenom's month boxes blur
+   * themselves on focus and drop what is typed, so "03/2026" only goes in as 2026 in the header's year list, then
+   * "Mar". True when the box then holds a date; false when the date can't be picked there (greyed out: a "To" before
+   * its "From"), the calendar closed again.
+   */
+  async function pickInCalendar(el, v) {
+    const d = v.date;
+    if (!d || !d.year || !isCalendarBox(el)) return false;
+    const before = openPopups(el.ownerDocument);
+    // Already open from the writes before? react-datepicker opens on a click and never closes on one.
+    pointerClick(el);
+    await sleep(60);
+    const cal = calendarOf(el, before);
+    if (!cal) return false;
+    const mode = cal.querySelector('.react-datepicker__month-text')
+      ? 'month'
+      : cal.querySelector('.react-datepicker__year-text')
+        ? 'year'
+        : 'day';
+    const want = { year: d.year, month: d.month || v.typicalMonth || 1, day: d.day || 1 };
+    await showPeriod(el, before, want, mode === 'day' ? 'month' : 'year');
+    const now = calendarOf(el, before);
+    let cell = null;
+    if (now && mode === 'month') {
+      const cells = Array.from(now.querySelectorAll('.react-datepicker__month-text'));
+      cell =
+        cells.find((c) => c.classList.contains(`react-datepicker__month-${want.month - 1}`)) ||
+        (cells.length === 12 ? cells[want.month - 1] : null);
+    } else if (now && mode === 'year') {
+      cell = Array.from(now.querySelectorAll('.react-datepicker__year-text')).find(
+        (c) => c.textContent.trim() === String(want.year),
+      );
+    } else if (now) {
+      cell = Array.from(now.querySelectorAll('.react-datepicker__day')).find(
+        (c) => !/--outside-month/.test(c.className) && +c.textContent.trim() === want.day,
+      );
+    }
+    if (cell && !cellOff(cell)) {
+      pointerClick(cell);
+      await sleep(60);
+    }
+    await closePopups(el, before);
+    return !!(cell && !cellOff(cell) && textIn(el));
+  }
+
   /* ------------------------------------------------------------- files */
 
   function dataUrlToFile(doc) {
@@ -1791,6 +1911,9 @@
             way = await writeText(el, (wrote = ways[i]), 0, strict);
           if ((way < 0 || rejected()) && wrote !== ways[0]) way = await writeText(el, (wrote = ways[0]), 0, strict);
           await closePopups(el, before);
+          // A date box that takes no typing at all (Phenom's month boxes) gets its date from its calendar.
+          if (way < 0 && v.date && isCalendarBox(el) && (await pickInCalendar(el, v)))
+            return { status: 'filled', check: { text: textIn(el), ways: [textIn(el)], way, said, calendar: true } };
           return { status: 'filled', check: { text: wrote, ways, way, said, strict } };
         }
       }
@@ -1869,7 +1992,11 @@
       for (const t of check.targets) if (!isChecked(t)) await tickHarder(t);
     } else if (kind === 'combo' || kind === 'combobox') {
       if (opts && opts.comboboxes) await fillCombo(field, v);
+    } else if (check.calendar) {
+      // Picked from its calendar, and the calendar is still the only way in.
+      if (await pickInCalendar(el, v)) check.text = textIn(el);
     } else if (first.lost) {
+      const before = openPopups(el.ownerDocument);
       const ways = writeWays(el);
       const order = ways.map((w, i) => i).filter((i) => i !== check.way);
       if (check.way >= 0) order.push(check.way);
@@ -1878,7 +2005,10 @@
         await sleep(120);
         if (verify(field, check).ok) break;
       }
+      // A calendar or suggestion list the writing opened is closed again, as after the first fill.
+      await closePopups(el, before);
     } else {
+      const before = openPopups(el.ownerDocument);
       let fixed = false;
       for (const text of check.ways.slice(0, 8)) {
         if (text === check.text) continue;
@@ -1892,6 +2022,7 @@
         }
       }
       if (!fixed) await writeText(el, check.ways[0], 0, check.strict);
+      await closePopups(el, before);
     }
     const now = verify(field, check);
     return now.ok ? { ok: true, fixed: true } : now;

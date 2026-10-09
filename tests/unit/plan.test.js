@@ -3432,3 +3432,171 @@ test('Jane Street: when the degree began, full-time start, a second major, inter
   assert.equal(type('', 'combo', codes), 'phone.countryCode');
   assert.equal(type('Phone', 'combo', codes), 'phone.countryCode');
 });
+
+test('Phenom (Marsh): Workday’s degree and subject lists, a spring week’s dates, "How did you hear" for Trackr', () => {
+  const { DEGREES, FIELDS, SOURCES } = require('../fixtures/src/phenom-data.mjs');
+  const p = computingScientist();
+  const list = (rows) => rows.map(([text, value]) => ({ text, value }));
+  const pick = (type, question, rows, index) => {
+    const options = list(rows);
+    const v = ask(p, type, question, { kind: 'select', options, index });
+    const i = v ? matcher.matchOption(options, v) : -1;
+    return i < 0 ? null : options[i].text;
+  };
+  assert.equal(pick('edu.degree', 'Degree', DEGREES, 0), 'Bachelor of Science');
+  // "Computer and Information Science" (there is no "Computer Science"), never the catch-all "Science" beside it.
+  assert.equal(pick('edu.field', 'Field of study', FIELDS, 0), 'Computer and Information Science');
+  // The school entry: "High School Graduate", never "Baccalaureat" (the French one) for Advanced Highers.
+  assert.equal(pick('edu.degree', 'Degree', DEGREES, 1), 'High School Graduate');
+  const school = (degree, ...options) => {
+    p.education[1].degree = degree;
+    return pick(
+      'edu.degree',
+      'Degree',
+      options.map((o) => [o, o]),
+      1,
+    );
+  };
+  assert.equal(school('A-levels', 'GED', 'GCSE', 'High School Diploma', 'Bachelor of Arts'), 'High School Diploma');
+  assert.equal(school('A-levels', 'International Baccalaureate', 'A-Levels', 'High School'), 'A-Levels');
+  assert.equal(school('Baccalauréat', 'Baccalaureat', 'High School Graduate'), 'Baccalaureat');
+  assert.equal(school('IB Diploma', 'Baccalaureat', 'International Baccalaureate'), 'International Baccalaureate');
+
+  // A job site the list doesn't name is left for you: "Referral- Client/Vendor/Other" is a referral, not "Other".
+  p.job.referralSource = 'Trackr';
+  assert.equal(
+    pick(
+      'job.referralSource',
+      'How did you hear about us?',
+      SOURCES.map((s) => [s, s]),
+    ),
+    null,
+  );
+  p.job.referralSource = '';
+  assert.equal(
+    pick(
+      'job.referralSource',
+      'How did you hear about us?',
+      SOURCES.map((s) => [s, s]),
+    ),
+    'LinkedIn',
+  );
+
+  // A spring week (March to March) ends the month after: forms turn down a "To" that isn't after "From".
+  p.experience = [
+    Object.assign(fields.blankExperience(), {
+      company: 'Barclays',
+      title: 'Technology Developer Spring Week',
+      startDate: '2026-03',
+      endDate: '2026-03',
+    }),
+    Object.assign(fields.blankExperience(), {
+      company: 'Glasgow Uni Esports',
+      startDate: '2025-12',
+      endDate: '2025-12',
+    }),
+    Object.assign(fields.blankExperience(), { company: 'Tesco', startDate: '2024-06', endDate: '2024-09' }),
+  ];
+  const end = (index, part) => {
+    const v = ask(p, 'exp.end', 'To', { index, part });
+    return part ? v.text : matcher.formatForText(v, desc({ label: 'To', placeholder: 'MM/YYYY' }));
+  };
+  assert.equal(end(0), '04/2026');
+  assert.equal(end(0, 'month'), '4');
+  assert.equal(end(1), '01/2026', 'December ends in January');
+  assert.equal(end(2), '09/2024', 'a longer stint keeps its end');
+  assert.equal(ask(p, 'exp.start', 'From', { index: 0 }).text, '2026-03');
+});
+
+test('an upload that only says how to upload takes its meaning from the text before it (Phenom’s attachments)', () => {
+  const file = (signals) => {
+    const r = matcher.classify(desc(signals, { kind: 'file', inputType: 'file' }));
+    return r ? r.type : null;
+  };
+  const how = { label: 'Select file', question: 'Upload either DOC, DOCX, RTF, PDF, or TXT file types (1MB max)' };
+  assert.equal(
+    file({
+      ...how,
+      nearby: 'An optional cover letter (or any other documents relevant to your application) can be uploaded here.',
+    }),
+    'file.coverLetter',
+  );
+  assert.equal(file({ ...how, nearby: 'Additional documents' }), null, 'other documents are never the CV’s');
+  assert.equal(file(how), 'file.resume', 'nothing said: the CV, as before');
+});
+
+test('Phenom (Marsh): its questionnaire after the entries — local-scale GPA, N/A for no Master’s, fluency, interviews', () => {
+  const p = computingScientist(); // a 2:1, and Advanced Highers at school
+  p.languages = 'English, French';
+  p.job.adjustments = 'No';
+  const area = (question) => desc({ label: question }, { kind: 'textarea', inputType: 'textarea' });
+  const page = [
+    desc('School or University'),
+    desc('School or University'),
+    desc({ label: 'Select file', nearby: 'Please upload a copy of your cover letter.' }, { kind: 'file' }),
+    desc(
+      'What year will you / did you graduate from your most recent study? Please use the following format: MM/YYYY (e.g. 09/2025)',
+      { inputType: 'date' },
+    ),
+    area('What is your cumulative undergraduate (Bachelor) GPA on the scale used by your local school/university?'),
+    area(
+      'What is your cumulative graduate (Master) GPA on the scale used by your local school/university?  Please indicate N/A if you do not have a graduate GPA.',
+    ),
+    desc(
+      { label: 'Please list any languages in which you have native or business level fluency.' },
+      { kind: 'checkboxes', options: opts('Danish', 'English', 'French', 'German', 'Other') },
+    ),
+    area('Do you require any special requirements if you are invited to attend an interview?'),
+  ];
+  const filled = fillPage(page, p);
+  assert.deepEqual(filled.slice(0, 2), ['University of Glasgow', 'Hillhead High School']);
+  assert.equal(matcher.plan(page, p).results[2].type, 'file.coverLetter');
+  // Your degree's date, not the school entry's above: a question of its own after the entries is your first entry's.
+  assert.equal(filled[3], '2027-06-01');
+  assert.match(filled[4], /^2:1\b/, 'the class on your own scale, never a GPA made up from it');
+  assert.equal(filled[5], 'N/A', 'no Master’s');
+  assert.deepEqual(matcher.plan(page, p).results[6].type, 'languages');
+  assert.equal(filled[7], 'No');
+  // What the GPA scale is (a list) stays a question about the scale.
+  assert.equal(matcher.classify(desc('What GPA scale is used by your university?')).type, 'edu.gpaScale');
+  assert.equal(matcher.classify(area('Please state any reasonable adjustments you require')), null, 'what they are');
+});
+
+test('live survey (niche forms): referrer boxes that ask for N/A, "applied before? If yes…" boxes, connections', () => {
+  const p = computingScientist();
+  p.job.referralSource = 'Trackr';
+  p.job.otherOffers = 'No';
+  Object.assign(p.compliance, { previouslyApplied: 'No', relatives: 'No' });
+  const text = (question) => {
+    const r = matcher.classify(desc(question));
+    const v = r && ask(p, r.type, question, { kind: 'text' });
+    return v ? v.text : null;
+  };
+  assert.equal(
+    text('Please provide the name and team of your referrer. if you haven’t been referred please state n/a'),
+    'N/A',
+  );
+  assert.equal(
+    text('If you were referred by a Graham Capital employee, please enter their name. If not, write N/A.'),
+    'N/A',
+  );
+  assert.equal(text('Referrer’s name'), null, 'no word to give for "not referred"');
+  p.job.referralSource = 'Employee referral';
+  assert.equal(text('If you were referred by an employee, please enter their name. If not, write N/A.'), null, 'yours');
+  assert.equal(
+    text('Have you ever applied for Graham employment before? If yes, please list dates and position.'),
+    'No',
+  );
+  assert.equal(matcher.classify(desc('If yes, when did you apply?')), null, 'its follow-up');
+  assert.equal(text('Other Processes/Offers/Timelines'), 'No');
+  const connected = opts(
+    'Work - Former Co-Worker',
+    'School/University',
+    'Friend',
+    'Other (please specify)',
+    'Not Applicable',
+  );
+  const q = 'Are you connected to any current employees of Rothesay? If yes, please confirm how you are connected.';
+  const v = ask(p, matcher.classify(desc(q, { kind: 'select', options: connected })).type, q, { kind: 'select' });
+  assert.equal(connected[matcher.matchOption(connected, v)].text, 'Not Applicable');
+});
