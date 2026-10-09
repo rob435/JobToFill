@@ -455,6 +455,7 @@ test('settings: Claude, OpenRouter and DeepSeek each keep their own key and mode
           fast: [document.querySelector('[name=ai-fast]')].map((f) => ({
             shown: !f.closest('label').hidden,
             enabled: !f.disabled,
+            checked: f.checked,
             note: f.closest('label').nextElementSibling.textContent,
           }))[0],
         };
@@ -500,6 +501,14 @@ test('settings: Claude, OpenRouter and DeepSeek each keep their own key and mode
     assert.match(now.fast.note, /research preview/);
     await settings.call(() => document.querySelector('[name=ai-fast]').click());
     await until(() => h.bg(async () => (await globalThis.JTF.store.getSettings()).ai.fast === true), null, null, 5000);
+    // Back to Sonnet: the switch shows off, but the choice is kept for Opus.
+    await type('ai-model-choice', 'claude-sonnet-5-5');
+    now = await read();
+    assert.deepEqual([now.fast.enabled, now.fast.checked], [false, false]);
+    assert.equal(await h.bg(async () => (await globalThis.JTF.store.getSettings()).ai.fast), true);
+    await type('ai-model-choice', '\u0000another');
+    await type('ai-model', 'claude-opus-5');
+    assert.deepEqual([(await read()).fast.enabled, (await read()).fast.checked], [true, true]);
     await until(async () => /Claude \(Anthropic\), OpenRouter, DeepSeek/.test((await read()).saved), null, null, 5000);
 
     await type('ai-provider', 'openrouter');

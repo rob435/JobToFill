@@ -63,6 +63,8 @@ async function aiGroup() {
     'Fast mode: Claude Opus writes up to 2.5× as fast, at twice the price (about 20¢ a letter)',
   );
   const fastNote = el('small', { className: 'muted' });
+  // What the person chose, kept while a model without fast mode shows the switch off.
+  let wantFast = cfg.fast === true;
 
   const showSaved = () => {
     // In the order the provider list shows them.
@@ -85,6 +87,7 @@ async function aiGroup() {
     const able = ai.hasFastMode(provider.value, picker.value);
     fastRow.hidden = fastNote.hidden = !claude;
     fast.disabled = !able;
+    fast.checked = able && wantFast;
     fastNote.textContent = able
       ? 'A research preview from Anthropic. If your key can’t use it yet, Claude writes at its usual speed and Test connection says so.'
       : 'Only Claude Opus has a fast mode: choose Claude Opus 5.5 to use it.';
@@ -107,7 +110,7 @@ async function aiGroup() {
       ...now,
       fallback: fallback.checked,
       backupKeys: backupKeys.checked,
-      fast: fast.checked,
+      fast: wantFast,
     });
     status.textContent = 'Saved.';
   };
@@ -130,7 +133,11 @@ async function aiGroup() {
     status.textContent = 'Saved.';
   });
   key.addEventListener('change', saveKey);
-  for (const input of [base, fallback, backupKeys, fast]) input.addEventListener('change', saveSettings);
+  for (const input of [base, fallback, backupKeys]) input.addEventListener('change', saveSettings);
+  fast.addEventListener('change', () => {
+    wantFast = fast.checked;
+    saveSettings();
+  });
   sync();
 
   const test = async () => {
