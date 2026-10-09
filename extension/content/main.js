@@ -575,10 +575,12 @@
         await settle();
         settled = true;
       }
-      // "Please specify" after a list is for the answer the list didn't have: only once "Other" is its choice.
-      if (r.part === 'specify' && r.followsField) {
+      // "Please specify" after a list is for the answer the list didn't have: only once "Other" is its choice. "…or
+      // write N/A if you selected another answer" (r.type 'na') is N/A until then, and yours to write after.
+      if ((r.part === 'specify' || r.type === 'na') && r.followsField) {
         const chosen = U.normalize(JTF.fill.currentValue(r.followsField));
-        if (!/\bother\b|\bnot listed\b|\bsomething else\b/.test(chosen)) return null;
+        const other = /\bother\b|\bnot listed\b|\bsomething else\b/.test(chosen);
+        if (r.type === 'na' ? other || !chosen : !other) return null;
       }
       let v = await valueFor(field, r, def, question);
       if (v && r.type !== 'custom' && FOLLOW_UP.test(question) && !JTF.fields.followUpAnswer(v, field.kind))
@@ -921,6 +923,7 @@
       if (q.length < 3) continue;
       let guess = null;
       if (r && r.type === 'custom') guess = { type: 'custom', value: r.answer };
+      else if (r && r.type === 'na') guess = null;
       else if (r && r.type) {
         const def = JTF.fields.DEFS[r.type];
         if (NOT_FOR_AI.test(r.type) || !def || def.consent || def.secret || def.file) continue;

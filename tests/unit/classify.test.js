@@ -426,8 +426,9 @@ test('contact and identity questions that only look like personal fields', () =>
   assert.equal(ask('Please state your notice period'), 'job.noticePeriod');
   assert.equal(ask('Please state any reasonable adjustments you require', 'textarea'), null);
   assert.equal(ask('Nationality', 'select'), 'nationality');
-  assert.equal(ask('Do you hold any other citizenships?', 'select', ['Yes', 'No']), null);
-  assert.equal(ask('Dual nationality'), null);
+  // Not your nationality: whether you hold another (No with one in your profile).
+  assert.equal(ask('Do you hold any other citizenships?', 'select', ['Yes', 'No']), 'personal.dualNationality');
+  assert.equal(ask('Dual nationality'), 'personal.dualNationality');
   assert.equal(ask('Pronouns'), 'pronouns');
   assert.equal(ask('How do you pronounce your name?'), null, 'neither your pronouns nor your name');
   assert.equal(ask('Name pronunciation'), null);
@@ -1436,7 +1437,7 @@ test('live survey (British student in Glasgow): residence, commuting, UK visa an
   );
   assert.equal(ask('Do you hold British citizenship?'), 'citizen');
   assert.equal(ask('Do you have a British passport?'), 'citizen');
-  assert.equal(ask('Do you hold any other citizenships?'), null);
+  assert.equal(ask('Do you hold any other citizenships?'), 'personal.dualNationality');
   // The sanctions questions are not citizenship yes/no questions: they are sanctions declarations.
   assert.equal(
     ask(

@@ -528,10 +528,56 @@
     const canon = (t) => (JTF.matcher ? JTF.matcher.canonicalOf(t) : null);
     const ok = canon(p.job.authorized);
     const sponsor = canon(p.job.sponsorship);
-    if (ok === 'yes' && sponsor === 'no') return val('I have the right to work and do not need visa sponsorship.');
-    if (ok === 'yes' && sponsor === 'yes') return val('I have the right to work now but will need visa sponsorship.');
-    if (ok === 'no' || sponsor === 'yes') return val('I will need visa sponsorship to work in this role.');
+    // "If no, type N/A" when you need no visa; but Peel Hunt's "If you do require a visa or are currently on a visa,
+    // please provide details… If you do not require a visa, please type N/A" wants a visa's details from anyone on one:
+    // N/A only for a citizen. Arma's "…please confirm what visa type you have…": "British citizen (no visa needed)".
+    const q = ctx.question || '';
+    const citizen = rightType(p, ctx);
+    const instead = sponsor === 'no' && otherwiseVal(ctx);
+    if (instead && (citizen || !/\b(currently )?on a visa\b|\b(hold|have) a visa\b/.test(q))) return instead;
+    if (citizen && /\bvisa type\b|\btype of visa\b/.test(q)) return citizen;
+    // Sentences, not a "No": a box's "If you do not require a visa, please type N/A" is for citizens only (above).
+    const say = (text) => val(text, { canonical: null });
+    if (ok === 'yes' && sponsor === 'no') return say('I have the right to work and do not need visa sponsorship.');
+    if (ok === 'yes' && sponsor === 'yes') return say('I have the right to work now but will need visa sponsorship.');
+    if (ok === 'no' || sponsor === 'yes') return say('I will need visa sponsorship to work in this role.');
     return null;
+  }
+
+  /**
+   * "What type of right to work in the UK do you hold?" [Citizenship/Nationality/Permanent Residency | … Visa | …]:
+   * the citizenship one for a citizen of the country asked (or the job's); a text box gets "British citizen (no visa
+   * needed)". Nothing for anyone else: which visa or status you hold isn't in the profile.
+   */
+  function rightType(p, ctx) {
+    if (/^if (yes|so)\b/.test(ctx.question || '')) return null;
+    let { codes } = countriesAsked(ctx.question, null);
+    if (!codes.length) codes = jobCountries(ctx);
+    // Peel Hunt's visa box names no country, nor does the page: the country you live in.
+    if (!codes.length) codes = JTF.geo.countriesIn(p.address.country || '');
+    const rows = JTF.geo.nationalities(p.personal.nationality).filter(Boolean);
+    if (codes.length !== 1 || !rows.some((row) => row[0] === codes[0])) return null;
+    const row = rows.find((r) => r[0] === codes[0]);
+    const demonym = (JTF.geo.demonyms(row[0])[0] || row[1]).replace(/^./, (c) => c.toUpperCase());
+    const named = /\bcitizen(ship)?s?\b|\bnationality\b|\bnational\b|\bpassport\b/;
+    if (CHOICE.includes(ctx.kind))
+      return val(`${demonym} citizen`, { named, candidates: [`${demonym} citizen`, 'Citizen'] });
+    return val(`${demonym} citizen (no visa needed)`);
+  }
+
+  /**
+   * "Do you hold dual nationality?", "Do you currently hold any other (dual) nationality or citizenships?": Yes with
+   * two in your profile ("British, Irish"), else No. A text box gets the others. Citizenships held before aren't in it.
+   */
+  function dualNationality(p, ctx) {
+    const q = ctx.question || '';
+    if (/\b(previously|formerly|ever|in the past)\b/.test(q)) return null;
+    const rows = JTF.geo.nationalities(p.personal.nationality).filter(Boolean);
+    if (!rows.length) return null;
+    if (rows.length < 2) return val('No');
+    return LONG_TEXT.includes(ctx.kind) && !/^(do|does|are|is|have)\b/.test(q)
+      ? val(rows.map((r) => r[1]).join(', '))
+      : val('Yes');
   }
 
   /**
@@ -907,10 +953,14 @@
       if (at.length) hits.push([Math.min(...at), row]);
     }
     hits.sort((a, b) => a[0] - b[0]);
+    const stem = hits.some(([, row]) => row.stem);
+    // A subject the list doesn't have: its "Other" (SpaceX's "Other (Non-Technical)" for Economics).
+    const other = stem ? ['Other (Technical)', 'Other (STEM)'] : ['Other (Non-Technical)', 'Other (Non-STEM)'];
     return Object.assign(v, {
       kind: 'subject',
       candidates: [...new Set([v.text, ...hits.flatMap(([, row]) => row.names)])],
-      stem: hits.some(([, row]) => row.stem),
+      stem,
+      fallback: [...other, 'Other', 'Other (please specify)'],
     });
   }
 
@@ -1832,7 +1882,7 @@
 
   // "…Otherwise, enter N/A.", "If not, please write 'None'", "(enter N/A if not applicable)": a box's word for No.
   const OTHERWISE =
-    /\b(?:otherwise|if (?:not|no|none|not applicable|you (?:answered|selected|said|chose) no|(?:you )?(?:haven t|have not|were not|weren t|are not|aren t|did not|didn t|do not|don t)(?: \w+){1,3}))\b,? (?:please )?(?:enter|write|type|put|input|insert|state|answer|fill in)(?: in)? (n a|na|none|not applicable|nil|no|nothing|0)\b|\b(?:enter|write|type|put|input|insert|indicate|state|answer) (n a|na|none|not applicable|nil) (?:if|where|when) (?:not applicable|it does not apply|this does not apply|not|no|none|n a|you (?:answered|selected|said) no|you (?:do not|don t) have)\b/;
+    /\bor (?:just )?(?:enter|write|type|put|input),? (n a|na|none|not applicable|nil|nothing)$|\b(?:otherwise|if (?:not|no|none|not applicable|you (?:answered|selected|said|chose) no|(?:you )?(?:haven t|have not|were not|weren t|are not|aren t|did not|didn t|do not|don t)(?: \w+){1,3}))\b,? (?:please )?(?:enter|write|type|put|input|insert|state|answer|fill in)(?: in)? (n a|na|none|not applicable|nil|no|nothing|0)\b|\b(?:enter|write|type|put|input|insert|indicate|state|answer) (n a|na|none|not applicable|nil) (?:if|where|when) (?:not applicable|it does not apply|this does not apply|not|no|none|n a|you (?:answered|selected|said) no|you (?:do not|don t) have)\b/;
   const OTHERWISE_WORDS = {
     'n a': 'N/A',
     na: 'NA',
@@ -1847,7 +1897,7 @@
   /** The word a box asks for when the answer is No ("Otherwise, enter N/A" -> "N/A"), or null. */
   function otherwiseVal(ctx) {
     const m = LONG_TEXT.includes(ctx.kind) && String(ctx.question || '').match(OTHERWISE);
-    return m ? val(OTHERWISE_WORDS[m[1] || m[2]], { otherwise: true, canonical: null }) : null;
+    return m ? val(OTHERWISE_WORDS[m[1] || m[2] || m[3]], { otherwise: true, canonical: null }) : null;
   }
 
   /** "N/A" for a text box that asks only "if applicable" ("Postgraduate Degree (if applicable)"), or null. */
@@ -2193,6 +2243,9 @@
           const typical = key === 'endDate' ? 6 : 9;
           const raw = key === 'endDate' ? endAfterStart(e) : e[key];
           const v = windowAnswer(raw, ctx.question, typical) || dateVal(raw, ctx.part, typical);
+          // PDT's "What is your anticipated graduation date?" [Fall 2027 | Spring 2028 | … | Other]: "Other" for a term
+          // the list doesn't have.
+          if (v && list === 'education' && CHOICE.includes(ctx.kind)) v.fallback = ['Other', 'Other (please specify)'];
           // Graduated already: "Expected graduation date: … / I am not currently enrolled" takes the last one.
           if (v && v.date && key === 'endDate' && list === 'education') {
             const now = ctx.today || new Date();
@@ -2518,6 +2571,8 @@
         sponsorAware(val(p.job.sponsorship), p, 'sponsorship'),
     },
     'job.visa': { label: 'Holds a visa (yes/no)', get: visaHeld },
+    'job.rightType': { label: 'Type of right to work', get: rightType, derived: true },
+    'personal.dualNationality': { label: 'Dual nationality (yes/no)', get: dualNationality, derived: true },
     // "Are you located in London?" / "Are you based in the UK?": from your address (Glasgow is in the UK, not London).
     'location.in': {
       label: 'Lives in the place asked about',
@@ -2569,7 +2624,26 @@
       label: 'Preferred locations',
       path: 'job.locations',
       get(p, ctx) {
-        const v = listVal(p.job.locations);
+        let v = listVal(p.job.locations);
+        // Ashton Fire's "Please indicate your first / second choice office location": that one of yours, or nothing.
+        const nth = ['first', 'second', 'third', 'fourth'].findIndex((w, i) =>
+          new RegExp(`\\b(${w}|${i + 1}(st|nd|rd|th)) (choice|preference)\\b`).test(ctx.question || ''),
+        );
+        if (v && nth >= 0) v = v.items[nth] ? listVal(v.items[nth]) : null;
+        // FDM's "Which FDM Location…?" [Canada | Ireland | UK | USA | None]: London's country when the list has no
+        // city of yours (its own nation only: never "Scotland" for London).
+        if (v && CHOICE.includes(ctx.kind)) {
+          const places = v.items.flatMap((item) => JTF.geo.placesNamed(item)).filter((pl) => pl.type === 'metro');
+          const nations = /^(England|Scotland|Wales|Northern Ireland)$/;
+          v.fallback = [
+            ...new Set(
+              places.flatMap((pl) => [
+                ...(pl.region && !/^[A-Z]{2}$/.test(pl.region) ? [pl.region] : []),
+                ...JTF.geo.countryCandidates(pl.country).filter((c) => !nations.test(c) && c !== pl.country),
+              ]),
+            ),
+          ];
+        }
         const named = JTF.geo.placesNamed(ctx.question || '').filter((pl) => pl.type === 'metro');
         if (!v || !LONG_TEXT.includes(ctx.kind) || named.length < 2) return v;
         const q = ' ' + (ctx.question || '') + ' ';
@@ -2694,6 +2768,18 @@
     // "Please provide the name and team of your referrer. If you haven't been referred please state n/a", "If you were
     // referred by a Graham Capital employee, please enter their name. If not, write N/A.": the word it asks for, when
     // where you heard about the job is no referral. A referral's name is yours to give.
+    // A box for the answer a list above didn't have, "or write N/A if you selected another answer" (see matcher.plan).
+    na: { label: 'N/A for another answer', get: () => val('N/A', { otherwise: true, canonical: null }), derived: true },
+    // "Were you referred by a current Cirrus Logic employee?": from where you heard of the job.
+    'job.referred': {
+      label: 'Referred by an employee (yes/no)',
+      get(p) {
+        const source = U.normalize(p.job.referralSource || '');
+        if (!source) return null;
+        return val(/\b(referr\w*|refer|employee|friend|colleague|relative|family)\b/.test(source) ? 'Yes' : 'No');
+      },
+      derived: true,
+    },
     'job.referrer': {
       label: 'Who referred you',
       get(p, ctx) {
@@ -3040,7 +3126,11 @@
           const mine = listVal(text) ? listVal(text).items.map(U.normalize) : [];
           return asked.some((l) => mine.some((m) => m === l || m.split(' ').includes(l))) ? val('Yes') : null;
         }
-        return listVal(text);
+        // Aurora's "Do you speak any non-European languages…? Please select 'None' if you do not.": "None" when the
+        // list has none of yours.
+        const v = listVal(text);
+        if (v && /\bnone\b/.test(q)) v.fallback = ['None', 'None of the above', 'N/A'];
+        return v;
       },
     },
     summary: simple('Summary', 'summary'),
@@ -3385,10 +3475,12 @@
     ),
     R(
       'job.authorized',
-      /\b(authori[sz]ed|eligible|entitled|permitted|allowed) to (lawfully |legally )?work|work (authori[sz]ation|permit|eligibility)|employment (authori[sz]ation|eligibility)|eligib(le|ility) (for|to) (employment|work)|authori[sz]ation to work|right to work|legal right to|legally (work|employed)|\bimmigration status\b/,
+      /\b(authori[sz]ed|eligible|entitled|permitted|allowed) to (lawfully |legally )?work|work (authori[sz]ation|permit|eligibility)|employment (authori[sz]ation|eligibility)|eligib(le|ility) (for|to) (employment|work)|authori[sz]ation to work|rights? to work|legal rights? to|legally (work|employed)|\bimmigration status\b/,
       // "Will you in the future require authorization to work in the US?" asks whether you need sponsoring; "Will you
       // rely on a UK Graduate Route visa for your right to work…?" whether you hold a visa.
-      { not: /\b(require|need)\b.{0,30}\b(work )?authori[sz]ation\b|\brely on (a |an |the |any )?(\w+ ){0,3}visa\b/ },
+      {
+        not: /\b(require|need)\b.{0,30}\b(work )?authori[sz]ation\b|\brely on (a |an |the |any )?(\w+ ){0,3}visa\b|\b(type|kind|basis|form|category) of (your )?(right to work|work authori[sz]ation|immigration status)\b/,
+      },
     ),
     // "Are you able to work in the UK?" is about permission; "able to work on-site 5 days a week" is not.
     // Nor "…you will be able to work as of 22 February 2027 on a full-time basis…", which asks when you can start.
@@ -3396,6 +3488,20 @@
       not: /\bon ?site\b|in (the |our )?office|in person|days (a|per) week|\bcommute|\bhybrid\b|\bshifts?\b|weekends?|overtime|consecutive|full ?time for|\bable to work (as of|from|starting|by|on) /,
     }),
     // "Do you hold a valid UK visa?" (never "a visa that allows you to work…", which asks for your right to work).
+    // IK Partners' "What type of right to work in the UK do you hold?" [Citizenship/Nationality/… | … Visa | …].
+    R(
+      'job.rightType',
+      /\b(type|kind|basis|form|category) of (your )?(right to work|work authori[sz]ation|immigration status)\b/,
+      {
+        kinds: CHOICE.concat(LONG_TEXT),
+      },
+    ),
+    // Capgemini's "Do you hold dual nationality?", Cambridge Consultants' "…any other (dual) nationality or citizenships?".
+    R(
+      'personal.dualNationality',
+      /\bdual (nationality|nationalities|citizenship)\b|\b(any |an )?(other|another|second|additional|multiple) (\(dual\) |dual )?(nationalit(y|ies)|citizenships?)\b|\bcitizenship (of|for|in) (any )?other countr/,
+      { kinds: CHOICE.concat(LONG_TEXT) },
+    ),
     R(
       'job.visa',
       /^(do|does) you (currently )?(hold|have|possess)( a| an| any)?( valid| current| active)? (\w+ ){0,2}visas?\b|^(will|would|do) you (need to )?rely on (a |an |any )?(\w+ ){0,3}visas?\b/,
@@ -3433,7 +3539,7 @@
     ),
     R(
       'job.locations',
-      /\blocations?\b.*\b(interested|prefer|willing|open to|relocat|consider|like to work|want to work)|\b(preferred|desired|target|ideal) (work |office |job |internship |role )?(locations?|offices?|cities)|\bwhich (other )?(offices?|locations?|cities)\b|\b(office|location|city) preferences?\b|where would you (like|prefer|want) to (work|be based)|\brelocat\w* (where|which (cities|locations|offices))\b|^where\b.*\brelocat/,
+      /\b(first|second|top|1st|2nd) (choice|preference) (of )?(office|location|city)|\b(first|top) choice (office )?locations?\b|\blocations?\b.*\b(interested|prefer|willing|open to|relocat|consider|like to work|want to work)|\b(preferred|desired|target|ideal) (work |office |job |internship |role )?(locations?|offices?|cities)|\bwhich (other )?(offices?|locations?|cities)\b|\b(office|location|city) preferences?\b|where would you (like|prefer|want) to (work|be based)|\brelocat\w* (where|which (cities|locations|offices))\b|^where\b.*\brelocat/,
       // "…willing to relocate to one of the following locations New York… Please confirm" [Yes / No] is about relocating.
       { test: (desc) => !hasYesNoOptions(desc) },
     ),
@@ -3447,8 +3553,13 @@
       /how did you (first )?(hear|find|learn|come across|discover|get to know|connect with)|where did you (first )?(hear|find|learn|see|discover|come across)|hear(d)? about (us|this|the)|learn(ed)? about (us|this|the)|source of (application|referral|hire|candidate)|referral source|^source$|how were you referred|found (us|this|the job)|\b(become|became) aware of (us|this|the)\b/,
     ),
     R(
+      'job.referred',
+      /^(were|have) you (been )?referred\b|^did (a |an |any )?(current |existing )?(\w+ ){0,3}(employee|member of staff|staff member|colleague) refer you\b/,
+      { kinds: CHOICE },
+    ),
+    R(
       'job.referrer',
-      /\b(name|names|details|team)\b.{0,40}\breferr(er|al)s?\b|\breferred (to us |to you )?by\b.{0,80}\b(name|names)\b|\breferr(er|al) s? (name|full name)\b/,
+      /\b(name|names|details|team)\b.{0,40}\breferr(er|al)s?\b|\breferred (to us |to you )?by\b.{0,80}\b(name|names)\b|\breferr(er|al) s? (name|full name)\b|\b(name|names) of (the )?(person|people|employee|colleague)s? who referred you\b/,
       { kinds: LONG_TEXT },
     ),
     // The list that follows "How did you first hear about BNY?" (Job Board → "Please select the specific source").
@@ -3477,7 +3588,9 @@
     R(
       'job.otherOffers',
       /\b(other|competing|outstanding|existing|pending) (job |internship |employment )?offers?\b|\boffers? (from|at|with) (other|another|any other) (firms?|compan|employers?|organi)|\boffers? (and|or|&) deadlines?|\bdeadlines? (we|that we) should\b|\bany (other )?(offers|deadlines)\b|\bexploding offer|\b(upcoming|pending|current|any) (offer )?deadlines?\b|\boffer deadlines?\b|\bdecision (deadlines?|timelines?)\b|\brecruiting timelines?\b|\btimelines? (we|that we) should\b|\baccepted an? (\w+ ){0,3}offer\b|\b(holding|hold) any (\w+ )?offers?\b|\b(other )?(processes|interviews) (and |or )?(offers|timelines)\b/,
-      { not: /\bif (yes|so)\b|\bwhich (firm|company)\b|\bwhat (firm|company)\b/ },
+      // Nominal's "Do you have any pending offers or deadlines we should know about? If so, what companies and dates?"
+      // in one box takes your answer; a box of its own that starts "If so…" is the follow-up.
+      { not: /^if (yes|so)\b|^(which|what) (firm|company)\b/ },
     ),
     // "Have you applied to Marshall Wace before?"
     R(
@@ -3490,7 +3603,7 @@
     // "Do you require any reasonable adjustments to participate in the recruitment process?"
     R(
       'job.adjustments',
-      /\breasonable adjustments?\b|\b(require|need|request)\b.{0,40}\b(adjustments?|accommodations?|support|(special|additional|access) (requirements?|arrangements?|needs|assistance))\b.{0,60}\b(recruitment|application|interview|assessment|selection|hiring)\b|\badjustments? (to|during|in|for) (the |our )?(recruitment|application|interview|assessment|selection)|\b(additional|special|access) (requirements?|needs)\b.{0,80}\b(interview|assessment|recruitment)\b/,
+      /\breasonable adjustments?\b|^(do|will|would) you (require|need|have) any (special|additional|access) (requirements?|arrangements?|needs)\b|\b(require|need|request)\b.{0,40}\b(adjustments?|accommodations?|support|(special|additional|access) (requirements?|arrangements?|needs|assistance))\b.{0,60}\b(recruitment|application|interview|assessment|selection|hiring)\b|\badjustments? (to|during|in|for) (the |our )?(recruitment|application|interview|assessment|selection)|\b(additional|special|access) (requirements?|needs)\b.{0,80}\b(interview|assessment|recruitment)\b/,
       {
         // A text box asking it as a yes/no question ("Do you require any special requirements if you are invited to
         // attend an interview?" on Phenom) takes the answer too; one asking what they are is left for you.
@@ -3500,7 +3613,7 @@
           /^(do|does|will|would|are|is|have|has) (you|there)\b|\b(are|is) there\b|\b(do|will|would) you (require|need)\b/.test(
             text,
           ),
-        not: /essential functions|housing|\bif (yes|so)\b|please (provide|give|tell)/,
+        not: /essential functions|housing|^if (yes|so)\b|^please (provide|give|tell|state|describe|list)/,
       },
     ),
     // "Are you willing to work in the office 5 days a week?" (where it is is the AI's to weigh up)
@@ -3604,7 +3717,7 @@
     ),
     R(
       'compliance.previouslyEmployed',
-      /\b(previously|ever|formerly|before|in the past) (been )?(worked|employed|work|been employed|interned)\b.*\b(for|at|by|with)\b|\b(current or former|former|ex) (employee|staff member|intern)\b|\bhave you (ever )?worked (for|at|with) (us|our)\b|\bworked (for|at) [a-z ]+ (before|previously|in the past)\b/,
+      /\b(previously|ever|formerly|before|in the past) (been )?(worked|employed|work|been employed|interned)\b.*\b(for|at|by|with)\b|\b(current or former|former|ex) (employee|staff member|intern)\b|\bhave you (ever )?worked (for|at|with) (us|our)\b|\bworked (for|at) [a-z ]+ (before|previously|in the past)\b|\bbeen employed (by|at|with) [a-z ]+ (before|previously|in the past)\b/,
       {
         kinds: CHOICE.concat(LONG_TEXT),
         not: /\bapplied\b|\binterview|\brelated|famil|relative|\bin (finance|banking|consulting|the industry|a similar)|\b(ernst|ey|deloitte|pwc|pricewaterhouse\w*|kpmg|auditors?|audit)\b/,

@@ -58,6 +58,9 @@
   // another country, please specify.": the box for an answer the list didn't have.
   const OTHER_FOLLOW_UP =
     /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|^(if|when) you (have )?(selected|chose|picked|ticked|checked) (?!yes\b|predicted\b|expected\b)|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b|\bif (it|yours|your \w+( \w+)?) (is|was) not (listed|shown|in the list|found|available)\b|\bif (\w+ ){1,6}?(is|are|was|were) not (listed|shown|in (the|this|our) (list|options|dropdown))\b|\bif (\w+ ){1,6}?(isn t|aren t|wasn t|weren t) (listed|shown|in (the|this) list)\b|\bif (\w+ ){1,6}?(does not|doesn t|do not|don t) (appear|show up)\b|\bif (\w+ ){1,6}?not in (the|this) list\b|\bif (residing|living|based|located|studying) (in |at )?(another|a different) \w+\b|\bnot listed (above|below)\b.*\b(specify|enter|type|provide|state)\b|\bif not (listed|shown|in the list|found|available)\b|^(any )?other (university|school|college|institution|degree|subject|major|course)\b|\b(university|school|college|institution|degree|subject|major|course) (name )?other$/;
+  // "…please specify here or write N/A if you selected another answer": N/A unless the list above is on "Other".
+  const NA_UNLESS_OTHER =
+    /\b(write|enter|type|put|input) (n a|na|none|not applicable)\b.*\bif (you (have )?(selected|chose|picked|answered|gave) )?(another|a different|any other) (answer|option|response)\b|\bif (you (have )?(selected|chose|picked|answered|gave) )?(another|a different) (answer|option|response)\b.*\b(write|enter|type|put|input) (n a|na|none|not applicable)\b/;
   // A bare "Please specify" / "If other, please tell us where": the box for the answer a list above didn't have.
   const SPECIFY =
     /^(please )?(specify|explain|state)\b|^(if )?other\b|\bselected other\b|^(please )?(tell us|let us know) (where|which|more)\b/;
@@ -632,6 +635,15 @@
         /^(which one|which|please (select|specify)|specify|source)$/.test(q)
       )
         results[i] = { type: 'job.referralSource', part: null, score: 1, source: 'follow-up' };
+    });
+
+    // Maven's "If you selected 'Other' for the above question, please specify here or write N/A if you selected another
+    // answer" after a list: "N/A" unless that list is on "Other" (content/main.js checks), when it is left for you.
+    results.forEach((r, i) => {
+      if ((r && r.type) || !['text', 'textarea'].includes(descs[i].kind)) return;
+      if (!NA_UNLESS_OTHER.test(norm(questionText(descs[i])))) return;
+      const before = [i - 1, i - 2].find((j) => j >= 0 && LIST_KINDS.includes(descs[j].kind));
+      if (before != null) results[i] = { type: 'na', part: null, score: 1, source: 'follow-up', follows: before };
     });
 
     // "If you selected a response to the prior question other than "none of the above"…" right after a sanctions
@@ -1515,10 +1527,12 @@
         .filter(Boolean);
     const picks = [];
     for (const item of items) {
-      const idx = matchOption(options, typeof item === 'string' ? F().val(item) : item);
+      const idx = matchOptionAs(options, typeof item === 'string' ? F().val(item) : item);
       if (idx >= 0 && !picks.includes(idx)) picks.push(idx);
     }
-    return picks;
+    // None of them listed: the value's fallback ("None" for languages the list doesn't have).
+    const none = !picks.length && v.fallback && v.fallback.length ? fallbackOption(options, v) : -1;
+    return none >= 0 ? [none] : picks;
   }
 
   /* ------------------------------------------- statements and slots, one by one */
@@ -1631,6 +1645,27 @@
    * options: [{ text, value, disabled }]. Returns the index into `options`, or -1.
    */
   function matchOption(options, v) {
+    const i = matchOptionAs(options, v);
+    return i < 0 && v && v.fallback && v.fallback.length ? fallbackOption(options, v) : i;
+  }
+
+  /**
+   * Nothing fits: the value's own fallback ("Other" for a job site the list doesn't name, "Other (Non-Technical)" for
+   * Economics among engineering subjects, "None" for languages the list doesn't have), an option that is just that:
+   * "Other (please specify)", never one that has it among other things ("Referral- Client/Vendor/Other").
+   */
+  function fallbackOption(options, v) {
+    const asIs = v.fallback.map(norm);
+    // Numbered or lettered lists count: "6) Other (please explain)".
+    const just = (o) => norm(o.text).replace(/^(\d{1,2}|[a-h]) /, '');
+    const plain = options.map((o) => (asIs.some((f) => just(o).startsWith(f)) ? o : { text: '', value: '' }));
+    return matchOptionAs(
+      plain,
+      Object.assign({}, v, { candidates: v.fallback, fallback: null, kind: 'text', canonical: null }),
+    );
+  }
+
+  function matchOptionAs(options, v) {
     if (!v || !options || !options.length) return -1;
     // A list ("London, New York") answers a single choice with its first item that is offered.
     if (v.kind === 'list') {
@@ -1784,20 +1819,7 @@
     }
 
     const best = bestText(opts, cands, v);
-    if (best && best.score >= 45) return best.i;
-    // Nothing fits: the value's own fallback ("Other" for a job site the list doesn't name), an option that is just
-    // that: "Other (please specify)", never one that has it among other things ("Referral- Client/Vendor/Other").
-    if (v.fallback && v.fallback.length) {
-      const asIs = v.fallback.map(norm);
-      // Numbered or lettered lists count: "6) Other (please explain)".
-      const just = (o) => norm(o.text).replace(/^(\d{1,2}|[a-h]) /, '');
-      const plain = options.map((o) => (asIs.some((f) => just(o).startsWith(f)) ? o : { text: '', value: '' }));
-      return matchOption(
-        plain,
-        Object.assign({}, v, { candidates: v.fallback, fallback: null, kind: 'text', canonical: null }),
-      );
-    }
-    return -1;
+    return best && best.score >= 45 ? best.i : -1;
   }
 
   /* --------------------------------------------------------------- formatting */

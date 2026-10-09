@@ -228,9 +228,9 @@ test('widget libraries are named and counted', async () => {
   const antd = await h.open('lib-antd.html');
   await antd.waitForSelector('#apply_firstName');
   const a = await pageMap(antd);
-  assert.equal(a.map.widgets['Ant Design'], 20);
-  assert.match(a.text.split('\n')[0], /widgets=Ant Design×20$/);
-  assert.equal(a.map.fields.length, 20);
+  assert.equal(a.map.widgets['Ant Design'], 21);
+  assert.match(a.text.split('\n')[0], /widgets=Ant Design×21$/);
+  assert.equal(a.map.fields.length, 21);
   await antd.close();
 
   const jquery = await h.open('lib-jquery.html');

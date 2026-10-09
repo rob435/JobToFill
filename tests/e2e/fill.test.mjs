@@ -522,6 +522,9 @@ test('tricky page: honeypots, existing values, custom radios, checkbox lists, ra
   assert.equal(await value(page, '#dob'), '1990-12-10');
   assert.equal(await value(page, '#start'), '2026-11-02');
   assert.equal(await value(page, '#fav'), '');
+  // "…or write N/A if you selected another answer" after a list on Mathematics.
+  assert.equal(await selectedText(page, '#subject'), 'Mathematics');
+  assert.equal(await value(page, '#subject_other'), 'N/A');
   assert.ok(r.skipped >= 1);
   assert.ok(r.missing.includes('Twitter / X'));
 
@@ -532,6 +535,15 @@ test('tricky page: honeypots, existing values, custom radios, checkbox lists, ra
   assert.equal(await checked(page, '#auth'), false);
   assert.equal(await selectedText(page, '#country_default'), 'Canada');
   assert.equal(await value(page, '#pre'), 'Augusta');
+  await page.close();
+});
+
+test('the box for an answer the list lacks stays empty once the list is on "Other"', async () => {
+  const page = await h.open('tricky.html');
+  await page.selectOption('#subject', 'Other');
+  await h.fill(page);
+  assert.equal(await selectedText(page, '#subject'), 'Other', 'your choice is kept');
+  assert.equal(await value(page, '#subject_other'), '', 'never "N/A" for the subject you are to name');
   await page.close();
 });
 

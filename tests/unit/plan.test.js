@@ -2720,7 +2720,10 @@ test('degree subjects: "Computing Science" is "Computer Science", never "Science
   const stem = 'STEM (Science, Technology, Engineering, Maths)';
   assert.equal(pick('Physics', stem, 'Humanities', 'Business'), stem);
   assert.equal(pick('Computer Science', 'Science', 'Computer Engineering', 'Arts'), 'Science', 'only a catch-all fits');
-  assert.equal(pick('History', 'Mathematics', 'Science', 'Other'), null, 'never "Other" or a wrong subject');
+  // A subject the list doesn't have is its "Other", never a wrong subject; a list without one is left for you.
+  assert.equal(pick('History', 'Mathematics', 'Science', 'Other'), 'Other');
+  assert.equal(pick('History', 'Mathematics', 'Science'), null);
+  assert.equal(pick('Economics', 'Physics', 'Finance', 'Other (Non-Technical)', 'Other'), 'Other (Non-Technical)');
   // A text box gets the subject as written.
   p.education[0].field = 'Computing Science';
   assert.equal(ask(p, 'edu.field', 'Degree subject', { kind: 'text' }).text, 'Computing Science');
@@ -4037,4 +4040,149 @@ test('niche-form dry runs: dates — M/d/yyyy, a picker under “Year”, gradua
     matcher.classify(desc({ label: isio }, { kind: 'combo', options: opts('University of Glasgow', 'Other') })).type,
     'edu.school',
   );
+});
+
+test('niche-form dry runs: legal rights to work, the type of right you hold, a citizen’s visa boxes, dual nationality', () => {
+  const p = glaswegian();
+  const typeOf = (q, kind = 'radio', list) =>
+    (matcher.classify(desc({ question: q }, { kind, options: list ? opts(...list) : null })) || {}).type || null;
+  // Arma: "rights", not just "right".
+  const arma = 'Do you possess the legal rights to work in the UK? Please confirm one of the below answers';
+  const rights = [
+    'I have the right to work in the UK',
+    'I do not have the right to work in the UK and will require a visa',
+  ];
+  assert.equal(typeOf(arma, 'radio', rights), 'job.authorized');
+  assert.equal(choose(p, 'job.authorized', arma, rights), rights[0]);
+  // IK Partners: a British citizen's right is citizenship, whatever else the list offers.
+  const ik = 'What type of right to work in the UK do you hold?';
+  const kinds = [
+    'Citizenship/Nationality/Permanent Residency',
+    'European Pre-settle/Settle Status',
+    'Student/Graduate Visa',
+    'I need a company sponsorship',
+  ];
+  assert.equal(typeOf(ik, 'checkboxes', kinds), 'job.rightType');
+  assert.equal(choose(p, 'job.rightType', ik, kinds, { kind: 'checkboxes' }), kinds[0]);
+  // Peel Hunt and Arma's boxes: N/A when they say so for those needing no visa; the citizenship for a visa type.
+  const peel =
+    'If you do require a visa or are currently on a visa, please provide details of your current visa and requirements. If you do not require a visa, please type N/A';
+  assert.equal(ask(p, 'job.sponsorship', peel, { kind: 'text' }).text, 'N/A');
+  const armaType =
+    'If you answered that you have the right to work in the UK, please confirm what visa type you have i.e. pre-settled status or a specific visa, please include the expiry date of this visa. If you answered that you will require a visa to work in the UK, please type n/a';
+  assert.equal(ask(p, 'job.sponsorship', armaType, { kind: 'textarea' }).text, 'British citizen (no visa needed)');
+  // Someone on a visa is not told "N/A": that is theirs to write.
+  p.personal.nationality = 'Indian';
+  assert.notEqual((ask(p, 'job.sponsorship', peel, { kind: 'text' }) || {}).text, 'N/A');
+  assert.equal(ask(p, 'job.rightType', ik, { kind: 'checkboxes', options: opts(...kinds) }), null);
+  p.personal.nationality = 'British';
+  // Capgemini, Cambridge Consultants: one nationality is "No"; citizenships held before aren't in the profile.
+  const yn = ['Yes', 'No'];
+  assert.equal(typeOf('Do you hold dual nationality?', 'radio', yn), 'personal.dualNationality');
+  assert.equal(choose(p, 'personal.dualNationality', 'Do you hold dual nationality?', yn), 'No');
+  const other = 'Do you currently hold any other (dual) nationality or citizenships?';
+  assert.equal(choose(p, 'personal.dualNationality', other, yn), 'No');
+  assert.equal(
+    choose(p, 'personal.dualNationality', 'Have you previously held any other (dual) nationality or citizenships?', yn),
+    null,
+  );
+  p.personal.nationality = 'British, Irish';
+  assert.equal(choose(p, 'personal.dualNationality', 'Do you hold dual nationality?', yn), 'Yes');
+  // Capgemini: "employed by … before" is having worked there.
+  assert.equal(
+    typeOf('Have you been employed by Capgemini Group before?', 'combobox'),
+    'compliance.previouslyEmployed',
+  );
+});
+
+test('niche-form dry runs: "If so" in the same box, N/A unless Other, "or type None", and lists answered "Other"/"None"', () => {
+  const p = computingScientist();
+  Object.assign(p.job, { otherOffers: 'No', adjustments: 'No', referralSource: 'Trackr', locations: 'London' });
+  const typeOf = (q, kind = 'radio', list) =>
+    (matcher.classify(desc({ question: q }, { kind, options: list ? opts(...list) : null })) || {}).type || null;
+  // Nominal: the question and its "If so…" in one box take your answer; a box of its own starting "If so" doesn't.
+  const nominal = 'Do you have any pending offers or deadlines we should know about? If so, what companies and dates?';
+  assert.equal(typeOf(nominal, 'textarea'), 'job.otherOffers');
+  assert.equal(ask(p, 'job.otherOffers', nominal, { kind: 'textarea' }).text, 'No');
+  assert.equal(typeOf('If so, which companies and what are the deadlines?', 'textarea'), null);
+  // Menzies, Cirrus Logic.
+  const yn = ['Yes', 'No'];
+  assert.equal(
+    typeOf('Do you require any special requirements that we may need to be aware of?', 'radio', yn),
+    'job.adjustments',
+  );
+  assert.equal(typeOf('Were you referred by a current Cirrus Logic employee?', 'radio', yn), 'job.referred');
+  assert.equal(choose(p, 'job.referred', 'Were you referred by a current Cirrus Logic employee?', yn), 'No');
+  const cirrus = 'Please enter the name of the person who referred you or type, "None"';
+  assert.equal(typeOf(cirrus, 'textarea'), 'job.referrer');
+  assert.equal(ask(p, 'job.referrer', cirrus, { kind: 'textarea' }).text, 'None');
+  // Maven: "…or write N/A if you selected another answer" after a list follows it (content/main.js reads its choice).
+  const page = [
+    desc({ label: 'Discipline' }, { kind: 'select', options: opts('Computer Science', 'Mathematics', 'Other') }),
+    desc(
+      "If you selected 'Other' for the above question, please specify here or write N/A if you selected another answer",
+    ),
+  ];
+  const { results } = matcher.plan(page, p);
+  assert.deepEqual([results[1].type, results[1].follows], ['na', 0]);
+  assert.equal(fields.resolve('na', p, {}).text, 'N/A');
+  // Lists without your answer: their "Other" or "None", never a wrong one.
+  p.education[0].field = 'Economics';
+  assert.equal(
+    choose(p, 'edu.field', 'Of the following options, please select your declared major', [
+      'Physics',
+      'Mathematics',
+      'Statistics',
+      'Computer Science',
+      'Other',
+    ]),
+    'Other',
+  );
+  assert.equal(
+    choose(
+      p,
+      'edu.end',
+      'What is your anticipated graduation date?',
+      ['Fall 2027', 'Spring 2028', 'Fall 2028', 'Other'],
+      { today: TODAY },
+    ),
+    'Other',
+  );
+  p.languages = 'English, French';
+  const aurora =
+    "Do you speak any non-European languages (native or to a professional level - C1 or above)? Please select 'None' if you do not.";
+  assert.deepEqual(
+    matcher.matchAll(
+      opts('Japanese', 'Hindi', 'Mandarin', 'None', 'Other'),
+      ask(p, 'languages', aurora, { kind: 'checkboxes' }),
+    ),
+    [3],
+  );
+  // Ashton Fire's first-choice office; FDM's countries: London's.
+  const ashton = ['Buncrana', 'Birmingham', 'Edinburgh', 'Glasgow', 'Manchester', 'London'];
+  assert.equal(typeOf('Please indicate your first choice office location', 'radio', ashton), 'job.locations');
+  assert.equal(
+    choose(p, 'job.locations', 'Please indicate your first choice office location', ashton, { kind: 'radio' }),
+    'London',
+  );
+  assert.equal(
+    choose(p, 'job.locations', 'Which FDM Location are you interested in working at?', [
+      'Canada',
+      'Ireland',
+      'UK',
+      'USA',
+      'None',
+    ]),
+    'UK',
+  );
+  assert.equal(
+    choose(p, 'job.locations', 'Preferred location', ['Scotland', 'Wales']),
+    null,
+    'never another nation of the UK',
+  );
+  // The second choice is your second city, never the first again.
+  const second = 'Please indicate your second choice office location';
+  assert.equal(choose(p, 'job.locations', second, ashton, { kind: 'radio' }), null);
+  p.job.locations = 'London, Manchester';
+  assert.equal(choose(p, 'job.locations', second, ashton, { kind: 'radio' }), 'Manchester');
 });
