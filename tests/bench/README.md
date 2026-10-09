@@ -2,7 +2,7 @@
 
 Scores the rules on real application forms: what a fill would leave in every field of 55 forms found in dry runs on
 niche Trackr postings (1,085 fields, 9 October 2026), against the answer a careful person with the same profile would
-give. It is how a change to `lib/fields.js`, `lib/matcher.js` or `content/dom.js` shows what it does to real forms,
+give. It is how a change to `lib/fields*.js`, `lib/matcher.js` or `content/dom.js` shows what it does to real forms,
 not only to the fixtures it was written for.
 
 It runs exactly what ships: each field is decided by `lib/decide.js`, the code the fill itself decides with

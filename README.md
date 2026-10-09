@@ -269,7 +269,9 @@ extension/
   manifest.json        Manifest V3, shared by Chromium (service worker) and Firefox (background scripts)
   background.js        injection, fill orchestration, passwords and cards for the page, menus, shortcut
   lib/                 classic scripts shared by every context (and the Node unit tests)
-    fields.js          profile schema, field types, detection rules, value resolution
+    fields.js          profile schema, field types, detection rules, value resolution, put together from
+    fields-*.js        its parts by topic: values, profile, personal, education, documents, availability,
+                       work, diversity, compliance, and rules (RULES, one ordered list)
     matcher.js         classification, section/entry planning, option matching, formatting
     decide.js          what a fill does with each field (fill, leave for you, ask the AI), as the benchmark scores it
     account.js         job-portal accounts: the click allow/deny-list, "already exists" messages, shared-host employers
@@ -337,7 +339,7 @@ npm run sign:firefox  # a signed .xpi for a permanent Firefox install (needs AMO
                       # .github/workflows/firefox.yml runs it and publishes the GitHub release
 ```
 
-Adding support for a new kind of field usually means adding a rule to `RULES` and a definition to `DEFS` in `extension/lib/fields.js`, plus a case in `tests/unit/classify.test.js`.
+Adding support for a new kind of field usually means adding a rule to `RULES` (`extension/lib/fields-rules.js`) and a definition to `DEFS` in the part for its topic (`extension/lib/fields-education.js` for `edu.*`, `fields-diversity.js` for `eeo.*`…), plus a case in `tests/unit/classify.test.js`.
 
 ### Surveying live application forms
 

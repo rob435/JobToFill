@@ -21,7 +21,7 @@ Features list before changing behaviour, and its Development section for the fil
   keep it passing and extend it when you add a field to what they carry. A page map that leaves the browser (to
   the AI, in a file) is made with `values: 'redacted'`: the default `'state'` hides typed values but not the
   page's own text ("Welcome back, Ada").
-- **Fills stay deterministic.** The rules (`lib/fields.js`, `lib/matcher.js`) do the filling: fast, free,
+- **Fills stay deterministic.** The rules (`lib/fields*.js`, `lib/matcher.js`) do the filling: fast, free,
   private. AI handles the leftovers; don't route fills through a model.
 - Fills must not regress on any fixture: a change for one site runs against all of them in the e2e suite.
 
@@ -30,7 +30,9 @@ Features list before changing behaviour, and its Development section for the fil
 - `lib/` — classic scripts shared by the background, content scripts, extension pages and the Node unit tests.
   Each attaches to the `JTF` namespace and ends with `module.exports` when pure. No `import`/`require` between
   them; load order is the list in `background.js` (`importScripts`, Chromium) which must equal manifest
-  `background.scripts` (Firefox) — `scripts/check.mjs` enforces it.
+  `background.scripts` (Firefox) — `scripts/check.mjs` enforces it. `lib/fields.js` is put together from its parts
+  (`lib/fields-*.js`, by topic), which load just before it, in the same order wherever it loads (check.mjs again);
+  a part shares what the others use on `JTF.fieldParts`.
 - `content/` — injected on demand into every frame (`CONTENT_FILES` in `background.js`); `main.js` exposes
   `globalThis.__jtf`, which the background calls per frame through `callFrames(tabId, method, args)`.
 - **Fill:** `fillTab` → `callFrames('fill')` → `main.js scan()` = `dom.collect()` (controls, labels, groups,
@@ -48,9 +50,10 @@ Features list before changing behaviour, and its Development section for the fil
 
 ## Common changes
 
-- **A new kind of field or screening question:** a rule in `RULES` and a definition in `DEFS`
-  (`lib/fields.js`), a case in `tests/unit/classify.test.js` (and `screening.test.js` for answers), and a
-  Features bullet in the README with the real question wording.
+- **A new kind of field or screening question:** a rule in `RULES` (`lib/fields-rules.js`: one ordered list, the
+  first of equal scores wins) and a definition in `DEFS` in its topic's part (`lib/fields-education.js` for `edu.*`,
+  `fields-work.js` for `job.*`, `fields-diversity.js` for `eeo.*`…), a case in `tests/unit/classify.test.js` (and
+  `screening.test.js` for answers), and a Features bullet in the README with the real question wording.
 - **A site or widget that fills wrongly:** reproduce it as a fixture in `tests/fixtures/` that mimics the real
   markup (fixtures are deliberately exempt from Prettier: don't tidy them), or as a page built with the real
   library in `tests/fixtures/src/*.jsx` (bundled on request by `serve.mjs`); add an e2e test; then fix
@@ -81,7 +84,7 @@ npm run test:e2e    # every e2e file (minutes); CI also runs the Firefox list in
 ```
 
 Done means: `npm run lint` clean, `npm run test:unit` green, the e2e files for every area you touched green (all of
-them for changes to `dom.js`, `fill.js`, `matcher.js` or `fields.js`), and the README updated for any behaviour a
+them for changes to `dom.js`, `fill.js`, `matcher.js` or `fields*.js`), and the README updated for any behaviour a
 person would notice. Firefox isn't installed in cloud sessions; CI covers it, so keep tests to what both drivers
 share (see `tests/e2e/harness.mjs`).
 

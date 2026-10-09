@@ -1577,3 +1577,11 @@ test('boxes that are not yours to fill from the profile: a name "if different", 
   p.contact.email = 'am123@st-andrews.ac.uk';
   assert.equal(ask('University email').text, 'am123@st-andrews.ac.uk');
 });
+
+test('every rule and autocomplete token names a type some part defines', () => {
+  // "gen.start", "gen.end" and "gen.description" become an education or job entry's once the planner knows the section.
+  const types = [...fields.RULES.map((r) => r.type), ...Object.values(fields.AUTOCOMPLETE).map(([type]) => type)];
+  assert.deepEqual([...new Set(types.filter((t) => !fields.DEFS[t] && !/^gen\./.test(t)))], []);
+  for (const [type, def] of Object.entries(fields.DEFS))
+    assert.ok(def.label && (typeof def.get === 'function' || def.file || def.consent), type);
+});
