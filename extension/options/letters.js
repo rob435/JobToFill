@@ -1,5 +1,5 @@
 /* JobToFill settings — cover letters: the AI model, what to write about, example letters, layout. */
-import { api, download, el, plural, requestAiConsent } from '../ui/common.js';
+import { api, download, el, modelPicker, plural, requestAiConsent } from '../ui/common.js';
 import { control, grid, group, sectionHead, table } from './controls.js';
 
 const { store, ai, doctext, letter: L, cvtex } = globalThis.JTF;
@@ -26,15 +26,6 @@ async function aiGroup() {
     Object.entries(ai.PROVIDERS).map(([id, p]) => el('option', { value: id, textContent: p.label })),
   );
   provider.value = cfg.provider;
-  const model = el('input', {
-    type: 'text',
-    name: 'ai-model',
-    value: modelOf(cfg.provider) || '',
-    autocomplete: 'off',
-    spellcheck: false,
-  });
-  model.setAttribute('list', 'ai-models');
-  const models = el('datalist', { id: 'ai-models' });
   const base = el('input', {
     type: 'url',
     name: 'ai-base',
@@ -59,7 +50,7 @@ async function aiGroup() {
   const [fallback, fallbackRow] = checkbox(
     'ai-fallback',
     cfg.fallback !== false,
-    'If it’s out of credit or down, use my other provider (OpenRouter or DeepSeek) when it has a key',
+    'If it’s out of credit or down, use another provider I’ve added a key for',
   );
   const [backupKeys, backupRow] = checkbox(
     'ai-backup-keys',
@@ -68,20 +59,22 @@ async function aiGroup() {
   );
 
   const showSaved = () => {
-    const names = Object.keys(keys).map((id) => (ai.PROVIDERS[id] || {}).label || id);
+    // In the order the provider list shows them.
+    const names = Object.keys(ai.PROVIDERS)
+      .filter((id) => keys[id])
+      .map((id) => ai.PROVIDERS[id].label);
     saved.textContent = names.length ? `Keys saved for: ${names.join(', ')}.` : '';
   };
-  const loadModels = async () => {
-    const p = ai.PROVIDERS[provider.value];
-    const ids = await ai.models({ ...current(), apiKey: key.value.trim() }).catch(() => []);
-    models.replaceChildren(
-      ...(ids.length ? ids : p.models || []).slice(0, 400).map((id) => el('option', { value: id })),
-    );
-  };
-  const current = () => ({ provider: provider.value, model: model.value.trim(), baseUrl: base.value.trim() });
+  // The provider's suggested models in a list, with what each is good for; any other id it offers can be typed.
+  const picker = modelPicker({
+    name: 'ai-model',
+    list: (id) => ai.models({ provider: id, baseUrl: base.value.trim(), apiKey: key.value.trim() }),
+    onChange: () => saveSettings(),
+  });
+  picker.set(cfg.provider, modelOf(cfg.provider));
+  const current = () => ({ provider: provider.value, model: picker.value, baseUrl: base.value.trim() });
   const sync = () => {
     const p = ai.PROVIDERS[provider.value];
-    model.placeholder = p.model || 'model id';
     key.placeholder = p.keyHint || '';
     baseField.hidden = provider.value !== 'custom';
     keyLink.href = p.keyUrl || '#';
@@ -105,26 +98,17 @@ async function aiGroup() {
     await store.setAiKey(value, id);
     status.textContent = 'Saved.';
   };
-  // The model list is fetched when someone goes to pick a model, not every time settings open.
-  let listed = null;
-  model.addEventListener('focus', () => {
-    if (listed === provider.value) return;
-    listed = provider.value;
-    loadModels();
-  });
   // Each provider keeps its own key and model: switching shows the ones saved for it.
   provider.addEventListener('change', async () => {
     key.value = keys[provider.value] || '';
-    model.value = modelOf(provider.value) || '';
-    models.replaceChildren();
-    listed = null;
+    picker.set(provider.value, modelOf(provider.value));
     sync();
     cfg.provider = provider.value;
     await store.saveAiSettings({ provider: provider.value, baseUrl: base.value.trim() });
     status.textContent = 'Saved.';
   });
   key.addEventListener('change', saveKey);
-  for (const input of [model, base, fallback, backupKeys]) input.addEventListener('change', saveSettings);
+  for (const input of [base, fallback, backupKeys]) input.addEventListener('change', saveSettings);
   sync();
 
   const test = async () => {
@@ -147,10 +131,10 @@ async function aiGroup() {
 
   return group(
     'AI model',
-    'Letters are written by the model you choose, with your own API key. DeepSeek V4.1 Flash through OpenRouter is fast and costs about a tenth of a cent per letter; DeepSeek’s own API (deepseek-chat) works too. Each provider keeps its own key and model. Keys are stored only in this browser and in your own backup file.',
+    'Cover letters, tailored CVs and answers to the questions a fill leaves are written by the model you choose, with your own API key. With Claude, Sonnet 5.5 is the all-rounder (about 5¢ a letter), Haiku 5.5 the quickest and cheapest (well under 1¢) and Opus 5.5 the most capable (about 10¢). OpenRouter offers the same Claude models beside DeepSeek V4.1 Flash, if you’d rather keep one account. Each provider keeps its own key and model. Keys are stored only in this browser and in your own backup file.',
     grid(
       el('label', { className: 'field' }, el('span', { textContent: 'Provider' }), provider),
-      el('label', { className: 'field' }, el('span', { textContent: 'Model' }), model, models),
+      el('label', { className: 'field' }, el('span', { textContent: 'Model' }), ...picker.parts),
       baseField,
       el(
         'label',

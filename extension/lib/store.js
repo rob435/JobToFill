@@ -13,7 +13,7 @@
  *   kit:<id>      cover letter material per profile: { notes, samples: [{ id, name, text }], contact, closing,
  *                 spelling, paper, cv: { updatedAt, text } (text read from the resume file),
  *                 cvTex (the user's CV as LaTeX, as pasted) and cvMaster (cvtex.parse() of it: the model tailoring edits) }
- *   aiKeys        the AI providers' API keys ({ openrouter, deepseek, custom }); in backups unless switched off
+ *   aiKeys        the AI providers' API keys ({ anthropic, openrouter, deepseek, custom }); in backups unless off
  *   letters       generated letters, newest first (see saveLetter)
  *   answers       answers the AI wrote, per application, newest first (see saveAnswers)
  *   (session) tabjob:<tabId>  the job found for the application open in a tab (see setTabJob)
@@ -208,7 +208,9 @@
     return kit;
   });
 
-  const PROVIDER_IDS = ['openrouter', 'deepseek', 'custom'];
+  const PROVIDER_IDS = ['anthropic', 'openrouter', 'deepseek', 'custom'];
+  // Who stands in when the chosen provider is out of credit or down: the first other one with a key.
+  const FALLBACK_ORDER = ['anthropic', 'openrouter', 'deepseek'];
   const aiSettings = (settings) => Object.assign({}, DEFAULT_SETTINGS.ai, (settings && settings.ai) || {});
 
   /** The API keys, one per provider: { openrouter: 'sk-or-…', deepseek: 'sk-…' }. (Older versions kept one.) */
@@ -274,11 +276,11 @@
     const config = {
       provider: ai.provider,
       model: modelFor(ai, ai.provider),
-      // The address is only for "Other" providers; OpenRouter and DeepSeek have their own.
+      // The address is only for "Other" providers; Claude, OpenRouter and DeepSeek have their own.
       baseUrl: ai.provider === 'custom' ? ai.baseUrl || '' : '',
       apiKey: keys[ai.provider] || '',
     };
-    const other = ai.fallback !== false && ['openrouter', 'deepseek'].find((id) => id !== ai.provider && keys[id]);
+    const other = ai.fallback !== false && FALLBACK_ORDER.find((id) => id !== ai.provider && keys[id]);
     if (other) config.fallback = { provider: other, model: modelFor(ai, other), baseUrl: '', apiKey: keys[other] };
     return config;
   }

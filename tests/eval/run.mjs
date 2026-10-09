@@ -2,14 +2,14 @@
 // through the extension's own chat client (ai.js), every model call recorded. Writes tests/eval/runs/<stamp>-<name>/
 // with config.json, cassette.jsonl (the calls), results.json (per case and question) and summary.json.
 //
-//   node tests/eval/run.mjs --suite answers|letters|all --provider openrouter|deepseek|custom --model <id>
+//   node tests/eval/run.mjs --suite answers|letters|all --provider anthropic|openrouter|deepseek|custom --model <id>
 //        [--base-url https://…] [--split train|test|all] [--cases N] [--reps N] [--concurrency 4] [--label name]
 //        [--judge] [--out dir]
 //   node tests/eval/run.mjs --replay <runDir> [--replay-loose] [--judge]   the recorded replies, no provider
 //   node tests/eval/run.mjs --provider fake --model oracle|null            scripted replies: a harness check
 //
-// Keys come from the environment: OPENROUTER_API_KEY, DEEPSEEK_API_KEY, AI_API_KEY (custom); ANTHROPIC_API_KEY for
-// the judge.
+// Keys come from the environment: ANTHROPIC_API_KEY (Claude, and the judge), OPENROUTER_API_KEY, DEEPSEEK_API_KEY,
+// AI_API_KEY (custom).
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -25,7 +25,12 @@ import { formatScoreboard, scoreboardRows } from './scoreboard.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const RUNS = path.join(here, 'runs');
-export const KEYS = { openrouter: 'OPENROUTER_API_KEY', deepseek: 'DEEPSEEK_API_KEY', custom: 'AI_API_KEY' };
+export const KEYS = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY',
+  custom: 'AI_API_KEY',
+};
 const SUITES = ['answers', 'letters'];
 // ai.js's error codes every later case would hit too: a rejected key, no credit, an unknown model, no address.
 const FATAL = new Set(['key', 'credit', 'model', 'setup']);
@@ -43,7 +48,8 @@ export function parseArgs(argv) {
 
 /** The provider config the extension would build, with the key from the environment; throws what's missing. */
 export function providerConfig(JTF, { provider, model, baseUrl }, env = process.env) {
-  if (!KEYS[provider]) throw new Error(`Unknown provider “${provider}”: openrouter, deepseek, custom or fake.`);
+  if (!KEYS[provider])
+    throw new Error(`Unknown provider “${provider}”: anthropic, openrouter, deepseek, custom or fake.`);
   const label = JTF.ai.PROVIDERS[provider].label;
   const config = { provider, model: model || '', baseUrl: baseUrl || '', apiKey: env[KEYS[provider]] || '' };
   if (!config.apiKey.trim()) throw new Error(`Set ${KEYS[provider]} to run against ${label}.`);

@@ -11,6 +11,7 @@ It runs exactly what ships: the extension's own pipelines through its own chat c
 
 ```bash
 OPENROUTER_API_KEY=sk-or-… node tests/eval/run.mjs --suite all --provider openrouter --model deepseek/deepseek-v4.1-flash --split train
+ANTHROPIC_API_KEY=sk-ant-… node tests/eval/run.mjs --provider anthropic --model claude-sonnet-5-5 --split train
 OPENROUTER_API_KEY=sk-or-… node tests/eval/run.mjs --provider openrouter --model anthropic/claude-sonnet-5.5 --label sonnet-train --split train
 DEEPSEEK_API_KEY=sk-… node tests/eval/run.mjs --provider deepseek --model deepseek-chat
 AI_API_KEY=… node tests/eval/run.mjs --provider custom --base-url https://api.example.com/v1 --model some-model
