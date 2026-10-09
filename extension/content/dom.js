@@ -760,9 +760,12 @@
     if (tag === 'textarea') return 'textarea';
     if (tag === 'input') {
       const type = (el.getAttribute('type') || 'text').toLowerCase();
-      // A search box inside a combobox (ARIA 1.1's pattern: select2's and Choices' multi-selects) is the box that
-      // dropdown is typed into, not a site search.
+      // A search box inside a combobox (ARIA 1.1's pattern: select2's and Choices' multi-selects), or one that is a
+      // form's combobox itself (Ant Design 5's Select on Dayforce), is the box that dropdown is typed into, not a site
+      // search: that one sits in the header or a search landmark.
       if (type === 'search' && el.parentElement && el.parentElement.closest('[role="combobox"]')) return 'combobox';
+      if (type === 'search' && el.getAttribute('role') === 'combobox' && popupOf(el) === 'listbox')
+        return el.closest('header, nav, [role="banner"], [role="navigation"], [role="search"]') ? null : 'combobox';
       if (SKIP_INPUT_TYPES.has(type)) return null;
       if (PASS_THROUGH_TYPES.has(type)) return type;
       // chosen's box, which only searches the options of the <select> it stands in for, is a dropdown too.
@@ -820,11 +823,30 @@
     );
   }
 
+  /**
+   * The hidden <select> a form's menu button sets (BambooHR's "Country United States" button, aria-haspopup="true",
+   * whose menu of role="menuitem" rows is only made when it opens): the button's widget holds it and nothing else
+   * a person fills. It carries the <label for> and the chosen id, but no option text. Null for any other button.
+   */
+  function menuSelectOf(el) {
+    if (!/^(true|menu)$/.test(popupOf(el)) || !el.matches('button, [role="button"]') || !el.closest('form'))
+      return null;
+    for (let a = el.parentElement, i = 0; a && i < 4; a = a.parentElement, i++) {
+      const others = Array.from(a.querySelectorAll(`${COUNTED_SELECTOR}, [aria-haspopup]`)).some(
+        (c) => c !== el && c.localName !== 'select' && isVisible(c),
+      );
+      if (others) return null;
+      const select = Array.from(a.querySelectorAll('select')).find((s) => !isVisible(s));
+      if (select) return select;
+    }
+    return null;
+  }
+
   function collectControls(rootNode, out) {
     const doc = rootNode.ownerDocument || rootNode;
     const walker = doc.createTreeWalker(rootNode, NodeFilter.SHOW_ELEMENT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-      if (n.matches(CONTROL_SELECTOR) || isChoiceMenu(n)) out.push(n);
+      if (n.matches(CONTROL_SELECTOR) || isChoiceMenu(n) || menuSelectOf(n)) out.push(n);
       if (n.shadowRoot) collectControls(n.shadowRoot, out);
     }
     return out;
@@ -943,9 +965,15 @@
     } else {
       const combo = kind === 'combo' || kind === 'combobox';
       const native = combo ? standsFor(el) : null;
-      // A dropdown widget is labelled by the <label> of the <select> it stands in for (select2, chosen, Choices).
-      s.label = explicitLabel(el, combo) || (native ? explicitLabel(native) : '');
+      const held = kind === 'combo' ? menuSelectOf(el) : null;
+      // A dropdown widget is labelled by the <label> of the <select> it stands in for (select2, chosen, Choices), or
+      // of the one it sets (BambooHR).
+      s.label = explicitLabel(el, combo) || (native || held ? explicitLabel(native || held) : '');
       s.aria = el.getAttribute('aria-label') || '';
+      // BambooHR names its button after the label and the choice ("Country United States"): the choice is no question.
+      const shown = held ? U.cleanLabel(visibleText(el)) : '';
+      if (shown && s.aria.length > shown.length && s.aria.endsWith(shown))
+        s.aria = s.aria.slice(0, -shown.length).trim();
       s.placeholder = desc.placeholderRaw;
       s.name = el.getAttribute('name') || '';
       s.id = el.id || '';

@@ -1828,6 +1828,12 @@
     return m ? val(OTHERWISE_WORDS[m[1] || m[2]], { otherwise: true, canonical: null }) : null;
   }
 
+  /** "N/A" for a text box that asks only "if applicable" ("Postgraduate Degree (if applicable)"), or null. */
+  const notApplicable = (ctx) =>
+    LONG_TEXT.includes(ctx.kind) && /\bif (applicable|any|relevant)\b/.test(ctx.question || '')
+      ? val('N/A', { otherwise: true, canonical: null })
+      : null;
+
   /* -------------------------------------------------------------- definitions */
 
   const at = (path, wrap) => (p) => (wrap || val)(U.getPath(p, path));
@@ -1875,6 +1881,70 @@
     const asked = qualsOf(question);
     const held = qualsOf(U.normalize(degree));
     return !asked.length || !held.length || /\bequivalent\b/.test(question) || asked.some((q) => held.includes(q));
+  }
+
+  /** Which qualification a school entry is, its school qualifications ("A-Levels" -> ['alevel']). */
+  const heldQuals = (p) => (p.education || []).flatMap((e) => qualsOf(U.normalize(e.degree)));
+  const schoolEntries = (p) =>
+    (p.education || []).filter((e) => JTF.matcher.degreeGroup(U.normalize(e.degree)) === 'highschool');
+
+  /**
+   * "Did you complete UK A-levels?": Yes when a school entry is that qualification, No when your school entries are
+   * another one (Advanced Highers), nothing when the profile has no school entry.
+   */
+  function qualificationHeld(p, ctx) {
+    const asked = qualsOf(ctx.question || '');
+    if (!asked.length) return null;
+    if (heldQuals(p).some((q) => asked.includes(q))) return val('Yes');
+    return schoolEntries(p).length ? val('No') : null;
+  }
+
+  /**
+   * "If you didn't complete UK A-levels, please provide your equivalent high school qualification and results":
+   * nothing when you did; else your school entry as you would write it ("Advanced Highers in Mathematics, Physics –
+   * AAA").
+   */
+  function equivalentQualification(p, ctx) {
+    const asked = qualsOf(ctx.question || '');
+    if (!asked.length || heldQuals(p).some((q) => asked.includes(q))) return null;
+    const e = schoolEntries(p)[0];
+    if (!e) return null;
+    const what = [e.degree, e.field].filter((t) => !U.isBlank(t)).join(' in ');
+    return val([what, e.gpa].filter((t) => !U.isBlank(t)).join(' – '));
+  }
+
+  /**
+   * The position a question asks for in a list of subjects or grades: "A-Level Subject 2", "A-Level Grade 2", "2nd
+   * subject", "Second A-level grade" are 1. -1 for none ("A-level grades", "GCSE Maths grade (9-1)").
+   */
+  function positionAsked(q) {
+    const m =
+      q.match(/\b(?:subject|grade|result)s? (?:no |number )?([1-9])\b(?! \d)/) ||
+      q.match(/\b([1-9])(?:st|nd|rd|th)? (?:a level |gcse |higher )?(?:subject|grade|result)\b/);
+    if (m) return +m[1] - 1;
+    const w = q.match(
+      /\b(first|second|third|fourth|fifth|sixth) (?:a level |gcse |higher )?(?:subject|grade|result)\b/,
+    );
+    return w ? ORDINALS.indexOf(w[1]) : -1;
+  }
+
+  /** "Mathematics, Further Mathematics and Economics" -> the three subjects; one subject stays one. */
+  function subjectList(text) {
+    const parts = String(text || '')
+      .split(/\s*[,;]\s*/)
+      .filter(Boolean);
+    if (parts.length > 1 && / and /.test(parts[parts.length - 1])) parts.push(...parts.pop().split(/\s+and\s+/));
+    return parts;
+  }
+
+  /** "A*A*A", "A* A* A", "AAB", "D*D*D": one grade each; null for anything else ("38/45", "2:1", "3.8"). */
+  function gradeList(text) {
+    const t = String(text || '').trim();
+    const parts = /[\s,;/]/.test(t) ? t.split(/[\s,;/]+/).filter(Boolean) : t.match(/[A-GU]\*{0,2}/gi) || [];
+    const each = parts.length > 1 && parts.every((g) => /^([A-GU]\*{0,2}|[1-9])$/i.test(g));
+    return each && parts.join('').length === t.replace(/[\s,;/]+/g, '').length
+      ? parts.map((g) => g.toUpperCase())
+      : null;
   }
 
   /** The one level of study a question names, or null (none, or several). */
@@ -1998,6 +2068,24 @@
   }
 
   /**
+   * Does the profile answer a box with nothing, on purpose? "A-Level Subject 4" for three A-levels, "A-Level Grade 1"
+   * for Advanced Highers; "If you didn't complete UK A-levels, … your equivalent" for someone who did. Not missing
+   * from the profile, nor the AI's to answer.
+   */
+  function leftEmpty(type, p, ctx) {
+    const q = (ctx && ctx.question) || '';
+    if (type === 'edu.equivalent') return qualsOf(q).some((x) => heldQuals(p).includes(x));
+    if (!['edu.field', 'edu.gpa', 'edu.classification'].includes(type)) return false;
+    const { e, level } = entryAt(p, 'education', ctx || {});
+    if (!e) return false;
+    if (level === 'highschool' && !sameQualification(q, e.degree)) return true;
+    const nth = type === 'edu.classification' ? -1 : positionAsked(q);
+    const list =
+      nth < 0 ? null : type === 'edu.gpa' ? gradeList(e.gpa) : U.isBlank(e.field) ? null : subjectList(e.field);
+    return !!list && nth >= list.length;
+  }
+
+  /**
    * An entry's end date for a form's "To" box: a stint that starts and ends in the same month (a spring week, an
    * insight day: "03/2026" to "03/2026") ends the month after, since forms turn down a "To" that isn't after "From".
    */
@@ -2023,8 +2111,9 @@
           return key === 'company' && i === 0 ? val(p.address.organization) : null;
         }
         const { e, level } = entryAt(p, list, ctx);
-        // No studies at the level asked: "…graduate (Master) GPA? Please indicate N/A if you do not have one."
-        if (!e) return level ? otherwiseVal(ctx) : null;
+        // No studies at the level asked: "…graduate (Master) GPA? Please indicate N/A if you do not have one.", and
+        // Eastdil's required "Postgraduate University (if applicable)" for someone with no postgraduate degree.
+        if (!e) return level ? otherwiseVal(ctx) || notApplicable(ctx) : null;
         if (
           level === 'highschool' &&
           ['gpa', 'class', 'subject'].includes(kind) &&
@@ -2056,6 +2145,16 @@
           return degreeVal(withSubject ? `${e.degree} in ${e.field}` : e[key]);
         }
         if (kind === 'number') return numberVal(e[key]);
+        // "A-Level Grade 2" / "A-Level Subject 2" (Eastdil): the second of your grades or subjects, or nothing.
+        const nth = kind === 'gpa' || kind === 'subject' ? positionAsked(ctx.question || '') : -1;
+        if (nth >= 0 && kind === 'gpa' && gradeList(e.gpa)) {
+          const grade = gradeList(e.gpa)[nth];
+          return grade ? val(grade, { kind: 'grade' }) : null;
+        }
+        if (nth >= 0 && kind === 'subject' && !U.isBlank(e.field)) {
+          const subject = subjectList(e.field)[nth];
+          return subject ? subjectVal(subject) : null;
+        }
         if (kind === 'gpa') return gpaFor(e, ctx);
         if (kind === 'class') return classFor(e, ctx);
         if (kind === 'school') return val(e[key], { kind: 'school' });
@@ -2804,6 +2903,10 @@
         return enrolled && val(enrolled.canonical === 'yes' ? 'No' : 'Yes');
       },
     },
+
+    // "Did you complete UK A-levels?", and the box for an equivalent if you didn't.
+    'edu.qualification': { label: 'School qualification held (yes/no)', get: qualificationHeld },
+    'edu.equivalent': { label: 'Equivalent school qualification', get: equivalentQualification, derived: true },
 
     'exp.company': entry('Company', 'experience', 'company'),
     'exp.title': entry('Job title', 'experience', 'title'),
@@ -3567,6 +3670,18 @@
       /\b(year|date|when)\b.*\b(did|do|will) you (begin|start|commence|enrol+|enter)\b.*\b(degree|studies|course|program(me)?|universit\w*|college|undergrad\w*|bachelor\w*|master\w*|ph ?d|doctora\w*)\b|\b(began|started|commenced) (your )?(\w+ )?(degree|studies|course|program(me)?)\b/,
       { not: /\b(job|employment|work|internship|placement|role|position)\b/ },
     ),
+    // "Did you complete UK A-levels? Yes or No. If yes, please provide your A-Level subjects…" (Eastdil).
+    R(
+      'edu.qualification',
+      /^(did|do|have) you (\w+ )?(complete|completed|take|taken|sit|sat|study|studied|have|hold|achieve|achieved|do|done) (any |the |your )?(uk |english |scottish |irish )?(a levels?|as levels?|(advanced )?highers|ib|international baccalaureate|gcses?|btecs?|leaving cert\w*|abitur)\b/,
+      { kinds: CHOICE },
+    ),
+    // "If you didn't complete UK A-levels, please provide your equivalent high school qualification and results".
+    R(
+      'edu.equivalent',
+      /\bif you (did not|didn t|have not|haven t|do not|don t) (\w+ )?(complete|completed|take|taken|sit|sat|study|studied|have|hold|achieve|achieved|do|done) (any |the |your )?(uk |english |scottish |irish )?(a levels?|as levels?|(advanced )?highers|ib|international baccalaureate|gcses?|btecs?|leaving cert\w*|abitur)\b.*\bequivalent\b/,
+      { kinds: LONG_TEXT },
+    ),
     R(
       'edu.completed',
       /^have you (already |now )?graduated\b|\b(have|has) you (already |now )?(completed|finished|graduated from) (your |all your )(\w+ )?(studies|degree|course|university|education|programme|program)\b|\bconfirm (that )?you have (already )?(completed|finished|graduated)\b/,
@@ -3603,7 +3718,7 @@
       'edu.school',
       /\bschool\b|universit|college|institut(e|ion)|alma mater|academy|hochschule|\becole\b|universidad/,
       {
-        not: /high school (diploma|graduate|completion)|degree|major|minor|gpa|\byear\b|\bdates?\b|\bstart|\bend\b|graduat|\blocation\b|\bcity\b|(?<!\b(please|kindly) )\bstate\b|country|^(did|have|has|are|do|does|were|was|will|would|can|is) you\b|e ?mail|address|transcript|meals|type of school|school type|kind of school|fee paying|state school|grammar school|grading|\bscale\b|\bcourses?\b/,
+        not: /high school (diploma|graduate|completion)|degree|major|minor|gpa|\byear\b|\bdates?\b|\bstart|\bend\b|(?<!\b(under|post ?))graduat|\blocation\b|\bcity\b|(?<!\b(please|kindly) )\bstate\b|country|^(did|have|has|are|do|does|were|was|will|would|can|is) you\b|e ?mail|address|transcript|meals|type of school|school type|kind of school|fee paying|state school|grammar school|grading|\bscale\b|\bcourses?\b/,
       },
     ),
     // "State/City/Region of School", "School Location", "City of university": where that school is.
@@ -4046,6 +4161,7 @@
     uploadApplies,
     uploadAlso,
     gradeHeld,
+    leftEmpty,
     placeCountry,
     languagesNamed,
     isAcknowledgement,

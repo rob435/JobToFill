@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>BambooHR</title>
+    <style>
+      body { font: 15px/1.4 system-ui, sans-serif; margin: 32px auto; max-width: 720px; }
+      [data-fabric-component="TextField InputWrapper"], [data-fabric-component="SelectField InputWrapper"],
+      [data-fabric-component="Flex"], fieldset { margin: 0 0 18px; display: block; }
+      fieldset { border: 0; padding: 0; }
+      label { display: block; font-weight: 600; margin-bottom: 4px; }
+      .MuiFormControlLabel-root { display: inline-flex; font-weight: normal; margin-right: 12px; }
+      input[type='text'] { padding: 6px; width: 320px; }
+      .fab-SelectToggle { min-width: 240px; padding: 6px 10px; text-align: left; background: #fff; border: 1px solid #999; }
+      .fab-SelectToggle__toggleButton { display: inline-block; margin-left: 8px; }
+      .fab-SelectToggle__content { display: inline-block; }
+      .fab-MenuVessel { background: #fff; border: 1px solid #999; box-shadow: 0 2px 8px #0003; width: 280px; }
+      .fab-MenuList { max-height: 260px; overflow-y: auto; }
+      .fab-MenuOption { padding: 4px 10px; cursor: pointer; }
+      .fab-MenuOption--active { background: #e6f0d8; }
+      .hp { position: absolute; left: -9999px; }
+      .fabric-bc1bde-input { position: absolute; width: 0; height: 0; opacity: 0; }
+      #state { background: #f4f4f4; padding: 8px; font-size: 12px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <!--
+      BambooHR's careers page (Eastdil Secured's 2027 Summer Internship and Ashton Fire's form): Fabric's dropdowns are
+      a button, aria-haspopup="true" and named "Country United States" (the label and the choice), over a hidden
+      <select> that holds just the chosen id with no text; the <label for> points at that select. The menu, a
+      role="menu" of role="menuitem" rows under a "Search..." box, is only made when the button is clicked, appended
+      to <body>, and kept hidden there once closed. A click only opens it when it is a mouse's (detail 1): the click
+      Enter makes is left to the key's own handling. The State list becomes County once the country is the United
+      Kingdom. The uploads say what they are for only in the text before them ("Cover Letter*", "Resume*"); their
+      inputs are named "file-input". A honeypot the person never sees sits first. #state is what the form would send.
+    -->
+    <main>
+      <h3>2027 Summer Internship (London)</h3>
+      <form id="job-application-form" novalidate>
+        <div data-fabric-component="StyledBoxV2">
+          <div data-fabric-component="LayoutBox" aria-hidden="true" class="hp">
+            <div data-fabric-component="Label"><label for="nickname_hpcsaf">Please leave this field blank</label></div>
+            <input name="nickname_hpcsaf" id="nickname_hpcsaf" autocomplete="newAppNicknameInput_hpcsaf" data-lpignore="true" placeholder="Enter your text here" tabindex="-1" type="text" value="" />
+          </div>
+        </div>
+        <div id="fields"></div>
+      </form>
+      <button type="button">Submit Application</button>
+    </main>
+    <pre id="state"></pre>
+    <script>
+      const COUNTRIES = [
+        ['1', 'United States'], ['2', 'Afghanistan'], ['14', 'Australia'], ['38', 'Canada'], ['44', 'China'], ['73', 'France'],
+        ['81', 'Germany'], ['99', 'India'], ['103', 'Ireland'], ['107', 'Italy'], ['147', 'Netherlands'], ['193', 'Spain'],
+        ['209', 'Switzerland'], ['221', 'United Arab Emirates'], ['222', 'United Kingdom'], ['223', 'United States Minor Outlying Islands'],
+      ];
+      const US_STATES = ['Alabama', 'Alaska', 'Arizona', 'California', 'Colorado', 'Florida', 'Georgia', 'Illinois', 'Massachusetts', 'New Jersey', 'New York', 'Texas', 'Washington'];
+      const COUNTIES = ["Aberdeen City", "Aberdeenshire", "Angus", "Ards", "Argyll and Bute", "Ballymena", "Ballymoney", "Banbridge", "Barking and Dagenham", "Barnet", "Barnsley", "Bath and North East Somerset", "Bedford", "Belfast", "Berkshire", "Bexley", "Birmingham", "Blackburn with Darwen", "Blackpool", "Blaenau Gwent", "Bolton", "Bournemouth", "Bracknell Forest", "Bradford", "Brent", "Bridgend", "Brighton and Hove", "Bristol, City of", "Bromley", "Buckinghamshire", "Bury", "Caerphilly", "Calderdale", "Cambridgeshire", "Camden", "Cardiff", "Carmarthenshire", "Carrickfergus", "Castlereagh", "Central Bedfordshire", "Ceredigion", "Cheshire", "Cheshire East", "Cheshire West and Chester", "Clackmannanshire", "Coleraine", "Conwy", "Cookstown", "Cornwall", "County Antrim", "County Armagh", "County Down", "County Fermanagh", "County Londonderry", "County Tyrone", "Coventry", "Craigavon", "Croydon", "Cumbria", "Darlington", "Denbighshire", "Derby", "Derbyshire", "Derry", "Devon", "Didcot", "Doncaster", "Dorset", "Dudley", "Dumfries and Galloway", "Dundee City", "Dungannon", "Durham", "Ealing", "East Ayrshire", "East Dunbartonshire", "East Lothian", "East Renfrewshire", "East Riding of Yorkshire", "East Sussex", "Edinburgh, City of", "Eilean Siar", "Enfield", "Essex", "Falkirk", "Fife", "Flintshire", "Gateshead", "Glasgow City", "Gloucestershire", "Greater London", "Greater Manchester", "Greenwich", "Gwynedd", "Hackney", "Halton", "Hammersmith and Fulham", "Hampshire", "Haringey", "Harrow", "Hartlepool", "Havering", "Herefordshire", "Hertfordshire", "Highland", "Hillingdon", "Hounslow", "Inverclyde", "Isle of Anglesey", "Isle of Wight", "Isles of Scilly", "Islington", "Kensington and Chelsea", "Kent", "Kingston upon Hull", "Kingston upon Thames", "Kirklees", "Knowsley", "Lambeth", "Lancashire", "Larne", "Leeds", "Leicester", "Leicestershire", "Leinster", "Lewisham", "Limavady", "Lincolnshire", "Lisburn", "Liverpool", "London, City of", "Luton", "Magherafelt", "Medway", "Merseyside", "Merthyr Tydfil", "Merton", "Middlesbrough", "Middlesex", "Midlothian", "Milton Keynes", "Monmouthshire", "Moray", "Moyle", "Neath Port Talbot", "Newcastle upon Tyne", "Newham", "Newport", "Newry and Mourne", "Newtownabbey", "Norfolk", "North Ayrshire", "North Down", "North East Lincolnshire", "North Lanarkshire", "North Lincolnshire", "North Somerset", "North Tyneside", "North Yorkshire", "Northamptonshire", "Northern Ireland", "Northumberland", "Nottingham", "Nottinghamshire", "Oldham", "Omagh", "Orkney Islands", "Oxfordshire", "Pembrokeshire", "Perth and Kinross", "Peterborough", "Plymouth", "Poole", "Portsmouth", "Powys", "Reading", "Redbridge", "Redcar and Cleveland", "Renfrewshire", "Rhondda, Cynon, Taff", "Richmond upon Thames", "Rochdale", "Rotherham", "Rutland", "Salford", "Sandwell", "Scottish Borders, The", "Sefton", "Sheffield", "Shetland Islands", "Shropshire", "Slough", "Solihull", "Somerset", "South Ayrshire", "South Glamorgan", "South Gloucestershire", "South Lanarkshire", "South Tyneside", "South Yorkshire", "Southampton", "Southend-on-Sea", "Southwark", "St. Helens", "Staffordshire", "Stirling", "Stockport", "Stockton-on-Tees", "Stoke-on-Trent", "Strabane", "Suffolk", "Sunderland", "Surrey", "Sutton", "Swansea", "Swindon", "Tameside", "Telford and Wrekin", "Thurrock", "Torbay", "Torfaen", "Tower Hamlets", "Trafford", "Tyne and Wear", "Vale of Glamorgan, The", "Wakefield", "Walsall", "Waltham Forest", "Wandsworth", "Warrington", "Warwickshire", "West Berkshire", "West Dunbartonshire", "West Lothian", "West Midlands", "West Northamptonshire", "West Sussex", "West Yorkshire", "Western Cape", "Westminster", "Wigan", "Wiltshire", "Windsor and Maidenhead", "Wirral", "Wokingham", "Wolverhampton", "Worcestershire", "Wrexham", "York"];
+      const EDUCATION = [
+        'GED or Equivalent', 'High School', 'Some College', 'College - Associates', 'College - Bachelor of Arts',
+        'College - Bachelor of Fine Arts', 'College - Bachelor of Science', 'College - Master of Arts',
+        'College - Master of Fine Arts', 'College - Master of Science', 'College - Master of Business Administration',
+        'College - Doctorate', 'Medical Doctor', 'Other',
+      ];
+      const GRADES = ['A*', 'A', 'B', 'C', 'D', 'E', 'U'];
+
+      const state = {};
+      const show = () => {
+        const open = Array.from(document.querySelectorAll('[data-fabric-component="Select Menu"]')).filter((m) => m.style.visibility !== 'hidden').length;
+        document.getElementById('state').textContent = JSON.stringify({ ...state, open }, null, 2);
+      };
+      let uid = 400;
+      let menuUid = 20;
+      let itemUid = 70;
+      const fields = document.getElementById('fields');
+      const el = (html) => {
+        const t = document.createElement('template');
+        t.innerHTML = html.trim();
+        return t.content.firstElementChild;
+      };
+      const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+      const star = (required) => (required ? '<span aria-hidden="true" class="MuiFormLabel-asterisk"> *</span>' : '');
+
+      function textField(label, key, { name = key, id = name, required = false, placeholder = '' } = {}) {
+        const box = el(`<div class="MuiFormControl-root" data-fabric-component="TextField InputWrapper">
+          <div class="fabric-label-labelWrapper"><label class="MuiFormLabel-root MuiInputLabel-root" for="${esc(id)}">${esc(label)}${star(required)}</label></div>
+          <div class="fabric-1vlsppk-root MuiBox-root"><div class="MuiInputBase-root"><input aria-invalid="false" id="${esc(id)}" name="${esc(name)}" type="text" class="MuiInputBase-input" ${placeholder ? `placeholder="${esc(placeholder)}"` : ''} value="" /></div></div>
+        </div>`);
+        const input = box.querySelector('input');
+        state[key] = '';
+        input.addEventListener('input', () => { state[key] = input.value; show(); });
+        return box;
+      }
+
+      // Fabric's Select: the toggle button, the hidden <select> holding the chosen id, the menu made on first open.
+      function fabricSelect(label, key, { name, items, value = null, required = true, onPick = () => {} }) {
+        const id = `fab-select${++uid}`;
+        const menuId = `fab-menu${++menuUid}`;
+        const box = el(`<div class="MuiFormControl-root" data-fabric-component="SelectField InputWrapper">
+          <div class="fabric-SelectField-label-labelWrapper"><label class="MuiFormLabel-root MuiInputLabel-root" data-shrink="false" for="${id}">${esc(label)}${star(required)}</label></div>
+          <div class="fabric-1vlsppk-root MuiBox-root"><div class="fab-Select" data-fabric-component="Select">
+            <div style="display: inline-block;"><div class="fab-SelectToggle__container">
+              <button data-menu-id="${menuId}" aria-expanded="false" aria-haspopup="true" aria-label="" tabindex="0" aria-disabled="false" class="fab-SelectToggle fab-SelectToggle--width6 fab-SelectToggle--sizeMedium" type="button">
+                <div class="fab-SelectToggle__outerFacade"><div class="fab-SelectToggle__innerFacade fab-SelectToggle__innerFacade--form"></div></div>
+                <div class="fab-SelectToggle__guts fab-SelectToggle__guts--form"><div class="fab-SelectToggle__content"></div><div class="fab-SelectToggle__toggleButton"><svg aria-hidden="true" viewBox="0 0 320 512" width="10" height="10"><path d="M137 374L9 246h302z"></path></svg></div></div>
+              </button>
+            </div></div>
+            <select aria-hidden="true" class="chzn-ignore" id="${id}" name="${esc(name)}" readonly ${required ? 'required' : ''} tabindex="-1" style="border: none; height: 0px; opacity: 0; overflow: hidden; position: absolute; width: 0px;"><option value=""></option></select>
+          </div></div>
+        </div>`);
+        const button = box.querySelector('button');
+        const select = box.querySelector('select');
+        const rows = items.map((it) => (Array.isArray(it) ? { id: it[0], text: it[1] } : { id: String(items.indexOf(it) + 1), text: it }));
+        let chosen = null;
+        let wrap = null;
+        let active = 0;
+        const render = () => {
+          const text = chosen ? chosen.text : '–Select–';
+          button.setAttribute('aria-label', `${label} ${text}`);
+          button.querySelector('.fab-SelectToggle__content').textContent = text;
+          select.firstElementChild.value = chosen ? chosen.id : '';
+          state[key] = chosen ? chosen.text : '';
+          show();
+        };
+        const pick = (row) => {
+          chosen = row;
+          close();
+          render();
+          button.focus();
+          onPick(row);
+        };
+        const list = () => wrap.querySelector('[role="menu"]');
+        const fillList = (query) => {
+          const q = query.trim().toLowerCase();
+          const shown = rows.filter((r) => r.text.toLowerCase().includes(q));
+          list().innerHTML = '';
+          shown.forEach((r, i) => {
+            const opt = el(`<div class="fab-MenuOption fab-MenuOption--sizeMedium MuiBox-root" id="menu-item-${++itemUid}" role="menuitem" tabindex="-1"><div class="fab-MenuOption__content"><div class="fab-MenuOption__row"><div>${esc(r.text)}</div></div></div></div>`);
+            opt.addEventListener('click', () => pick(r));
+            opt.addEventListener('mouseenter', () => setActive(i));
+            list().append(opt);
+          });
+          setActive(Math.max(0, chosen ? shown.indexOf(chosen) : 0));
+        };
+        const setActive = (i) => {
+          const opts = Array.from(list().children);
+          active = Math.min(Math.max(i, 0), opts.length - 1);
+          opts.forEach((o, k) => o.classList.toggle('fab-MenuOption--active', k === active));
+          const id = opts[active] ? opts[active].id : '';
+          list().setAttribute('aria-activedescendant', id);
+          wrap.querySelector('input').setAttribute('aria-activedescendant', id);
+        };
+        const open = () => {
+          if (!wrap) {
+            wrap = el(`<div data-fabric-component="Select Menu" style="z-index: 1030; position: absolute;" data-helium-id="${menuId}">
+              <div class="fab-MenuVessel fab-MenuVessel--bottom" data-menu-id="${menuId}"><div class="fab-MenuVessel__list">
+                <div class="fab-MenuVessel__search"><label class="fab-MenuSearch"><input aria-label="Search" class="fab-MenuSearch__input" placeholder="Search..." type="text" value="" /></label></div>
+                <div id="${menuId}" class="fab-MenuList" role="menu"></div>
+              </div></div>
+            </div>`);
+            document.body.append(wrap);
+            const search = wrap.querySelector('input');
+            search.addEventListener('input', () => fillList(search.value));
+            search.addEventListener('keydown', (e) => {
+              const opts = Array.from(list().children);
+              if (e.key === 'ArrowDown') setActive(active + 1);
+              else if (e.key === 'ArrowUp') setActive(active - 1);
+              else if (e.key === 'Enter' && opts[active]) opts[active].click();
+              else if (e.key === 'Escape') { close(); button.focus(); }
+              else return;
+              e.preventDefault();
+            });
+          }
+          const r = button.getBoundingClientRect();
+          Object.assign(wrap.style, { visibility: 'visible', display: 'flex', left: `${r.left + scrollX}px`, top: `${r.bottom + scrollY}px` });
+          wrap.querySelector('input').value = '';
+          fillList('');
+          button.setAttribute('aria-expanded', 'true');
+          wrap.querySelector('input').focus();
+          show();
+        };
+        const close = () => {
+          if (!wrap) return;
+          Object.assign(wrap.style, { visibility: 'hidden', display: 'none' });
+          button.setAttribute('aria-expanded', 'false');
+          show();
+        };
+        // A click with no click count is Enter's or Space's: Fabric opens on the key itself and ignores that one.
+        button.addEventListener('click', (e) => {
+          if (e.detail === 0) return;
+          if (button.getAttribute('aria-expanded') === 'true') close();
+          else open();
+        });
+        button.addEventListener('keydown', (e) => {
+          if (!['Enter', ' '].includes(e.key)) return;
+          e.preventDefault();
+          open();
+        });
+        document.addEventListener('mousedown', (e) => {
+          if (wrap && button.getAttribute('aria-expanded') === 'true' && !wrap.contains(e.target) && !button.contains(e.target)) close();
+        });
+        if (value) chosen = rows.find((r) => r.text === value);
+        render();
+        box.dispose = () => { if (wrap) wrap.remove(); delete state[key]; };
+        return box;
+      }
+
+      // An upload: what it is for is only in the text before it.
+      function upload(title, key, hiddenName) {
+        const box = el(`<div data-fabric-component="Flex">
+          <p data-fabric-component="BodyText">${esc(title)}*</p>
+          <div data-fabric-component="FileUpload"><div data-fabric-component="FileUploadInput"><div data-fabric-component="FileUploadToggle">
+            <div data-fabric-component="Flex"><button class="MuiButtonBase-root MuiButton-root" tabindex="0" type="button" data-fabric-component="Button"><span class="fabric-sipj72-Button-content">Choose File*</span></button>
+            <div data-fabric-component="Flex"><p data-fabric-component="BodyText" class="name">No file selected</p></div></div>
+          </div>
+          <input accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.jpg,.jpeg,.tif,.tiff,.gif,.png,.bmp,.txt,.rtf" aria-invalid="false" aria-label="file-input" class="fabric-bc1bde-input" required tabindex="-1" type="file" /></div>
+          <input name="${hiddenName}" type="hidden" value="" /></div>
+        </div>`);
+        const input = box.querySelector('input[type="file"]');
+        box.querySelector('button').addEventListener('click', () => input.click());
+        state[key] = '';
+        input.addEventListener('change', () => {
+          const f = input.files[0];
+          state[key] = f ? f.name : '';
+          box.querySelector('.name').textContent = f ? f.name : 'No file selected';
+          show();
+        });
+        return box;
+      }
+
+      function radios(legend, key, name, options, required = false) {
+        const box = el(`<div data-fabric-component="Flex"><fieldset class="MuiFormControl-root" aria-invalid="false" aria-required="${required}" data-fabric-component="RadioGroup" role="radiogroup">
+          <legend id="radio-group-${++uid}-legend"><div class="MuiStack-root"><div data-fabric-component="Label"><label class="MuiFormLabel-root">${esc(legend)}${star(required)}</label></div></div></legend>
+          <div><div class="MuiFormGroup-root MuiRadioGroup-root">${options
+            .map((o, i) => `<span data-fabric-component="Radio"><label class="MuiFormControlLabel-root"><span class="MuiButtonBase-root MuiRadio-root"><input class="PrivateSwitchBase-input" name="${name}" type="radio" value="${1250 + i}" /><span class="fabric-Radio-radioIcon"></span></span><span class="MuiTypography-root MuiFormControlLabel-label">${esc(o)}</span></label></span>`)
+            .join('')}</div></div>
+        </fieldset></div>`);
+        state[key] = '';
+        box.querySelectorAll('input').forEach((r, i) => r.addEventListener('change', () => { state[key] = options[i]; show(); }));
+        return box;
+      }
+
+      const params = new URLSearchParams(location.search);
+      // Ashton Fire's form: the United States chosen until you pick another country.
+      const startCountry = params.has('blank') ? null : 'United States';
+      let regionBox = null;
+      const region = (country) => {
+        const uk = country === 'United Kingdom';
+        const box = country === 'United States' || uk
+          ? fabricSelect(uk ? 'County' : 'State', 'state', { name: 'state.value', items: uk ? COUNTIES : US_STATES })
+          : textField('State/Province', 'state', { name: 'state.value', id: `FabricTextField-${++uid}` });
+        if (regionBox) { if (regionBox.dispose) regionBox.dispose(); regionBox.replaceWith(box); }
+        regionBox = box;
+        return box;
+      };
+
+      fields.append(
+        textField('First Name', 'firstName', { required: true }),
+        textField('Last Name', 'lastName', { required: true }),
+        textField('Email', 'email', { required: true }),
+        textField('Phone', 'phone', { required: true }),
+        textField('Address', 'streetAddress', { name: 'streetAddress.value', id: `FabricTextField-${++uid}`, required: true }),
+        textField('City', 'city', { name: 'city.value', id: `FabricTextField-${++uid}`, required: true }),
+        region(startCountry),
+        textField('Post Code', 'zip', { name: 'zip.value', id: `FabricTextField-${++uid}`, required: true }),
+        fabricSelect('Country', 'country', { name: 'countryId.value', items: COUNTRIES, value: startCountry, onPick: (row) => region(row.text) }),
+        upload('Cover Letter', 'coverLetter', 'coverLetterFileId'),
+        upload('Resume', 'resume', 'resumeFileId'),
+        textField('Date Available', 'dateAvailable', { id: `FabricTextField-${++uid}`, name: '', required: true, placeholder: 'mm/dd/yyyy' }),
+        textField('LinkedIn URL', 'linkedinUrl'),
+        fabricSelect('Highest Education Obtained', 'educationLevel', { name: 'educationLevelId', items: EDUCATION }),
+        textField('College/University', 'educationInstitutionName', { required: true }),
+        textField('Undergraduate University', 'undergraduateUniversity', { name: 'customQuestionAnswers.short_880', required: true }),
+        textField('Undergraduate Degree', 'undergraduateDegree', { name: 'customQuestionAnswers.short_881', required: true }),
+        textField('Anticipated Graduation Date', 'graduation', { name: 'customQuestionAnswers.short_878', required: true }),
+        radios('Did you complete UK A-levels? Yes or No. If yes, please provide your A-Level subjects and grades in the next six questions, starting with your highest grade and working downwards.', 'aLevels', 'customQuestionAnswers.yes_no_892', ['Yes', 'No'], true),
+        ...[1, 2, 3, 4].flatMap((n) => [
+          textField(`A-Level Subject ${n}`, `subject${n}`, { name: `customQuestionAnswers.short_${882 + 2 * n}` }),
+          radios(`A-Level Grade ${n}`, `grade${n}`, `customQuestionAnswers.multi_${883 + 2 * n}`, GRADES),
+        ]),
+        textField("If you didn't complete UK A-levels, please provide your equivalent high school qualification and results (e.g., US High School Diploma – GPA 3.8/4.0; International Baccalaureate – 38/45).", 'equivalent', { name: 'customQuestionAnswers.short_893' }),
+        textField('How did you hear about this position?', 'heard', { name: 'customQuestionAnswers.short_879', required: true }),
+        radios('Do you currently have the legal right to work in the UK for the duration of the intern programme?', 'rightToWork', 'customQuestionAnswers.yes_no_897', ['Yes', 'No'], true),
+      );
+      document.getElementById('nickname_hpcsaf').addEventListener('input', (e) => { state.honeypot = e.target.value; show(); });
+      show();
+    </script>
+  </body>
+</html>

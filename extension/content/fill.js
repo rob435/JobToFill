@@ -48,11 +48,15 @@
       clientX: rect.left + rect.width / 2,
       clientY: rect.top + rect.height / 2,
     };
-    el.dispatchEvent(new PointerEvent('pointerdown', init));
-    el.dispatchEvent(new MouseEvent('mousedown', init));
-    el.dispatchEvent(new PointerEvent('pointerup', init));
-    el.dispatchEvent(new MouseEvent('mouseup', init));
-    el.dispatchEvent(new MouseEvent('click', init));
+    // As a mouse sends them: a click with no click count (detail 0) is what Enter on a button makes, and BambooHR's
+    // menu buttons leave those to their keyboard handling.
+    const pointer = { ...init, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+    const mouse = { ...init, detail: 1 };
+    el.dispatchEvent(new PointerEvent('pointerdown', { ...pointer, buttons: 1 }));
+    el.dispatchEvent(new MouseEvent('mousedown', { ...mouse, buttons: 1 }));
+    el.dispatchEvent(new PointerEvent('pointerup', pointer));
+    el.dispatchEvent(new MouseEvent('mouseup', mouse));
+    el.dispatchEvent(new MouseEvent('click', mouse));
   }
 
   function nativeSetter(el) {
@@ -773,7 +777,12 @@
         '[role="combobox"], [class*="select" i], [class*="combobox" i], [class*="dropdown" i], [class*="listbox" i]',
       ) ||
       !!dom().standsFor(el);
-    const selector = comboLike ? LISTBOX_LIKE : '[role="listbox"]';
+    // A menu button's menu (BambooHR's role="menu" of role="menuitem" rows, appended to <body> when it opens).
+    const selector = comboLike
+      ? /^(true|menu)$/.test(el.getAttribute('aria-haspopup') || '')
+        ? `${LISTBOX_LIKE}, [role="menu"]`
+        : LISTBOX_LIKE
+      : '[role="listbox"]';
     const all = Array.from(rootNode.querySelectorAll(selector));
     if (rootNode !== doc) all.push(...doc.querySelectorAll(selector));
     // A list inside another combobox is that one's (Choices keeps its value and its menu inside its own).

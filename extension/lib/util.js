@@ -42,7 +42,8 @@
     let s = String(input).replace(/\s+/g, ' ').trim();
     s = s
       .replace(/\s*\((required|optional)\)\s*$/i, '')
-      .replace(/[\s*:]+$/, '')
+      // A trailing "*" marks a required field, except in a grade: "A*", "D**".
+      .replace(/(^|[\s,(/])([AD]\*{1,2})[\s:]*$|[\s*:]+$/, (m, pre, grade) => (grade ? pre + grade : ''))
       .replace(/^\*+\s*/, '');
     return s.length > max ? s.slice(0, max).trim() + '…' : s;
   }

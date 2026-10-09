@@ -150,6 +150,24 @@ test('antd form, US profile: +1 and the United States, then the State question t
   await page.close();
 });
 
+test('antd v5 markup (Dayforce): a Select whose box is an <input type="search"> is still a dropdown', async () => {
+  await h.setProfile(STUDENT);
+  const page = await open('?v5');
+  assert.equal(await page.$eval('#apply_country', (el) => el.type), 'search');
+  const r = await h.fill(page);
+  assert.equal(r.error, undefined);
+  const s = await formState(page);
+  assert.equal(s.values.prefix, 'GB');
+  assert.equal(s.values.country, 'GB');
+  assert.equal(s.values.university, 'University of Glasgow');
+  assert.equal(s.values.degree, 'Bachelor’s degree (BA, BSc, BEng)');
+  assert.deepEqual(s.values.offices, ['London', 'New York']);
+  assert.equal(s.values.source, 'LinkedIn');
+  assert.deepEqual(s.errors, {});
+  await clean(page);
+  await page.close();
+});
+
 test('antd RangePicker: the dates of study go into its start and end boxes', async () => {
   await h.setProfile(STUDENT);
   const page = await open('?range');

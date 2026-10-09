@@ -3729,3 +3729,123 @@ test('niche-form dry runs: "How did you hear?" — no rival site, examples in br
   assert.equal(ask(p, 'job.referralSource', 'Please specify', { part: 'specify' }).text, 'Trackr');
   assert.deepEqual(fillPage(page, p).slice(0, 3), ['Job Board', 'Trackr', 'Other']);
 });
+
+test('Eastdil (BambooHR): each A-level in its own box, A* not A, a BSc’s level, the university, “(if applicable)”', () => {
+  const p = computingScientist();
+  p.education[1] = Object.assign(fields.blankEducation(), {
+    school: 'Highbury Grove School',
+    degree: 'A-Levels',
+    field: 'Mathematics, Further Mathematics and Economics',
+    gpa: 'A*A*A',
+    startDate: '2021-09',
+    endDate: '2023-06',
+  });
+  const grades = ['A*', 'A', 'B', 'C', 'D', 'E', 'U'];
+  const yn = ['Yes', 'No'];
+  const radio = (label, options) => desc({ question: label }, { kind: 'radio', options: opts(...options) });
+  const page = [
+    desc(
+      { label: 'Highest Education Obtained' },
+      {
+        kind: 'combo',
+        options: opts(
+          'GED or Equivalent',
+          'High School',
+          'Some College',
+          'College - Associates',
+          'College - Bachelor of Arts',
+          'College - Bachelor of Fine Arts',
+          'College - Bachelor of Science',
+          'College - Master of Arts',
+          'Other',
+        ),
+      },
+    ),
+    desc('College/University'),
+    desc('Undergraduate University'),
+    desc('Undergraduate Degree'),
+    desc('Postgraduate University (if applicable)'),
+    desc('Postgraduate Degree (if applicable)'),
+    radio(
+      'Did you complete UK A-levels? Yes or No. If yes, please provide your A-Level subjects and grades in the next six questions, starting with your highest grade and working downwards.',
+      yn,
+    ),
+    desc('A-Level Subject 1'),
+    radio('A-Level Grade 1', grades),
+    desc('A-Level Subject 2'),
+    radio('A-Level Grade 2', grades),
+    desc('A-Level Subject 3'),
+    radio('A-Level Grade 3', grades),
+    desc('A-Level Subject 4'),
+    radio('A-Level Grade 4', grades),
+    desc(
+      "If you didn't complete UK A-levels, please provide your equivalent high school qualification and results (e.g., US High School Diploma – GPA 3.8/4.0; International Baccalaureate – 38/45).",
+    ),
+  ];
+  assert.deepEqual(fillPage(page, p), [
+    'College - Bachelor of Science',
+    'University of Glasgow',
+    'University of Glasgow',
+    'BSc',
+    'N/A',
+    'N/A',
+    'Yes',
+    'Mathematics',
+    'A*',
+    'Further Mathematics',
+    'A*',
+    'Economics',
+    'A',
+    null,
+    null,
+    null,
+  ]);
+  // The fourth A-level and the equivalent are empty on purpose: not missing from the profile, not the AI's.
+  const q = (i) => ({ question: util.normalize(matcher.questionText(page[i])) });
+  assert.ok(fields.leftEmpty('edu.field', p, q(13)));
+  assert.ok(fields.leftEmpty('edu.gpa', p, q(14)));
+  assert.ok(fields.leftEmpty('edu.equivalent', p, q(15)));
+  assert.ok(!fields.leftEmpty('edu.field', p, q(7)));
+  // Advanced Highers: "No", the A-level boxes aren't yours, and the equivalent box takes them.
+  p.education[1] = computingScientist().education[1];
+  const highers = fillPage(page, p);
+  assert.deepEqual(highers.slice(6), [
+    'No',
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    'Advanced Highers in Mathematics, Physics, Computing Science – AAB',
+  ]);
+  assert.ok(fields.leftEmpty('edu.gpa', p, q(8)));
+  assert.ok(!fields.leftEmpty('edu.equivalent', p, q(15)));
+  // No school entry at all: nothing to say either way.
+  p.education = p.education.slice(0, 1);
+  assert.equal(ask(p, 'edu.qualification', 'Did you complete UK A-levels?', { kind: 'radio' }), null);
+});
+
+test('school grades and degree disciplines: "A*" is not "A", a BSc is a Bachelor of Science, "A*" keeps its star', () => {
+  const grade = (text) => fields.val(text, { kind: 'grade' });
+  assert.equal(matcher.matchOption(opts('A*', 'A', 'B'), grade('A')), 1);
+  assert.equal(matcher.matchOption(opts('A* (Distinction)', 'A (Merit)'), grade('A*')), 0);
+  assert.equal(matcher.matchOption(opts('Above average', 'B'), grade('A')), -1);
+  assert.equal(util.cleanLabel('A*'), 'A*');
+  assert.equal(util.cleanLabel('D**'), 'D**');
+  assert.equal(util.cleanLabel('First name *'), 'First name');
+  assert.equal(util.cleanLabel('Name:*'), 'Name');
+  const degree = (text) => fields.val(text, { kind: 'degree' });
+  const levels = opts('College - Bachelor of Arts', 'College - Bachelor of Science', 'College - Master of Science');
+  assert.equal(matcher.matchOption(levels, degree('BSc')), 1);
+  assert.equal(matcher.matchOption(levels, degree('BA')), 0);
+  assert.equal(matcher.matchOption(levels, degree('MSc')), 2);
+  // An option naming yours among others is as good: "Bachelor’s degree (BA, BSc, BEng)".
+  const kinds = opts('Bachelor’s degree (BA, BSc, BEng)', 'Master’s degree (MA, MSc)');
+  assert.equal(matcher.matchOption(kinds, degree('BSc')), 0);
+  // A GPA or a class is no list of grades.
+  const p = computingScientist();
+  assert.equal(ask(p, 'edu.gpa', 'University grade 1').text, '2:1');
+});

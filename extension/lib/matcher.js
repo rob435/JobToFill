@@ -906,6 +906,20 @@
   ];
   const schoolQualifications = (n) => SCHOOL_QUALIFICATIONS.filter(([, re]) => re.test(n)).map(([q]) => q);
 
+  // What a bachelor's or master's is in: "BSc" and "Bachelor of Science", "BA" and "Bachelor of Arts".
+  const DISCIPLINES = [
+    ['science', /\b[bm] ?sc?\b|\bm ?sci\b|\bof science\b/],
+    ['arts', /\b[bm] ?a\b|\bab\b|\bof arts\b/],
+    ['fine arts', /\b[bm] ?fa\b|\bof fine arts\b/],
+    ['engineering', /\b[bm] ?eng\b|\bof engineering\b/],
+    ['business', /\b[bm] ?ba\b|\bbusiness administration\b/],
+    ['law', /\bll ?[bm]\b|\bof laws?\b/],
+    ['commerce', /\b[bm] ?com\b|\bof commerce\b/],
+    ['technology', /\b[bm] ?tech\b|\bof technology\b/],
+    ['education', /\b[bm] ?ed\b|\bof education\b/],
+  ];
+  const disciplines = (n) => DISCIPLINES.filter(([, re]) => re.test(n)).map(([d]) => d);
+
   function degreeGroup(n) {
     // A Scottish "MA (Hons)" is a first degree.
     if (/\bm ?a\b/.test(n) && /\bhons\b|\bhonours\b/.test(n) && !/\bmaster/.test(n)) return 'bachelor';
@@ -946,6 +960,7 @@
   function bestText(opts, cands, v) {
     const wantDegree = v.kind === 'degree' ? degreeGroup(cands[0] || '') : null;
     const mine = wantDegree === 'highschool' ? schoolQualifications(cands[0] || '') : [];
+    const field = wantDegree === 'bachelor' || wantDegree === 'master' ? disciplines(cands[0] || '') : [];
     const primary = U.tokens(cands[0] || '');
     const near = (v.near || []).map(norm).filter(Boolean);
     let best = null;
@@ -954,8 +969,13 @@
       for (const c of cands) score = Math.max(score, textScore(o, c));
       const theirs = mine.length ? schoolQualifications(o.n) : [];
       const otherQualification = theirs.length && !theirs.some((q) => mine.includes(q));
-      if (wantDegree && degreeGroup(o.n) === wantDegree && !otherQualification)
+      if (wantDegree && degreeGroup(o.n) === wantDegree && !otherQualification) {
         score = Math.max(score, 75 + score * 0.2);
+        // BambooHR's "College - Bachelor of Science" for a BSc, never "College - Bachelor of Arts" listed first; a
+        // "Bachelor's (BA, BSc)" that names yours among others is as good.
+        const theirs = field.length ? disciplines(o.n) : [];
+        if (theirs.length) score += theirs.some((d) => field.includes(d)) ? 6 : -6;
+      }
       // "Integrated Masters Degree" for an MEng, "Masters Degree" for an MSc.
       if (wantDegree === 'master' && /\bintegrated\b/.test(o.n) !== isIntegratedMasters(cands[0] || '')) score -= 10;
       // Break ties toward the option that shares the most words with the main spelling.
@@ -1593,6 +1613,13 @@
     if (JUDGED.has(v.kind)) {
       const picks = judgedPicks(opts, v, false);
       return picks.length ? picks[0] : -1;
+    }
+
+    // One school grade: "A*" is not "A", though both read "a" once punctuation is stripped. "A* (Distinction)" is A*.
+    if (v.kind === 'grade') {
+      const want = v.text.toUpperCase();
+      const hit = opts.find((o) => (o.text.toUpperCase().match(/^([A-GU]\*{0,2}|[1-9])(?![\w*])/) || [])[1] === want);
+      return hit ? hit.i : -1;
     }
 
     // Notice periods against "< 1 Month" / "1-2 Months" / "4 weeks": compared in weeks (before spellings:

@@ -234,10 +234,16 @@ function CityInput(props) {
 }
 
 // ?range asks for the dates of study (a RangePicker) instead of the graduation date; ?lang=en makes the page plain
-// English (the site's own markup says en-GB).
+// English (the site's own markup says en-GB); ?v5 marks each Select's box up as antd v5 did (Dayforce's forms): an
+// <input type="search" role="combobox">, where v6 has type="text".
 const params = new URLSearchParams(location.search);
 const RANGE = params.has('range');
 if (params.get('lang')) document.documentElement.lang = params.get('lang');
+if (params.has('v5')) {
+  const v5 = () =>
+    document.querySelectorAll('input.ant-select-input:not([type="search"])').forEach((i) => (i.type = 'search'));
+  new MutationObserver(v5).observe(document.documentElement, { childList: true, subtree: true });
+}
 
 const required = (message) => ({ required: true, message });
 

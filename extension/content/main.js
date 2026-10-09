@@ -395,25 +395,24 @@
     const hold = payload.hold ? new Set(payload.hold) : null;
     const replace = payload.replace ? new Set(payload.replace) : null;
     const docCache = {};
+    /** What the profile's value for a field is worked out from: the question, the page's help, the options. */
+    const ctxFor = (field, r, question) =>
+      Object.assign({}, context, {
+        index: r.index || 0,
+        part: r.part,
+        kind: field.kind,
+        secrets,
+        answer: r.answer,
+        question,
+        help: U.normalize(JTF.matcher.helpText(field.desc)),
+        options: field.desc.options,
+        consents: !!settings.consents || accountTerms,
+        // How the page writes "03/11" (interview slots).
+        dateOrder: JTF.matcher.dateOrder(field.desc),
+      });
     const valueFor = async (field, r, def, question) => {
       if (def && def.file) return documentValue(r.type, payload, docCache);
-      return JTF.fields.resolve(
-        r.type,
-        profile,
-        Object.assign({}, context, {
-          index: r.index || 0,
-          part: r.part,
-          kind: field.kind,
-          secrets,
-          answer: r.answer,
-          question,
-          help: U.normalize(JTF.matcher.helpText(field.desc)),
-          options: field.desc.options,
-          consents: !!settings.consents || accountTerms,
-          // How the page writes "03/11" (interview slots).
-          dateOrder: JTF.matcher.dateOrder(field.desc),
-        }),
-      );
+      return JTF.fields.resolve(r.type, profile, ctxFor(field, r, question));
     };
     // Files first: sites like Breezy and Lever read an uploaded CV and rewrite the form, which would
     // wipe answers filled before it. The rest is filled once the page has settled.
@@ -593,7 +592,7 @@
         if (!v || !v.text) return null;
       }
       if (!v) {
-        if (count && !(def && def.secret)) {
+        if (count && !(def && def.secret) && !JTF.fields.leftEmpty(r.type, profile, ctxFor(field, r, question))) {
           report.missing.push(label);
           report.missingTypes.push(r.type);
         }
@@ -935,8 +934,9 @@
           options: field.desc.options,
         };
         // A grade your profile holds is the rules' to give (or to leave, as a class in a GPA box that wants a
-        // number): the AI never turns a 2:1 into a GPA.
-        if (JTF.fields.gradeHeld(r.type, profile, ctx)) continue;
+        // number): the AI never turns a 2:1 into a GPA. Nor does it answer a box left empty on purpose ("A-Level
+        // Subject 4" for three A-levels).
+        if (JTF.fields.gradeHeld(r.type, profile, ctx) || JTF.fields.leftEmpty(r.type, profile, ctx)) continue;
         const v = JTF.fields.resolve(r.type, profile, ctx);
         // A follow-up after a "No" ("If yes, give details") or a box the profile said no to stays empty.
         if (v && (field.kind === 'checkbox' || (FOLLOW_UP.test(q) && !JTF.fields.followUpAnswer(v, field.kind))))
