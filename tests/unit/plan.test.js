@@ -4283,3 +4283,19 @@ test('niche-form dry runs: opt-ins left alone, one-box addresses, "Known As", a 
     'eeo.careLeaver',
   );
 });
+
+test('diversity questions in text boxes: your ethnicity as you gave it, a disability yes/no, never a description', () => {
+  const p = computingScientist();
+  Object.assign(p.eeo, { race: 'White – British', disability: 'No' });
+  const typeOf = (q, kind) => (matcher.classify(desc({ label: q }, { kind, inputType: kind })) || {}).type || null;
+  assert.equal(typeOf('How would you describe your ethnic origin?', 'text'), 'eeo.race');
+  assert.equal(
+    ask(p, 'eeo.race', 'How would you describe your ethnic origin?', { kind: 'text' }).text,
+    'White – British',
+  );
+  const ik = 'Would you consider yourself having any type of impairment? If yes, please describe.';
+  assert.equal(typeOf(ik, 'textarea'), 'eeo.disability');
+  assert.equal(ask(p, 'eeo.disability', ik, { kind: 'textarea' }).text, 'No');
+  assert.equal(typeOf('Please describe your disability', 'textarea'), null, 'what it is is yours to say');
+  assert.equal(typeOf('Please describe any adjustments you need', 'textarea'), null);
+});

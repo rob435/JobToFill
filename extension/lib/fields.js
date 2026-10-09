@@ -3858,6 +3858,11 @@
     ),
     R('eeo.hispanic', /hispanic|latin[oax]\b/, { kinds: CHOICE }),
     R('eeo.race', /\brace\b|ethnic/, { kinds: CHOICE }),
+    // IK Partners' "How would you describe your ethnic origin?" in a text box: your answer, as you gave it.
+    R('eeo.race', /\bethnic(ity| origin| background| group)\b/, {
+      kinds: LONG_TEXT,
+      test: (desc, text) => /^(how would you describe|what is|please (state|describe|tell us))\b|^ethnic/.test(text),
+    }),
     // Not a date a veteran gives (Oracle's "Veteran First Civilian Start Date" in Day / Month / Year lists, where "No"
     // would pick November).
     R('eeo.veteran', /veteran|military (service|status)|armed forces|served in the/, {
@@ -3865,6 +3870,13 @@
       not: /\bdates?\b|\bwhen\b/,
     }),
     R('eeo.disability', /disabilit|disabled|handicap|impairment/, { kinds: CHOICE, not: /adjustments?\b|accommodat/ }),
+    // "Would you consider yourself having any type of impairment? If yes, please describe." in a text box: Yes or No
+    // (what it is, you describe).
+    R('eeo.disability', /disabilit|disabled|impairment/, {
+      kinds: LONG_TEXT,
+      not: /adjustments?\b|accommodat/,
+      test: (desc, text) => /^(do|would|are|have|is)\b/.test(text),
+    }),
     R('eeo.gender', /\bgender\b|\bsex\b|geschlecht|\bgenre\b|\bsexo\b/, {
       not: /orientation|transgender|same as|(registered|assigned) at birth|\bpronouns?\b/,
     }),
