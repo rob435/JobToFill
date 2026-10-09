@@ -50,6 +50,7 @@ const CONTENT_FILES = [
   'lib/geo.js',
   'lib/fields.js',
   'lib/matcher.js',
+  'lib/decide.js',
   'lib/account.js',
   'lib/redact.js',
   'content/dom.js',

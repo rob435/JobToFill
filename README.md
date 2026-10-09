@@ -269,6 +269,7 @@ extension/
   lib/                 classic scripts shared by every context (and the Node unit tests)
     fields.js          profile schema, field types, detection rules, value resolution
     matcher.js         classification, section/entry planning, option matching, formatting
+    decide.js          what a fill does with each field (fill, leave for you, ask the AI), as the benchmark scores it
     account.js         job-portal accounts: the click allow/deny-list, "already exists" messages, shared-host employers
     geo.js             countries (ISO codes + aliases) and US/CA/AU regions
     passwords.js       saved logins and cards, password generator and page password rules
@@ -302,6 +303,7 @@ tests/
   unit/                node:test, no browser
   e2e/                 the real extension in Chromium (Playwright) or Firefox (Puppeteer + remote debugging)
   live/                surveys of live application forms listed on Trackr (not run by npm test, see below)
+  bench/               the detection benchmark: real forms (a private corpus) scored field by field (see below)
   fixtures/            the demo/test forms; src/*.jsx are pages built with real widget libraries
                        (lib-*.html: MUI, Ant Design, Headless UI, Radix, Downshift, select2, chosen,
                        choices.js, Tom Select, form libraries and masks, Element Plus; phenom.html:
@@ -345,6 +347,16 @@ node tests/live/survey.mjs --limit 20                      # the real extension 
 ```
 
 The first survey (117 live forms, 2,408 questions on Trackr's UK and US finance and tech trackers) is what the country-by-country right to work, job-site mapping, on-site and adjustments answers, and AI answers were built from. The rules now fill 1,546 of those questions (64%, up from 60%; about a third of the gain is the new profile answers, the rest is new and corrected rules), and about 30 right-to-work answers that were wrong for a British applicant on US forms are now right. Most of the 461 questions they still don't recognise are firm-specific, and those go to the AI.
+
+### Measuring detection
+
+`tests/bench/` scores the rules on 55 real application forms from the dry runs on niche Trackr postings (1,085 fields), each field with the answer a careful person with the survey applicant's profile would give. It decides every field with `lib/decide.js`, the code the fill itself decides with, so the score is what the extension does. The forms live in a private repository (they are the employers' pages); clone it beside this one. Run it before and after a change to the rules or to `content/dom.js`, and look at every field that got worse (`tests/bench/README.md`):
+
+```bash
+npm run bench -- --save /tmp/before.json                   # the rules on the fields as captured live (under a second)
+npm run bench -- --baseline /tmp/before.json               # what got better, worse or changed since
+npm run bench -- --pages                                   # content/dom.js too: each saved page read again in Chromium
+```
 
 ### Measuring the AI features
 

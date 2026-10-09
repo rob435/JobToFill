@@ -18,6 +18,7 @@
     "icons": "node scripts/icons.mjs",
     "firms": "node scripts/firms.mjs",
     "pagemap": "node scripts/pagemap.mjs",
+    "bench": "node tests/bench/run.mjs",
     "eval": "node tests/eval/run.mjs",
     "eval:build": "node tests/eval/build.mjs",
     "eval:scoreboard": "node tests/eval/scoreboard.mjs"

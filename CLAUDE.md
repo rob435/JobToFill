@@ -33,8 +33,10 @@ Features list before changing behaviour, and its Development section for the fil
 - `content/` — injected on demand into every frame (`CONTENT_FILES` in `background.js`); `main.js` exposes
   `globalThis.__jtf`, which the background calls per frame through `callFrames(tabId, method, args)`.
 - **Fill:** `fillTab` → `callFrames('fill')` → `main.js scan()` = `dom.collect()` (controls, labels, groups,
-  shadow DOM) → `matcher.plan()` (classification) → `fields.resolve()` (value from the profile) →
-  `fill.apply()` (sets values the way frameworks notice, drives custom dropdowns) → read-back and retry.
+  shadow DOM) → `matcher.plan()` (classification) → `decide.field()` (fill, leave for you or missing, with the value
+  from `fields.resolve()`) → `fill.apply()` (sets values the way frameworks notice, drives custom dropdowns) →
+  read-back and retry. What goes to the AI is `decide.forAi()`. `lib/decide.js` is DOM-free, so the benchmark scores
+  exactly what the fill does.
 - **AI answers:** `answerRound` (background) → `answers.answer(chat, …)` with `ai.chat` (`lib/ai.js`,
   OpenAI-compatible: OpenRouter, DeepSeek, custom). Pipelines take `chat` injected, so they run in Node tests.
 - **Letters and CVs:** `studio/studio.js` → `letter.analyse()` / `letter.write()` / `letter.tailor()`; PDFs by
@@ -62,6 +64,9 @@ Features list before changing behaviour, and its Development section for the fil
 - **Prompt or model changes to the AI features:** measure with `tests/eval/` (README there) before and after;
   tune on the train split, report the test split. The deterministic checks in `answers.js` and `letter.js` stay
   whatever the model.
+- **Detection on real forms:** `npm run bench` scores the rules on 55 real forms (a private corpus, cloned beside this
+  repo; `tests/bench/README.md`). Run it with `--save` before and `--baseline` after any change to the rules or
+  `dom.js` (`--pages` for `dom.js`), and look at every field that got worse.
 - **Coverage on real forms:** `tests/live/survey-api.mjs` (README › _Surveying live application forms_) runs the
   rules over live Greenhouse, Ashby and Lever forms and lists what they don't recognise.
 
