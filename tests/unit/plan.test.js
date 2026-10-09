@@ -3600,3 +3600,132 @@ test('live survey (niche forms): referrer boxes that ask for N/A, "applied befor
   const v = ask(p, matcher.classify(desc(q, { kind: 'select', options: connected })).type, q, { kind: 'select' });
   assert.equal(connected[matcher.matchOption(connected, v)].text, 'Not Applicable');
 });
+
+test('niche-form dry runs: uploads that name nothing never get the CV a second time; CV readers are no uploads', () => {
+  const p = computingScientist();
+  const file = (signals) => desc(signals, { kind: 'file', inputType: 'file' });
+  const page = [
+    file({ label: 'Cover letter', aria: 'Upload Cover letter', id: 'doc-input-cover-letter' }),
+    file({ label: 'CV', aria: 'Upload CV', id: 'doc-input-cv' }),
+    file({ label: 'Employment reference ( Optional )', aria: 'Upload Employment reference' }),
+    file({ label: 'Other ( Optional )', aria: 'Upload Other' }),
+    file({ label: 'Attach', id: 'additional_upload' }),
+  ];
+  assert.deepEqual(
+    matcher.plan(page, p).results.map((r) => r && r.type),
+    ['file.coverLetter', 'file.resume', null, null, null],
+  );
+  // Dayforce's CV box says "Attachment", its id "…_files_resume": still the CV's.
+  const dayforce = [file({ label: 'Attachment', id: 'jobPostingApplication_files_resume' }), file({ label: 'Resume' })];
+  assert.deepEqual(
+    matcher.plan(dayforce, p).results.map((r) => r && r.type),
+    ['file.resume', 'file.resume'],
+  );
+  // CharlieHR's "AUTOFILL FOR SPEED, save time by uploading your cv" box (named "user_cv") reads the CV into the form.
+  const charlie = file({
+    label: 'From Device',
+    name: 'user_cv',
+    nearby: 'AUTOFILL FOR SPEED save time by uploading your cv',
+  });
+  assert.equal(matcher.classify(charlie), null);
+  assert.equal(
+    matcher.classify(file({ label: 'from Device', name: 'user_cv', nearby: 'Upload CV *' })).type,
+    'file.resume',
+  );
+});
+
+test('niche-form dry runs: statements by country, a requirement said back, US clearances and US persons, religion', () => {
+  const p = computingScientist(); // British
+  // DN Capital: the UK statement (whatever its brackets say), never Germany's.
+  const where = [
+    'I have the right to work in the UK (post-Brexit does not apply automatically for EU-citizens)',
+    'I have the right to work in Germany',
+    'Neither - I require support with getting the visa (we can help but your preferred start date might need to be 6 months out)',
+  ];
+  const q = 'Where do you have the right to work? (Select all that apply)';
+  const v = ask(p, 'job.authorized', q, { kind: 'checkboxes', options: opts(...where) });
+  assert.deepEqual(matcher.matchAll(opts(...where), v), [0]);
+  p.personal.nationality = 'Indian';
+  p.job.workCountries = 'India';
+  assert.deepEqual(
+    matcher.matchAll(opts(...where), ask(p, 'job.authorized', q, { kind: 'checkboxes', options: opts(...where) })),
+    [2],
+  );
+  p.personal.nationality = 'British';
+  p.job.workCountries = '';
+  // Capgemini: eligible for clearance is the statement that meets the requirement, not the one that fails it.
+  p.job.clearanceEligible = 'Yes';
+  const lived = [
+    'I have lived in the UK for the last 5 years and have not spent more than 6 months (consecutively or in total) outside of the UK',
+    'I have lived in the UK for the last 5 years but have spent more than 6 months (consecutively or in total) outside of the UK.',
+    'I have not lived in the UK for the last 5 years but have not spent more than 6 months (consecutively or in total) outside of the UK.',
+    'I have not lived in the UK for the last 5 years and have spent more than 6 months (consecutively or in total) outside of the UK.',
+  ];
+  const sc =
+    'Security Clearance Eligibility Some of our roles require security clearance. To meet the eligibility requirements, you must have lived in the UK for the last 5 years and not have spent more than 6 months (either consecutively or in total) outside of the UK during that period.';
+  assert.equal(choose(p, 'job.clearanceEligible', sc, lived), lived[0]);
+  // A US clearance needs US citizenship; eligible is never "I hold an active one".
+  const us =
+    'Clearance Eligibility - Do you presently hold an active U.S. security clearance, or are you eligible to obtain one?';
+  const usOptions = ['Yes, I hold an active U.S. security clearance', 'Yes, I’m eligible to obtain one', 'No'];
+  assert.equal(choose(p, 'job.clearanceEligible', us, usOptions), 'No');
+  assert.equal(
+    choose(p, 'job.clearanceEligible', 'Are you eligible for SC clearance?', usOptions),
+    'Yes, I’m eligible to obtain one',
+  );
+  // "…subject to U.S. export controls": which kind of US person, from your nationality.
+  const persons = [
+    'A person lawfully admitted for permanent residence of the United States (i.e. Green Card holder)',
+    'A person admitted as a refugee to the United States under 8 U.S.C. 1157',
+    'A United States citizen or national',
+    'None of the above',
+  ];
+  const exportQ =
+    'This position requires access to information and technology that is subject to U.S. export controls. Your responses to the questions below will be used solely to determine your eligibility';
+  assert.equal(
+    matcher.classify(desc({ question: exportQ }, { kind: 'radio', options: opts(...persons) })).type,
+    'nationality',
+  );
+  assert.equal(choose(p, 'nationality', exportQ, persons, { kind: 'radio' }), 'None of the above');
+  p.personal.nationality = 'American';
+  assert.equal(choose(p, 'nationality', exportQ, persons, { kind: 'radio' }), 'A United States citizen or national');
+  // "No religion or belief" is "Non Religious", never "Not Specified".
+  p.eeo.religion = 'No religion or belief';
+  assert.equal(
+    choose(p, 'eeo.religion', 'Religion', ['Atheism', 'Christianity', 'Non Religious', 'Not Specified']),
+    'Non Religious',
+  );
+  assert.equal(choose(p, 'eeo.religion', 'Religion', ['Christianity', 'Not Specified', 'Other']), null);
+});
+
+test('niche-form dry runs: "How did you hear?" — no rival site, examples in brackets, "Which One?", "Please specify"', () => {
+  const p = computingScientist();
+  p.job.referralSource = 'Trackr';
+  const hear = (...o) => choose(p, 'job.referralSource', 'How did you hear about us?', o);
+  // Chicago Trading Co: another site's own posting is never Trackr's.
+  assert.equal(hear('LinkedIn Job Posting', 'Handshake Job Posting', 'Company Website', 'Other'), 'Other');
+  // Aurora: an example in brackets names no site.
+  assert.equal(
+    hear('LinkedIn', 'Other Job Board (e.g. University Job Board, etc.)', 'Friend', 'Other'),
+    'Other Job Board (e.g. University Job Board, etc.)',
+  );
+  assert.equal(hear('LinkedIn', 'Job Board (Indeed, LinkedIn, etc.)', 'Other'), 'Job Board (Indeed, LinkedIn, etc.)');
+  p.job.referralSource = 'Bright Network';
+  assert.equal(hear('LinkedIn', 'Bright Network Job Posting', 'Other'), 'Bright Network Job Posting');
+  p.job.referralSource = 'Trackr';
+  // The follow-ups: "Please specify" (where you heard, once "Other" is chosen), "Which One?" the same question.
+  const page = [
+    desc({ label: 'How did you hear about us?' }, { kind: 'select', options: opts('LinkedIn', 'Job Board', 'Other') }),
+    desc('Please specify'),
+    desc({ label: 'Which One?' }, { kind: 'select', options: opts('Google for Jobs', 'Indeed', 'Milkround', 'Other') }),
+    desc("If you selected 'A friend or relative', please put their full name below."),
+  ];
+  const { results } = matcher.plan(page, p);
+  assert.deepEqual(
+    results.map((r) => r && r.type && r.type + (r.part ? ':' + r.part : '')),
+    ['job.referralSource', 'job.referralSource:specify', 'job.referralSource', null],
+  );
+  assert.equal(results[1].follows, 0);
+  assert.equal(ask(p, 'job.referralSource', 'Please specify', { part: 'specify' }).text, 'Trackr');
+  assert.deepEqual(fillPage(page, p).slice(0, 3), ['Job Board', 'Trackr', 'Other']);
+});

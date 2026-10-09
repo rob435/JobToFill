@@ -76,11 +76,12 @@
   // A drop zone's instructions ("Click to upload or drag and drop here", "PDF, max 5MB") say nothing about
   // what the upload is for: the label is further out.
   const UPLOAD_WORDS = new Set(
-    'click tap here to or and upload uploads attach browse choose select add drag drop your a an the files file document documents max maximum size mb kb limit up of pdf doc docx txt rtf odt html htm jpg jpeg png accepted allowed permitted format formats type types extension extensions supported only either less than under'.split(
+    'click tap here to or and upload uploads attach browse choose select add drag drop your a an the files file document documents max maximum size mb kb limit up of pdf doc docx txt rtf odt html htm jpg jpeg png accepted allowed permitted format formats type types extension extensions supported only either less than under input no selected chosen from device computer desktop'.split(
       ' ',
     ),
   );
-  // "Upload either DOC, DOCX, RTF, PDF, or TXT file types (1MB max)" (Phenom) is boilerplate too.
+  // "Upload either DOC, DOCX, RTF, PDF, or TXT file types (1MB max)" (Phenom), "Choose File* No file selected" and
+  // "file-input" (BambooHR), "from Device" (CharlieHR's source menu) are boilerplate too.
   const isUploadBoilerplate = (t) =>
     U.normalize(t)
       .split(' ')
@@ -556,6 +557,8 @@
       const said = [];
       for (let sib = node.previousElementSibling, k = 0; sib && k < 4; sib = sib.previousElementSibling, k++) {
         if (sib.matches(CONTROL_SELECTOR) || sib.querySelector(CONTROL_SELECTOR)) break;
+        // A button says what it does ("Upload your CV" opening CharlieHR's CV reader), not what the upload is for.
+        if (sib.matches('button, [role="button"]')) continue;
         const t = U.cleanLabel(textOf(sib), 200);
         if (t) said.unshift(t);
       }

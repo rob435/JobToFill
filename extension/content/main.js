@@ -35,6 +35,8 @@
       profile,
     );
     splitBoxes(fields, planned.results);
+    // A follow-up box knows the list it follows ("Please specify" after "How did you hear about us?").
+    for (const r of planned.results) if (r && r.follows != null) r.followsField = fields[r.follows];
     return { fields, results: planned.results, context: planned.context };
   }
 
@@ -573,6 +575,11 @@
       if (uploaded && !settled && field.kind !== 'file') {
         await settle();
         settled = true;
+      }
+      // "Please specify" after a list is for the answer the list didn't have: only once "Other" is its choice.
+      if (r.part === 'specify' && r.followsField) {
+        const chosen = U.normalize(JTF.fill.currentValue(r.followsField));
+        if (!/\bother\b|\bnot listed\b|\bsomething else\b/.test(chosen)) return null;
       }
       let v = await valueFor(field, r, def, question);
       if (v && r.type !== 'custom' && FOLLOW_UP.test(question) && !JTF.fields.followUpAnswer(v, field.kind))

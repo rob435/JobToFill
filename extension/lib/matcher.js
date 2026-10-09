@@ -58,6 +58,9 @@
   // another country, please specify.": the box for an answer the list didn't have.
   const OTHER_FOLLOW_UP =
     /^(if|when) (you )?(selected|chose|answered|picked|ticked|checked) other\b|^(if|when) you (have )?(selected|chose|picked|ticked|checked) (?!yes\b)|\bif (you (selected|chose|answered|picked|ticked|checked) )?other\b.*\b(specify|state|tell|describe|provide|enter|give)|\b(specify|state|describe)\b.*\bif (you )?(selected|chose|answered|picked) other\b|^other please specify$|^if other\b|\bif (it|yours|your \w+( \w+)?) (is|was) not (listed|shown|in the list|found|available)\b|\bif (\w+ ){1,6}?(is|are|was|were) not (listed|shown|in (the|this|our) (list|options|dropdown))\b|\bif (\w+ ){1,6}?(isn t|aren t|wasn t|weren t) (listed|shown|in (the|this) list)\b|\bif (\w+ ){1,6}?(does not|doesn t|do not|don t) (appear|show up)\b|\bif (\w+ ){1,6}?not in (the|this) list\b|\bif (residing|living|based|located|studying) (in |at )?(another|a different) \w+\b|\bnot listed (above|below)\b.*\b(specify|enter|type|provide|state)\b|\bif not (listed|shown|in the list|found|available)\b|^(any )?other (university|school|college|institution|degree|subject|major|course)\b|\b(university|school|college|institution|degree|subject|major|course) (name )?other$/;
+  // A bare "Please specify" / "If other, please tell us where": the box for the answer a list above didn't have.
+  const SPECIFY =
+    /^(please )?(specify|explain|state)\b|^(if )?other\b|\bselected other\b|^(please )?(tell us|let us know) (where|which|more)\b/;
   const EMAIL_TYPES = new Set(['email', 'email.school', 'account.username']);
   // Field types a lone checkbox can answer: "I am authorized to work in the US", "I have read the
   // privacy notice", or one option of a checklist ("London" under "Which offices…?").
@@ -81,23 +84,42 @@
   // what the question asks for.
   const EXAMPLES = /\b(for example|for instance|e g|such as)\b.*$/;
 
+  // A paragraph's sentences: "…of any individual. We recognise that… If you are invited for an interview, are…".
+  const SENTENCE_END = /(?<=[.?!])\s+(?=["'“(]?[A-Z0-9])/;
+  const FOCUS_KEYS = new Set(['label', 'question', 'aria', 'nearby']);
+
+  /**
+   * The sentence a long, several-sentence question asks (its last question, else its last sentence), or ''. The rest
+   * is preamble: "We are committed to ensuring that the firm removes any unnecessary barriers…" says nothing about
+   * your employer.
+   */
+  function focusOf(raw) {
+    const sentences = raw.split(SENTENCE_END).filter((t) => t.trim());
+    if (sentences.length < 2 || raw.split(/\s+/).length < 20) return '';
+    const asks = sentences.filter((t) => /\?\s*$/.test(t.trim()));
+    return norm(asks.length ? asks[asks.length - 1] : sentences[sentences.length - 1]);
+  }
+
   function signalTexts(desc) {
     const out = [];
     const s = desc.signals || {};
     for (const key of Object.keys(WEIGHTS)) {
       if (!s[key]) continue;
       // "Mobile Number (+CountryCode)", "(country code + number)": that plus is a word.
-      let text = norm(
-        String(s[key])
-          .slice(0, 300)
-          .replace(/\+\s*(?=country|((phone|mobile) )?number)/gi, ' plus '),
-      );
+      const raw = String(s[key])
+        .slice(0, 300)
+        .replace(/\+\s*(?=country|((phone|mobile) )?number)/gi, ' plus ');
+      let text = norm(raw);
       const m = text.match(EXAMPLES);
       if (m && text.slice(0, m.index).split(' ').length > 6) text = text.slice(0, m.index).trim();
-      if (text) out.push({ key, text, weight: WEIGHTS[key] });
+      const focus = FOCUS_KEYS.has(key) ? focusOf(raw) : '';
+      if (text) out.push({ key, text, weight: WEIGHTS[key], focus });
     }
     return out;
   }
+
+  // Answers never asked in the preamble of a paragraph: a name, an employer, a school, a list of skills.
+  const PREAMBLE_NEVER = (type) => SHORT_VALUE.test(type) || type === 'skills' || type === 'languages';
 
   function kindAllowed(rule, desc) {
     if (desc.kind === 'checkbox') return CHECKBOX_TYPES.has(rule.type);
@@ -183,9 +205,15 @@
       let hitText = '';
       for (const s of signals) {
         if (!rule.re.test(s.text) || (rule.not && rule.not.test(s.text))) continue;
+        // Only in a long question's preamble, not in what it asks: half as telling, and never a short answer.
+        const preamble = !!s.focus && !rule.re.test(s.focus);
+        // A list's options settle it ("…U.S. export controls… A United States citizen or national / None…"); a box
+        // has only the words.
+        if (preamble && PREAMBLE_NEVER(rule.type) && !desc.options) continue;
+        const weight = preamble ? s.weight / 2 : s.weight;
         hits++;
-        if (s.weight > score) {
-          score = s.weight;
+        if (weight > score) {
+          score = weight;
           hitText = s.text;
         }
       }
@@ -575,6 +603,30 @@
       }
     });
 
+    // "Please specify" / "If you have selected other, please tell us where" right after "How did you hear about us?":
+    // where you heard, once that list's choice is "Other" (content/main.js checks it); "Which One?" right after it
+    // (Eploy's "Job Board" → "Google for Jobs / Indeed / … / Other") is the same question.
+    results.forEach((r, i) => {
+      const prev = results.slice(Math.max(0, i - 2), i).findIndex((x) => x && x.type === 'job.referralSource');
+      if (prev < 0 || (r && r.type)) return;
+      const q = norm(questionText(descs[i]));
+      const at = Math.max(0, i - 2) + prev;
+      // Never the box for one named answer ("If you selected 'A friend or relative', please put their full name").
+      const named =
+        /\b(name|friend|relative|employee|referr\w*|colleague|event|which (event|university|school))\b/.test(q);
+      if (
+        ['text', 'textarea'].includes(descs[i].kind) &&
+        !named &&
+        (SPECIFY.test(q) || /^if (you (have )?(selected|chose|picked|ticked) )?other\b|^other\b/.test(q))
+      )
+        results[i] = { type: 'job.referralSource', part: 'specify', score: 1, source: 'follow-up', follows: at };
+      else if (
+        LIST_KINDS.includes(descs[i].kind) &&
+        /^(which one|which|please (select|specify)|specify|source)$/.test(q)
+      )
+        results[i] = { type: 'job.referralSource', part: null, score: 1, source: 'follow-up' };
+    });
+
     // "If you selected a response to the prior question other than "none of the above"…" right after a sanctions
     // question (its options unseen in a closed dropdown): that question's follow-up.
     results.forEach((r, i) => {
@@ -583,6 +635,17 @@
       if (results.slice(Math.max(0, i - 2), i).some((x) => x && x.type === 'compliance.sanctions'))
         results[i] = { type: 'compliance.sanctions', part: null, score: 1, source: 'follow-up' };
     });
+
+    // An upload that says it is for your CV ("Resume*", "Upload CV") is where it goes: one that names it nowhere, not
+    // even in its id ("file-input", "Other", "Additional Files"), never gets it a second time. Dayforce's "Attachment"
+    // (id …_files_resume) is still the CV's.
+    const namesCv = (d, weight) =>
+      signalTexts(d).some((t) => t.weight >= weight && /\b(resumes?|cvs?|curriculum|lebenslauf)\b/.test(t.text));
+    if (results.some((r, i) => r && r.type === 'file.resume' && namesCv(descs[i], 0.75)))
+      results.forEach((r, i) => {
+        if (r && r.type === 'file.resume' && !namesCv(descs[i], 0))
+          Object.assign(r, { type: null, dropped: 'file.resume' });
+      });
 
     const state = {
       edu: { index: -1, seen: new Set(), run: new Set() },
@@ -775,7 +838,7 @@
   }
 
   const DECLINE =
-    /\bdecline|prefer not|not (wish|want) to|(don t|do not|does not) wish|(don t|do not) want to|rather not|not to (say|answer|disclose|self identify|specify|provide|state|respond)|choose not|not disclose|undisclosed|wish not to/;
+    /\bdecline|prefer not|\bnot (specified|disclosed|stated|declared)\b|not (wish|want) to|(don t|do not|does not) wish|(don t|do not) want to|rather not|not to (say|answer|disclose|self identify|specify|provide|state|respond)|choose not|not disclose|undisclosed|wish not to/;
 
   /** Map an answer or option to yes / no / decline / male / female / nonbinary, if it is one. */
   function canonicalOf(text) {
@@ -1312,6 +1375,38 @@
     return (best || generic || { i: -1 }).i;
   }
 
+  // Words that turn the next few around: "have not spent", "never lived".
+  const NEGATOR = /^(not|never|no|without|neither|nor)$/;
+
+  /**
+   * The statement among several that agrees with a requirement: "you must have lived in the UK for the last 5 years
+   * and not have spent more than 6 months… outside of the UK" is "I have lived in the UK for the last 5 years and have
+   * not spent more than 6 months…", never "…but have spent…" or "I have not lived…". Each word both say counts for
+   * when it is said the same way (negated or not) and against when it isn't. -1 unless one statement agrees best.
+   */
+  function agreeing(opts, requirement) {
+    if (opts.length < 3 || !opts.every((o) => o.n.split(' ').length >= 8)) return -1;
+    const polarity = (text) => {
+      const words = norm(text).split(' ');
+      const out = new Map();
+      words.forEach((w, k) => {
+        if (w.length < 4 || NEGATOR.test(w)) return;
+        const negated = words.slice(Math.max(0, k - 3), k).some((x) => NEGATOR.test(x));
+        if (!out.has(w)) out.set(w, negated);
+      });
+      return out;
+    };
+    const want = polarity(requirement);
+    const scored = opts
+      .map((o) => {
+        let s = 0;
+        for (const [w, negated] of polarity(o.text)) if (want.has(w)) s += want.get(w) === negated ? 1 : -1;
+        return { i: o.i, s };
+      })
+      .sort((a, b) => b.s - a.s);
+    return scored[0].s > scored[1].s ? scored[0].i : -1;
+  }
+
   /** Every option a list value ("London, New York") picks, in the list's order. */
   /** Which country an option spells: "United Kingdom (GB)", "UK - United Kingdom", "United Kingdom +44", "GB". */
   function countryOfOption(text) {
@@ -1374,7 +1469,7 @@
   /* ------------------------------------------- statements and slots, one by one */
 
   // Values whose options are each judged against your profile: sanctions statements, interview slots.
-  const JUDGED = new Set(['sanctions', 'availability']);
+  const JUDGED = new Set(['sanctions', 'availability', 'rights']);
   // "None of the above", "None of these apply to me", "Not applicable".
   const NONE_OPTION =
     /^(none|neither|n a|not applicable)\b|\bnone of (the above|these|the following|them)\b|\b(do(es)?|did) not apply\b|\bnot applicable\b/;
@@ -1436,9 +1531,27 @@
     return pick ? [pick.o.i] : [];
   }
 
+  /**
+   * The statements of a right-to-work list each about a country ("I have the right to work in the UK (post-Brexit does
+   * not apply…)", "…in Germany", "Neither…"): those about countries you have the right to work in, whatever words in
+   * brackets say; else the one that says you have none.
+   */
+  function rightsPicks(opts, v, all) {
+    const judged = opts.map((o) => ({
+      o,
+      codes: JTF.geo.countriesNamed(norm(o.text.replace(/\([^)]*\)/g, ' '))),
+      negative: /^(no|not|neither|none)\b|^i (do not|don t|am not|have no|cannot|can t)\b/.test(o.n),
+    }));
+    const yes = judged.filter((x) => x.codes.length && !x.negative && x.codes.every((c) => v.rights.includes(c)));
+    if (yes.length) return (all ? yes : yes.slice(0, 1)).map((x) => x.o.i);
+    const none = judged.find((x) => x.negative && !x.codes.length) || judged.find((x) => NONE_OPTION.test(x.o.n));
+    return none ? [none.o.i] : [];
+  }
+
   function judgedPicks(opts, v, all) {
     if (!opts.length) return [];
     if (v.kind === 'availability') return slotPicks(opts, v, all);
+    if (v.kind === 'rights') return rightsPicks(opts, v, all);
     const picks = sanctionPicks(opts, v);
     return all ? picks : picks.slice(0, 1);
   }
@@ -1588,6 +1701,12 @@
           v.citizen.some((c) => (' ' + o.n + ' ').includes(' ' + c + ' ')),
       );
       if (mine.length) return mine[0].i;
+    }
+
+    // A Yes to a requirement the question spells out, over statements of what you have done: the one that says it back.
+    if (v.requirement && v.canonical === 'yes') {
+      const r = agreeing(pool, v.requirement);
+      if (r >= 0) return r;
     }
 
     if (v.canonical) {
