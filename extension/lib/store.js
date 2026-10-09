@@ -56,6 +56,9 @@
     // On a sign-in or sign-up page you fill: click its own "Sign in" / "Create account" (never an application's
     // submit), wait for you to solve any CAPTCHA, and carry on to the next page (background.js accountStep).
     accountFlow: true,
+    // On a multi-step application: click the step's own "Next" once it is done, and fill the next one; never the
+    // step that submits (background.js advanceStep). Off unless switched on.
+    autoAdvance: false,
   };
 
   // answerNotes: the candidate's own rules for answers ("I have never applied to any of these firms").

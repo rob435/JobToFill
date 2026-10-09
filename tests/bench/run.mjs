@@ -31,6 +31,9 @@ const TODAY = new Date('2026-10-09T12:00:00Z');
 const DOCS = { 'file.resume': true, 'file.coverLetter': true };
 // The live capture kept a list's first 120 options: a longer one (countries) is only scored when read again (--pages).
 const CAPTURED_OPTIONS = 120;
+// Dropdowns whose options only load when opened (react-select, Teamtailor's menus) were captured without them: what
+// the fill types into one is scored, but not which option it would land on.
+const MENU_KINDS = new Set(['combo', 'combobox']);
 
 if (!existsSync(path.join(corpus, 'forms'))) {
   console.error(`No corpus at ${corpus}: clone the benchmark's corpus there, or pass --corpus DIR (README.md).`);
@@ -38,10 +41,22 @@ if (!existsSync(path.join(corpus, 'forms'))) {
 }
 
 const J = load();
+const hostOf = (url) => {
+  try {
+    return new URL(url).hostname;
+  } catch (err) {
+    return '';
+  }
+};
 const profile = J.fields.upgradeProfile(structuredClone(SURVEY_PROFILE));
 
-/** A descriptor as content/dom.js makes it, from one captured on the live site. */
-const fromLive = (d) => ({
+/**
+ * A descriptor as content/dom.js makes it, from one captured on the live site, with the page's language and site
+ * (how it writes dates when it doesn't say) from the form's meta.json.
+ */
+const fromLive = (d, meta) => ({
+  lang: meta.lang || '',
+  host: hostOf(meta.formUrl || meta.url),
   kind: d.kind,
   inputType: d.inputType || '',
   autocomplete: '',
@@ -53,9 +68,13 @@ const fromLive = (d) => ({
   signals: d.signals || {},
 });
 
-/** Each field of a frame as a fill would leave it. */
-function decideFrame(descs, { partialLists }) {
-  const entries = J.decide.page(descs, profile, { docs: DOCS, context: { today: TODAY, jobContext: true } });
+/**
+ * Each field of a frame as a fill would leave it. `jobLocation`: where the job is, as the fill knows it from the
+ * posting ("Are you authorized to work in the country where this role is based?").
+ */
+function decideFrame(descs, { partialLists, jobLocation }) {
+  const context = { today: TODAY, jobContext: true, jobLocation: jobLocation || '' };
+  const entries = J.decide.page(descs, profile, { docs: DOCS, context });
   return descs.map((desc, i) => ({
     question: J.matcher.questionText(desc),
     kind: desc.kind,
@@ -63,6 +82,7 @@ function decideFrame(descs, { partialLists }) {
     type: entries[i].type,
     got: outcomeOf(entries[i]),
     partial: partialLists && (desc.options || []).length >= CAPTURED_OPTIONS,
+    unseen: MENU_KINDS.has(desc.kind) && !(desc.options || []).length,
   }));
 }
 
@@ -99,7 +119,9 @@ async function readPages(ids) {
       });
       return results.map((r) => r.result).filter(Boolean);
     }, tabId);
-    out.set(id, frames);
+    // Where the job is, as the fill reads it from the page (its location line, Ashby's pane, JSON-LD).
+    const [where] = await h.bg((t) => globalThis.JTFBackground.callFrames(t, 'jobLocation', [], [0]), tabId);
+    out.set(id, { frames, jobLocation: (where && where.jobLocation) || '' });
     await page.close();
   }
   await h.close();
@@ -116,18 +138,29 @@ const forms = [];
 for (const id of ids) {
   const dir = path.join(corpus, 'forms', id);
   const meta = JSON.parse(readFileSync(path.join(dir, 'meta.json'), 'utf8'));
+  const page = pagesMode ? read.get(id) || { frames: [], jobLocation: '' } : null;
+  // The page's own location line, where the corpus has none (--write-meta keeps it for the runs without --pages).
+  if (page && page.jobLocation && !meta.jobLocation) {
+    meta.jobLocation = page.jobLocation;
+    if (flag('--write-meta')) writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 1) + '\n');
+  }
   const frames = pagesMode
-    ? (read.get(id) || []).map((f) => decideFrame(f.descs, { partialLists: false }))
+    ? page.frames.map((f) => decideFrame(f.descs, { partialLists: false, jobLocation: meta.jobLocation }))
     : JSON.parse(readFileSync(path.join(dir, 'live.json'), 'utf8')).frames.map((f) =>
-        decideFrame((f.fields || []).map(fromLive), { partialLists: true }),
+        decideFrame(
+          (f.fields || []).map((d) => fromLive(d, meta)),
+          { partialLists: true, jobLocation: meta.jobLocation },
+        ),
       );
   const fields = frames.flat();
   const expectedFile = path.join(dir, 'expected.json');
   const expected = existsSync(expectedFile) ? JSON.parse(readFileSync(expectedFile, 'utf8')).fields : [];
   const scored = scoreForm(fields, expected);
-  // A list cut short by the capture is scored only when it came out right.
+  // A list cut short by the capture is scored only when it came out right; a menu whose options weren't captured, only
+  // on whether something goes in (not on which option it would land on).
   scored.rows.forEach((row, i) => {
-    if (!fields[i].partial || row.verdict === 'right' || row.verdict === 'unscored') return;
+    const unseen = fields[i].unseen && row.verdict === 'wrong' && row.got.outcome === 'fill' && row.expect.fill != null;
+    if (!(fields[i].partial || unseen) || row.verdict === 'right' || row.verdict === 'unscored') return;
     scored.counts[row.verdict]--;
     scored.counts.unscored++;
     row.verdict = 'unscored';

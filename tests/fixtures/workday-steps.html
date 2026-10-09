@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Apply - Workday-style application in steps (Ada &amp; Co)</title>
+  <style>
+    body { font: 14px system-ui; max-width: 720px; margin: 24px auto; }
+    [data-automation-id="progressBar"] { display: flex; gap: 12px; list-style: none; padding: 0; color: #777; }
+    [data-automation-id="progressBarActiveStep"] { color: #000; font-weight: 600; }
+    .field { margin: 10px 0; display: grid; gap: 4px; }
+    [role="group"] { border-top: 1px solid #ddd; margin: 12px 0; padding-top: 8px; }
+    [role="alert"] { color: #b00; border: 1px solid #b00; padding: 8px; }
+    .footer { display: flex; gap: 12px; margin-top: 20px; }
+    .wrap { position: relative; display: inline-block; }
+    [data-automation-id="click_filter"] { position: absolute; inset: 0; cursor: pointer; }
+    #state { background: #f4f4f4; padding: 8px; font-size: 12px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <!--
+    A Workday-style application in four steps, drawn by script in one page: My Information, My Experience (whose Work
+    Experience and Education sections start empty, each with its own "Add", which becomes "Add Another"), Application
+    Questions, Review. The footer's "Save and Continue" lies under Workday's click filter, a transparent box with the
+    same label that takes the click; it checks the step's required fields and stays put with "Errors Found" when one
+    is empty. On the Review step the same button says "Submit": pressing it would send the application
+    (state.submitted). ?values=1 adds a required essay to Application Questions that no profile answers.
+  -->
+  <h1>Summer Analyst Internship 2027</h1>
+  <ol data-automation-id="progressBar"></ol>
+  <div id="errors"></div>
+  <form id="step" onsubmit="return false"></form>
+  <div class="footer">
+    <button type="button" data-automation-id="pageFooterBackButton" id="back">Back</button>
+    <span class="wrap">
+      <button type="button" data-automation-id="bottom-navigation-next-button" id="next">Save and Continue</button>
+      <div data-automation-id="click_filter" role="button" tabindex="-1" aria-label="Save and Continue" id="filter"></div>
+    </span>
+  </div>
+  <pre id="state"></pre>
+  <script>
+    const STEPS = ['My Information', 'My Experience', 'Application Questions', 'Review'];
+    const hard = new URLSearchParams(location.search).has('values');
+    const state = { step: Number(new URLSearchParams(location.search).get('start') || 1), submitted: false, values: {}, experience: 0, education: 0 };
+    const show = () => (document.getElementById('state').textContent = JSON.stringify(state, null, 1));
+    const form = document.getElementById('step');
+    const field = (id, label, required, input) =>
+      `<div class="field"><label for="${id}">${label}${required ? '<abbr title="required">*</abbr>' : ''}</label>${input || `<input id="${id}" ${required ? 'aria-required="true"' : ''}>`}</div>`;
+    const select = (id, options, required) =>
+      `<select id="${id}" ${required ? 'aria-required="true"' : ''}><option value="">Select One</option>${options.map((o) => `<option>${o}</option>`).join('')}</select>`;
+
+    function experienceBlock(n) {
+      return `<div role="group" aria-labelledby="we-${n}-h" data-automation-id="workExperience-${n}"><h4 id="we-${n}-h">Work Experience ${n}</h4>` +
+        field(`we-${n}-title`, 'Job Title', true) + field(`we-${n}-company`, 'Company', true) + field(`we-${n}-location`, 'Location', false) + '</div>';
+    }
+    function educationBlock(n) {
+      return `<div role="group" aria-labelledby="ed-${n}-h" data-automation-id="education-${n}"><h4 id="ed-${n}-h">Education ${n}</h4>` +
+        field(`ed-${n}-school`, 'School or University', true) +
+        field(`ed-${n}-degree`, 'Degree', true, select(`ed-${n}-degree`, ["Bachelor's Degree", "Master's Degree", 'Doctorate', 'Other'], true)) +
+        field(`ed-${n}-field`, 'Field of Study', false) + '</div>';
+    }
+
+    function render() {
+      document.querySelector('[data-automation-id="progressBar"]').innerHTML = STEPS.map((name, i) =>
+        i + 1 === state.step
+          ? `<li data-automation-id="progressBarActiveStep">current step ${i + 1} of ${STEPS.length} ${name}</li>`
+          : `<li data-automation-id="progressBarInactiveStep">step ${i + 1} of ${STEPS.length} ${name}</li>`).join('');
+      document.getElementById('errors').innerHTML = '';
+      const next = state.step === STEPS.length ? 'Submit' : 'Save and Continue';
+      document.getElementById('next').textContent = next;
+      document.getElementById('filter').setAttribute('aria-label', next);
+      if (state.step === 1)
+        form.innerHTML = '<h2>My Information</h2>' + field('first', 'First Name', true) + field('last', 'Last Name', true) +
+          field('email', 'Email Address', true) + field('phone', 'Phone Number', true) +
+          field('source', 'How Did You Hear About Us?', true, select('source', ['LinkedIn', 'Job Board', 'Referral', 'Other'], true));
+      else if (state.step === 2) {
+        form.innerHTML = '<h2>My Experience</h2>' +
+          '<div role="group" aria-labelledby="we-h" data-automation-id="workExperienceSection"><h3 id="we-h">Work Experience</h3><div class="entries"></div><button type="button" data-automation-id="Add" data-kind="experience">Add</button></div>' +
+          '<div role="group" aria-labelledby="ed-h" data-automation-id="educationSection"><h3 id="ed-h">Education</h3><div class="entries"></div><button type="button" data-automation-id="Add" data-kind="education">Add</button></div>' +
+          field('linkedin', 'LinkedIn', false) + field('resume', 'Resume/CV', false, '<input type="file" id="resume">');
+        for (const kind of ['experience', 'education']) for (let n = 1; n <= state[kind]; n++) addBlock(kind, n);
+      } else if (state.step === 3)
+        form.innerHTML = '<h2>Application Questions</h2>' +
+          field('auth', 'Are you legally authorized to work in the United States?', true, select('auth', ['Yes', 'No'], true)) +
+          field('spons', 'Will you now or in the future require sponsorship for employment visa status?', true, select('spons', ['Yes', 'No'], true)) +
+          (hard ? field('values', 'Which of our five values resonates most with you, and why?', true, '<textarea id="values" aria-required="true"></textarea>') : '');
+      else form.innerHTML = '<h2>Review</h2><p>Check your application, then submit it.</p>';
+      show();
+    }
+
+    function addBlock(kind, n) {
+      const section = form.querySelector(`[data-kind="${kind}"]`).parentElement;
+      section.querySelector('.entries').insertAdjacentHTML('beforeend', kind === 'experience' ? experienceBlock(n) : educationBlock(n));
+      section.querySelector('[data-automation-id="Add"]').textContent = 'Add Another';
+    }
+
+    form.addEventListener('click', (e) => {
+      const add = e.target.closest('[data-automation-id="Add"]');
+      if (!add) return;
+      const kind = add.dataset.kind;
+      state[kind]++;
+      // Workday draws the new entry a moment later.
+      setTimeout(() => { addBlock(kind, state[kind]); show(); }, 150);
+    });
+
+    function save() {
+      for (const el of form.querySelectorAll('input, select, textarea')) if (el.id && el.type !== 'file') state.values[el.id] = el.value;
+    }
+
+    function next() {
+      if (state.step === STEPS.length) {
+        state.submitted = true;
+        show();
+        return;
+      }
+      const empty = Array.from(form.querySelectorAll('[aria-required="true"]')).filter((el) => !el.value.trim());
+      if (empty.length) {
+        document.getElementById('errors').innerHTML = `<div role="alert">Errors Found: ${empty.length} required field(s) are empty</div>`;
+        return;
+      }
+      save();
+      state.step++;
+      // The next step is drawn after a moment, as Workday saves the step first.
+      form.innerHTML = '';
+      setTimeout(render, 300);
+    }
+    document.getElementById('filter').addEventListener('click', next);
+    document.getElementById('back').addEventListener('click', () => { if (state.step > 1) { save(); state.step--; render(); } });
+    document.addEventListener('input', save);
+    render();
+  </script>
+</body>
+</html>

@@ -321,7 +321,14 @@
     // A page the account flow landed on after one of its clicks (the application after signing in) is still drawing
     // its form: it is filled once it has gone quiet.
     if (payload.settleFirst) await settle(4000, 800);
-    const { fields, results, context } = await scanWhenDrawn(profile);
+    let scanned = await scanWhenDrawn(profile);
+    // Room for each of your education and job entries first: a section's own "Add" (Workday's My Experience starts
+    // with none), then the page is read again.
+    if (!payload.only && scanned.context.jobContext && (await JTF.flow.addEntries(profile, () => scan(profile)))) {
+      await settle(1500, 300);
+      scanned = scan(profile);
+    }
+    const { fields, results, context } = scanned;
     context.jobLocation = jobLocation(payload);
     // On a pure sign-up page in an account flow, the sign-up form's own terms box is part of creating the account.
     const page = JTF.flow.analyze({ fields, results });
@@ -1193,6 +1200,13 @@
     accountWait: (token, payload) =>
       JTF.flow.wait(token, () => accountScan(payload), (payload && payload.timeout) || 5 * 60e3),
     accountStop: () => JTF.flow.stopWait(),
+    // A multi-step application's step (Settings › "Move through multi-step applications for me"): what stands
+    // between it and its next, and its own "Next" clicked when nothing does.
+    stepState: (payload) => JTF.flow.stepState(accountScan(payload)),
+    advance(label, payload) {
+      const res = JTF.flow.advance(accountScan(payload), label);
+      return { clicked: res.clicked || '', refused: res.refused || '' };
+    },
     async pending(payload) {
       const { context } = scan(payload.profile);
       context.jobLocation = jobLocation(payload);
@@ -1205,6 +1219,8 @@
     },
     learn,
     jobContext,
+    /** Where the job is, as a fill reads it from this page (for the detection benchmark's reading of a saved page). */
+    jobLocation: () => ({ jobLocation: jobLocation(null) }),
     inspect,
     toast,
     fillActive,

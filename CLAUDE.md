@@ -7,9 +7,10 @@ Features list before changing behaviour, and its Development section for the fil
 
 ## Invariants (never break these)
 
-- **It never submits an application.** Sign-in and sign-up flows click only through `JTF.flow.click()`
-  (`content/account.js`), which re-checks the allow/deny-list in `lib/account.js`. No other code clicks a page's
-  buttons.
+- **It never submits an application.** Every click on a page's own buttons goes through `JTF.flow`
+  (`content/account.js`), which re-checks the wording against `lib/account.js`: `intent()` for sign-in and sign-up
+  pages, `stepIntent()` on an application (a section's "Add" for another entry; with the opt-in setting, a step's
+  "Next" / "Save and Continue", never anything `submits()` names). No other code clicks a page's buttons.
 - **Nothing leaves the browser** except to the AI provider the person chose (with their key) and Nylas for codes.
   README › _Privacy and security_ is a promise: a new data flow needs an opt-in and a line there.
 - **What the AI never sees** (`lib/answers.js` `withheld()`): diversity/equal-opportunity questions (any

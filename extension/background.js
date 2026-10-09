@@ -182,6 +182,8 @@ async function fillTab(tabId, options) {
   const { payload, letter } = await fillPayload(tabId);
   if (opts.consents) payload.settings = { ...payload.settings, consents: true };
   const { settings } = payload;
+  // Moving through a multi-step application waits for the AI's answers: a step is only left once it is done.
+  if (settings.autoAdvance && !opts.only && opts.waitAi == null) opts.waitAi = true;
   if (opts.only) Object.assign(payload, { only: opts.only, force: opts.force !== false });
   if (opts.replace) payload.replace = opts.replace;
   let hold = opts.hold || null;
@@ -270,10 +272,97 @@ async function fillFrames(tabId, opts, payload, letter, aiReady) {
     });
   else if (flowLines.length && settings.toast !== false)
     await showToast(tabId, flowLines.join('\n'), { duration: 20000 });
-  summary.notes.push(...flowLines);
+  // A multi-step application's next step (Settings › "Move through multi-step applications for me").
+  const advance =
+    !flowLines.length && !opts.only && settings.autoAdvance && summary.jobContext
+      ? await advanceStep(tabId, payload, opts).catch(() => null)
+      : null;
+  const stepLines = (advance && advance.lines) || [];
+  if (stepLines.length && settings.toast !== false && !opts.toast)
+    await showToast(tabId, stepLines.join('\n'), { duration: 15000 });
+  summary.notes.push(...flowLines, ...stepLines);
   // The click (or the wait for a CAPTCHA) comes after the toast that announces it.
   if (account && account.act) await account.act().catch(() => {});
+  // The next step is filled in the background: the fill that got here is done.
+  if (advance && advance.act) advance.act().catch(() => advancing.delete(tabId));
   return summary;
+}
+
+/*
+ * Multi-step applications (Settings › "Move through multi-step applications for me", off unless you switch it on):
+ * once a fill has done a step, the step's own "Next" or "Save and Continue" is clicked when nothing on it is left for
+ * you (content/account.js stepState: no required box empty, no terms, no error, no CAPTCHA), and the next step is
+ * filled, up to ADVANCE_STEPS steps. It stops before the step that submits the application: that is always yours.
+ */
+const ADVANCE_STEPS = 12;
+const ADVANCE_WAIT = 20e3; // how long the next step may take to show
+const advancing = new Map(); // tabId -> { steps }: the steps clicked through since the Fill you pressed
+
+/** After a fill: the step's next move, { lines, act? }, or null when it isn't a step of an application. */
+async function advanceStep(tabId, payload, opts) {
+  const states = await callFrames(tabId, 'stepState', [{ profile: payload.profile }]).catch(() => []);
+  const page =
+    states.find((s) => s.application && s.next) || states.find((s) => s.application && (s.final || s.progress));
+  const steps = opts.advance && advancing.has(tabId) ? advancing.get(tabId).steps : 0;
+  const end = (line) => {
+    advancing.delete(tabId);
+    return line ? { lines: [line] } : null;
+  };
+  if (!page) return end('');
+  const p = page.progress;
+  const where = p && p.total ? ` (step ${p.step} of ${p.total})` : '';
+  // A form of one page offers its submit too: only a form of steps says so.
+  if (page.final)
+    return end(
+      steps || (p && p.total > 1) ? `That’s the last step${where}: check your application and submit it yourself.` : '',
+    );
+  if (!page.next) return end('');
+  const carry = 'then press Fill to carry on';
+  if (page.errors.length) return end(`The page says “${page.errors[0]}”: fix that, ${carry}.`);
+  if (page.blockers.some((b) => b.kind === 'captcha')) return end(`Complete the “I’m not a robot” check, ${carry}.`);
+  const terms = page.blockers.filter((b) => b.kind === 'terms');
+  if (terms.length) return end(`Tick ${joinList(terms.map((b) => `“${b.label}”`))} yourself, ${carry}.`);
+  const empty = page.blockers.filter((b) => b.kind === 'missing');
+  if (empty.length) {
+    const named = joinList(empty.slice(0, 4).map((b) => `“${b.label}”`)) + (empty.length > 4 ? ' and the rest' : '');
+    return end(`Fill in ${named}, ${carry}.`);
+  }
+  if (!page.ready) return end('');
+  if (steps >= ADVANCE_STEPS) return end(`JobToFill stopped after ${ADVANCE_STEPS} steps: carry on yourself.`);
+  advancing.set(tabId, { steps: steps + 1 });
+  return {
+    lines: [`Clicking “${page.next}” for the next step${where}…`],
+    act: async () => {
+      const [res] = await callFrames(tabId, 'advance', [page.next, { profile: payload.profile }], [page.frameId]);
+      const stop = (line) => {
+        advancing.delete(tabId);
+        return payload.settings.toast !== false ? showToast(tabId, line, { duration: 15000 }) : null;
+      };
+      if (!res || !res.clicked) return stop(`JobToFill couldn’t click “${page.next}”: carry on yourself.`);
+      if (!(await nextStepShown(tabId, page, payload.profile)))
+        return stop(`The page didn’t move on after “${page.next}”: check it for a message.`);
+      await fillTab(tabId, { toast: true, advance: true });
+    },
+  };
+}
+
+/** Wait for the step after `before` to show (a new page, or the same one drawn anew), but not for a refusal. */
+async function nextStepShown(tabId, before, profile) {
+  const until = Date.now() + ADVANCE_WAIT;
+  await sleep(800);
+  while (Date.now() < until) {
+    const tab = await api.tabs.get(tabId).catch(() => null);
+    if (!tab) return false;
+    if (tab.status !== 'loading') {
+      const states = await callFrames(tabId, 'stepState', [{ profile }]).catch(() => []);
+      const now = states.find((s) => s.frameId === before.frameId) || states[0];
+      if (now && now.application && now.signature !== before.signature) return true;
+      // Still the same step, now with an error ("Please fill in all required fields"): it was turned down.
+      if (now && now.signature === before.signature && now.errors.length) return false;
+    }
+    await sleep(500);
+  }
+  return false;
 }
 
 function mergeReports(frames) {
