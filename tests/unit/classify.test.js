@@ -693,17 +693,13 @@ test('live survey (Glasgow undergraduate): a box for the whole number, code incl
   assert.equal(type('Phone area code'), null);
   assert.equal(type('Area code'), null);
   assert.equal(type('Mobile verification code'), 'otp');
-  // Another number than your mobile is left empty, in a tel box too.
-  for (const label of [
-    'Alternative phone number',
-    'Secondary phone',
-    'Other phone',
-    'Mobile number (if different from above)',
-    'Landline',
-    'Home phone (landline)',
-  ])
+  // Another number than your mobile is left empty, in a tel box too: one it calls another is yours to add (never the
+  // AI's), the rest unrecognised.
+  for (const label of ['Alternative phone number', 'Secondary phone', 'Other phone'])
+    assert.equal(type(label), 'contact.other', label);
+  for (const label of ['Mobile number (if different from above)', 'Landline', 'Home phone (landline)'])
     assert.equal(type(label), null, label);
-  assert.equal(type('Alternative phone number', 'tel'), null);
+  assert.equal(type('Alternative phone number', 'tel'), 'contact.other');
   // Names are still names.
   assert.equal(type('First name (as on passport)'), 'name.first');
   assert.equal(type('First'), 'name.first');
@@ -1563,7 +1559,7 @@ test('boxes that are not yours to fill from the profile: a name "if different", 
   assert.equal(typeOf(desc('Legal First Name (if different from preferred name)')), null);
   assert.equal(typeOf(desc('Legal Last Name (if different from preferred name)')), null);
   assert.equal(typeOf(desc('Preferred Name')), 'name.preferred');
-  assert.equal(typeOf(desc('Alternate Email')), null);
+  assert.equal(typeOf(desc('Alternate Email')), 'contact.other', 'yours to add, never the AI’s');
   assert.equal(typeOf(desc('Confirm email')), 'email');
   const p = fields.createProfile('Student');
   p.contact.email = 'alex.morgan@gmail.com';
@@ -1580,4 +1576,12 @@ test('boxes that are not yours to fill from the profile: a name "if different", 
   assert.equal(ask('Email (university address preferred)').text, 'alex.morgan@gmail.com');
   p.contact.email = 'am123@st-andrews.ac.uk';
   assert.equal(ask('University email').text, 'am123@st-andrews.ac.uk');
+});
+
+test('every rule and autocomplete token names a type some part defines', () => {
+  // "gen.start", "gen.end" and "gen.description" become an education or job entry's once the planner knows the section.
+  const types = [...fields.RULES.map((r) => r.type), ...Object.values(fields.AUTOCOMPLETE).map(([type]) => type)];
+  assert.deepEqual([...new Set(types.filter((t) => !fields.DEFS[t] && !/^gen\./.test(t)))], []);
+  for (const [type, def] of Object.entries(fields.DEFS))
+    assert.ok(def.label && (typeof def.get === 'function' || def.file || def.consent), type);
 });

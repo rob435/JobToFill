@@ -94,23 +94,6 @@
     }
   }
 
-  /** Does the question take several answers: a checklist, a <select multiple>, a widget standing in for one? */
-  const takesSeveral = (field) =>
-    field.kind === 'checkboxes' ||
-    (field.kind === 'select' && !!field.el.multiple) ||
-    (field.kind !== 'file' && !!field.desc.multiple);
-
-  /** A custom answer as the list it names, when every item is one of the question's options (or none are known). */
-  function listAnswer(v, field) {
-    const items = String(v.text || '')
-      .split(/\s*[,;\n]\s*/)
-      .filter(Boolean);
-    if (items.length < 2) return null;
-    const options = (field.desc.options || []).filter((o) => !o.disabled);
-    if (options.length && !items.every((t) => JTF.matcher.matchOption(options, JTF.fields.val(t)) >= 0)) return null;
-    return { text: items.join(', '), kind: 'list', items, candidates: items, canonical: null };
-  }
-
   /**
    * One box's slice of a number split over several (see splitBoxes): the digits that fill exactly the first boxes
    * (all of them, or the first ones: a ZIP code without its +4), a phone number's taken without its country code
@@ -148,9 +131,13 @@
     '[data-automation-id="locations"] dd',
   ];
 
+  // "This role is based in our Birmingham office.", "The internship will be based in London, UK": the place, in capitals.
+  const BASED_IN =
+    /\b(?:role|position|job|internship|placement|vacancy|opportunity) (?:is|will be) based (?:in|at|out of|from) (?:our |the )?((?:[A-Z][\w'’-]*,?\s*){1,4})/;
+
   /**
    * Where the job is, for "Are you authorized to work in the country where this role is based?": what the extension
-   * already knew about the job in this tab, else the location line on the application page itself.
+   * already knew about the job in this tab, else the location line on the application page itself, else its own words.
    */
   function jobLocation(payload) {
     if (payload && payload.jobLocation) return payload.jobLocation;
@@ -171,14 +158,16 @@
         const where = ['addressLocality', 'addressRegion', 'addressCountry'].map(part).filter(Boolean).join(', ');
         if (where) return where;
       }
+      // The posting's own words: "This role is based in our Birmingham office." (Isio, on Teamtailor).
+      const said = ((document.body && document.body.textContent) || '').match(BASED_IN);
+      const where = said && said[1].replace(/[\s,]+$/, '');
+      if (where && JTF.geo.placesNamed(where).length) return where;
     } catch (err) {
       /* nothing to go by */
     }
     return '';
   }
 
-  // "If you said yes above, please tell us more": only worth filling when the answer was yes.
-  const FOLLOW_UP = /^if (yes|so|you (said|answered|selected|chose|checked|ticked) yes)\b/;
   // Sites choose these for you (Workday, from where your connection seems to be): one that isn't yours is put right.
   const CORRECTED = new Set(['address.country', 'phone.countryCode']);
 
@@ -340,7 +329,14 @@
     // A page the account flow landed on after one of its clicks (the application after signing in) is still drawing
     // its form: it is filled once it has gone quiet.
     if (payload.settleFirst) await settle(4000, 800);
-    const { fields, results, context } = await scanWhenDrawn(profile);
+    let scanned = await scanWhenDrawn(profile);
+    // Room for each of your education and job entries first: a section's own "Add" (Workday's My Experience starts
+    // with none), then the page is read again.
+    if (!payload.only && scanned.context.jobContext && (await JTF.flow.addEntries(profile, () => scan(profile)))) {
+      await settle(1500, 300);
+      scanned = scan(profile);
+    }
+    const { fields, results, context } = scanned;
     context.jobLocation = jobLocation(payload);
     // On a pure sign-up page in an account flow, the sign-up form's own terms box is part of creating the account.
     const page = JTF.flow.analyze({ fields, results });
@@ -395,24 +391,12 @@
     const hold = payload.hold ? new Set(payload.hold) : null;
     const replace = payload.replace ? new Set(payload.replace) : null;
     const docCache = {};
-    /** What the profile's value for a field is worked out from: the question, the page's help, the options. */
-    const ctxFor = (field, r, question) =>
-      Object.assign({}, context, {
-        index: r.index || 0,
-        part: r.part,
-        kind: field.kind,
-        secrets,
-        answer: r.answer,
-        question,
-        help: U.normalize(JTF.matcher.helpText(field.desc)),
-        options: field.desc.options,
-        consents: !!settings.consents || accountTerms,
-        // How the page writes "03/11" (interview slots).
-        dateOrder: JTF.matcher.dateOrder(field.desc),
-      });
-    const valueFor = async (field, r, def, question) => {
+    // What the fill decides with besides the page: the passwords and cards it was given, and whether it ticks
+    // acknowledgements (a sign-up page's own terms box, in an account flow).
+    const extra = { secrets, consents: !!settings.consents || accountTerms };
+    const valueFor = async (field, r, def) => {
       if (def && def.file) return documentValue(r.type, payload, docCache);
-      return JTF.fields.resolve(r.type, profile, ctxFor(field, r, question));
+      return JTF.fields.resolve(r.type, profile, JTF.decide.contextOf(field.desc, r, context, extra));
     };
     // Files first: sites like Breezy and Lever read an uploaded CV and rewrite the form, which would
     // wipe answers filled before it. The rest is filled once the page has settled.
@@ -428,17 +412,14 @@
         .filter((r) => r && r.type && JTF.fields.DEFS[r.type] && JTF.fields.DEFS[r.type].file)
         .map((r) => r.type),
     );
-    /**
-     * The documents an upload takes, its own first: your CV's upload, when it takes several files, also takes your
-     * letter and transcript (fields.uploadAlso), those you have.
-     */
-    const carriedBy = (field, r) => {
-      if (r.type !== 'file.resume' || field.kind !== 'file' || !field.desc.multiple) return [r.type];
-      const s = field.desc.signals;
-      const text = U.normalize([s.question, s.label, s.aria, s.nearby, s.group, s.section].filter(Boolean).join(' '));
-      const also = JTF.fields.uploadAlso(text, { multiple: true, profile, separate: uploadTypes });
-      return [r.type, ...also.filter((t) => payload.docs && payload.docs[JTF.fields.DEFS[t].file])];
-    };
+    const carriedBy = (field, r) =>
+      JTF.decide.carriedBy(
+        field.desc,
+        r,
+        profile,
+        uploadTypes,
+        (t) => !!(payload.docs && payload.docs[JTF.fields.DEFS[t].file]),
+      );
     for (const { tile, r } of tiles) {
       const def = r && JTF.fields.DEFS[r.type];
       if (!def || !def.file) continue;
@@ -562,41 +543,29 @@
       const label = labelFor(field, r);
       if (carried.length > 1) return fillUpload(field, carried, label);
       const question = U.normalize(JTF.matcher.questionText(field.desc));
-      // "If applicable, please provide a recent transcript of your graduate studies.": not for a level you haven't
-      // studied at, and nothing missing from your profile either.
-      if (def && def.file && !JTF.fields.uploadApplies(r.type, profile, question)) return null;
-      if (def && def.consent && !settings.consents && !accountTerms) {
-        if (!JTF.fill.hasValue(field)) report.consents++;
-        return null;
-      }
-      // An opt-in is yours to decide.
-      if (def && def.leave) return null;
       // "I'm not a robot" is only ticked when no CAPTCHA stands behind it.
       if (r.type === 'human' && JTF.flow.captcha(document)) return null;
       if (uploaded && !settled && field.kind !== 'file') {
         await settle();
         settled = true;
       }
-      // "Please specify" after a list is for the answer the list didn't have: only once "Other" is its choice. "…or
-      // write N/A if you selected another answer" (r.type 'na') is N/A until then, and yours to write after.
-      if ((r.part === 'specify' || r.type === 'na') && r.followsField) {
-        const chosen = U.normalize(JTF.fill.currentValue(r.followsField));
-        const other = /\bother\b|\bnot listed\b|\bsomething else\b/.test(chosen);
-        if (r.type === 'na' ? other || !chosen : !other) return null;
-      }
-      let v = await valueFor(field, r, def, question);
-      if (v && r.type !== 'custom' && FOLLOW_UP.test(question) && !JTF.fields.followUpAnswer(v, field.kind))
+      const followed = r.followsField ? JTF.fill.currentValue(r.followsField) : null;
+      const d = JTF.decide.field(field.desc, r, profile, context, { ctx: extra, followed });
+      if (d.action === 'consent') {
+        if (!JTF.fill.hasValue(field)) report.consents++;
         return null;
-      // A custom answer naming several of the options ("Technology, Quantitative Research") picks each of them where
-      // the question takes several.
-      if (v && r.type === 'custom' && takesSeveral(field)) v = listAnswer(v, field) || v;
+      }
+      // An upload for a level you haven't studied at, an opt-in, a follow-up that isn't for you: nothing to do.
+      if (!d.unresolved && (d.action === 'skip' || d.action === 'leave')) return null;
+      let v = d.action === 'upload' ? await valueFor(field, r, def) : d.value;
       // A box that holds part of a number (see splitBoxes) gets its part, or nothing when the number doesn't fit.
       if (v && r.segment) {
         v = segmentValue(v, r.segment);
         if (!v || !v.text) return null;
       }
       if (!v) {
-        if (count && !(def && def.secret) && !JTF.fields.leftEmpty(r.type, profile, ctxFor(field, r, question))) {
+        // A document you haven't added is missing too; what the profile leaves empty on purpose isn't.
+        if (count && d.action !== 'leave') {
           report.missing.push(label);
           report.missingTypes.push(r.type);
         }
@@ -671,7 +640,7 @@
         if (!filledKeys.has(key) && !keptKeys.has(key)) continue;
         const def = JTF.fields.DEFS[r.type];
         if (def && def.consent && !settings.consents) continue;
-        const v = await valueFor(field, r, JTF.fields.DEFS[r.type], question);
+        const v = await valueFor(field, r, JTF.fields.DEFS[r.type]);
         if (!v) continue;
         const res = await JTF.fill.apply(field, v, {
           overwrite: false,
@@ -898,12 +867,6 @@
 
   /* ----------------------------------------------------------- AI answers */
 
-  // Never for the AI: what only the profile knows or the person decides (contact details, diversity answers,
-  // declarations), secrets, uploads, and a cover letter (the letter writer does those).
-  // Sanctions declarations and interview slots too: left for you when your profile can't tell.
-  const NOT_FOR_AI =
-    /^(name\.|email$|phone|address\.|links\.|dob$|age$|pronouns$|account\.|otp$|human$|cc\.|file\.|consent$|optIn$|referee$|eeo\.|coverLetter$|job\.salary$|compliance\.sanctions$|job\.availability$)/;
-  const FOLLOW_ON = /^(if|please (specify|explain|state|give|provide)|other\b|specify)\b/;
   const MAX_PENDING = 40;
 
   /**
@@ -919,65 +882,26 @@
     for (let i = 0; i < fields.length && items.length < MAX_PENDING; i++) {
       const field = fields[i];
       const r = results[i];
-      if (['file', 'password', 'email', 'tel', 'url'].includes(field.kind) || JTF.fill.hasValue(field)) continue;
-      const question = JTF.matcher.questionText(field.desc);
-      const q = U.normalize(question);
-      if (q.length < 3) continue;
-      let guess = null;
-      if (r && r.type === 'custom') guess = { type: 'custom', value: r.answer };
-      else if (r && r.type === 'na') guess = null;
-      else if (r && r.type) {
-        const def = JTF.fields.DEFS[r.type];
-        if (NOT_FOR_AI.test(r.type) || !def || def.consent || def.secret || def.file) continue;
-        const ctx = {
-          ...context,
-          index: r.index || 0,
-          part: r.part,
-          kind: field.kind,
-          question: q,
-          help: U.normalize(JTF.matcher.helpText(field.desc)),
-          options: field.desc.options,
-        };
-        // A grade your profile holds is the rules' to give (or to leave, as a class in a GPA box that wants a
-        // number): the AI never turns a 2:1 into a GPA. Nor does it answer a box left empty on purpose ("A-Level
-        // Subject 4" for three A-levels).
-        if (JTF.fields.gradeHeld(r.type, profile, ctx) || JTF.fields.leftEmpty(r.type, profile, ctx)) continue;
-        const v = JTF.fields.resolve(r.type, profile, ctx);
-        // A follow-up after a "No" ("If yes, give details") or a box the profile said no to stays empty.
-        if (v && (field.kind === 'checkbox' || (FOLLOW_UP.test(q) && !JTF.fields.followUpAnswer(v, field.kind))))
-          continue;
-        if (v) guess = { type: r.type, value: v.text };
-      }
+      if (JTF.fill.hasValue(field)) continue;
       const prev = prevOf(i);
       const prevType = prev && prev.r && prev.r.type;
-      // "If other, please specify" after a diversity or password question belongs to it.
-      if (prevType && /^(eeo\.|account\.|cc\.)/.test(prevType) && FOLLOW_ON.test(q)) continue;
-      let options = null;
-      let multiple = field.kind === 'checkboxes' || !!field.desc.multiple;
-      if (field.desc.options && field.kind !== 'checkbox')
-        options = field.desc.options
-          .filter((o) => !o.disabled)
-          .map((o) => U.cleanLabel(o.text, 200))
-          .filter((t) => t && !JTF.matcher.isPlaceholder(U.normalize(t)));
-      else if (peek && (field.kind === 'combo' || field.kind === 'combobox')) {
+      const on = JTF.decide.conditionOn(r, i);
+      const before = fields[on] ? JTF.decide.beforeOf(fields[on].desc, JTF.fill.currentValue(fields[on])) : null;
+      const asked = JTF.decide.forAi(field.desc, r, profile, context, prevType, before);
+      if (!asked) continue;
+      const item = JTF.decide.aiItem(field.desc, asked.guess);
+      if (!field.desc.options && peek && (field.kind === 'combo' || field.kind === 'combobox')) {
         const seen = await JTF.fill.peekOptions(field).catch(() => null);
         // A long list (countries, universities) is searched by typing the answer.
-        if (seen && seen.options.length && seen.options.length <= 150) options = seen.options;
-        if (seen && seen.multi) multiple = true;
+        if (seen && seen.options.length && seen.options.length <= 150) item.options = seen.options;
+        if (seen && seen.multi) item.multiple = true;
       }
       const id = String(i);
       state.pending.set(id, field);
       items.push({
         id,
-        question: U.cleanLabel(question, 600),
-        help: U.cleanLabel(field.desc.signals.describedby || '', 300),
-        kind: field.kind,
-        options: options && options.length ? options : null,
-        multiple,
-        maxLength: field.desc.maxLength || 0,
+        ...item,
         required: JTF.dom.isRequired(field),
-        section: U.cleanLabel(field.desc.signals.section || '', 120),
-        placeholder: U.cleanLabel(field.desc.placeholderRaw || '', 120),
         follows: prev
           ? {
               question: U.cleanLabel(JTF.matcher.questionText(prev.field.desc), 200),
@@ -987,7 +911,6 @@
                   : JTF.fill.currentValue(prev.field).slice(0, 200),
             }
           : null,
-        guess,
       });
     }
     return items;
@@ -1271,6 +1194,13 @@
     accountWait: (token, payload) =>
       JTF.flow.wait(token, () => accountScan(payload), (payload && payload.timeout) || 5 * 60e3),
     accountStop: () => JTF.flow.stopWait(),
+    // A multi-step application's step (Settings › "Move through multi-step applications for me"): what stands
+    // between it and its next, and its own "Next" clicked when nothing does.
+    stepState: (payload) => JTF.flow.stepState(accountScan(payload)),
+    advance(label, payload) {
+      const res = JTF.flow.advance(accountScan(payload), label);
+      return { clicked: res.clicked || '', refused: res.refused || '' };
+    },
     async pending(payload) {
       const { context } = scan(payload.profile);
       context.jobLocation = jobLocation(payload);
@@ -1283,6 +1213,8 @@
     },
     learn,
     jobContext,
+    /** Where the job is, as a fill reads it from this page (for the detection benchmark's reading of a saved page). */
+    jobLocation: () => ({ jobLocation: jobLocation(null) }),
     inspect,
     toast,
     fillActive,

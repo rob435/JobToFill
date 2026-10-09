@@ -45,3 +45,14 @@ test('Eploy: an "Upload CV" that opens a dialog with its own Upload File button 
   });
   await page.close();
 });
+
+test('Dayforce: two uploads sharing an id, the CV in the one its label sits beside, never the box that imports it', async () => {
+  const page = await h.open('dayforce-upload.html');
+  const summary = await h.fill(page);
+  assert.equal(summary.error, undefined);
+  const file = (box) => page.$eval(`[data-box="${box}"]`, (el) => (el.files[0] ? el.files[0].name : ''));
+  assert.equal(await file('resume'), 'ada_cv.pdf', '"Attachment:" under Resume Upload');
+  assert.equal(await file('import'), '', '"Import Resume" would rewrite the form from the CV');
+  assert.equal(await value(page, '#first'), 'Ada');
+  await page.close();
+});

@@ -659,13 +659,16 @@ test('a question naming a level of study answers from that degree', () => {
   );
   assert.deepEqual(types(plan), [
     'edu.school#0',
-    null,
+    'edu.dates#0',
     'edu.school#0',
-    null,
+    'edu.dates#0',
     'edu.field#0',
     'edu.classification#0',
     'edu.end#0:year',
   ]);
+  // AAB's "…Dates Attended" in one box: each entry's dates, the school's for the school.
+  assert.equal(q('edu.dates', 'Secondary/Academy School Dates Attended'), 'September 2008 – June 2015');
+  assert.equal(q('edu.dates', 'University Dates Attended'), 'September 2015 – June 2019');
 });
 
 test('"Are you available to start from <date>?" is answered from your start date', () => {

@@ -1,9 +1,11 @@
 /*
- * JobToFill — sign-in, sign-up and emailed-code pages, in the page. Reads what kind of page this is, what still
- * stands between it and its submit (an empty required box, an "I'm not a robot" check, the terms), and clicks
- * the page's own sign-in / create-account controls when the background says so. Only ever clicks controls whose
- * wording passes JTF.accounts.intent() (a strict allow-list, never anything on the deny-list), only on pages
- * with no job-application questions, and never inside a CAPTCHA.
+ * JobToFill — sign-in, sign-up and emailed-code pages, and the steps of an application, in the page. Reads what kind
+ * of page this is, what still stands between it and its submit or its next step (an empty required box, an "I'm not
+ * a robot" check, the terms), and clicks the page's own controls when the background says so: sign-in and
+ * create-account controls whose wording passes JTF.accounts.intent(), only on pages with no job-application
+ * questions; on an application, only a section's "Add" for another entry and a step's own "Next", whose wording
+ * passes JTF.accounts.stepIntent(), never anything that sends it. Never inside a CAPTCHA. Nothing else in the
+ * extension clicks a page's buttons.
  */
 (function (root) {
   'use strict';
@@ -388,9 +390,10 @@
   /**
    * Click like a person: on whatever is on top at the control's centre, when that is the control itself (or an
    * overlay that says the same, like Workday's click filter, whose label is a bare "Submit" over the "Sign In" of
-   * its email sign-in form). Anything else covering it (a cookie banner, a dialog) means no click.
+   * its email sign-in form). Anything else covering it (a cookie banner, a dialog) means no click. `same(over)`: does
+   * a control laid over this one say the same (the account flow's own test by default)?
    */
-  function press(el) {
+  function press(el, same) {
     if (el.scrollIntoView) el.scrollIntoView({ block: 'center', inline: 'nearest' });
     const r = el.getBoundingClientRect();
     const rootNode = el.getRootNode();
@@ -399,15 +402,7 @@
     let target = el;
     if (top && top !== el && !el.contains(top)) {
       const over = top.closest(CLICKABLE) || top;
-      const said = A().intent(controlText(over));
-      const own = A().intent(controlText(el));
-      // A plain "Submit" laid over the submit itself: the two share a wrapper.
-      const filter =
-        said === 'only' &&
-        ['signin', 'signup', 'verify'].includes(own) &&
-        !!over.parentElement &&
-        over.parentElement.contains(el);
-      if (!said || (said !== own && !filter)) return { ok: false, reason: 'covered' };
+      if (!(same || sameAccountControl)(over, el)) return { ok: false, reason: 'covered' };
       target = over;
     }
     const view = el.ownerDocument.defaultView;
@@ -426,6 +421,24 @@
     target.dispatchEvent(new view.MouseEvent('mouseup', init));
     target.click();
     return { ok: true };
+  }
+
+  /** Does a control laid over an account control say the same (or a plain "Submit" over it, sharing its wrapper)? */
+  function sameAccountControl(over, el) {
+    const said = A().intent(controlText(over));
+    const own = A().intent(controlText(el));
+    const filter =
+      said === 'only' &&
+      ['signin', 'signup', 'verify'].includes(own) &&
+      !!over.parentElement &&
+      over.parentElement.contains(el);
+    return !!said && (said === own || filter);
+  }
+
+  /** Does a control laid over a step's control say the same (Workday's click filter over "Save and Continue")? */
+  function sameStepControl(over, el) {
+    const said = A().stepIntent(controlText(over));
+    return !!said && said === A().stepIntent(controlText(el));
   }
 
   /**
@@ -458,6 +471,174 @@
     if (A().denied(target.text) || !A().intent(target.text)) return { refused: 'not an allowed control', state: st };
     const res = press(target.el);
     return res.ok ? { clicked: target.text, kind: st.kind, state: st } : { refused: res.reason, state: st };
+  }
+
+  /* ---------------------------------------------------- application steps */
+
+  // "Step 2 of 6", Workday's "current step 2 of 6 My Experience".
+  const STEP_OF = /\b(?:step|page|stage|part)\s+(\d{1,2})\s*(?:of|\/|out of)\s*(\d{1,2})\b/i;
+  const CURRENT_STEP = '[aria-current="step"], [data-automation-id="progressBarActiveStep"]';
+  const STEP_TEXT =
+    'h1, h2, h3, h4, [role="heading"], [role="progressbar"], [class*="step" i], [class*="progress" i], [class*="wizard" i]';
+
+  /** Where a multi-step application is: { step, total, label } (as far as the page says), or null when it shows no steps. */
+  function progress(doc) {
+    const current = Array.from(doc.querySelectorAll(CURRENT_STEP)).find(shown);
+    if (current) {
+      const label = U.cleanLabel(dom().textOf(current), 80);
+      const m = label.match(STEP_OF);
+      if (m) return { step: +m[1], total: +m[2], label };
+      const list = current.closest('ol, ul, [role="list"], [role="tablist"]');
+      const items = list ? Array.from(list.children).filter(shown) : [];
+      const i = items.findIndex((c) => c === current || c.contains(current));
+      return i >= 0 ? { step: i + 1, total: items.length, label } : { label };
+    }
+    for (const el of doc.querySelectorAll(STEP_TEXT)) {
+      if (!shown(el) || el.closest('[data-jtf-ui]')) continue;
+      const text = [el.getAttribute('aria-valuetext'), dom().textOf(el)].filter(Boolean).join(' ').slice(0, 300);
+      const m = text.match(STEP_OF);
+      if (m && +m[1] >= 1 && +m[1] <= +m[2]) return { step: +m[1], total: +m[2], label: U.cleanLabel(m[0], 80) };
+    }
+    return null;
+  }
+
+  /** The step's own way on: a "Next" or "Save and Continue" at the foot of its form (a bare "Continue" on a page of steps). */
+  function nextControl(fields, steps) {
+    const forward = controls(document).filter((c) => {
+      const i = A().stepIntent(c.text);
+      return i === 'next' || (i === 'continue' && steps);
+    });
+    const last = fields.length ? fields[fields.length - 1].el : null;
+    const after = (c) => !!last && !!(last.compareDocumentPosition(c.el) & Node.DOCUMENT_POSITION_FOLLOWING);
+    return forward.filter(after).pop() || forward[forward.length - 1] || null;
+  }
+
+  /**
+   * What stands between an application's step and its next, from a scan: { application, progress, next (the words of
+   * its "Next"), final (the page offers its submit, or is the last step: the person's), blockers (required fields
+   * still empty, the terms, a CAPTCHA), errors, ready, signature (tells the next step from this one) }.
+   */
+  function stepState(scan) {
+    const { fields, results } = scan;
+    const st = progress(document);
+    const out = {
+      application: analyze(scan).kind === 'application',
+      progress: st,
+      next: '',
+      final: false,
+      blockers: [],
+      errors: [],
+      ready: false,
+      signature: [
+        location.href,
+        st ? `${st.step}/${st.total} ${st.label || ''}` : '',
+        ...fields.slice(0, 12).map((f) => JTF.matcher.questionText(f.desc).slice(0, 60)),
+      ].join('|'),
+    };
+    if (!out.application) return out;
+    out.final = controls(document).some((c) => A().submits(c.text)) || (!!st && st.total > 1 && st.step === st.total);
+    const next = nextControl(fields, !!st);
+    out.next = next ? next.text : '';
+    const label = (f) => U.cleanLabel(JTF.matcher.questionText(f.desc), 60) || f.kind;
+    fields.forEach((f, i) => {
+      if (!isRequired(f) || inCaptcha(f.el) || JTF.fill.hasValue(f)) return;
+      out.blockers.push({ kind: results[i] && results[i].type === 'consent' ? 'terms' : 'missing', label: label(f) });
+    });
+    const c = captcha(document);
+    if (c && !c.solved) out.blockers.push({ kind: 'captcha', label: c.kind });
+    out.errors = messages(document, ERRORS).filter((t) => !/^\*?\s*(indicates|denotes) a required/i.test(t));
+    out.ready = !!next && !out.final && !out.blockers.length && !out.errors.length;
+    return out;
+  }
+
+  /**
+   * Click the step's own "Next" (`label`, as stepState() read it), when the step is still ready: everything on it
+   * filled, no error showing, and not the step that submits. { clicked } or { refused }.
+   */
+  function advance(scan, label) {
+    const st = stepState(scan);
+    if (!st.application) return { refused: 'not an application', state: st };
+    if (!st.ready || st.next !== label) return { refused: 'not ready', state: st };
+    const target = nextControl(scan.fields, !!st.progress);
+    if (!target || target.text !== label) return { refused: 'no such control', state: st };
+    // The last word: the wording must still pass, and never one that sends.
+    if (A().denied(target.text) || A().submits(target.text) || !A().stepIntent(target.text))
+      return { refused: 'not an allowed control', state: st };
+    const res = press(target.el, sameStepControl);
+    return res.ok ? { clicked: target.text, state: st } : { refused: res.reason, state: st };
+  }
+
+  // The sections that hold your education and your jobs, one entry after another, by their headings.
+  const ENTRY_SECTIONS = {
+    edu: /^(?:education|education history|academic history|academic background|education and qualifications|qualifications)$/,
+    exp: /^(?:work experience|experience|employment|employment history|work history|professional experience|previous employment|career history)$/,
+  };
+  const SECTION_HEADING = 'h1, h2, h3, h4, h5, h6, [role="heading"], legend';
+  const DIALOGS = '[role="dialog"], [role="alertdialog"], dialog[open], [aria-modal="true"]';
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  /** The section headed "Education" or "Work Experience" (`kind` edu / exp) that has its own "Add": { el } or null. */
+  function entrySection(kind) {
+    const other = kind === 'edu' ? ENTRY_SECTIONS.exp : ENTRY_SECTIONS.edu;
+    for (const h of document.querySelectorAll(SECTION_HEADING)) {
+      if (!shown(h) || !ENTRY_SECTIONS[kind].test(U.normalize(dom().textOf(h)))) continue;
+      for (let a = h.parentElement, i = 0; a && a !== document.body && i < 4; a = a.parentElement, i++) {
+        // Never as far as the page around both sections.
+        const heads = Array.from(a.querySelectorAll(SECTION_HEADING)).filter(shown);
+        if (heads.some((x) => other.test(U.normalize(dom().textOf(x))))) break;
+        if (controls(a).some((c) => A().stepIntent(c.text) === 'add')) return { el: a };
+      }
+    }
+    return null;
+  }
+
+  /** How many entries a section holds: the distinct entries its fields are planned into. */
+  function entriesIn(section, kind, scan) {
+    const seen = new Set();
+    scan.fields.forEach((f, i) => {
+      const r = scan.results[i];
+      if (section.el.contains(f.el) && r && r.type && r.type.startsWith(kind + '.')) seen.add(r.index || 0);
+    });
+    return seen.size;
+  }
+
+  /**
+   * Make room for each of your education and job entries: in a section headed "Education" or "Work Experience" that
+   * holds fewer entries than your profile has (Workday's My Experience starts with none), click its own "Add" ("Add
+   * Another") once per missing entry, while each click adds one. A button that opens a dialog instead is closed again
+   * and left alone. `scanner()` reads the page afresh. Returns how many entries were added.
+   */
+  async function addEntries(profile, scanner) {
+    const want = {
+      edu: (profile.education || []).filter((e) => e && (e.school || e.degree)).length,
+      exp: (profile.experience || []).filter((e) => e && (e.company || e.title)).length,
+    };
+    let added = 0;
+    for (const kind of ['edu', 'exp']) {
+      for (let i = 0; i < 6; i++) {
+        const section = entrySection(kind);
+        if (!section) break;
+        const before = entriesIn(section, kind, scanner());
+        if (before >= want[kind]) break;
+        const add = controls(section.el)
+          .filter((c) => A().stepIntent(c.text) === 'add' && !A().denied(c.text))
+          .pop();
+        const dialogs = document.querySelectorAll(DIALOGS).length;
+        if (!add || !press(add.el, sameStepControl).ok) break;
+        let grew = false;
+        for (let waited = 0; waited < 2500 && !grew; waited += 250) {
+          await sleep(250);
+          const now = entrySection(kind);
+          grew = !!now && entriesIn(now, kind, scanner()) > before;
+        }
+        if (!grew) {
+          if (document.querySelectorAll(DIALOGS).length > dialogs) JTF.fill.closeDialogs(document, dialogs);
+          break;
+        }
+        added++;
+      }
+    }
+    return added;
   }
 
   /* ------------------------------------------------------------- waiting */
@@ -517,6 +698,9 @@
   JTF.flow = {
     analyze,
     click,
+    stepState,
+    advance,
+    addEntries,
     wait,
     stopWait,
     captcha,

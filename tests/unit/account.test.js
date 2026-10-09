@@ -72,6 +72,37 @@ test('the deny-list: applications, money, deleting, other sign-in services, rese
   assert.equal(accounts.denied('Create Account'), false);
 });
 
+test('on an application: a step’s own "Next" and a section’s "Add", never anything that sends it', () => {
+  const step = (t) => accounts.stepIntent(t);
+  for (const t of ['Next', 'Next >', 'Next Step', 'Save and Continue', 'Save & Continue', 'Continue to next step'])
+    assert.equal(step(t), 'next', t);
+  // A bare "Continue": only on a page that shows its steps (content/account.js decides).
+  assert.equal(step('Continue'), 'continue');
+  assert.equal(step('Proceed'), 'continue');
+  for (const t of ['Add', 'Add Another', '+ Add another education', 'Add work experience'])
+    assert.equal(step(t), 'add', t);
+  for (const t of [
+    'Submit',
+    'Submit Application',
+    'Review and Submit',
+    'Continue to review',
+    'Save and continue application',
+    'Send application',
+    'Finish',
+    'Complete',
+    'I agree',
+    'Apply',
+    'Upload',
+    'Add Website',
+    'Next: Review',
+  ])
+    assert.equal(step(t), null, t);
+  for (const t of ['Submit', 'Submit Application', 'Send application', 'Finish', 'Apply now'])
+    assert.equal(accounts.submits(t), true, t);
+  for (const t of ['Save and Continue', 'Next', 'Back', 'Apply with LinkedIn'])
+    assert.equal(accounts.submits(t), false, t);
+});
+
 test('what a page says after a submit', () => {
   const exists = [
     'An account with this email address already exists. Sign in',

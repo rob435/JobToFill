@@ -237,7 +237,7 @@ test('Greenhouse job board with real react-select: terms, multi-select, checklis
   }
 });
 
-test('right to work where the job is: the page’s location line, else the job found for the tab', async () => {
+test('right to work where the job is: the page’s location line or its own words, else the job found for the tab', async () => {
   const original = await h.profile();
   await h.setProfile({
     personal: { nationality: 'British' },
@@ -254,6 +254,12 @@ test('right to work where the job is: the page’s location line, else the job f
     assert.equal(await checked(page, '#us-no'), true, 'never “Yes, but I will need visa sponsorship”');
     assert.equal(await selectedText(page, '#q_london'), 'No', 'Glasgow is not London');
     await page.close();
+    // No location line, but the posting says "This role is based in our London office.": the UK answers.
+    const said = await h.open('work-rights.html?said=1');
+    await h.fill(said);
+    assert.equal(await selectedText(said, '#q_based'), 'Yes');
+    assert.equal(await selectedText(said, '#q_sponsor'), 'No');
+    await said.close();
     // The job found for this tab before (Quick apply, AI answers) says London: the UK answers.
     const again = await h.open('work-rights.html');
     const tabId = await h.tabId(again);

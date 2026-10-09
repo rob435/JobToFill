@@ -29,5 +29,14 @@
     <div class="field"><label for="q_london">Are you located in London?</label>
       <select id="q_london"><option value="">--</option><option>Yes</option><option>No</option></select></div>
   </form>
+  <script>
+    // ?said=1: no location line, only the posting's own words (Isio's, on Teamtailor).
+    if (new URLSearchParams(location.search).has('said')) {
+      document.querySelector('.job__location').remove();
+      const p = document.createElement('p');
+      p.innerHTML = '<span>This role is based in our </span><a href="#offices"><span>London </span></a><span>office.</span>';
+      document.querySelector('.job__title').after(p);
+    }
+  </script>
 </body>
 </html>

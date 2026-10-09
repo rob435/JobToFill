@@ -1830,9 +1830,10 @@
       switch (kind) {
         case 'select': {
           // A list that takes several (<select multiple>) gets every one of your answers it offers.
+          const picked = JTF.decide.picks(desc, v);
+          if (!picked.length) return { status: 'nomatch' };
           if (el.multiple && (v.kind === 'list' || v.many)) {
-            const picks = M().matchAll(desc.options, v);
-            if (!picks.length) return { status: 'nomatch' };
+            const picks = picked;
             history.push({ el, kind, prev: el.selectedIndex, prevMany: Array.from(el.options, (o) => o.selected) });
             focusIn(el);
             picks.forEach((i) => (el.options[i].selected = true));
@@ -1841,8 +1842,7 @@
             focusOut(el);
             return { status: 'filled', check: { idx: el.selectedIndex, picks } };
           }
-          const idx = M().matchOption(desc.options, v);
-          if (idx < 0) return { status: 'nomatch' };
+          const idx = picked[0];
           history.push({ el, kind, prev: el.selectedIndex });
           // Picked as a person does, focused and left: a form that checks on blur (Formik, react-hook-form's
           // "onBlur") then drops its "Select your degree".
@@ -1854,8 +1854,8 @@
           return { status: 'filled', check: { idx } };
         }
         case 'radio': {
-          const idx = M().matchOption(desc.options, v);
-          if (idx < 0) return { status: 'nomatch' };
+          const [idx] = JTF.decide.picks(desc, v);
+          if (idx == null) return { status: 'nomatch' };
           // Already your answer (a page that writes the checked attribute makes every choice look like its default).
           if (isChecked(members[idx])) return { status: 'skipped', reason: 'has value' };
           history.push({ el, kind, members, prev: members.map(isChecked) });
@@ -1866,13 +1866,7 @@
           // A list ("London, New York") ticks every match; a single answer ticks its one option; an
           // acknowledgement ticks each statement you agree to ("…you consent to our privacy statement").
           // Sanctions statements and interview slots tick each one that is true of you (or "None of the above").
-          let picks = v.kind === 'list' || v.many ? M().matchAll(desc.options, v) : [];
-          if (v.consent)
-            picks = desc.options.map((o, i) => (JTF.fields.isAcknowledgement(o.text) ? i : -1)).filter((i) => i >= 0);
-          if (!picks.length && !v.many) {
-            const idx = M().matchOption(desc.options, v);
-            picks = idx >= 0 ? [idx] : M().matchAll(desc.options, v);
-          }
+          const picks = JTF.decide.picks(desc, v);
           if (!picks.length) return { status: 'nomatch' };
           history.push({ el, kind, members, prev: members.map(isChecked) });
           for (const i of picks) setChecked(members[i], true);
@@ -1880,8 +1874,7 @@
         }
         case 'checkbox': {
           // One option of a checklist ("London" under "Which offices…?"), or a yes/no box.
-          const tick = v.kind === 'list' || v.many ? M().matchAll(desc.options, v).length > 0 : v.canonical === 'yes';
-          if (!tick) return { status: 'skipped', reason: 'not one of your answers' };
+          if (!JTF.decide.picks(desc, v).length) return { status: 'skipped', reason: 'not one of your answers' };
           history.push({ el, kind, prev: isChecked(el) });
           setChecked(el, true);
           return { status: 'filled', check: { targets: [el] } };

@@ -95,6 +95,11 @@ const TOGGLES = [
     'Sign in and create job-portal accounts for me',
     'On a sign-in or sign-up page you fill, JobToFill clicks the page’s own “Sign in” or “Create account” (ticking the sign-up form’s terms box), waits for you to solve any “I’m not a robot” check, and fills the code emailed to you. It never submits a job application.',
   ],
+  [
+    'autoAdvance',
+    'Move through multi-step applications for me',
+    'On an application in steps (Workday, Oracle, Phenom…), JobToFill clicks the step’s own “Next” or “Save and Continue” once everything on it is filled, then fills the next step. It stops at anything left for you (a required box, the terms, an error) and before the step that submits: that is always yours. Each step is saved with the employer’s site as you go, as when you click “Next” yourself.',
+  ],
 ];
 
 export async function renderSettings() {

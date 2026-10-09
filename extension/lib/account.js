@@ -5,8 +5,11 @@
  *
  * Signing in and creating accounts for you (Settings › "Sign in and create job-portal accounts for me") only
  * ever clicks what passes intent() here: a strict allow-list of sign-in / sign-up wording, never anything on
- * the deny-list (apply, submit, send, withdraw, delete, pay, "Sign in with Google"…). Pure functions: used by
- * the content scripts, the background and the unit tests. Texts are JTF.util.normalize()d first.
+ * the deny-list (apply, submit, send, withdraw, delete, pay, "Sign in with Google"…). On an application, the only
+ * clicks are those stepIntent() allows: a section's "Add" for another entry, and (Settings › "Move through
+ * multi-step applications for me") a step's own "Next" or "Save and Continue", never anything that sends it.
+ * Pure functions: used by the content scripts, the background and the unit tests. Texts are JTF.util.normalize()d
+ * first.
  */
 (function (root) {
   'use strict';
@@ -67,6 +70,37 @@
     return null;
   }
 
+  // A multi-step application's own way on to its next step: only these words ("Save & Continue" reads "save continue").
+  const NEXT_STEP =
+    /^(?:next|next step|next page|next section|save (?:and )?(?:continue|next|proceed)|save (?:and )?go to (?:the )?next (?:step|page)|continue to (?:the )?next (?:step|page|section)|go to (?:the )?next (?:step|page|section))$/;
+  // A bare "Continue" or "Proceed": only on a page that shows it is one step of several (the content side checks).
+  const NEXT_PLAIN = /^(?:continue|proceed)$/;
+  // Never on the way to the next step: anything that sends, finishes, agrees or pays.
+  const SENDS = /\b(?:submit|send|finish|complete|confirm|review|done|agree|accept|sign|pay|withdraw)\b/;
+  // A section's own "Add" for another entry: Workday's "Add" and "Add Another", Greenhouse's "+ Add another education".
+  const ADD_ENTRY =
+    /^add(?: another| more| new| an?)?(?: (?:work experience|experience|job|position|employment|role|education|school|degree|qualification|entry))?$/;
+  // What sends an application ("Submit", "Submit Application", "Send application", "Finish"): its last step.
+  const SUBMITS =
+    /^(?:submit|send|finish|complete)\b|\bsubmit\b|\bsend (?:my |your |the )?application\b|^apply(?: now)?$/;
+
+  /**
+   * What clicking a control on an application would do, for the clicks allowed there: 'next' (a step's own "Next",
+   * "Save and Continue"), 'continue' (a bare "Continue" or "Proceed": only on a page that is one step of several) or
+   * 'add' (a section's "Add" for another entry). Null for anything else, and always for what sends it.
+   */
+  function stepIntent(text) {
+    const t = norm(text).slice(0, 80);
+    if (!t || NEVER.test(t) || SENDS.test(t)) return null;
+    if (NEXT_STEP.test(t)) return 'next';
+    if (NEXT_PLAIN.test(t)) return 'continue';
+    if (ADD_ENTRY.test(t)) return 'add';
+    return null;
+  }
+
+  /** Does this control send the application ("Submit", "Send application"): the step that is the person's? */
+  const submits = (text) => SUBMITS.test(norm(text).slice(0, 80));
+
   /** Does this text name a control that must never be clicked (for reports and the tests)? */
   function denied(text) {
     const t = norm(text);
@@ -125,7 +159,7 @@
     return '';
   }
 
-  const accounts = { intent, denied, readMessages, isVerifyNotice, isCaptchaFrame, portal };
+  const accounts = { intent, stepIntent, submits, denied, readMessages, isVerifyNotice, isCaptchaFrame, portal };
   JTF.accounts = accounts;
   if (typeof module === 'object' && module.exports) module.exports = accounts;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

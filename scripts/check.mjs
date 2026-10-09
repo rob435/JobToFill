@@ -56,6 +56,31 @@ if (JSON.stringify([...imported, manifest.background.service_worker]) !== JSON.s
 for (const f of referenced)
   if (!(await exists(path.join(ext, f)))) problems.push(`missing file referenced by manifest/background: ${f}`);
 
+// lib/fields.js is put together from its parts (lib/fields-*.js), which load just before it in the order importScripts()
+// lists them, wherever it loads: background.js's two lists, the manifest and every extension page.
+const parts = imported.filter((f) => /^lib\/fields-[\w-]+\.js$/.test(f));
+const onDisk = files
+  .map((f) => path.relative(ext, f).split(path.sep).join('/'))
+  .filter((f) => /^lib\/fields-[\w-]+\.js$/.test(f));
+for (const f of onDisk)
+  if (!parts.includes(f)) problems.push(`${f} is not loaded: list it in importScripts() in background.js`);
+const contentFiles = [...bg.match(/const CONTENT_FILES = \[([^\]]*)\]/)[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+const loads = { 'background.js CONTENT_FILES': contentFiles, 'manifest background.scripts': listed };
+for (const html of files.filter((x) => x.endsWith('.html'))) {
+  const src = await readFile(html, 'utf8');
+  loads[path.relative(ext, html)] = [...src.matchAll(/<script src="([^"]+)"/g)].map((m) =>
+    path
+      .relative(ext, path.resolve(path.dirname(html), m[1]))
+      .split(path.sep)
+      .join('/'),
+  );
+}
+for (const [where, list] of Object.entries(loads)) {
+  const at = list.indexOf('lib/fields.js');
+  if (at >= 0 && JSON.stringify(list.slice(at - parts.length, at)) !== JSON.stringify(parts))
+    problems.push(`${where} must load ${parts.join(', ')} just before lib/fields.js`);
+}
+
 for (const html of files.filter((x) => x.endsWith('.html'))) {
   const src = await readFile(html, 'utf8');
   for (const m of src.matchAll(/(?:src|href)="([^"#:]+)"/g)) {
