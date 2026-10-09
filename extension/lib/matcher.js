@@ -74,6 +74,7 @@
     'job.over18',
     'exp.current',
     'consent',
+    'optIn',
     'edu.end', // "I confirm that I will graduate in 2027": ticked only when your date says so
     'job.locations',
     'skills',
@@ -665,6 +666,32 @@
         if (r && r.type === 'file.resume' && !namesCv(descs[i], 0))
           Object.assign(r, { type: null, dropped: 'file.resume' });
       });
+
+    // A bare "Title" with no job's fields around it (Cambridge Associates', between the uploads and the address) is
+    // Mr / Ms; after "Company" (T Capital's) it is the job's.
+    results.forEach((r, i) => {
+      if (!r || r.type !== 'exp.title' || norm(questionText(descs[i])) !== 'title') return;
+      const near = results
+        .slice(Math.max(0, i - 2), i + 3)
+        .some((x) => x && x !== r && x.type && (/^exp\./.test(x.type) || /^(job\.currentCompany|gen\.)/.test(x.type)));
+      if (!near) Object.assign(r, { type: 'name.prefix', dropped: 'exp.title' });
+    });
+
+    // Appian's "Primary Mailing Address": one box for the whole address when the form has no city or postcode box; not
+    // its region and country when it asks for those apart (Cambridge Associates' "Country", "District / Region").
+    if (!results.some((r) => r && ['address.city', 'address.postalCode', 'address.full'].includes(r.type))) {
+      const apart = results.some((r) => r && ['address.country', 'address.state'].includes(r.type));
+      results.forEach((r, i) => {
+        const q = norm(questionText(descs[i]));
+        if (
+          r &&
+          r.type === 'address.line1' &&
+          descs[i].kind === 'text' &&
+          !/\b(line|street|house|building|flat|1)\b/.test(q)
+        )
+          r.part = apart ? 'withCity' : 'oneLine';
+      });
+    }
 
     const state = {
       edu: { index: -1, seen: new Set(), run: new Set() },

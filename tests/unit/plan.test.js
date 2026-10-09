@@ -4186,3 +4186,100 @@ test('niche-form dry runs: "If so" in the same box, N/A unless Other, "or type N
   p.job.locations = 'London, Manchester';
   assert.equal(choose(p, 'job.locations', second, ashton, { kind: 'radio' }), 'Manchester');
 });
+
+test('niche-form dry runs: opt-ins left alone, one-box addresses, "Known As", a bare "Title", and the smaller gaps', () => {
+  const p = computingScientist();
+  Object.assign(p.address, {
+    line1: '12 Gower Street',
+    city: 'London',
+    state: '',
+    postalCode: 'WC1E 6BT',
+    country: 'United Kingdom',
+  });
+  p.education[0] = Object.assign(p.education[0], { field: 'Economics', location: 'London, UK' });
+  p.languages = 'English, French';
+  p.personal.firstName = 'Robin';
+  const typeOf = (q, kind = 'radio', list) =>
+    (
+      matcher.classify(
+        desc(
+          { question: q, label: kind === 'checkbox' ? q : '' },
+          { kind, options: list ? opts(...list) : kind === 'checkbox' ? opts(q) : null },
+        ),
+      ) || {}
+    ).type || null;
+  // Opt-ins: recognised (so never sent to the AI), and nothing to fill.
+  for (const [q, kind, list] of [
+    ['Yes, Arma Partners can add me to the talent pool and contact me about future job opportunities.', 'checkbox'],
+    ['Would you like to receive job alerts from us?', 'radio', ['Yes', 'No']],
+    ['Sms Consent', 'select', ['Yes', 'No']],
+    ['Do you agree to be contacted via WhatsApp?', 'combobox', ['Yes', 'No']],
+    ['You agree to receive information regarding FDM news and events.', 'checkbox'],
+  ])
+    assert.equal(typeOf(q, kind, list), 'optIn', q);
+  assert.equal(fields.resolve('optIn', p, {}), null);
+  assert.ok(fields.DEFS.optIn.leave);
+  assert.equal(
+    typeOf('Are you interested in other roles at Acme?', 'radio', ['Yes', 'No']),
+    null,
+    'a question, not an opt-in',
+  );
+  // DV Trading's "Terms & Conditions" ("&" is dropped from the words) is an acknowledgement.
+  assert.equal(typeOf('Terms & Conditions', 'combobox', ['I agree', 'I disagree']), 'consent');
+  // The form's only address box gets all of it; up to the postcode when the region and country are asked apart.
+  const fill = (page) => fillPage(page, p);
+  assert.deepEqual(fill([desc('First Name'), desc('Primary Mailing Address')]), [
+    p.personal.firstName,
+    '12 Gower Street, London, WC1E 6BT, United Kingdom',
+  ]);
+  assert.deepEqual(
+    fill([desc('Address'), desc({ label: 'Country' }, { kind: 'select', options: opts('United Kingdom', 'France') })]),
+    ['12 Gower Street, London WC1E 6BT', 'United Kingdom'],
+  );
+  assert.deepEqual(fill([desc('Address'), desc('City'), desc('Post Code')]), ['12 Gower Street', 'London', 'WC1E 6BT']);
+  // OC&C's "Known As": your (legal) first name. Cambridge Associates' lone "Title": Mr / Ms; T Capital's after
+  // "Company": the job's.
+  assert.equal(ask(p, 'name.preferred', 'Known As', { kind: 'text' }).text, p.personal.firstName);
+  const lone = matcher.plan(
+    [desc({ label: 'Other Attachment' }, { kind: 'file' }), desc('Title'), desc('Address')],
+    p,
+  ).results;
+  assert.equal(lone[1].type, 'name.prefix');
+  const job = matcher.plan([desc('Company'), desc('Title'), desc('Start date')], p).results;
+  assert.equal(job[1].type, 'exp.title');
+  // Teamtailor's "Email address without domain" is a colleague's, not yours.
+  assert.notEqual(typeOf('Email address without domain', 'text'), 'email');
+  // Aurora, BBB, FDM, Isio, Capgemini, Appian, Menzies.
+  const yn = ['Yes', 'No'];
+  const answer = (q, kind = 'radio') => {
+    const t = typeOf(q, kind, yn);
+    return t && choose(p, t, q, yn, { kind, today: TODAY });
+  };
+  assert.equal(answer('Please confirm that you speak English to a professional level (native or C1 or above)'), 'Yes');
+  assert.equal(answer('Are you currently studying or have you completed your most recent degree in the UK?'), 'Yes');
+  assert.equal(answer('Are you currently studying or completing a course of study at degree level or above?'), 'Yes');
+  assert.equal(answer('Are you currently or have you ever attended university?'), 'Yes');
+  assert.equal(answer('Are you studying a MSc or other post graduate qualification?'), 'No');
+  assert.equal(
+    answer(
+      'Are you currently studying for, or have you completed, a postgraduate qualification other than a masters degree?',
+    ),
+    'No',
+  );
+  assert.equal(
+    answer(
+      'Are you currently pursuing a Major in one of the following disciplines: Computer Science or Computer Engineering',
+      'combobox',
+    ),
+    'No',
+  );
+  assert.equal(typeOf('If successful, where will you live during your employment?', 'text'), 'location');
+  assert.equal(
+    typeOf(
+      'Have you ever been in the care of a local authority at any stage in your life, regardless of the duration?',
+      'radio',
+      yn,
+    ),
+    'eeo.careLeaver',
+  );
+});

@@ -104,7 +104,7 @@ const FORMS = {
           f('personal.middleName', 'Middle name', { autocomplete: 'additional-name' }),
           f('personal.lastName', 'Last name', { autocomplete: 'family-name' }),
           f('personal.preferredName', 'Preferred name', {
-            hint: 'For “preferred name” boxes. Leave blank to use your first name.',
+            hint: 'Signs your cover letters. Forms always get your legal name, so “Known as” boxes get your first name.',
           }),
           f('personal.pronouns', 'Pronouns', { placeholder: 'e.g. she/her' }),
         ],

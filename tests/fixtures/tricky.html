@@ -12,7 +12,14 @@
   </style>
 </head>
 <body>
+  <main>
   <h1>Apply now</h1>
+  <h2>Your details</h2>
+  <!-- A script and a hidden error template between the heading and the form (Trakstar's reCAPTCHA set-up, Eploy's
+       "already registered" message): not help anyone reads -->
+  <script>window.onSubmit = function () { /* grecaptcha.ready(function () { … }) */ };</script>
+  <div class="red" style="display:none">Sorry, the email address you have supplied is already registered in our records.</div>
+  <p>Fields marked * are required.</p>
   <form id="f">
     <div class="q"><label for="pre">First name</label><input id="pre" value="Augusta"></div>
 
@@ -64,5 +71,6 @@
     <div class="q"><label for="subject">Degree subject</label><select id="subject"><option value="">Select…</option><option>Computer Science</option><option>Mathematics</option><option>Other</option></select></div>
     <div class="q"><label for="subject_other">If you selected 'Other' for the above question, please specify here or write N/A if you selected another answer</label><input id="subject_other"></div>
   </form>
+  </main>
 </body>
 </html>

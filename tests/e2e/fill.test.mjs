@@ -522,6 +522,18 @@ test('tricky page: honeypots, existing values, custom radios, checkbox lists, ra
   assert.equal(await value(page, '#dob'), '1990-12-10');
   assert.equal(await value(page, '#start'), '2026-11-02');
   assert.equal(await value(page, '#fav'), '');
+  // The help over the form is what a person reads there: no script source, no hidden error template.
+  const help = await h.bg(
+    async (id) => {
+      const [res] = await globalThis.JTF.api.scripting.executeScript({
+        target: { tabId: id },
+        func: () => globalThis.JTF.dom.collect(document).find((f) => f.el.id === 'lastname').desc.signals.sectionHelp,
+      });
+      return res.result;
+    },
+    await h.tabId(page),
+  );
+  assert.equal(help, 'Fields marked * are required.');
   // "…or write N/A if you selected another answer" after a list on Mathematics.
   assert.equal(await selectedText(page, '#subject'), 'Mathematics');
   assert.equal(await value(page, '#subject_other'), 'N/A');
@@ -894,6 +906,43 @@ test('Oracle-style country comboboxes and nickname boxes: aliases, mouse-only an
     assert.equal(await value(page, '#preferred-name'), 'Ada Lovelace', 'legal name, never the profile nickname');
     assert.equal(await value(page, '#preferred-full'), 'Ada Lovelace');
     assert.equal(await value(page, '#legal-first'), 'Ada');
+    await page.close();
+  } finally {
+    await h.setProfile(original);
+  }
+});
+
+test('Microsoft Forms: questions read without their hidden "Single line text." notes; a M/d/yyyy date picker', async () => {
+  const original = await h.profile();
+  await h.setProfile({
+    personal: { firstName: 'Robin', lastName: 'Li', nationality: 'British' },
+    contact: { email: 'robin@example.com' },
+    address: { city: 'Glasgow', country: 'United Kingdom' },
+    job: { authorized: 'Yes', sponsorship: 'No', startDate: '2027-06-28' },
+  });
+  try {
+    const page = await h.open('msforms.html');
+    const r = await h.fill(page);
+    assert.equal(r.error, undefined);
+    const s = JSON.parse(await text(page, '#state'));
+    assert.deepEqual(s, { name: 'Robin Li', email: 'robin@example.com', rightToWork: 'Yes', start: '2027-06-28' });
+    assert.equal(await value(page, '#DatePicker0-label'), '6/28/2027');
+    const questions = await h.bg(
+      async (id) => {
+        const [res] = await globalThis.JTF.api.scripting.executeScript({
+          target: { tabId: id },
+          func: () => globalThis.JTF.dom.collect(document).map((f) => f.desc.signals.label || f.desc.signals.question),
+        });
+        return res.result;
+      },
+      await h.tabId(page),
+    );
+    assert.deepEqual(questions, [
+      '1. Full Name',
+      '2. Personal Email',
+      '3. Do you currently have a right to work in the UK?',
+      '4. Earliest Start Data avaliable',
+    ]);
     await page.close();
   } finally {
     await h.setProfile(original);

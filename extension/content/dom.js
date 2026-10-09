@@ -259,6 +259,12 @@
    * The text a person sees: not what CSS hides ("Select an option" once a dropdown shows its choice) or keeps for
    * screen readers only (a 1px clipped "Select an option").
    */
+  /** Not display: none nor visibility: hidden (whatever its size). */
+  function shown(node) {
+    const style = node.ownerDocument.defaultView.getComputedStyle(node);
+    return style.display !== 'none' && style.visibility !== 'hidden';
+  }
+
   function visibleText(node) {
     const win = node.ownerDocument.defaultView;
     return textOf(node, (n) => {
@@ -284,10 +290,15 @@
   /** `outside`: only what lies outside the control: select2's combobox is "labelled" by its own selection ("Italy"). */
   function explicitLabel(el, outside) {
     const parts = [];
+    const notes = [];
     for (const id of (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)) {
       const ref = byId(el, id);
-      if (ref && ref !== el && !(outside && el.contains(ref)) && !isStatus(ref)) parts.push(textOf(ref));
+      if (!ref || ref === el || (outside && el.contains(ref)) || isStatus(ref)) continue;
+      // A note hidden from view that the label points at too (Microsoft Forms' "Single line text." after each
+      // question) only counts when nothing else names the field.
+      (ref.getAttribute('aria-hidden') === 'true' ? notes : parts).push(textOf(ref));
     }
+    if (!parts.some(Boolean)) parts.push(...notes);
     if (!parts.some(Boolean)) for (const l of labelsOf(el)) if (!machineLabel(l, el)) parts.push(textOf(l));
     return U.cleanLabel(parts.filter(Boolean).join(' '));
   }
@@ -625,7 +636,16 @@
           parts = [head && all.includes(head) ? all.slice(all.lastIndexOf(head) + head.length) : ''];
           open = true;
         } else if (field || c.matches('label') || c.querySelector('label')) open = false;
-        else if (open && !c.matches(STEP_BAR) && !c.querySelector(STEP_BAR)) parts.push(textOf(c));
+        // What a person reads: never a script's source (Trakstar's reCAPTCHA set-up) or a hidden error template
+        // (Eploy's "Sorry, the email address you have supplied is already registered…").
+        else if (
+          open &&
+          !SKIP_TEXT_TAGS.has(c.localName) &&
+          shown(c) &&
+          !c.matches(STEP_BAR) &&
+          !c.querySelector(STEP_BAR)
+        )
+          parts.push(visibleText(c));
       }
       const t = parts ? U.cleanLabel(parts.join(' '), 400) : '';
       if (t) return t;
