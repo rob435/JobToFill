@@ -3,8 +3,9 @@
  * person sees here, in reading order and through open shadow roots. Landmarks, headings and text; every field the
  * fill scans (one entry per JTF.dom.collect() field, in its order) with its question, options, state, what the rules
  * take it for and what the last fill did; the buttons that act on the form; and the frames. Injected only when a map
- * is asked for, never with a fill, and it only reads the page: no clicks, focus, scrolling or menus opened. marks()
- * draws the refs on the page for a screenshot.
+ * is asked for, never with a fill, and a map only reads the page: no clicks, focus, scrolling or menus opened. marks()
+ * draws the refs on the page for a screenshot; reveal() scrolls one to the middle and outlines it for a moment, when
+ * the person clicks its line in the page map viewer (map/).
  */
 (function (root) {
   'use strict';
@@ -816,7 +817,8 @@
       if (last.reason) out.fill.reason = quote(String(last.reason));
     }
     out.path = w.ident(path);
-    w.refs.set(out.ref, { anchor: anchors[0] || null, status: out.rules.status });
+    // The control too: a field with nothing showing is still there (hidden), not gone, when it is revealed.
+    w.refs.set(out.ref, { anchor: anchors[0] || null, anchors, el, status: out.rules.status });
     return out;
   }
 
@@ -990,7 +992,7 @@
 
   /* ----------------------------------------------------------------- marks */
 
-  const state = { last: null, marks: null };
+  const state = { last: null, marks: null, flash: null };
   // Set-of-marks tags: by what the rules make of a field (as the inspect labels), buttons and frames apart.
   // prettier-ignore
   const MARK_COLOURS = {
@@ -1067,6 +1069,102 @@
     return item && item.anchor && item.anchor.isConnected ? item.anchor : null;
   }
 
+  /* ---------------------------------------------------------------- reveal */
+
+  // How long a revealed field stays outlined, and the fade at the end of it.
+  const FLASH_MS = 2000;
+  const FADE_MS = 450;
+  const RING = {
+    position: 'fixed',
+    boxSizing: 'border-box',
+    border: '3px solid #6a4bff',
+    borderRadius: '6px',
+    background: 'rgba(106, 75, 255, 0.12)',
+    boxShadow: '0 0 0 4px rgba(106, 75, 255, 0.28), 0 2px 12px rgba(20, 16, 40, 0.25)',
+    pointerEvents: 'none',
+    opacity: '1',
+    transition: `opacity ${FADE_MS}ms ease-out`,
+  };
+
+  /** Take the last reveal's outline off the page. */
+  function unflash() {
+    if (state.flash) state.flash.stop();
+  }
+
+  /**
+   * Outline these elements for FLASH_MS: a ring drawn over the page (fixed, in a closed shadow root) that follows them
+   * while the page scrolls, then fades and is removed. Nothing on the page moves or changes.
+   */
+  function flash(els) {
+    unflash();
+    const doc = els[0].ownerDocument;
+    const win = doc.defaultView;
+    const host = doc.createElement('jobtofill-reveal');
+    host.setAttribute('data-jtf-ui', '');
+    Object.assign(host.style, HOST, { position: 'fixed' });
+    const ring = doc.createElement('div');
+    Object.assign(ring.style, RING);
+    host.attachShadow({ mode: 'closed' }).append(ring);
+    // Inside an open modal <dialog> (the top layer), so the ring isn't drawn under it.
+    const modal = els[0].closest && els[0].closest('dialog[open]');
+    (modal || doc.documentElement).append(host);
+    let raf = 0;
+    const place = () => {
+      const rects = els
+        .filter((el) => el.isConnected)
+        .map((el) => el.getBoundingClientRect())
+        .filter((r) => r.width || r.height);
+      if (rects.length) {
+        const pad = 4;
+        const left = Math.min(...rects.map((r) => r.left)) - pad;
+        const top = Math.min(...rects.map((r) => r.top)) - pad;
+        // Where "fixed" starts from: the screen, or a transformed ancestor's corner (a dialog centred by a transform).
+        const origin = host.getBoundingClientRect();
+        ring.style.left = left - origin.left + 'px';
+        ring.style.top = top - origin.top + 'px';
+        ring.style.width = Math.max(...rects.map((r) => r.right)) + pad - left + 'px';
+        ring.style.height = Math.max(...rects.map((r) => r.bottom)) + pad - top + 'px';
+      }
+      raf = win.requestAnimationFrame(place);
+    };
+    place();
+    const fade = win.setTimeout(() => (ring.style.opacity = '0'), FLASH_MS - FADE_MS);
+    // A timer, not the animation frames, ends it: those stop while the tab is in the background.
+    const end = win.setTimeout(stop, FLASH_MS);
+    function stop() {
+      win.cancelAnimationFrame(raf);
+      win.clearTimeout(fade);
+      win.clearTimeout(end);
+      host.remove();
+      if (state.flash && state.flash.host === host) state.flash = null;
+    }
+    state.flash = { host, stop };
+  }
+
+  /**
+   * Show a ref of this frame's last map on the page (the page map viewer's click on its line): scrolled to the middle
+   * and outlined for a moment. { ok }, or { ok: false, reason }: 'gone' (not on the page any more: it changed since
+   * the map) or 'hidden' (there, but nothing of it shows: a closed section, a later step). opts.dry: only look.
+   */
+  function reveal(ref, opts) {
+    const item = state.last && state.last.refs.get(ref);
+    const target = item && (item.el || item.anchor);
+    if (!target || !target.isConnected) return { ok: false, reason: 'gone' };
+    const shows = (el) => {
+      if (!el || !el.isConnected) return false;
+      const r = el.getBoundingClientRect();
+      return !!(r.width || r.height);
+    };
+    const els = (item.anchors || [item.anchor]).filter(shows);
+    if (!els.length) return { ok: false, reason: 'hidden' };
+    if (opts && opts.dry) return { ok: true };
+    const win = els[0].ownerDocument.defaultView;
+    const still = win.matchMedia && win.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    els[0].scrollIntoView({ block: 'center', inline: 'nearest', behavior: still ? 'auto' : 'smooth' });
+    flash(els);
+    return { ok: true };
+  }
+
   /** This frame's map for the background (a CAPTCHA's frame is left out). */
   function pageMap(opts) {
     const href = location.href;
@@ -1085,8 +1183,9 @@
     if (!api || api.pageMap) return;
     api.pageMap = pageMap;
     api.pageMapMarks = marks;
+    api.pageMapReveal = reveal;
   }
 
-  Object.assign(PM, { capture, marks, element, register });
+  Object.assign(PM, { capture, marks, element, reveal, register });
   register();
 })(typeof globalThis !== 'undefined' ? globalThis : this);

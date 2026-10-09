@@ -751,8 +751,8 @@ async function snapshotTab(tabId, opts = {}) {
 
 // The page map (lib/pagemap.js, content/pagemap.js): a tab's frames as one outline of its text, every field the fill
 // scans with its ref, question, state and classification, the buttons and the frames; for the AI, bug-report
-// snapshots and developers (scripts/pagemap.mjs). Its walker goes into a page only when a map is asked for, never with
-// a fill, and only reads it.
+// snapshots, the page map viewer (map/, from the popup) and developers (scripts/pagemap.mjs). Its walker goes into a
+// page only when a map is asked for, never with a fill, and only reads it (the viewer's reveal scrolls, on a click).
 const PAGEMAP_FILES = ['lib/pagemap.js', 'content/pagemap.js'];
 const PAGEMAP_VALUES = new Set(['state', 'redacted', 'full']);
 
@@ -766,8 +766,9 @@ async function ensurePageMap(tabId, frameIds) {
 
 /**
  * The page map of a tab: { map, text }, or { error }. opts: values ('state': what is picked, never what is typed;
- * 'redacted': also every text through the snapshot's redactor; 'full': typed values too, for developers), maxChars
- * (the text's budget), payload (a fill payload already read).
+ * 'redacted': also every text through the snapshot's redactor, and the text again here with the site's saved logins,
+ * which never go to a page; 'full': typed values too, for developers), maxChars (the text's budget), payload (a fill
+ * payload already read).
  */
 async function pageMapTab(tabId, opts = {}) {
   const { profile, settings, docs, jobLocation } = opts.payload || (await fillPayload(tabId)).payload;
@@ -796,7 +797,44 @@ async function pageMapTab(tabId, opts = {}) {
     return { error: await explainError(err, tabId) };
   }
   const map = pagemap.merge(frames.map((r) => ({ frameId: r.frameId, ...(r.result || { problem: 'not mapped' }) })));
-  return { map, text: pagemap.render(map, { maxChars: opts.maxChars }) };
+  const text = pagemap.render(map, { maxChars: opts.maxChars });
+  if (values !== 'redacted') return { map, text };
+  // "Account adal_1815" on a review page: the logins saved for the page's sites go too, as in a snapshot.
+  const tab = await api.tabs.get(tabId).catch(() => null);
+  const hosts = [tab && tab.url, ...map.frames.map((f) => f.url)].map((u) => {
+    try {
+      return new URL(u).hostname;
+    } catch (err) {
+      return '';
+    }
+  });
+  const redact = redaction.redactor(profile, { files, ...(await snapshotSecrets(hosts)) });
+  return { map, text: redact.text(text) };
+}
+
+/**
+ * Show a field, button or frame of a tab's last page map (the viewer's click on its line): the tab brought to the
+ * front, the element scrolled to the middle and outlined for a moment. `ref` is the frame's own (a field's `local`).
+ * { ok }, or { ok: false, reason }: 'closed' (the tab), 'gone' (the page changed since the map) or 'hidden'.
+ */
+async function pageMapReveal(tabId, frameId, ref) {
+  const tab = await api.tabs.get(tabId).catch(() => null);
+  if (!tab) return { ok: false, reason: 'closed' };
+  const show = (dry) =>
+    execute(tabId, [frameId || 0], {
+      func: (r, d) =>
+        globalThis.__jtf && globalThis.__jtf.pageMapReveal ? globalThis.__jtf.pageMapReveal(r, { dry: d }) : null,
+      args: [String(ref), dry],
+    }).then(
+      ([r] = []) => (r && r.result) || { ok: false, reason: 'gone' },
+      () => ({ ok: false, reason: 'gone' }),
+    );
+  // Looked for first, so a field that has gone leaves the viewer in front to say so.
+  const found = await show(true);
+  if (!found.ok) return found;
+  await api.tabs.update(tabId, { active: true }).catch(() => {});
+  if (api.windows && tab.windowId != null) await api.windows.update(tab.windowId, { focused: true }).catch(() => {});
+  return show(false);
 }
 
 /**
@@ -2492,6 +2530,7 @@ const HANDLERS = {
   'jtf:snapshot': (msg) => snapshotTab(msg.tabId, { returnHtml: !!msg.returnHtml, saveAs: msg.saveAs !== false }),
   'jtf:pagemap': (msg) => pageMapTab(msg.tabId, { values: msg.values, maxChars: msg.maxChars }),
   'jtf:pagemap-marks': (msg) => pageMapMarks(msg.tabId, !!msg.on, { values: msg.values, maxChars: msg.maxChars }),
+  'jtf:pagemap-reveal': (msg) => pageMapReveal(msg.tabId, msg.frameId, msg.ref),
   'jtf:job-context': (msg) => jobContext(msg.tabId),
   'jtf:scrape': (msg) => scrapeInTab(msg.url),
   'jtf:attach': (msg) => attachLetter(msg.tabId, msg.letterId),
@@ -2659,6 +2698,7 @@ globalThis.JTFBackground = {
   snapshotTab,
   pageMapTab,
   pageMapMarks,
+  pageMapReveal,
   otpFor,
   watchOtp,
   getFlow,

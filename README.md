@@ -123,6 +123,7 @@ Save your details once: name, contact info, address, links, education, work hist
 - Works inside cross-origin iframes (embedded Greenhouse boards) and open shadow DOM (web components).
 - **Show detected fields** labels every field with what JobToFill thinks it is: green means ready, amber means your profile lacks it, grey means unknown.
 - **Undo** puts back whatever was on the page before the fill.
+- **Page map.** Toolbar → _Page map_ opens, in a tab beside the page, the page as JobToFill and the AI see it: every field numbered (f1, f2…) with its question, options, what’s picked and what JobToFill takes it for (“→ name.first ✓”, “✗ no value” when your profile has no answer, “(none: for AI)” when no rule knows the question), the buttons and frames, and the form’s step, alerts and dialogs. Click a line and the page scrolls to that field and outlines it; _Only fields that need something_ cuts a long form down to what’s missing, invalid or left for the AI. _Copy for an AI chat_ and _Save as text_ give the same map with your details replaced by placeholders, as in a bug-report snapshot.
 - **Save a snapshot for a bug report.** When a form trips JobToFill up, the link at the bottom of the popup saves one HTML file: a copy of the form with your values and personal details taken out (see [Privacy](#privacy-and-security)), and a trace of what JobToFill saw and did with each field (what it took each question for, how it wrote the answer, what the page said). Attach it to a bug report and the form can be rebuilt as a test, without anyone needing your login.
 - Only empty fields are filled unless you turn on _Overwrite_, and filled fields are outlined. One exception: a country the site chose for you is put right. Workday picks the _Country / Territory_ and the phone code's country from where your connection seems to be (Italy on a VPS there); when that isn't your country it becomes yours, the chip "Italy (+39)" becomes "United Kingdom (+44)", and the address fields are filled once the page has switched to that country's (_County_ and _City_ instead of _Province_ and _City (Comune)_).
 - Light and dark mode, an automatic backup file, and import/export.
@@ -168,19 +169,20 @@ In both browsers the settings page opens on install. Fill in your profile and pi
 
 ## Using it
 
-| Do this                        | How                                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------------------- |
-| Fill the page                  | **Alt+Shift+F**, the toolbar button → _Fill this page_, or right-click → _Fill this page_   |
-| See what was detected          | Toolbar → _Show detected fields_                                                            |
-| Save answers you typed         | Toolbar → _Learn from this page_                                                            |
-| Insert one value               | Right-click a box → _Insert from profile_                                                   |
-| New password on a sign-up form | Right-click the password box → _Generate strong password_ (or just fill the page)           |
-| Undo a fill                    | _Undo_ in the popup or in the on-page toast                                                 |
-| Letter, CV and form in one go  | Toolbar → _Quick apply_ (see the result later under _Last quick apply_)                     |
-| Write a cover letter           | Toolbar → _Write cover letter_ on the application page (set up a key under _Cover letters_) |
-| Answer the questions left      | Automatic with an AI key; or the popup's _Answer them with AI_                              |
-| Emailed sign-in codes          | Automatic once your inbox is connected under _Email codes_; or right-click the box          |
-| Sign in / create an account    | Fill the portal's sign-in or sign-up page: it clicks _Sign in_ / _Create account_ for you   |
+| Do this                        | How                                                                                                 |
+| ------------------------------ | --------------------------------------------------------------------------------------------------- |
+| Fill the page                  | **Alt+Shift+F**, the toolbar button → _Fill this page_, or right-click → _Fill this page_           |
+| See what was detected          | Toolbar → _Show detected fields_                                                                    |
+| See the page as JobToFill does | Toolbar → _Page map_: every field, what it’s taken for and what’s missing; click a line to go to it |
+| Save answers you typed         | Toolbar → _Learn from this page_                                                                    |
+| Insert one value               | Right-click a box → _Insert from profile_                                                           |
+| New password on a sign-up form | Right-click the password box → _Generate strong password_ (or just fill the page)                   |
+| Undo a fill                    | _Undo_ in the popup or in the on-page toast                                                         |
+| Letter, CV and form in one go  | Toolbar → _Quick apply_ (see the result later under _Last quick apply_)                             |
+| Write a cover letter           | Toolbar → _Write cover letter_ on the application page (set up a key under _Cover letters_)         |
+| Answer the questions left      | Automatic with an AI key; or the popup's _Answer them with AI_                                      |
+| Emailed sign-in codes          | Automatic once your inbox is connected under _Email codes_; or right-click the box                  |
+| Sign in / create an account    | Fill the portal's sign-in or sign-up page: it clicks _Sign in_ / _Create account_ for you           |
 
 To change the shortcut, open `chrome://extensions/shortcuts` in Chromium browsers, or in Firefox go to `about:addons`, click ⚙, then **Manage Extension Shortcuts**. The settings page links there too.
 
@@ -211,6 +213,7 @@ The demo includes Greenhouse-, Workday- and Lever-style applications, searchable
 - **Never submits an application.** Acknowledgement and terms checkboxes are ticked and counted in the toast (switch _Tick acknowledgement boxes_ off to leave them for you; Quick apply always ticks them and tells you); marketing, newsletter and talent-pool opt-ins are never ticked. Beyond filling (which opens dropdowns, menus and upload tiles, never Dropbox or Google sign-ins), the one thing it clicks for you, with _Sign in and create job-portal accounts for me_ on, is a job portal's own sign-in or create-account button (and the _Continue_ after an emailed code) on a pure sign-in or sign-up page, as listed under [Job-portal accounts](#job-portal-accounts); on such a sign-up page it also ticks the form's own terms box, since creating the account means accepting them. Switch the setting off and it only fills.
 - **CAPTCHAs are never touched.** Nothing is filled or clicked inside a CAPTCHA, and its frames (Google reCAPTCHA, hCaptcha, Cloudflare, Arkose) are skipped entirely.
 - **Works under strict Content-Security-Policies.** The on-page toast and labels are styled through the DOM, so a site's CSP can't block them, and no page script ever sees the extension's code.
+- **Page maps stay where you put them.** _Page map_ reads the page in your browser and sends nothing anywhere; _Copy for an AI chat_ and _Save as text_ put the map, with your details replaced by placeholders and your saved logins taken out, on your clipboard or disk, for you to paste where you choose.
 - **Bug-report snapshots stay on your disk.** _Save a snapshot for a bug report_ writes one HTML file to your computer and sends nothing anywhere. Every typed value is left out, and your names, email, phone, address, postcode, date of birth, links, employers, file names, saved logins and longer written answers become placeholders wherever they appear; so do your equal-opportunity answers. Scripts are removed, and the file blocks scripts and form submission when opened. City, country, school, degree and job titles stay, because the form's own lists need them.
 - The extension needs access to all sites so it can fill application forms embedded from other domains (iframes). It only touches a page when you trigger it.
 
@@ -288,6 +291,7 @@ extension/
     pagemap.js         a frame's page map (injected only when one is asked for), and its refs drawn for screenshots
   ui/                  shared styles and helpers for the popup and settings page (ES modules)
   popup/               toolbar popup
+  map/                 the page map viewer: a tab's map to read, search, copy redacted, and click through to the page
   studio/              the cover letter page: find the job, write, check, preview, attach, tailor the CV
   discover/            Discover internships page: search, careers checks, watchlist
   data/firms.json      the registry Discover searches (built by scripts/firms.mjs)
@@ -372,4 +376,4 @@ node scripts/pagemap.mjs <page> --json map.json            # the whole map as JS
 node scripts/pagemap.mjs <page> --max-chars 8000 --wait 3000 --headed
 ```
 
-It runs the real extension in Chromium, as the end-to-end tests do, with their test profile, and never clicks or submits anything (`--fill` fills the way the Fill button does). A map says what is picked in a field, never what is typed in it, and not which answer an equal-opportunity question has; `--values redacted` also turns your details into placeholders everywhere, as snapshots do, and `--values full` shows what is typed too (for test profiles). Passwords, file names and hidden inputs' values are never on a map. Bug-report snapshots carry the redacted map as `pageMap` in their `jtf-trace` JSON. The page map's walker (`content/pagemap.js`) goes into a page only when a map is asked for (the background's `jtf:pagemap` message), never with a fill.
+It runs the real extension in Chromium, as the end-to-end tests do, with their test profile, and never clicks or submits anything (`--fill` fills the way the Fill button does). A map says what is picked in a field, never what is typed in it, and not which answer an equal-opportunity question has; `--values redacted` also turns your details into placeholders everywhere, as snapshots do, and `--values full` shows what is typed too (for test profiles). Passwords, file names and hidden inputs' values are never on a map. Bug-report snapshots carry the redacted map as `pageMap` in their `jtf-trace` JSON. The popup’s _Page map_ shows the same map in `map/map.html?tab=<id>` (made with `values: 'state'`, budget 60,000 characters). Clicking a line sends `jtf:pagemap-reveal` (`{ tabId, frameId, ref }`), which brings the tab forward and calls `__jtf.pageMapReveal(localRef)` in that frame to scroll the element to the middle and outline it for two seconds. _Copy for an AI chat_ and _Save as text_ use `values: 'redacted'`, whose text the background also clears of the site’s saved logins. The page map's walker (`content/pagemap.js`) goes into a page only when a map is asked for (the background's `jtf:pagemap` message), never with a fill.

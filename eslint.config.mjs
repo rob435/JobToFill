@@ -24,6 +24,7 @@ export default [
       'extension/studio/**/*.js',
       'extension/quick/**/*.js',
       'extension/discover/**/*.js',
+      'extension/map/**/*.js',
     ],
     languageOptions: { sourceType: 'module', globals: extension },
   },

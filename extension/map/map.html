@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Page map · JobToFill</title>
+    <link rel="icon" href="../icons/icon32.png" />
+    <link rel="stylesheet" href="../ui/theme.css" />
+    <link rel="stylesheet" href="map.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <img src="../icons/icon32.png" alt="" width="24" height="24" />
+      <strong>Page map</strong>
+      <span class="muted small">This page the way JobToFill and the AI see it</span>
+    </header>
+
+    <div class="page">
+      <section id="access" class="card warn" hidden>
+        <div>
+          <h2>JobToFill doesn’t have access to this site yet</h2>
+          <p class="muted">Needed once so it can read forms, including ones embedded from other sites.</p>
+        </div>
+        <div class="row"><button id="access-allow" class="primary" type="button">Allow</button></div>
+      </section>
+
+      <section id="problem" class="card" hidden>
+        <h2 id="problem-title">Can’t map this page</h2>
+        <p id="problem-text" class="muted"></p>
+        <div class="row"><button id="problem-retry" type="button">Try again</button></div>
+      </section>
+
+      <section id="summary" class="card" hidden>
+        <div class="summary-head">
+          <h1 id="page-title"></h1>
+          <p id="page-where" class="muted small"></p>
+        </div>
+        <ul id="counts" class="counts" aria-label="Summary"></ul>
+        <p id="no-fields" class="muted" hidden>No form fields on this page. The outline below is everything else JobToFill sees on it.</p>
+      </section>
+
+      <details id="legend" class="card legend">
+        <summary>How to read it</summary>
+        <dl>
+          <div>
+            <dt><code class="ref ok">f1</code> <code class="ref action">b1</code> <code class="ref iframe">i1</code></dt>
+            <dd>A field, a button and an embedded frame, numbered down the page. Click a line to see it on the page.</dd>
+          </div>
+          <div>
+            <dt><code>text*</code></dt>
+            <dd>The kind of field (text, select, radio, file…). A star means the form says it’s required.</dd>
+          </div>
+          <div>
+            <dt>
+              <code>→ name.first <span class="tok-ok">✓</span></code>
+            </dt>
+            <dd>What JobToFill takes the field for, and your profile has the answer.</dd>
+          </div>
+          <div>
+            <dt>
+              <code><span class="tok-missing">✗ no value</span></code>
+            </dt>
+            <dd>JobToFill knows the question, but your profile has no answer for it yet.</dd>
+          </div>
+          <div>
+            <dt>
+              <code><span class="tok-ai">(none: for AI)</span></code>
+            </dt>
+            <dd>No rule knows this question: a fill leaves it to the AI (with your API key) or to you.</dd>
+          </div>
+          <div>
+            <dt><code>fill=filled</code></dt>
+            <dd>What the last fill did with it: filled, nothing to put (no answer), skipped (it already had a value)…</dd>
+          </div>
+          <div>
+            <dt>
+              <code>filled <span class="tok-withheld">(answer withheld)</span></code>
+            </dt>
+            <dd>It has an answer, but which one isn’t shown: equal-opportunity questions, pronouns, title and date of birth.</dd>
+          </div>
+          <div>
+            <dt>
+              <code><span class="tok-bad">INVALID</span></code>
+            </dt>
+            <dd>The page says something is wrong with it, with the page’s own message.</dd>
+          </div>
+          <div>
+            <dt><code>(left for you)</code> <code>(upload)</code> <code>(secret)</code></dt>
+            <dd>A box JobToFill leaves for you to tick, an upload, a password or a card number.</dd>
+          </div>
+        </dl>
+        <p class="muted small">What you type into a box is never shown here, only whether it’s filled.</p>
+      </details>
+
+      <section id="outline-card" class="card">
+        <div class="toolbar">
+          <button id="refresh" type="button">Refresh</button>
+          <button id="marks" type="button" aria-pressed="false">Show refs on the page</button>
+          <button
+            id="copy"
+            type="button"
+            title="Copies the map with your details replaced with placeholders, to paste into a chat with an AI"
+          >
+            Copy for an AI chat
+          </button>
+          <button id="save" type="button" title="Saves the map as a text file, with your details replaced with placeholders">
+            Save as text
+          </button>
+        </div>
+        <p class="muted small privacy">Shown as it is in your browser. Copy and Save replace your details with placeholders.</p>
+        <p id="status" class="status small" role="status" aria-live="polite"></p>
+
+        <div id="stale" class="notice" hidden>
+          <span id="stale-text">The page has changed since this map was made.</span>
+          <button id="stale-refresh" class="small primary" type="button">Refresh</button>
+        </div>
+
+        <div id="copy-box" class="copy-box" hidden>
+          <label for="copy-text" class="small">Your browser didn’t let JobToFill copy it. Select the text and copy it yourself:</label>
+          <textarea id="copy-text" readonly rows="8" spellcheck="false"></textarea>
+          <div class="row"><button id="copy-close" class="small" type="button">Close</button></div>
+        </div>
+
+        <div class="filters">
+          <label class="check"><input id="need" type="checkbox" /> Only fields that need something</label>
+          <input id="search" type="search" placeholder="Search the map" aria-label="Search the map" autocomplete="off" spellcheck="false" />
+        </div>
+        <p id="shown" class="muted small" aria-live="polite"></p>
+
+        <div id="outline" class="outline" role="list" aria-label="Page map outline" aria-busy="true">
+          <p class="loading" role="listitem">Mapping the page…</p>
+        </div>
+      </section>
+    </div>
+
+    <script src="../lib/util.js"></script>
+    <script type="module" src="map.js"></script>
+  </body>
+</html>
