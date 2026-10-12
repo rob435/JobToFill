@@ -752,6 +752,93 @@ test('the default password is only used when that strategy is chosen', async () 
   await login.close();
 });
 
+test('passwords and cards: never into another site’s frame, nor into a box too small or faint to see', async () => {
+  await h.bg(() =>
+    globalThis.JTF.passwords.update((d) => {
+      d.credentials = [];
+      d.defaultPassword = 'Default-Pass-123!';
+      if (!d.cards.some((c) => c.id === 'k1'))
+        d.cards.push({ id: 'k1', name: 'Ada Lovelace', number: '4242424242424242', expMonth: 4, expYear: 2029 });
+      d.defaultCardId = 'k1';
+    }),
+  );
+  await h.setSettings({ passwordStrategy: 'default' });
+  try {
+    const page = await h.open('chat-widget.html');
+    const frame = (host, variant) => frameWith(page, `${host}:${h.port}/chat-widget-frame.html?${variant}`, '#card');
+    const [chat, own, faint] = [
+      await frame('127.0.0.1', 'normal'),
+      await frame('localhost', 'normal'),
+      await frame('localhost', 'faint'),
+    ];
+    const r = await h.fill(page);
+    assert.equal(await value(page, '#first'), 'Ada');
+    // A support chat framed from another site: neither your default password nor the card.
+    assert.deepEqual([await value(chat, '#password'), await value(chat, '#card')], ['', '']);
+    assert.ok(
+      r.notes.includes('Password not filled into a frame from 127.0.0.1: only a login saved for that site goes there.'),
+      JSON.stringify(r.notes),
+    );
+    assert.ok(r.notes.includes('Card not filled into a frame from 127.0.0.1.'), JSON.stringify(r.notes));
+    // A frame on the page's own site gets both, but not into a 2×2 px box or one faded to 5%.
+    assert.deepEqual(
+      [await value(own, '#password'), await value(own, '#card')],
+      ['Default-Pass-123!', '4242424242424242'],
+    );
+    assert.deepEqual([await value(faint, '#password'), await value(faint, '#card')], ['', '']);
+    const allowed = await h.bg(() => {
+      const { passwordAllowedIn } = globalThis.JTFBackground;
+      const tab = { url: 'https://www.acme.com/careers' };
+      return [
+        passwordAllowedIn({ frameId: 0, url: 'https://www.acme.com/careers', tab }),
+        passwordAllowedIn({ frameId: 2, url: 'https://apply.acme.com/login', tab }),
+        passwordAllowedIn({ frameId: 2, url: 'https://careers-acme.icims.com/jobs/1/login?in_iframe=1', tab }),
+        passwordAllowedIn({ frameId: 2, url: 'https://widget.chat.example/messenger', tab }),
+        passwordAllowedIn({ frameId: 2, url: 'https://docs.google.com/forms/d/1/viewform', tab }),
+      ];
+    });
+    assert.deepEqual(allowed, [true, true, true, false, false]);
+    await page.close();
+  } finally {
+    await h.setSettings({ passwordStrategy: 'generate' });
+  }
+});
+
+test('a frame whose fill fails says what went wrong, never “No fillable fields found”', async () => {
+  const page = await h.open('greenhouse.html');
+  const tabId = await h.tabId(page);
+  // A bug in the page's fill, as a site's markup might set off.
+  await h.bg(async (id) => {
+    await globalThis.JTFBackground.ensureInjected(id);
+    await globalThis.JTF.api.scripting.executeScript({
+      target: { tabId: id },
+      func: () => {
+        globalThis.JTF.matcher.plan = () => {
+          throw new Error('Simulated failure');
+        };
+      },
+    });
+  }, tabId);
+  const r = await h.fill(page);
+  assert.equal(r.error, 'JobToFill ran into an error on this page and stopped: “Simulated failure”.');
+  assert.equal(await h.bg((s) => globalThis.JTFBackground.summaryText(s), r), r.error, 'what the toast says');
+  await page.close();
+});
+
+test('Undo counts only what it put back: an ARIA radio no click can empty isn’t “restored”', async () => {
+  const page = await h.open('undo-choices.html');
+  const r = await h.fill(page);
+  assert.equal(r.filled, 3, JSON.stringify(r));
+  assert.equal(await page.$eval('#auth [aria-checked="true"]', (el) => el.dataset.value), 'yes');
+  assert.equal(await page.$eval('input[name="sponsorship"]:checked', (el) => el.value), 'no');
+  const undo = await h.handler('jtf:undo', page);
+  assert.equal(await value(page, '#first'), '');
+  assert.equal(await page.$$eval('input[name="sponsorship"]:checked', (list) => list.length), 0);
+  assert.equal(await page.$eval('#auth [aria-checked="true"]', (el) => el.dataset.value), 'yes', 'still checked');
+  assert.equal(undo.undone, 2, 'the name and the sponsorship answer');
+  await page.close();
+});
+
 test('passwords are not handed to insecure origins', async () => {
   // Any non-local http:// origin will do; *.localhost resolves to this machine in both browsers.
   const page = await h.open('login.html', 'insecure.localhost');

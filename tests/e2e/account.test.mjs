@@ -313,6 +313,17 @@ test('an account that already exists: back to sign in, with the default password
   await page.close();
 });
 
+test('back to sign in: the “Sign In” after the sign-up form, never the header’s menu button', { skip }, async () => {
+  const page = await h.open('signup-two-signins.html');
+  const tabId = await h.tabId(page);
+  const [st] = await h.bg((id) => globalThis.JTFBackground.callFrames(id, 'accountState', [{}]), tabId);
+  assert.deepEqual([st.kind, st.exists, st.toSignin], ['signup', true, 'Sign In']);
+  const [res] = await h.bg((id) => globalThis.JTFBackground.callFrames(id, 'accountClick', ['to-signin', {}]), tabId);
+  assert.equal(res.clicked, 'Sign In');
+  assert.equal(await page.$eval('#state', (el) => el.textContent), 'footer-signin');
+  await page.close();
+});
+
 test('a job application is never submitted, even with a password box on it', { skip }, async () => {
   const mixed = await h.open('application-signup.html');
   const r = await flowFill(mixed);

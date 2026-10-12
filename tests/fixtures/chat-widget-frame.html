@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Chat with us</title>
+  <style>
+    body { font: 14px/1.4 system-ui, sans-serif; margin: 8px; }
+    label { display: block; margin: 6px 0 2px; }
+    input { width: 220px; }
+    .faint #password { width: 2px; height: 2px; padding: 0; border: 0; }
+    .faint #card { opacity: 0.05; }
+  </style>
+</head>
+<body>
+  <p>Sign in to chat with our team.</p>
+  <form id="chat-login">
+    <label for="password">Password</label><input type="password" id="password" name="password" autocomplete="current-password">
+    <label for="card">Card number</label><input id="card" name="card" autocomplete="cc-number">
+  </form>
+  <script>
+    if (location.search === '?faint') document.body.className = 'faint';
+  </script>
+</body>
+</html>

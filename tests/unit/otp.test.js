@@ -196,7 +196,69 @@ test('otp: pages anyone can publish never get another account’s code', () => {
   assert.equal(otp.relevance(help, ['bank.zendesk.com']), 'strong', 'the exact host still counts');
   // Files on Oracle's storage aren't Oracle's sign-in page.
   assert.notEqual(otp.relevance(from('no-reply@oracle.com'), ['objectstorage.us-ashburn-1.oraclecloud.com']), 'strong');
-  assert.equal(otp.relevance(from('no-reply@oracle.com'), ['jpmc.fa.us2.oraclecloud.com']), 'strong');
+  assert.equal(
+    otp.relevance(from('no-reply@oracle.com', { subject: 'JPMC verification code' }), ['jpmc.fa.us2.oraclecloud.com']),
+    'strong',
+  );
+});
+
+test('otp: on a tracking system many employers share, only the employer the page names', () => {
+  const from = (email, subject, body, name = 'Careers') =>
+    msg(subject, body, { from: [{ name, email }], date: Math.floor(Date.now() / 1000) });
+  const acme = from(
+    'noreply@smartrecruiters.com',
+    'Your verification code',
+    '<p>Use 482913 to sign in to your Acme Corp candidate account.</p>',
+  );
+  // Acme's code, sent while you apply to Acme in another tab, isn't for EvilCo's page on the same portal.
+  for (const page of [
+    'https://jobs.smartrecruiters.com/EvilCo/7444-intern',
+    'https://jobs.smartrecruiters.com/oneclick-ui/company/EvilCo/publication/1',
+  ]) {
+    assert.equal(otp.relevance(acme, [page]), 'weak', page);
+    assert.equal(otp.pick([acme], { kind: 'code', hosts: [page] }).relevance, 'weak', 'offered with “Use it”');
+  }
+  assert.equal(otp.relevance(acme, ['https://jobs.smartrecruiters.com/AcmeCorp/7444-intern']), 'strong');
+  const gh = from('no-reply@greenhouse.io', 'Security code', '<p>Your Greenhouse security code for Acme is 551234</p>');
+  assert.equal(otp.relevance(gh, ['https://boards.greenhouse.io/evilco/jobs/1']), 'weak');
+  assert.equal(otp.relevance(gh, ['https://job-boards.greenhouse.io/acme/jobs/1']), 'strong');
+  assert.equal(otp.relevance(gh, ['https://boards.greenhouse.io/embed/job_app?for=acme&token=1']), 'strong');
+  // A query can't lend a page another employer's name: only the embedded form's own one counts.
+  assert.equal(otp.relevance(gh, ['https://boards.greenhouse.io/evilco/jobs/1?for=acme']), 'weak');
+  // Greenhouse's own candidate pages name no employer: its email is theirs.
+  assert.equal(otp.relevance(gh, ['https://my.greenhouse.io/users/sign_in']), 'strong');
+  // Workday mails from the employer's own address there, the employer's name is the sender's.
+  const wd = from('acme@myworkday.com', 'Verify your account', 'Your verification code is 123456');
+  assert.equal(otp.relevance(wd, ['https://acme.wd3.myworkdayjobs.com/en-US/External/login']), 'strong');
+  assert.equal(otp.relevance(wd, ['https://evilco.wd3.myworkdayjobs.com/en-US/External/login']), 'weak');
+  assert.equal(otp.relevance(wd, ['https://wd3.myworkdaysite.com/recruiting/evilco/External/login']), 'weak');
+  // Oracle mail naming no employer is no one's in particular.
+  const oracle = from('no-reply@oracle.com', 'Your verification code', 'Your verification code: 123456');
+  assert.equal(otp.relevance(oracle, ['jpmc.fa.us2.oraclecloud.com']), 'weak');
+  // SuccessFactors names the employer in its query, with the instance after it ("moodysprod").
+  const sf = from('noreply@successfactors.eu', 'Moody’s: your verification code', 'Your code is 123456');
+  assert.equal(otp.relevance(sf, ['https://career5.successfactors.eu/career?company=moodysprod']), 'strong');
+  assert.equal(otp.relevance(sf, ['https://career5.successfactors.eu/career?company=evilcoprod']), 'weak');
+  // iCIMS and Lever: the employer's subdomain or path, named in the email's words or a link back to its pages.
+  const icims = from('donotreply@icims.com', 'Verification code', 'Your Acme verification code is 123456');
+  assert.equal(otp.relevance(icims, ['https://careers-acme.icims.com/jobs/1/login']), 'strong');
+  assert.equal(otp.relevance(icims, ['https://careers-evilco.icims.com/jobs/1/login']), 'weak');
+  const lever = from(
+    'no-reply@hire.lever.co',
+    'Confirm your email',
+    'Your code is 123456 <a href="https://jobs.lever.co/acme/1/apply">Back to your application</a>',
+  );
+  assert.equal(otp.relevance(lever, ['https://jobs.lever.co/acme/1/apply']), 'strong', 'a link back to its pages');
+  assert.equal(otp.relevance(lever, ['https://jobs.lever.co/evilco/1/apply']), 'weak');
+  // The employer's own domain behind its portal, and the page's own site off any portal, still count.
+  assert.equal(
+    otp.relevance(from('talent@acme.com', 'Code', 'Code: 123456'), ['https://acme.wd3.myworkdayjobs.com/x']),
+    'strong',
+  );
+  assert.equal(
+    otp.relevance(from('no-reply@acme.com', 'Code', 'Code: 123456'), ['https://careers.acme.com/x']),
+    'strong',
+  );
 });
 
 test('otp: short brands on country domains', () => {

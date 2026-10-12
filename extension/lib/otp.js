@@ -4,8 +4,9 @@
  *
  * That second part is what makes filling codes automatically safe. A page that asks for "the code we
  * emailed you" gets a code only from an email sent by that site (same domain, the same applicant
- * tracking system, or an email that links back to it). A code from anyone else is never filled on its
- * own: a look-alike page can't collect your bank's login code just by showing a code box.
+ * tracking system and the same employer when the page names one, or an email that links back to it). A
+ * code from anyone else is never filled on its own: a look-alike page can't collect your bank's login
+ * code just by showing a code box, nor another employer's page on that portal the code you asked for.
  *
  * Pure functions, no browser APIs: used by the background and the unit tests.
  */
@@ -321,6 +322,7 @@
     'services', 'service', 'group', 'the', 'and', 'bank', 'home', 'site', 'sites', 'cloud', 'prod', 'fa', 'docs',
     'forms', 'form', 'student', 'students', 'graduate', 'graduates', 'campus', 'early', 'entry', 'level', 'intern',
     'interns', 'internship', 'internships', 'experienced', 'professional', 'professionals', 'internal', 'ocs',
+    'boards', 'board', 'embed', 'sjobs',
   ]);
 
   // The words of a name: "BNY-Careers", "LazardStudentCareers" (Oracle site names run them together), less the ones
@@ -351,14 +353,27 @@
     return companyWords(shared ? labels.slice(0, labels.length - s.split('.').length) : [s.split('.')[0]]);
   }
 
-  // Vetted tracking systems that name the employer in the page's path rather than its host, where only the employer
-  // can name it: Oracle Recruiting Cloud's career sites (eofe.fa.us2.oraclecloud.com, BNY's, serves
-  // /hcmUI/CandidateExperience/en/sites/BNY-Careers/…) and Workday's shared hosts
-  // (wd3.myworkdaysite.com/recruiting/acme/External/…).
+  // Tracking systems that name the employer in the page's path rather than its host: Oracle Recruiting Cloud's career
+  // sites (eofe.fa.us2.oraclecloud.com, BNY's, serves /hcmUI/CandidateExperience/en/sites/BNY-Careers/…), Workday's
+  // shared hosts (wd3.myworkdaysite.com/recruiting/acme/External/…), and the boards that put it first
+  // (boards.greenhouse.io/acme, jobs.lever.co/acme, jobs.ashbyhq.com/acme, jobs.smartrecruiters.com/Acme and its
+  // one-click apply's /oneclick-ui/company/Acme, jobs.jobvite.com/acme).
   const TENANT_PATHS = [
     [/(^|\.)fa\.([a-z0-9-]+\.)*oraclecloud\.com$/, /\/candidateexperience\/[a-z]{2}(?:-[a-z]{2})?\/sites\/([^/?#]+)/i],
     [/(^|\.)myworkdaysite\.com$/, /^\/(?:[a-z]{2}-[a-z]{2}\/)?recruiting\/([^/?#]+)/i],
+    [
+      /^((job-)?boards(\.[a-z]{2})?\.greenhouse\.io|jobs(\.[a-z]{2})?\.lever\.co|jobs\.ashbyhq\.com|(jobs|careers)\.smartrecruiters\.com|jobs\.jobvite\.com)$/,
+      /^\/(?:oneclick-ui\/company\/)?([^/?#]+)/i,
+    ],
   ];
+  // And in the query, where the page's own path names no one else: SuccessFactors' career pages
+  // (career5.successfactors.eu/career?company=moodysprod), Greenhouse's embedded form (/embed/job_app?for=acme).
+  const TENANT_QUERY = [
+    [/(^|\.)(successfactors\.(com|eu)|sapsf\.(com|eu|cn))$/, /^\/(sf|portal)?careers?\b/i, 'company'],
+    [/(^|\.)greenhouse\.io$/, /^\/embed\//i, 'for'],
+  ];
+  // SuccessFactors' company ids can end in the instance they name: "moodysprod" is Moody's.
+  const INSTANCE = /^(.{3,}?)(prod|test|dev)$/i;
 
   /**
    * A page, given as its address or only its host name: { host, tokens }, the words that name its company, from the
@@ -368,20 +383,28 @@
     const s = String(entry || '');
     let host = s.toLowerCase();
     let path = '';
+    let query = null;
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
       try {
         const u = new URL(s);
         host = u.hostname.toLowerCase();
         path = u.pathname;
+        query = u.searchParams;
       } catch (err) {
         host = '';
       }
     }
     const tokens = hostTokens(host);
+    const names = [];
     for (const [hostRe, pathRe] of TENANT_PATHS) {
       const m = hostRe.test(host) && path.match(pathRe);
-      if (!m) continue;
-      let name = m[1];
+      if (m) names.push(m[1]);
+    }
+    for (const [hostRe, pathRe, key] of TENANT_QUERY) {
+      const id = query && hostRe.test(host) && pathRe.test(path) && query.get(key);
+      if (id) names.push(id, id.replace(INSTANCE, '$1'));
+    }
+    for (let name of names) {
       try {
         name = decodeURIComponent(name);
       } catch (err) {
@@ -392,20 +415,15 @@
     return { host, tokens: [...new Set(tokens)] };
   }
 
-  const hostOfUrl = (href) => {
-    try {
-      return new URL(href).hostname.toLowerCase();
-    } catch (err) {
-      return '';
-    }
-  };
-
   /**
    * How sure is it that `message` was sent by the site on `hosts` (the page, and the top page when it is
    * the same site: addresses, or host names only)? 'strong': the same site, the same tracking system, the
    * company's own domain behind a vetted tracking system, or a link back to the page's site. On domains where
    * anyone can publish a page only the exact host counts, and Google's and Microsoft's own pages never match.
-   * 'weak': the company's name only appears in it. 'none' otherwise.
+   * On a tracking system shared by many employers, a page that names its employer (acme.wd3.myworkdayjobs.com,
+   * jobs.smartrecruiters.com/Acme) only matches the system's own email strongly when that names the employer too:
+   * another employer's code, sent while you apply there in another tab, isn't this page's. 'weak': the company's
+   * name only appears in it, or the system sent it naming no one. 'none' otherwise.
    */
   function relevance(message, hosts) {
     const list = []
@@ -417,27 +435,41 @@
     const senderHost = (String(from.email || '').split('@')[1] || '').toLowerCase();
     const sender = site(senderHost);
     const { text, links } = readBody(message.body || '');
-    const linkHosts = links.map((l) => hostOfUrl(l.href)).filter(Boolean);
+    const linked = links.map((l) => pageOf(l.href)).filter((p) => p.host);
+    // Its sender's name and whole address (Workday mails from acme@myworkday.com), subject and text; "Moody's" as
+    // "moodys".
+    const words = clean(`${from.name || ''} ${from.email || ''} ${message.subject || ''} ${text.slice(0, 3000)}`)
+      .toLowerCase()
+      .replace(/['’]/g, '');
+    // A name from a page's path can hold anything ("Acme+Corp"): matched as it is written.
+    const named = (t) =>
+      new RegExp(`(^|[^a-z0-9])${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`).test(words);
     let weak = false;
     for (const { host, tokens } of list) {
       const page = site(host);
       const fam = familyOf(page);
+      // The employer the page names, when it is on a shared tracking system: in the email's words, or a link of it
+      // back to that employer's pages there.
+      const forEmployer =
+        !fam ||
+        !tokens.length ||
+        tokens.some(named) ||
+        linked.some((l) => site(l.host) === page && l.tokens.some((t) => tokens.includes(t)));
       if (fam && SHARED.has(fam)) {
         // Google Forms, Microsoft Forms: anyone's page. Never strong.
       } else if (HOSTED.has(page) || RAW_HOST.test(host)) {
-        if (senderHost === host || linkHosts.includes(host)) return 'strong';
+        if (senderHost === host || linked.some((l) => l.host === host)) return 'strong';
       } else {
-        if (sender && sender === page) return 'strong';
-        if (sender && fam && fam === mailFamilyOf(sender)) return 'strong';
+        const own =
+          (sender && (sender === page || (fam && fam === mailFamilyOf(sender)))) ||
+          linked.some((l) => site(l.host) === page);
+        if (own && forEmployer) return 'strong';
+        if (own) weak = true;
         // acme.wd3.myworkdayjobs.com emailing from talent@acme.com; BNY's Oracle career site from people.bny.com.
         if (fam && VETTED.has(fam) && sender && !HOSTED.has(sender) && tokens.includes(sender.split('.')[0]))
           return 'strong';
-        if (linkHosts.some((l) => site(l) === page)) return 'strong';
       }
-      const words = clean(
-        `${from.name || ''} ${senderHost} ${message.subject || ''} ${text.slice(0, 3000)}`,
-      ).toLowerCase();
-      if (tokens.some((t) => new RegExp(`(^|[^a-z0-9])${t}([^a-z0-9]|$)`).test(words))) weak = true;
+      if (tokens.some(named)) weak = true;
     }
     return weak ? 'weak' : 'none';
   }

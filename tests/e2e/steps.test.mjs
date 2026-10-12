@@ -52,6 +52,20 @@ test('My Experience: a section’s own "Add" once per entry of yours, then each 
   await page.close();
 });
 
+test('an "Add" that opens a dialog instead of an entry: closed again with its own Cancel, the rest filled', async () => {
+  const page = await h.open('add-dialog.html');
+  const r = await h.fill(page);
+  assert.equal(r.error, undefined);
+  assert.equal(await value(page, '#first'), 'Ada');
+  assert.equal(await value(page, '#li'), 'https://www.linkedin.com/in/ada');
+  const s = await state(page);
+  // Education's dialog is made on the click, Work Experience's was in the page, hidden, all along.
+  assert.deepEqual(s.opened, ['edu-dialog', 'exp-dialog'], 'each section’s Add is clicked once');
+  assert.deepEqual(s.closed, ['edu-dialog', 'exp-dialog'], 'and what it opened is closed again');
+  assert.deepEqual(s.open, [], 'no dialog is left over the form, and the hidden cookie panel is never touched');
+  await page.close();
+});
+
 test('with it on: each step filled and continued, up to the Review step, which is never submitted', async () => {
   await h.setSettings({ autoAdvance: true });
   try {

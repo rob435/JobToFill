@@ -132,14 +132,27 @@ async function ensureInjected(tabId, frameIds) {
   if (missing.length) await execute(tabId, missing, { files: CONTENT_FILES });
 }
 
-/** Call globalThis.__jtf[method](...args) in the content script of each frame. */
+/**
+ * Call globalThis.__jtf[method](...args) in the content script of each frame. A frame whose call threw answers
+ * { frameId, error }: Chromium would otherwise hand back no result at all, which reads as a page with nothing on it.
+ */
 async function callFrames(tabId, method, args, frameIds) {
   await ensureInjected(tabId, frameIds);
   const results = await execute(tabId, frameIds, {
-    func: (name, params) => globalThis.__jtf && globalThis.__jtf[name](...params),
+    func: async (name, params) => {
+      try {
+        return globalThis.__jtf && (await globalThis.__jtf[name](...params));
+      } catch (err) {
+        return { error: String((err && err.message) || err) };
+      }
+    },
     args: [method, args || []],
   });
-  return results.map((r) => ({ frameId: r.frameId, ...(r.result || {}) }));
+  return results.map((r) => ({
+    frameId: r.frameId,
+    ...(r.error ? { error: String(r.error.message || r.error) } : {}),
+    ...(r.result || {}),
+  }));
 }
 
 const CANT_RUN = 'JobToFill can’t run on this page (browser pages and add-on stores are off-limits).';
@@ -408,7 +421,10 @@ function mergeReports(frames) {
     // Upload fields by type: 'filled' when any frame put the document in, else how it went.
     docs: {},
   };
+  const errors = [];
   for (const f of frames) {
+    // A frame whose fill threw (see callFrames) says so, rather than passing for a page with nothing to fill.
+    if (f.error && typeof f.filled !== 'number') errors.push(f.error);
     if (typeof f.filled !== 'number') continue;
     // prettier-ignore
     for (const key of ['filled', 'detected', 'skipped', 'failed', 'unknown', 'consents', 'restored', 'revealed', 'repaired', 'ticked', 'held'])
@@ -423,6 +439,9 @@ function mergeReports(frames) {
   }
   for (const key of ['missing', 'missingTypes', 'unmatched', 'check', 'notes'])
     summary[key] = [...new Set(summary[key])];
+  if (errors.length && !summary.detected)
+    summary.error = `JobToFill ran into an error on this page and stopped: “${errors[0]}”.`;
+  else if (errors.length) summary.notes.unshift(`Part of this page couldn’t be filled: “${errors[0]}”.`);
   return summary;
 }
 
@@ -494,12 +513,27 @@ function siteOf(host) {
   return parts.slice(-n).join('.');
 }
 
-function cardAllowedIn(sender) {
+/** Is the frame asking the tab's top page, or a frame on the same site as it? */
+function ownSiteFrame(sender) {
   if (sender.frameId === 0) return true;
   const frameHost = new URL(sender.url).hostname;
   const topHost = sender.tab && sender.tab.url ? new URL(sender.tab.url).hostname : '';
-  if (topHost && siteOf(frameHost) === siteOf(topHost)) return true;
-  return PAYMENT_HOSTS.some((h) => util.hostMatches(frameHost, h));
+  return !!topHost && siteOf(frameHost) === siteOf(topHost);
+}
+
+function cardAllowedIn(sender) {
+  return ownSiteFrame(sender) || PAYMENT_HOSTS.some((h) => util.hostMatches(new URL(sender.url).hostname, h));
+}
+
+/**
+ * May the frame asking have your default password, or a new one made and saved for it? The top page, a frame on its
+ * site, or a job portal's own frame (an iCIMS application framed on the employer's careers site): never a chat
+ * widget's or an ad's frame. A login saved for the frame's own site goes to it wherever it is.
+ */
+function passwordAllowedIn(sender) {
+  if (ownSiteFrame(sender)) return true;
+  const family = otp.familyOf(otp.site(new URL(sender.url).hostname));
+  return !!family && family !== 'google' && family !== 'microsoft';
 }
 
 function newCredential(host, username, password, portal, note) {
@@ -539,7 +573,8 @@ function rulesFrom(msg) {
  * default password (strategy "default"), else a new one saved for the site; anything it hands a sign-up page fits
  * the rules the page states (length, kinds of character, banned characters, pattern). Your default password, when
  * the page wouldn't take it, is replaced by a fitting one saved for that site, and the fill says so. A login page
- * gets the saved password, else your default one (strategy "default").
+ * gets the saved password, else your default one (strategy "default"). A frame from another site gets only a login
+ * saved for that site: never your default password, nor a new one (see passwordAllowedIn).
  */
 async function secretsFor(msg, sender) {
   const fill = fillInProgress(sender);
@@ -560,18 +595,22 @@ async function secretsFor(msg, sender) {
     const rules = signup ? rulesFrom(msg) : null;
     const personal = { email: fill.email, names: fill.names };
     const problems = (pw) => (rules ? passwords.checkPassword(pw, rules, personal) : []);
-    const fallback = settings.passwordStrategy === 'default' ? data.defaultPassword || '' : '';
+    // Your default password, used everywhere, and a new one saved for this host only go to the page's own site (or a
+    // job portal's frame): a chat widget framed on the page gets neither.
+    const allowed = passwordAllowedIn(sender);
+    const fallback = allowed && settings.passwordStrategy === 'default' ? data.defaultPassword || '' : '';
     // Signing in for you to an account that turned out to exist already: your default password, whatever is saved.
     const flow = !signup && sender.tab ? await getFlow(sender.tab.id) : null;
-    let cred = flow && flow.useDefault && data.defaultPassword ? null : passwords.findCredential(data, host, portal);
+    const useDefault = allowed && !!flow && !!flow.useDefault && !!data.defaultPassword;
+    let cred = useDefault ? null : passwords.findCredential(data, host, portal);
     let source = cred ? 'saved' : null;
-    if (!cred && flow && flow.useDefault && data.defaultPassword) {
+    if (!cred && useDefault) {
       cred = { username: fill.email || '', password: data.defaultPassword };
       source = 'default';
     }
     // A login saved for this host that this sign-up page wouldn't take (made for another employer here): a new one.
     if (cred && signup && problems(cred.password).length && cred.portal !== portal) cred = source = null;
-    if (!cred && signup) {
+    if (!cred && signup && allowed) {
       if (fallback && !problems(fallback).length) {
         cred = { username: fill.email || '', password: fallback };
         source = 'default';
@@ -595,6 +634,8 @@ async function secretsFor(msg, sender) {
       source = 'default';
     }
     if (cred) out.credential = { username: cred.username || fill.email || '', password: cred.password, source };
+    else if (!allowed)
+      out.notes.push(`Password not filled into a frame from ${host}: only a login saved for that site goes there.`);
     else out.notes.push(`No saved password for ${host}.`);
     if (source && sender.tab)
       lastSecrets.set(sender.tab.id, {
@@ -1935,12 +1976,26 @@ async function insertOtp(tab, info, frameIds) {
     );
     return;
   }
-  await markUsed(found.id);
   await execute(tab.id, frameIds, { files: OTP_FILES });
-  await execute(tab.id, frameIds, {
-    func: (code) => globalThis.__jtfOtp && globalThis.__jtfOtp.fillFocused(code),
+  const typed = await execute(tab.id, frameIds, {
+    func: (code) => (globalThis.__jtfOtp ? globalThis.__jtfOtp.fillFocused(code) : null),
     args: [found.code],
   });
+  // Typed only into the box that has the focus. None (the right-click landed beside it), or a box that didn't take
+  // it, means nothing went in: the code stays unused for the next try.
+  if (!typed.some((r) => r.result)) {
+    const none = typed.every((r) => r.result == null);
+    await showToast(
+      tab.id,
+      none
+        ? 'Click into the code box first, then right-click it › Insert verification code from email.'
+        : `That box didn’t take the code from ${found.from || 'your inbox'}: type it in yourself.`,
+      {},
+      frameIds,
+    );
+    return;
+  }
+  await markUsed(found.id);
   await showToast(tab.id, `Inserted the code from ${found.from || 'your inbox'}.`, {}, frameIds);
 }
 
@@ -2811,6 +2866,7 @@ globalThis.JTFBackground = {
   secretsFor,
   summaryText,
   cardAllowedIn,
+  passwordAllowedIn,
   siteOf,
   writeBackup,
   lookForPreviousBackup,
