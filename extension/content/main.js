@@ -188,25 +188,56 @@
       position: 'fixed',
       right: '16px',
       bottom: '16px',
-      maxWidth: '340px',
+      // Never wider than a phone's screen, less its margins.
+      maxWidth: 'min(360px, calc(100vw - 32px))',
+      boxSizing: 'border-box',
       display: 'flex',
       gap: '10px',
       alignItems: 'flex-start',
-      padding: '12px 14px',
+      padding: '12px 10px 12px 14px',
       borderRadius: '12px',
+      // The light edge keeps it apart from a dark page.
+      border: '1px solid rgba(255, 255, 255, 0.16)',
       background: '#17142b',
       color: '#f4f2ff',
       font: FONT,
-      boxShadow: '0 10px 30px rgba(0, 0, 0, 0.25)',
+      textAlign: 'left',
+      overflowWrap: 'anywhere',
+      boxShadow: '0 10px 30px rgba(0, 0, 0, 0.3)',
       opacity: '0',
       transform: 'translateY(8px)',
       transition: 'opacity 0.18s, transform 0.18s',
     },
     dot: { flex: 'none', width: '10px', height: '10px', marginTop: '4px', borderRadius: '50%', background: '#8b74ff' },
-    message: { flex: '1', whiteSpace: 'pre-line' },
-    button: { all: 'unset', cursor: 'pointer', color: '#b9abff', fontWeight: '600', marginLeft: '4px', font: FONT },
+    message: { flex: '1', minWidth: '0', whiteSpace: 'pre-line' },
+    button: {
+      all: 'unset',
+      flex: 'none',
+      cursor: 'pointer',
+      color: '#c9bfff',
+      fontWeight: '600',
+      marginLeft: '4px',
+      padding: '0 2px',
+      borderRadius: '4px',
+      font: FONT,
+    },
+    close: {
+      all: 'unset',
+      flex: 'none',
+      cursor: 'pointer',
+      width: '20px',
+      height: '20px',
+      marginTop: '-1px',
+      borderRadius: '4px',
+      color: '#c9c4e0',
+      font: '18px/20px system-ui, sans-serif',
+      textAlign: 'center',
+    },
     tag: {
       position: 'absolute',
+      maxWidth: '260px',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
       padding: '1px 6px',
       borderRadius: '6px',
       font: '600 11px/16px system-ui, sans-serif',
@@ -237,26 +268,64 @@
     return state.ui;
   }
 
-  let toastTimer = null;
+  /** A toast button the keyboard can see: the page's CSS can't reach in here, so the ring is drawn by hand. */
+  function toastButton(style, text, label, onClick) {
+    const button = make('button', style, text);
+    button.type = 'button';
+    if (label) button.setAttribute('aria-label', label);
+    if (label) button.title = label;
+    button.addEventListener('click', onClick);
+    button.addEventListener('focus', () => Object.assign(button.style, { outline: '2px solid #c9bfff' }));
+    button.addEventListener('blur', () => Object.assign(button.style, { outline: 'none' }));
+    button.addEventListener('mouseenter', () => Object.assign(button.style, { color: '#ffffff' }));
+    button.addEventListener('mouseleave', () => Object.assign(button.style, { color: style.color }));
+    return button;
+  }
+
   function toast(message, opts) {
     const view = ui();
     if (view.toast) view.toast.remove();
     const box = make('div', STYLES.toast);
     box.setAttribute('role', 'status');
     box.append(make('span', STYLES.dot), make('span', STYLES.message, message));
-    if (opts && opts.undo && state.history.length) {
-      const undo = make('button', STYLES.button, 'Undo');
-      undo.addEventListener('click', () => {
-        api.undo();
-        box.remove();
-      });
-      box.append(undo);
-    }
+    // Each toast its own timer: one that was replaced only ever removes itself.
+    let timer = null;
+    const close = () => {
+      clearTimeout(timer);
+      box.remove();
+    };
+    if (opts && opts.undo && state.history.length)
+      box.append(
+        toastButton(STYLES.button, 'Undo', null, () => {
+          api.undo();
+          close();
+        }),
+      );
+    // It can sit over the page's own buttons (Workday's "Next" bar), or stay up for minutes while the AI works.
+    box.append(toastButton(STYLES.close, '×', 'Dismiss', close));
     view.shadow.append(box);
     view.toast = box;
     requestAnimationFrame(() => Object.assign(box.style, { opacity: '1', transform: 'none' }));
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => box.remove(), (opts && opts.duration) || 6000);
+    // Held while the pointer or focus is on it, so there's time to read it and reach Undo.
+    let left = (opts && opts.duration) || 6000;
+    let since = 0;
+    const arm = () => {
+      if (timer || box.matches(':hover, :focus-within')) return;
+      since = Date.now();
+      timer = setTimeout(close, left);
+    };
+    const hold = () => {
+      if (!timer) return;
+      clearTimeout(timer);
+      timer = null;
+      left = Math.max(2500, left - (Date.now() - since));
+    };
+    box.addEventListener('mouseenter', hold);
+    box.addEventListener('focusin', hold);
+    // After the event, when :hover and :focus-within have caught up.
+    box.addEventListener('mouseleave', () => setTimeout(arm));
+    box.addEventListener('focusout', () => setTimeout(arm));
+    arm();
     return true;
   }
 
@@ -1076,6 +1145,8 @@
     const { layer } = ui();
     state.overlay = [];
     let detected = 0;
+    // A label by a field at the right edge stays on the page instead of widening it (a sideways scroll on a phone).
+    const pageWidth = document.documentElement.scrollWidth;
     fields.forEach((field, i) => {
       const r = results[i];
       const def = r && r.type ? JTF.fields.DEFS[r.type] : null;
@@ -1120,6 +1191,12 @@
       });
       layer.append(tag);
       state.overlay.push(tag);
+    });
+    // All read, then all moved: one layout, however many fields.
+    const widths = state.overlay.map((tag) => tag.offsetWidth);
+    state.overlay.forEach((tag, i) => {
+      const over = parseFloat(tag.style.left) + widths[i] - pageWidth;
+      if (over > 0) tag.style.left = Math.max(0, parseFloat(tag.style.left) - over) + 'px';
     });
     return { on: true, detected, total: fields.length };
   }

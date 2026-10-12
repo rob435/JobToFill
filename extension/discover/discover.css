@@ -15,6 +15,10 @@ body {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
+.topbar h1 {
+  font-size: 15px;
+  white-space: nowrap;
+}
 .grow {
   flex: 1;
 }
@@ -93,10 +97,24 @@ legend {
   align-items: center;
   gap: 8px;
 }
+/* A row whose buttons are all hidden takes no room. */
+.row:not(:has(> :not([hidden]))) {
+  display: none;
+}
 .check {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+}
+/* The box keeps its size however long its words, which wrap beside it. */
+.check input {
+  flex: none;
+}
+#ai-wrap {
+  align-items: baseline;
+}
+#ai-wrap input {
+  align-self: center;
 }
 .error {
   color: var(--danger);
@@ -163,6 +181,10 @@ legend {
   flex-direction: column;
   gap: 8px;
   background: var(--surface);
+  overflow-wrap: anywhere;
+}
+.firms > .muted {
+  padding: 4px 2px;
 }
 .firm[data-open='true'] {
   border-color: var(--ok);
@@ -230,6 +252,19 @@ legend {
 .new {
   background: var(--ok-weak);
 }
+.programme.new,
+.roles li.new {
+  padding: 3px 8px;
+  border-radius: 0 6px 6px 0;
+}
+.roles li.new {
+  border-radius: 6px;
+}
+.empty {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 details summary {
   cursor: pointer;
   color: var(--muted);
@@ -242,4 +277,22 @@ details summary {
 }
 .footnote {
   text-align: center;
+}
+
+/* A phone-sized window: the tagline goes, so the tabs share the title's line or sit just under it. */
+@media (max-width: 640px) {
+  .topbar {
+    padding: 10px 14px;
+    row-gap: 8px;
+  }
+  .topbar .tagline {
+    display: none;
+  }
+  .page {
+    padding: 12px;
+    gap: 12px;
+  }
+  .card {
+    padding: 14px;
+  }
 }

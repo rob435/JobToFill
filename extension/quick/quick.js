@@ -49,7 +49,9 @@ async function render() {
   $('#empty').hidden = !!rec;
   $('#result').hidden = !rec;
   $('#clear').hidden = !rec;
-  $('#when').textContent = rec ? new Date(rec.createdAt).toLocaleString() : '';
+  $('#when').textContent = rec
+    ? new Date(rec.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+    : '';
   if (!rec) return;
   $('#job').textContent = [rec.role, rec.company].filter(Boolean).join(' at ') || 'Application';
   let host = '';
@@ -58,7 +60,8 @@ async function render() {
   } catch (err) {
     /* no address */
   }
-  $('#site').textContent = host ? `Applied on ${host}` : '';
+  // Filled in, never sent: the person still reviews the form and presses Submit.
+  $('#site').textContent = host ? `For the application on ${host}` : '';
   $('#note').hidden = !rec.note;
   $('#note').textContent = rec.note || '';
   show('letter');
