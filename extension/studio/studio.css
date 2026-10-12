@@ -135,10 +135,6 @@ main {
   align-items: center;
   gap: 8px;
 }
-/* A row whose buttons are all hidden (no Try again, no Stop) takes no room. */
-.row:not(:has(> :not([hidden]))) {
-  display: none;
-}
 .stack {
   display: flex;
   flex-direction: column;

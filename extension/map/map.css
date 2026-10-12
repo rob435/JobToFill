@@ -74,10 +74,6 @@ body {
   align-items: center;
   gap: 8px;
 }
-/* A row whose buttons are all hidden (no Try again for a closed tab) takes no room. */
-.row:not(:has(> :not([hidden]))) {
-  display: none;
-}
 .check {
   display: inline-flex;
   align-items: center;
