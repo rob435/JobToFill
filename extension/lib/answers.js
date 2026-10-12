@@ -212,9 +212,9 @@
   /**
    * The candidate's application facts (right to work, availability, …) that letters don't need; with `allow`
    * (allowed()), also what the kinds of question it lets the AI answer need: the full legal name for a typed
-   * signature, the profile's declarations, the date of birth. A fact about health or vetting goes only when those
-   * questions can (allowed, or with answer `guidance`, as withheld() lets them through): never an adjustments answer
-   * beside a question about something else.
+   * signature, the profile's declarations, the date of birth. The adjustments answer goes only when health questions
+   * can (allowed, or with answer `guidance`, as withheld() lets them through): never beside a question about something
+   * else.
    */
   function applicationFacts(profile, allow, guidance) {
     const may = allowed(allow);
@@ -243,8 +243,9 @@
       j.otherOffers && `Other offers or deadlines: ${j.otherOffers}`,
       source && `Where they found this job: ${source.text}`,
       slots && `Available for interviews: ${slots.text}`,
-      (may.legal || guided) && j.clearance && `Security clearance held: ${j.clearance}`,
-      (may.legal || guided) && j.clearanceEligible && `Could obtain security clearance: ${j.clearanceEligible}`,
+      // Clearance is no secret: the person gave it for "Do you hold an active security clearance?", which goes.
+      j.clearance && `Security clearance held: ${j.clearance}`,
+      j.clearanceEligible && `Could obtain security clearance: ${j.clearanceEligible}`,
       (may.health || guided) && j.adjustments && `Needs adjustments in the recruitment process: ${j.adjustments}`,
       c.previouslyEmployed && `Has worked for this employer before: ${c.previouslyEmployed}`,
       c.previouslyApplied && `Has applied to this employer before: ${c.previouslyApplied}`,

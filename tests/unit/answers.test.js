@@ -971,17 +971,17 @@ test('inMaterial: a number as the material writes it, spacing aside; a date howe
   assert.equal(A.inMaterial('My NI number is QQ123456C', own), false);
 });
 
-test('application facts: adjustments and clearance only go when their questions can', async () => {
+test('application facts: adjustments only go when health questions can; clearance always', async () => {
   const p = profile();
   Object.assign(p.job, { adjustments: 'Yes', clearance: 'SC', clearanceEligible: 'Yes' });
   const ADJUST = /Needs adjustments in the recruitment process: Yes/;
   const CLEARANCE = /Security clearance held: SC\nCould obtain security clearance: Yes/;
   const facts = (allow, guidance) => A.applicationFacts(p, allow, guidance);
   assert.doesNotMatch(facts(), ADJUST);
-  assert.doesNotMatch(facts(), CLEARANCE);
+  // "Do you hold an active security clearance?" goes to the AI by default, so the answer to it does too.
+  assert.match(facts(), CLEARANCE);
   assert.doesNotMatch(facts(only('legal')), ADJUST);
   assert.match(facts(only('health')), ADJUST);
-  assert.doesNotMatch(facts(only('health')), CLEARANCE);
   assert.match(facts(only('legal')), CLEARANCE);
   // With answer guidance, legal and health questions go (withheld()), and so do these.
   assert.match(facts(NONE, 'I need extra time in written tests.'), ADJUST);
@@ -1008,7 +1008,7 @@ test('application facts: adjustments and clearance only go when their questions 
   ];
   const out = await A.answer(chat, { profile: p, kit: {}, cvText: '', job: { company: 'Acme' }, bank: [] }, items);
   assert.equal(out.skipped.find((s) => s.id === '0:1').withheld, 'guidance');
-  assert.doesNotMatch(sent.join('\n'), /adjustments in the recruitment process|Security clearance held/);
+  assert.doesNotMatch(sent.join('\n'), /adjustments in the recruitment process/);
 });
 
 test('answer: a batch whose call fails leaves only its own questions; stopped or all failed, the run fails', async () => {
