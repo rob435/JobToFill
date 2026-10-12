@@ -105,6 +105,7 @@ function resetSteps(from) {
   $('#progress-card').hidden = false;
   $('#error').hidden = true;
   $('#retry').hidden = true;
+  $('#error-settings').hidden = true;
   const list = $('#steps');
   if (!list.children.length)
     list.replaceChildren(
@@ -134,14 +135,39 @@ function step(id, stateName, detail) {
   if (detail != null) li.querySelector('.detail').textContent = detail;
 }
 
+// The settings sections a message can send the person to ("… in Settings › Resume & files"), by the start of its name.
+const SECTIONS = [
+  ['Personal', 'personal'],
+  ['Resume', 'documents'],
+  ['Cover letters', 'letters'],
+  ['Skills', 'writing'],
+  ['Experience', 'experience'],
+];
+
+/** The section of the first "Settings › …" a message names, or 'letters' for a problem with the AI key. */
+function sectionIn(message) {
+  const named = (message.match(/Settings › ([^.,:;)]+)/) || [])[1];
+  const hit = named && SECTIONS.find(([start]) => named.startsWith(start));
+  if (hit) return hit[1];
+  return /api key|credit|model/i.test(message) ? 'letters' : null;
+}
+
+const openSettings = (section) =>
+  api.tabs.create({ url: api.runtime.getURL('options/options.html') + (section ? '#' + section : '') });
+
 function fail(err, stepId) {
   if (err && err.name === 'AbortError') return;
   if (stepId) step(stepId, 'fail');
   const box = $('#error');
+  const message = String((err && err.message) || err);
   box.hidden = false;
-  box.textContent = String((err && err.message) || err);
+  box.textContent = message;
   $('#retry').hidden = false;
   $('#stop').hidden = true;
+  // What the message asks for is a click away.
+  const section = sectionIn(message);
+  $('#error-settings').hidden = !section;
+  $('#error-settings').onclick = () => openSettings(section);
 }
 
 /* ---------------------------------------------------------------- setup */
@@ -324,7 +350,9 @@ function renderJob() {
     body.replaceChildren(
       el('p', {
         textContent:
-          'JobToFill couldn’t find the description for this job. Paste its web address or the description itself, or open the job’s page and try again from there.',
+          tabId == null
+            ? 'Paste the job’s web address or its whole description below, and JobToFill writes a letter for it.'
+            : 'JobToFill couldn’t find the description for this job. Paste its web address or the description itself, or open the job’s page and try again from there.',
       }),
     );
     $('#job-manual').hidden = false;
@@ -371,9 +399,17 @@ function renderJob() {
   $('#job-tried-list').replaceChildren(...tried.map((t) => el('li', { textContent: `${t.url} — ${t.outcome}` })));
 }
 
+/** Say what's wrong with what was pasted, under the box (not in a dialog that hides the page). */
+function manualError(message) {
+  $('#job-manual-error').textContent = message || '';
+  $('#job-manual-error').hidden = !message;
+  if (message) $('#job-manual-text').focus();
+}
+
 async function useManual() {
   const text = $('#job-manual-text').value.trim();
-  if (!text) return;
+  manualError('');
+  if (!text) return manualError('Paste the job’s web address or its description first.');
   const context = state.context || { url: '', title: '', company: '' };
   if (/^https?:\/\/\S+$/.test(text)) {
     const found = await jobpage.find(
@@ -385,10 +421,11 @@ async function useManual() {
       if (page && page.posting) Object.assign(found, { posting: page.posting, source: text });
     }
     if (!found.posting)
-      return alert('JobToFill couldn’t read a job description from that address. Paste the description instead.');
+      return manualError('JobToFill couldn’t read a job description from that address. Paste the description instead.');
     state.job = { ...found, verdict: 'pasted', reasons: ['you chose this page'], source: text };
   } else {
-    if (L.words(text) < 60) return alert('That’s too short to be a job description. Paste the whole thing.');
+    if (L.words(text) < 60)
+      return manualError('That’s too short to be a job description (under 60 words). Paste the whole thing.');
     state.job = {
       posting: {
         url: context.url,
@@ -412,7 +449,7 @@ async function useManual() {
 
 /** The text of the stored resume, read once per file and cached with the cover letter material. */
 async function readCv() {
-  // The pasted LaTeX master (Settings › Cover letters) is cleaner than text scraped from a PDF.
+  // The pasted LaTeX master (Settings › Cover letters & AI) is cleaner than text scraped from a PDF.
   const master = state.kit.cvMaster && state.kit.cvMaster.sections && state.kit.cvMaster.sections.length;
   if (master) return { text: L.cvText(state.kit.cvMaster), note: '' };
   const doc = await store.getDoc(state.profile.id, 'resume');
@@ -688,7 +725,7 @@ function cvExtra(use = $('#cv-use').checked) {
 
 /**
  * Tailor the CV to the analysed job and lay it out: no buttons, no page updates, so "Quick apply" can
- * call it too. Uses the master CV (Settings › Cover letters) when there is one, else the text of the
+ * call it too. Uses the master CV (Settings › Cover letters & AI) when there is one, else the text of the
  * uploaded file. Returns { result, pdf, tex }: result is letter.tailor()'s { cv, check, before, after },
  * pdf is pdfdoc.cv()'s { bytes, pages, overflow, ... }, tex the same CV as a LaTeX file.
  */
@@ -696,7 +733,7 @@ async function buildTailoredCv({ instructions = '', signal } = {}) {
   const master = state.kit.cvMaster && state.kit.cvMaster.sections && state.kit.cvMaster.sections.length;
   if (!master && !state.cvText)
     throw new Error(
-      'JobToFill needs your CV to tailor it: paste it as LaTeX in Settings › Cover letters, or add the file in Settings › Resume & files.',
+      'JobToFill needs your CV to tailor it: paste it as LaTeX in Settings › Cover letters & AI, or add the file in Settings › Resume & files.',
     );
   const result = await L.tailor(
     chat,
@@ -749,6 +786,7 @@ async function tailorCv() {
   const button = $('#cv-make');
   button.disabled = true;
   button.textContent = 'Tailoring…';
+  $('#cv-error').hidden = true;
   if (state.cvController) state.cvController.abort();
   state.cvController = new AbortController();
   try {
@@ -758,7 +796,10 @@ async function tailorCv() {
     // Not written yet? The letter's own save takes the CV with it.
     if (state.result) await saveEntry(cvExtra());
   } catch (err) {
-    if (err.name !== 'AbortError') alert(err.message);
+    if (err.name !== 'AbortError') {
+      $('#cv-error').textContent = err.message;
+      $('#cv-error').hidden = false;
+    }
   } finally {
     button.disabled = false;
     button.textContent = state.cv ? 'Tailor again' : 'Tailor my CV';
@@ -790,7 +831,7 @@ async function previousLetter() {
 /** Ask with buttons in the progress card; resolves true to reuse the earlier letter. */
 function offerPrevious(previous) {
   return new Promise((resolve) => {
-    const when = new Date(previous.createdAt).toLocaleString();
+    const when = new Date(previous.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
     const box = el(
       'div',
       { className: 'row', id: 'previous' },
@@ -939,7 +980,7 @@ async function run(from = 'job') {
         throw new Error('Add your name in Settings › Personal & contact first: it goes at the top of the letter.');
       if (!L.hasSubstance(state.profile, state.kit, state.cvText))
         throw new Error(
-          'There isn’t enough about you to write from yet. Upload your CV (Settings › Resume & files) or add notes in Settings › Cover letters.',
+          'There isn’t enough about you to write from yet. Upload your CV (Settings › Resume & files) or add notes in Settings › Cover letters & AI.',
         );
     }
 
@@ -1070,6 +1111,7 @@ async function quickApply() {
   state.controller = new AbortController();
   const signal = state.controller.signal;
   resetSteps();
+  $('#progress-title').textContent = 'Quick apply';
   $('#stop').hidden = true;
   const list = $('#steps');
   for (const [id, label] of [
@@ -1108,7 +1150,7 @@ async function quickApply() {
       throw new Error('Add your name in Settings › Personal & contact first: it goes at the top of the letter.');
     if (!L.hasSubstance(state.profile, state.kit, state.cvText))
       throw new Error(
-        'There isn’t enough about you to write from yet. Upload your CV (Settings › Resume & files) or add notes in Settings › Cover letters.',
+        'There isn’t enough about you to write from yet. Upload your CV (Settings › Resume & files) or add notes in Settings › Cover letters & AI.',
       );
 
     current = 'analyse';
@@ -1265,7 +1307,7 @@ async function boot() {
   $('#profile-name').textContent = profile.name;
   if (quick) studioTabId = ((await api.tabs.getCurrent()) || {}).id ?? null;
 
-  $('#open-settings').onclick = () => api.tabs.create({ url: api.runtime.getURL('options/options.html#letters') });
+  $('#open-settings').onclick = () => openSettings('letters');
   $('#retry').onclick = () => run(!state.job || !state.job.posting ? 'job' : state.analysis ? 'write' : 'cv');
   $('#stop').onclick = () => {
     if (state.controller) state.controller.abort();
@@ -1278,8 +1320,11 @@ async function boot() {
     $('#job-manual').hidden = false;
     $('#job-manual-text').focus();
   };
-  $('#job-manual-cancel').onclick = () => ($('#job-manual').hidden = true);
-  $('#job-manual-use').onclick = () => useManual().catch((err) => alert(err.message));
+  $('#job-manual-cancel').onclick = () => {
+    $('#job-manual').hidden = true;
+    manualError('');
+  };
+  $('#job-manual-use').onclick = () => useManual().catch((err) => manualError(err.message));
   $('#job-history').onclick = async () => {
     // Asked straight from the click, as browsers require for permission prompts.
     const granted = await api.permissions.request({ permissions: ['history'] }).catch(() => false);
@@ -1316,10 +1361,19 @@ async function boot() {
     renderJob();
   }
   // Each prerequisite is asked for from a click (browsers require it), then the next one.
-  const begin = () => (tabId == null ? null : quick ? quickApply() : run('job'));
+  // Until a prerequisite is met the job isn't being looked for: the job card says what it waits on.
+  const jobNote = (text) =>
+    tabId != null && $('#job-body').replaceChildren(el('p', { className: 'muted', textContent: text }));
+  const waiting = (what) => jobNote(`JobToFill looks for this job’s description once ${what}.`);
+  const begin = () => {
+    if (tabId == null) return null;
+    jobNote('Looking at the application…');
+    return quick ? quickApply() : run('job');
+  };
   const consent = async () => {
     if (await hasAiConsent()) return begin();
     leaveQuick();
+    waiting('you allow the cover letter writer above');
     $('#consent').hidden = false;
     $('#consent-allow').onclick = async () => {
       if (!(await requestAiConsent())) return;
@@ -1330,11 +1384,13 @@ async function boot() {
   const setup = () => {
     if (!ai.problem(state.config)) return consent();
     leaveQuick();
+    waiting('your AI model is connected above');
     renderSetup(begin);
   };
   if (await hasSiteAccess()) setup();
   else {
     leaveQuick();
+    waiting('JobToFill is allowed on websites (above)');
     $('#access').hidden = false;
     $('#access-allow').onclick = async () => {
       if (!(await requestSiteAccess())) return;
