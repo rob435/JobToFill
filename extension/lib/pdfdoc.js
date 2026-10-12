@@ -1331,12 +1331,8 @@
   }
 
   const pdfdoc = {
-    FONT_FILES,
-    HYPHENATION_FILE,
     PT,
     loadFonts,
-    parseFont,
-    parseHyphenation,
     hyphenate,
     shape,
     setParagraph,

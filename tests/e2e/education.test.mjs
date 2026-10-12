@@ -243,3 +243,34 @@ test('Greenhouse (Databricks): the undergraduate transcript is attached, the gra
     await h.setProfile({ education: [GLASGOW] });
   }
 });
+
+test('Greenhouse (Databricks): with a CV tailored for the application, the transcript upload still gets the transcript', async () => {
+  const page = await h.open('greenhouse-transcripts.html');
+  // The letter and tailored CV Quick apply (or "Use for this application") attached to this application.
+  await h.bg(
+    async ([id, tab, url, pdf]) => {
+      const doc = (name) => ({ name, type: 'application/pdf', size: 60, dataUrl: pdf });
+      await globalThis.JTF.store.saveLetter({
+        id: 'tailored',
+        profileId: id,
+        tabId: tab,
+        url,
+        attachedAt: Date.now(),
+        text: 'Dear Databricks team…',
+        pdf: doc('Ada_Lovelace_Databricks_letter.pdf'),
+        cv: doc('Ada_Lovelace_CV_Databricks.pdf'),
+        useCv: true,
+      });
+    },
+    [profileId, await h.tabId(page), page.url(), RESUME_PDF],
+  );
+  try {
+    const r = await h.fill(page);
+    assert.equal(r.error, undefined);
+    assert.equal(await fileName(page, '#resume'), 'Ada_Lovelace_CV_Databricks.pdf', 'the CV upload: the tailored CV');
+    assert.equal(await fileName(page, '#question_32886064002'), 'Ada_Lovelace_transcript.pdf', 'never the CV');
+  } finally {
+    await page.close();
+    await h.bg(() => globalThis.JTF.store.removeLetter('tailored'));
+  }
+});

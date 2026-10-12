@@ -160,6 +160,25 @@ test('nylas: explains errors and retries without select', async () => {
   assert.equal(n, 2);
 });
 
+test('nylas: a reply that stalls after its headers times out, and the request is ended', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let signal = null;
+  // The headers arrive; the body never does (until the request is ended).
+  const stalled = async (url, init) => {
+    signal = init.signal;
+    const body = new Promise((resolve, reject) =>
+      init.signal.addEventListener('abort', () => reject(new Error('aborted'))),
+    );
+    return { ok: true, status: 200, text: () => body };
+  };
+  const reading = nylas.messages({ apiKey: 'x', grantId: 'g' }, { fetch: stalled });
+  const failed = assert.rejects(reading, (e) => e.code === 'network');
+  await new Promise((resolve) => setImmediate(resolve));
+  t.mock.timers.tick(20000);
+  await failed;
+  assert.equal(signal.aborted, true);
+});
+
 test('store: Nylas connection is saved, backed up and restored', async () => {
   installChrome();
   assert.equal(await store.getNylas(), null);

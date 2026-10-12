@@ -750,7 +750,7 @@
     return out;
   }
 
-  const cvtex = { PREAMBLE, DEFAULT_ENTRY_GAP, parse, render, normalize, summarize, escape, linkFor };
+  const cvtex = { PREAMBLE, parse, render, normalize, summarize, escape, linkFor };
   JTF.cvtex = cvtex;
   if (typeof module === 'object' && module.exports) module.exports = cvtex;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

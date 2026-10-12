@@ -514,6 +514,6 @@
     return out;
   }
 
-  Object.assign(pagemap, { VERSION, MAX_CHARS, merge, render, labels, intentOf, platformOf });
+  Object.assign(pagemap, { MAX_CHARS, merge, render, labels, intentOf });
   if (typeof module === 'object' && module.exports) module.exports = pagemap;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

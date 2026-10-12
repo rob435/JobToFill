@@ -5,7 +5,7 @@
  *   profiles      { [id]: profile }
  *   profileOrder  [id, ...]
  *   settings      see DEFAULT_SETTINGS
- *   doc:<id>:<which>  { name, type, size, dataUrl, updatedAt }   (resume / coverLetter files)
+ *   doc:<id>:<which>  { name, type, size, dataUrl, updatedAt }   (resume / coverLetter / transcript files)
  *   history       [{ date, url, host, title, filled }]  newest first
  *   passwords     saved logins, your default password and payment cards, plain JSON (passwords.js); in backups
  *   vault         the encrypted vault of older versions, until it is moved into passwords or discarded (passwords.js)
@@ -556,12 +556,17 @@
   const sessionArea = () => (JTF.api.storage && JTF.api.storage.session) || null;
   const tabJobKey = (tabId) => `tabjob:${tabId}`;
   const TAB_JOB_TTL = 6 * 3600000;
+  // A job found without its description or summary (the job site didn't answer, the page didn't say) is looked up
+  // again after a few minutes rather than for the rest of the application.
+  const TAB_JOB_RETRY = 5 * 60000;
 
   async function getTabJob(tabId) {
     const s = sessionArea();
     if (!s || tabId == null) return null;
     const got = (await s.get(tabJobKey(tabId)).catch(() => ({})))[tabJobKey(tabId)];
-    return got && Date.now() - got.at < TAB_JOB_TTL ? got : null;
+    if (!got) return null;
+    const found = !!got.job && !!(got.job.description || got.job.summary);
+    return Date.now() - got.at < (found ? TAB_JOB_TTL : TAB_JOB_RETRY) ? got : null;
   }
 
   /** { url, job: { company, title, location, url, description, summary, companyNotes } } for a tab. */
@@ -569,6 +574,12 @@
     const s = sessionArea();
     if (!s || tabId == null) return;
     await s.set({ [tabJobKey(tabId)]: { ...entry, at: Date.now() } }).catch(() => {});
+  }
+
+  /** The tab was closed: its job goes with it. */
+  async function removeTabJob(tabId) {
+    const s = sessionArea();
+    if (s && tabId != null) await s.remove(tabJobKey(tabId)).catch(() => {});
   }
 
   /* ---------------------------------------------------------------- history */
@@ -681,8 +692,15 @@
     return out;
   }
 
+  /**
+   * Change what a watched firm's checks found. `patch` is the fields to change, or a function of what is stored now
+   * that returns them: a check that took a minute merges with a "Mark as seen" pressed meanwhile instead of undoing it.
+   * Nothing is written back for a firm no longer on the watchlist (removed during the check): returns null.
+   */
   const setWatchState = exclusive(async function setWatchState(id, patch) {
-    const state = Object.assign({ seen: null, fresh: [] }, await getWatchState(id), patch);
+    if (!(await getWatchlist()).some((w) => w.id === id)) return null;
+    const current = Object.assign({ seen: null, fresh: [] }, await getWatchState(id));
+    const state = Object.assign(current, typeof patch === 'function' ? patch(current) : patch);
     if (Array.isArray(state.seen)) state.seen = state.seen.slice(-SEEN_LIMIT);
     state.fresh = (state.fresh || []).slice(0, 30);
     await area().set({ ['watch:' + id]: state });
@@ -837,12 +855,12 @@
     answerBank,
     getTabJob,
     setTabJob,
+    removeTabJob,
     otherJob,
     getQuickApply,
     saveQuickApply,
     getQuickStatus,
     setQuickStatus,
-    removeQuickLetters,
     clearQuickApply,
     getHistory,
     addHistory,
