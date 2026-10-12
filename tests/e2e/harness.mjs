@@ -180,6 +180,12 @@ async function firefoxDriver() {
       const url = await bg((f) => globalThis.JTF.api.runtime.getURL(f), file);
       const tab = await bg((u) => globalThis.JTF.api.tabs.create({ url: u }).then((t) => t.id), url);
       const target = await consoleFor(file);
+      // The document is listed before its scripts have run ("globalThis.JTF is undefined" in a call made at once):
+      // wait for it to load, as page.goto does in Chromium.
+      for (const deadline = Date.now() + 10000; ; await sleep(100)) {
+        if ((await rdp.call(target, () => document.readyState).catch(() => '')) === 'complete') break;
+        if (Date.now() > deadline) throw new Error(`${file} never finished loading`);
+      }
       return {
         call: (fn, arg) => rdp.call(target, fn, arg),
         close: () => bg((id) => globalThis.JTF.api.tabs.remove(id), tab),
