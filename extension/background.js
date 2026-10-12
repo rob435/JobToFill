@@ -1271,6 +1271,27 @@ async function attachLetter(tabId, letterId) {
   return { saved: true, filled: summary.filled, detected: summary.detected };
 }
 
+/**
+ * What the settings page or the letter studio hadn't saved yet as its tab closed, sent as it closes: Firefox drops
+ * a closing page's own write of an object (a message gets here). `profile`: the page's copy, its edits on the profile
+ * as it last saw it stored; `letter`: { id, letter, text, pdfStale, pdf }; `logins`: what was typed into saved logins
+ * ({ id, username, password }) and `defaultPassword`. Nothing that no longer exists is made again.
+ */
+async function keepEdits(msg) {
+  if (msg.profile && (await store.loadAll()).profiles[msg.profile.id]) await store.saveProfile(msg.profile);
+  if (msg.letter && (await store.getLetters()).some((l) => l.id === msg.letter.id)) await store.saveLetter(msg.letter);
+  if (msg.logins || typeof msg.defaultPassword === 'string')
+    await passwords.update((d) => {
+      if (typeof msg.defaultPassword === 'string') d.defaultPassword = msg.defaultPassword;
+      for (const typed of msg.logins || []) {
+        const login = d.credentials.find((c) => c.id === typed.id);
+        const patch = Object.fromEntries(['username', 'password'].filter((k) => k in typed).map((k) => [k, typed[k]]));
+        if (login) Object.assign(login, patch, { updatedAt: Date.now() });
+      }
+    });
+  return { ok: true };
+}
+
 /* ------------------------------------------------------------ AI answers */
 
 // Firefox asks before an add-on sends personal data anywhere (granted from the popup or settings).
@@ -2818,6 +2839,7 @@ const HANDLERS = {
   'jtf:job-context': (msg) => jobContext(msg.tabId),
   'jtf:scrape': (msg) => scrapeInTab(msg.url),
   'jtf:attach': (msg) => attachLetter(msg.tabId, msg.letterId),
+  'jtf:keep': keepEdits,
   'jtf:ai-status': (msg) => {
     const run = aiRuns.get(msg.tabId);
     return { run: run ? runView(run) : null };

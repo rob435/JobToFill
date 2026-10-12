@@ -134,6 +134,69 @@ test('Lever-style form: div labels, url fields, radio custom question, EEO', asy
   await page.close();
 });
 
+test('two fills at once take turns, and Undo takes back every fill since the last Undo', async () => {
+  const page = await h.open('lever.html');
+  const tabId = await h.tabId(page);
+  const boxes = ['name', 'email', 'phone', 'org', 'urls[LinkedIn]', 'urls[GitHub]', 'urls[Portfolio]'].map(
+    (name) => `input[name="${name}"]`,
+  );
+  const lists = ['eeo[gender]', 'eeo[race]', 'eeo[veteran]'].map((name) => `select[name="${name}"]`);
+  const empty = async () => {
+    for (const box of [...boxes, 'textarea[name=comments]']) assert.equal(await value(page, box), '', box);
+    for (const list of lists) assert.equal(await selectedText(page, list), 'Select ...', list);
+    assert.equal(await checked(page, 'input[name="cards[abc][field0]"][value=Yes]'), false);
+  };
+  // The frame asked to fill twice at once (Fill pressed twice, Quick apply's second fill while the first runs).
+  const fillTwice = (id) =>
+    globalThis.JTF.store.getActive().then(({ profile, settings }) => {
+      const fill = () =>
+        globalThis.JTFBackground.callFrames(id, 'fill', [{ profile, settings, docs: {} }], [0]).then((f) => f[0]);
+      return Promise.all([fill(), fill()]);
+    });
+  const [first, second] = await h.bg(fillTwice, tabId);
+  assert.ok(first.filled >= 12, JSON.stringify(first));
+  assert.equal(second.filled, 0, 'the second waited, then found every box filled');
+  assert.equal(await value(page, 'input[name=name]'), 'Ada Lovelace', 'typed once, not twice over');
+  assert.equal(await selectedText(page, 'select[name="eeo[gender]"]'), 'Female');
+  const undone = await h.handler('jtf:undo', page);
+  assert.ok(undone.undone >= first.filled - 1, JSON.stringify(undone));
+  await empty();
+
+  // Filled again after the person emptied a box: Undo goes back to before the first fill, not just the second.
+  await h.fill(page);
+  await typeInto(page, 'input[name=org]', '');
+  const again = await h.fill(page);
+  assert.equal(again.filled, 1, JSON.stringify(again));
+  assert.equal(await value(page, 'input[name=org]'), 'Analytical Engines Inc');
+  await h.handler('jtf:undo', page);
+  await empty();
+
+  // A fill that stops part-way with an error: what it had already filled can still be undone.
+  await h.bg(
+    (id) =>
+      globalThis.JTF.api.scripting.executeScript({
+        target: { tabId: id, frameIds: [0] },
+        func: () => {
+          const fill = globalThis.JTF.fill;
+          const highlight = fill.highlight;
+          let n = 0;
+          fill.highlight = (...args) => {
+            if (++n < 4) return highlight(...args);
+            fill.highlight = highlight;
+            throw new Error('Stopped part-way');
+          };
+        },
+      }),
+    tabId,
+  );
+  await h.fill(page);
+  assert.equal(await value(page, 'input[name=name]'), 'Ada Lovelace');
+  assert.equal(await value(page, 'textarea[name=comments]'), '', 'the fill stopped before the end');
+  assert.ok((await h.handler('jtf:undo', page)).undone >= 4);
+  await empty();
+  await page.close();
+});
+
 test('searchable dropdowns: react-select style, async search, free-text autocomplete', async () => {
   const page = await h.open('combobox.html');
   const r = await h.fill(page);

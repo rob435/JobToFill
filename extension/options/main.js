@@ -12,6 +12,7 @@ import {
   toolbarPinned,
 } from '../ui/common.js';
 import { renderBackup, renderHistory, renderSettings } from './app.js';
+import { mergeEdits, same } from './edits.js';
 import { renderEmail } from './email.js';
 import { renderLetters } from './letters.js';
 import { renderPasswords } from './passwords.js';
@@ -35,6 +36,17 @@ const state = { all: null, profile: null, section: 'personal' };
 /* ------------------------------------------------------------- autosave */
 
 let saveTimer = null;
+// The stored profile this page's copy last matched (read, written, or changed elsewhere and taken in): where the
+// copy differs from it is what this page has to save, and nothing else is written. `origins`: where each list
+// entry of the copy was in it, so an education entry moved here keeps a change made to it elsewhere.
+let base = null;
+let origins = new WeakMap();
+// Every profile as last seen stored, and whether a write of this page's is on its way: for the write made as the
+// page closes, which can't wait for a read (see flushOnHide).
+let stored = null;
+let writing = false;
+// Boxes typed in since they were drawn: one drawn again keeps what it shows (see redraw).
+const typed = new WeakSet();
 
 function setSaveState(text, saved) {
   const label = $('#save-state');
@@ -50,11 +62,140 @@ function scheduleSave() {
   saveTimer = setTimeout(saveNow, 350);
 }
 
+/** The page's copy of the profile is what is stored now: remember it, and where each list entry is in it. */
+function inStep() {
+  const next = new WeakMap();
+  const tag = (value) => {
+    if (Array.isArray(value))
+      value.forEach((x, i) => {
+        if (x && typeof x === 'object') next.set(x, i);
+        tag(x);
+      });
+    else if (value && typeof value === 'object') Object.values(value).forEach(tag);
+  };
+  tag(state.profile);
+  base = structuredClone(state.profile);
+  origins = next;
+}
+
+const originOf = (entry) => origins.get(entry);
+const unsaved = () => !!state.profile && !!base && !same(state.profile, base);
+
+// Saves, and changes made elsewhere being taken in, one at a time.
+let turn = Promise.resolve();
+function inTurn(fn) {
+  const run = turn.then(fn);
+  turn = run.catch(() => {});
+  return run;
+}
+
+/** Write the page's copy; from then on only what is typed after it differs from the stored profile. */
+async function write() {
+  const before = { base, origins };
+  inStep();
+  stored = { ...stored, [state.profile.id]: base };
+  writing = true;
+  try {
+    await store.saveProfile(structuredClone(base));
+  } catch (err) {
+    ({ base, origins } = before);
+    throw err;
+  } finally {
+    writing = false;
+  }
+}
+
+/**
+ * Save what this page changed onto the profile as it is stored now: what Popup › Learn from this page or another
+ * Settings tab saved meanwhile stays (a stale copy of the whole profile used to be written over it).
+ */
 async function saveNow() {
   clearTimeout(saveTimer);
   saveTimer = null;
-  await store.saveProfile(state.profile);
-  setSaveState('All changes saved', true);
+  await inTurn(async () => {
+    const latest = (await store.loadAll()).profiles[state.profile.id];
+    // Deleted in another tab: the page moves to the profile now active (takeIn).
+    if (!latest) return;
+    if (!same(latest, base)) await adopt(mergeEdits(base, state.profile, latest, originOf));
+    if (same(state.profile, latest)) inStep();
+    else await write();
+  });
+  if (!saveTimer) setSaveState('All changes saved', true);
+}
+
+/**
+ * The page is going away (its tab closed): what isn't saved yet is put onto the profile as last seen stored and
+ * kept. A save that reads storage first never lands, as the page is gone before the read comes back: Chromium takes
+ * one write of the profiles, Firefox (which drops that) a message to the background (keepEdits).
+ */
+function flushOnHide() {
+  const latest = stored && state.profile && stored[state.profile.id];
+  if (!latest || !(writing || unsaved())) return;
+  const profile = mergeEdits(base, state.profile, latest, originOf);
+  api.storage.local.set({ profiles: { ...stored, [profile.id]: profile } }).catch(() => {});
+  api.runtime.sendMessage({ type: 'jtf:keep', profile }).catch(() => {});
+}
+
+/** Show a profile changed elsewhere (with this page's edits on it), in place of the page's copy. */
+async function adopt(profile) {
+  state.profile = structuredClone(profile);
+  state.all.profiles[profile.id] = state.profile;
+  renderSetup();
+  if (PROFILE_SECTIONS[state.section]) await redraw();
+}
+
+/**
+ * Draw the section again, the box that had focus focused again (found by its name and place) with its caret, and
+ * what was typed into it kept: a year half typed isn't in the profile yet.
+ */
+async function redraw() {
+  const container = $('#sections');
+  const active = container.contains(document.activeElement) ? document.activeElement : null;
+  const named = (name) => Array.from(container.querySelectorAll(`[name="${CSS.escape(name)}"]`));
+  const spot = active && active.name ? { el: active, index: named(active.name).indexOf(active) } : null;
+  const { scrollX, scrollY } = window;
+  await show(state.section);
+  window.scrollTo(scrollX, scrollY);
+  const again = spot && named(spot.el.name)[spot.index];
+  if (!again) return;
+  const text = again.matches('textarea, input:not([type="checkbox"]):not([type="radio"])');
+  if (text && typed.has(spot.el) && again.value !== spot.el.value) {
+    again.value = spot.el.value;
+    again.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  again.focus({ preventScroll: true });
+  if (!text) return;
+  again.scrollTop = spot.el.scrollTop;
+  try {
+    again.setSelectionRange(spot.el.selectionStart, spot.el.selectionEnd);
+  } catch (err) {
+    /* a box without a caret (email, number, date) */
+  }
+}
+
+/**
+ * Another context changed the profiles (Popup › Learn from this page, another Settings tab, a restore): its
+ * changes come in at once, and this page's edits stay on top of them, also in the box being typed in. Edits not
+ * saved yet are saved with them, so the page is in step with storage again.
+ */
+async function takeIn() {
+  if (!state.profile) return;
+  const all = await store.loadAll();
+  const latest = all.profiles[state.profile.id];
+  if (!latest) return load();
+  state.all = all;
+  all.profiles[state.profile.id] = state.profile;
+  if (!same(latest, base)) {
+    const edited = unsaved();
+    await adopt(mergeEdits(base, state.profile, latest, originOf));
+    if (edited && !same(state.profile, latest)) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      await write();
+      setSaveState('All changes saved', true);
+    } else inStep();
+  }
+  renderProfilePicker();
 }
 
 /* -------------------------------------------------------------- routing */
@@ -112,7 +253,9 @@ function renderProfilePicker() {
 
 async function load() {
   state.all = await store.loadAll();
+  stored = structuredClone(state.all.profiles);
   state.profile = state.all.profiles[state.all.settings.activeProfileId];
+  inStep();
   renderProfilePicker();
   await show(location.hash.slice(1) || state.section);
   await readSetupFacts();
@@ -122,7 +265,7 @@ async function switchTo(id) {
   // A name half typed belonged to the profile being left.
   $('#profile-form').hidden = true;
   $('.profile-actions').hidden = false;
-  if (saveTimer) await saveNow();
+  if (unsaved()) await saveNow();
   await store.setActive(id);
   await load();
 }
@@ -364,13 +507,8 @@ function onStorageChanged(changes, area) {
   if (Object.keys(changes).some((k) => /^(aiKeys|nylas|settings|doc:.+)$/.test(k))) readSetupFacts();
   // A backup was found, restored or written while this page is open.
   if (changes.backupInfo || changes.profiles) renderRestoreBanner();
-  // The popup's "learn" feature or another tab changed the profile: reload unless mid-edit.
-  if (saveTimer || !(changes.profiles || changes.profileOrder)) return;
-  const next = changes.profiles && changes.profiles.newValue && changes.profiles.newValue[state.profile.id];
-  if (next && JSON.stringify(next) === JSON.stringify(state.profile)) return;
-  const active = document.activeElement;
-  if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
-  load();
+  if (changes.profiles) stored = changes.profiles.newValue || {};
+  if (changes.profiles || changes.profileOrder) inTurn(takeIn).catch(() => {});
 }
 
 async function init() {
@@ -387,7 +525,10 @@ async function init() {
   // Pinning the button happens outside the page: look again when the person comes back to it.
   window.addEventListener('focus', () => readSetupFacts());
   if (api.action && api.action.onUserSettingsChanged) api.action.onUserSettingsChanged.addListener(readSetupFacts);
-  document.addEventListener('visibilitychange', () => saveTimer && saveNow());
+  // Another tab brought forward: saved now rather than after the pause. The tab closing: see flushOnHide.
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && unsaved() && saveNow());
+  window.addEventListener('pagehide', flushOnHide);
+  document.addEventListener('input', (e) => typed.add(e.target), true);
   $('#profile-select').addEventListener('change', (e) => switchTo(e.target.value));
   for (const [action, run] of Object.entries(PROFILE_ACTIONS)) $('#profile-' + action).addEventListener('click', run);
   api.storage.onChanged.addListener(onStorageChanged);

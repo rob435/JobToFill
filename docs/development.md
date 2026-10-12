@@ -55,7 +55,8 @@ extension/
   studio/              the cover letter page: find the job, write, check, preview, attach, tailor the CV
   discover/            Discover internships page: search, careers checks, watchlist
   data/firms.json      the registry Discover searches (built by scripts/firms.mjs)
-  options/             settings page: main.js (shell), profile.js, letters.js, email.js, passwords.js, app.js, controls.js
+  options/             settings page: main.js (shell), profile.js, letters.js, email.js, passwords.js, app.js, controls.js,
+                       setup.js (Get started), edits.js (what the page changed, put onto the profile as stored now)
 tests/
   unit/                node:test, no browser
   e2e/                 the real extension in Chromium (Playwright) or Firefox (Puppeteer + remote debugging)

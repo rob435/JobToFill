@@ -93,7 +93,7 @@ In both browsers the settings page opens on install. Fill in your profile and pi
 | Save answers you typed                                     | Toolbar → _Learn from this page_                                                                    |
 | Insert one value                                           | Right-click a box → _Insert from profile_                                                           |
 | New password on a sign-up form                             | Right-click the password box → _Generate strong password_ (or just fill the page)                   |
-| Undo a fill                                                | _Undo_ in the popup or in the on-page toast                                                         |
+| Undo a fill                                                | _Undo_ in the popup or in the on-page toast: every fill since the last Undo, the AI’s answers too   |
 | Letter, CV and form in one go                              | Toolbar → _Quick apply_ (see the result later under _Last quick apply_)                             |
 | Write a cover letter                                       | Toolbar → _Write cover letter_ on the application page (set up a key under _Cover letters & AI_)    |
 | Answer the questions left                                  | Automatic with an AI key; or the popup’s _Answer them with AI_                                      |
@@ -139,7 +139,7 @@ Without an AI key, JobToFill fills from your profile alone. With one, it also an
 
 ## Settings reference
 
-Open the settings from the popup’s _Edit profile & settings_. Everything is saved as you type. The bar at the top switches between profiles (“Software engineer”, “Data analyst”…), each with its own details and files: _New_, _Duplicate_, _Rename_, _Delete_.
+Open the settings from the popup’s _Edit profile & settings_. Everything is saved as you type, also when you close the tab straight after, and only what you change there: what _Learn from this page_ or another settings tab saves while the page is open stays, and shows. The bar at the top switches between profiles (“Software engineer”, “Data analyst”…), each with its own details and files: _New_, _Duplicate_, _Rename_, _Delete_.
 
 ### Your profile
 
