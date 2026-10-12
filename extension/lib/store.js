@@ -50,6 +50,11 @@
     searchHistory: false,
     // Questions the rules leave empty are answered by the AI (when a key is set up) as part of each fill.
     aiAnswers: true,
+    // Questions the AI never sees unless switched on here (Settings › Cover letters & AI, answers.withheld): eeo
+    // (diversity and social-mobility monitoring), consent (declarations, typed signatures, AI-use disclosures; never
+    // marketing opt-ins), legal (government officials, criminal and regulatory history, sanctions, vetting and checks),
+    // health (adjustments, medical questions), identity (ID numbers and date of birth; never passwords or cards).
+    aiSensitive: { eeo: false, consent: false, legal: false, health: false, identity: false },
     // Verification codes from email (Nylas): auto: watch pages for code boxes and fill them by themselves;
     // links: open the "verify your email" link when a page says one was sent.
     otp: { auto: true, links: true },
@@ -93,11 +98,24 @@
     };
   }
 
+  /** The kinds of question the AI may also answer: each of DEFAULT_SETTINGS.aiSensitive, true only when switched on. */
+  function aiSensitiveSettings(settings) {
+    const saved = (settings && settings.aiSensitive) || {};
+    return Object.fromEntries(Object.keys(DEFAULT_SETTINGS.aiSensitive).map((k) => [k, saved[k] === true]));
+  }
+
+  /** Saved settings over the defaults, nested ones key by key (settings saved before a key existed get its default). */
+  function withDefaults(saved) {
+    const settings = Object.assign({}, DEFAULT_SETTINGS, saved || {});
+    settings.aiSensitive = aiSensitiveSettings(settings);
+    return settings;
+  }
+
   async function loadAll() {
     const data = await area().get(['profiles', 'profileOrder', 'settings']);
     let profiles = data.profiles || {};
     let order = (data.profileOrder || Object.keys(profiles)).filter((id) => profiles[id]);
-    const settings = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
+    const settings = withDefaults(data.settings);
     let dirty = false;
     if (data.settings && !(data.settings.revision >= 2)) {
       settings.consents = true;
@@ -131,7 +149,12 @@
   }
 
   const saveSettings = exclusive(async function saveSettings(patch) {
-    const settings = Object.assign(await getSettings(), patch);
+    const settings = await getSettings();
+    const sensitive = settings.aiSensitive;
+    Object.assign(settings, patch);
+    // { aiSensitive: { legal: true } } switches that one on and leaves the others as they were.
+    if (patch && patch.aiSensitive)
+      settings.aiSensitive = aiSensitiveSettings({ aiSensitive: { ...sensitive, ...patch.aiSensitive } });
     await area().set({ settings });
     return settings;
   });
@@ -766,7 +789,7 @@
     const order = (data.profileOrder || Object.keys(data.profiles)).filter((id) => data.profiles[id]);
     const profiles = {};
     for (const id of order) profiles[id] = JTF.fields.upgradeProfile(data.profiles[id]);
-    const set = { profiles, profileOrder: order, settings: Object.assign({}, DEFAULT_SETTINGS, data.settings || {}) };
+    const set = { profiles, profileOrder: order, settings: withDefaults(data.settings) };
     if (data.history) set.history = data.history;
     if (Array.isArray(data.answers)) set.answers = data.answers;
     if (Array.isArray(data.watchlist)) set.watchlist = data.watchlist.filter((w) => w && w.id && w.firm);
@@ -826,6 +849,7 @@
     setNylas,
     backsUp,
     otpSettings,
+    aiSensitiveSettings,
     getLetters,
     saveLetter,
     removeLetter,

@@ -700,7 +700,8 @@
     state.lastFill = history;
     report.undoable = state.history.length > 0;
     // Only a job application's leftovers go to the AI (never a checkout's gift message or a sign-up page).
-    if (!only && context.jobContext) report.pending = await pendingQuestions(profile, context, { peek: !!payload.ai });
+    if (!only && context.jobContext)
+      report.pending = await pendingQuestions(profile, context, { peek: !!payload.ai, settings });
     // What kind of page this is now (sign-in, sign-up, emailed code…), for signing in and creating accounts.
     report.account = JTF.flow.analyze(scan(profile), { ignore: payload.accountIgnore });
     return report;
@@ -873,9 +874,11 @@
    * The questions the fill left empty, for the AI to answer: ones nothing recognised, recognised ones the
    * profile has nothing for, and choices none of whose options matched the profile's answer (`guess`). Each
    * comes with its options (a custom dropdown is opened to read them when `peek`) and the question before it.
+   * `settings.aiSensitive` lets the kinds of question the candidate allows through (decide.forAi).
    */
-  async function pendingQuestions(profile, context, { peek }) {
+  async function pendingQuestions(profile, context, { peek, settings }) {
     const { fields, results } = scan(profile);
+    const allow = (settings && settings.aiSensitive) || null;
     state.pending = new Map();
     const items = [];
     const prevOf = (i) => (i > 0 ? { field: fields[i - 1], r: results[i - 1] } : null);
@@ -887,7 +890,7 @@
       const prevType = prev && prev.r && prev.r.type;
       const on = JTF.decide.conditionOn(r, i);
       const before = fields[on] ? JTF.decide.beforeOf(fields[on].desc, JTF.fill.currentValue(fields[on])) : null;
-      const asked = JTF.decide.forAi(field.desc, r, profile, context, prevType, before);
+      const asked = JTF.decide.forAi(field.desc, r, profile, context, prevType, before, allow);
       if (!asked) continue;
       const item = JTF.decide.aiItem(field.desc, asked.guess);
       if (!field.desc.options && peek && (field.kind === 'combo' || field.kind === 'combobox')) {
@@ -905,10 +908,8 @@
         follows: prev
           ? {
               question: U.cleanLabel(JTF.matcher.questionText(prev.field.desc), 200),
-              answer:
-                prevType && /^(eeo\.|account\.|cc\.)/.test(prevType)
-                  ? ''
-                  : JTF.fill.currentValue(prev.field).slice(0, 200),
+              // Never a date of birth, a password or a diversity answer the AI isn't answering itself.
+              answer: JTF.decide.hidesAnswer(prevType, allow) ? '' : JTF.fill.currentValue(prev.field).slice(0, 200),
             }
           : null,
       });
@@ -1204,7 +1205,9 @@
     async pending(payload) {
       const { context } = scan(payload.profile);
       context.jobLocation = jobLocation(payload);
-      return { items: await pendingQuestions(payload.profile, context, { peek: !!payload.ai }) };
+      return {
+        items: await pendingQuestions(payload.profile, context, { peek: !!payload.ai, settings: payload.settings }),
+      };
     },
     hold,
     release() {

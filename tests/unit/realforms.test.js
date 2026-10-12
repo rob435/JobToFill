@@ -200,6 +200,50 @@ test('real forms: boxes that are yours to fill or leave, never the AI’s', () =
   );
 });
 
+test('real forms: with every kind of question allowed, the AI gets what is about you and nothing else', () => {
+  const ALL = { eeo: true, consent: true, legal: true, health: true, identity: true };
+  const allowing = (descs, allow) =>
+    decide
+      .page(descs, alex(), {
+        context: { today: TODAY, jobContext: true },
+        withheld: (item) => answers.withheld(item, '', allow),
+        allow,
+      })
+      .map((e) => (e.action === 'fill' ? e.text : e.ai ? 'ai' : e.action));
+  const mine = [
+    radio('Did your household receive income support during your school years?'),
+    radio('What is your gender?', opts('Woman', 'Man', 'Prefer not to say')),
+    radio('Are you, or is any member of your immediate family, a current or former government official?'),
+    // Netcraft
+    desc(
+      { label: 'Please disclose below whether AI tools were used to generate all or a portion of your code sample.' },
+      { kind: 'textarea' },
+    ),
+    desc('National Insurance number'),
+    radio('Do you require any reasonable adjustments during the recruitment process?'),
+  ];
+  assert.deepEqual(allowing(mine), ['leave', 'missing', 'ai', 'none', 'none', 'missing']);
+  assert.deepEqual(allowing(mine, ALL), ['ai', 'ai', 'ai', 'ai', 'ai', 'ai']);
+  // Fax, pager, someone else's email, a supervisor's name, a minor you don't have, the site's own box, a password,
+  // the acknowledgement the rules tick (or leave, by Settings › Filling): never, whatever is allowed.
+  const others = [
+    desc('Fax'),
+    desc('Pager'),
+    desc('Alternate Email'),
+    desc('Supervisor'),
+    desc('Minor'),
+    desc(
+      { label: '', aria: 'Email address without domain', section: 'Already working at Isio?' },
+      { kind: 'textarea' },
+    ),
+    desc('Password', { kind: 'password', inputType: 'password' }),
+    desc({ label: 'The information I have provided is accurate' }, { kind: 'checkbox', options: opts('Yes') }),
+    desc({ label: 'Keep me updated about future opportunities' }, { kind: 'checkbox', options: opts('Yes') }),
+  ];
+  assert.deepEqual(allowing(others, ALL), allowing(others));
+  assert.ok(!allowing(others, ALL).includes('ai'));
+});
+
 test('real forms: declarations stay yours, whatever their number or wording', () => {
   // OC&C
   const accurate = desc(

@@ -175,6 +175,45 @@ test('store: acknowledgement boxes are ticked by default; older settings are swi
   assert.equal((await store.getSettings()).consents, false, 'switched off afterwards, it stays off');
 });
 
+test('store: the questions the AI may also answer are all off by default, kept key by key, and in backups', async () => {
+  const NONE = { eeo: false, consent: false, legal: false, health: false, identity: false };
+  assert.deepEqual((await store.getSettings()).aiSensitive, NONE, 'a fresh install');
+  // Settings saved before the setting existed, and saved with only some of it (or junk in it), get the rest off.
+  await chrome.storage.local.set({ settings: { revision: 2, consents: true } });
+  assert.deepEqual((await store.getSettings()).aiSensitive, NONE);
+  await chrome.storage.local.set({
+    settings: { revision: 2, aiSensitive: { legal: true, eeo: 'yes', mystery: true } },
+  });
+  assert.deepEqual((await store.getSettings()).aiSensitive, { ...NONE, legal: true });
+  assert.deepEqual(store.aiSensitiveSettings(null), NONE);
+  assert.deepEqual(store.aiSensitiveSettings({ aiSensitive: { health: true } }), { ...NONE, health: true });
+  // One switch saved leaves the others as they were.
+  await store.saveSettings({ aiSensitive: { eeo: true } });
+  assert.deepEqual((await store.getSettings()).aiSensitive, { ...NONE, legal: true, eeo: true });
+  await store.saveSettings({ aiSensitive: { legal: false }, overwrite: true });
+  const saved = await store.getSettings();
+  assert.deepEqual(saved.aiSensitive, { ...NONE, eeo: true });
+  assert.equal(saved.overwrite, true);
+  // Changing what a read returned changes nothing stored, and never the defaults.
+  saved.aiSensitive.identity = true;
+  assert.equal((await store.getSettings()).aiSensitive.identity, false);
+  assert.deepEqual(store.DEFAULT_SETTINGS.aiSensitive, NONE);
+
+  // In the backup file, and back from it; a backup from before the setting existed gets the defaults.
+  const exported = JSON.parse(JSON.stringify(await store.exportData()));
+  assert.deepEqual(exported.settings.aiSensitive, { ...NONE, eeo: true });
+  installChrome();
+  await store.importData(exported);
+  assert.deepEqual((await store.getSettings()).aiSensitive, { ...NONE, eeo: true });
+  delete exported.settings.aiSensitive;
+  installChrome();
+  await store.importData(exported);
+  assert.deepEqual((await store.getSettings()).aiSensitive, NONE);
+  installChrome();
+  await store.importData({ ...exported, settings: { ...exported.settings, aiSensitive: { identity: true } } });
+  assert.deepEqual((await chrome.storage.local.get('settings')).settings.aiSensitive, { ...NONE, identity: true });
+});
+
 test('store: concurrent saves do not drop each other', async () => {
   const { profile } = await store.getActive();
   const b = await store.createProfile('Second');

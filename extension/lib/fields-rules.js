@@ -55,6 +55,9 @@
     return CONSENT.test(t) && !OPT_IN.test(t) && !NEGATED.test(t);
   }
 
+  /** A marketing, talent-pool, job-alert, SMS or WhatsApp opt-in ("Keep me updated about future opportunities"). */
+  const isOptIn = (text) => OPT_IN.test(U.normalize(text));
+
   /** "US Dollar ($) / Euro (€)" or "Hourly / Monthly / Yearly": the units next to a salary, not the amount. */
   function looksLikeMoneyUnits(options) {
     const opts = (options || []).filter((o) => !JTF.matcher.isPlaceholder(U.normalize(o.text)));
@@ -1174,5 +1177,5 @@
     tel: ['phone'], 'tel-national': ['phone.national'], 'tel-country-code': ['phone.countryCode'],
   };
 
-  Object.assign(P, { AUTOCOMPLETE, RULES, isAcknowledgement });
+  Object.assign(P, { AUTOCOMPLETE, RULES, isAcknowledgement, isOptIn });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

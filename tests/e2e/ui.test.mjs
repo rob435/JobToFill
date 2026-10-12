@@ -160,6 +160,60 @@ test('settings toggles persist', async () => {
   await page.close();
 });
 
+test('questions the AI may also answer: each switch saves, and “All of them” switches all five (mixed when some)', async () => {
+  const sensitive = async () => (await h.bg(() => globalThis.JTF.store.getSettings())).aiSensitive;
+  const NONE = { eeo: false, consent: false, legal: false, health: false, identity: false };
+  const page = await openExt('options/options.html#letters');
+  await page.waitForSelector('input[name="ai-sensitive-all"]');
+  const all = 'input[name="ai-sensitive-all"]';
+  const mixed = () => page.$eval(all, (box) => box.indeterminate);
+  assert.deepEqual(await sensitive(), NONE, 'all off by default');
+  assert.equal(await page.isChecked(all), false);
+  assert.equal(await mixed(), false);
+  for (const text of [
+    'Diversity and equal opportunity',
+    'Declarations and consents',
+    'Government, legal and security vetting',
+    'Health and adjustments',
+    'ID numbers and date of birth',
+    'Only switch this on if that’s true of you.',
+  ])
+    assert.ok(await page.getByText(text).count(), text);
+
+  await page.check('input[name="ai-sensitive-legal"]');
+  await page.waitForFunction(() => document.querySelector('input[name="ai-sensitive-all"]').indeterminate);
+  await page.waitForTimeout(200);
+  assert.deepEqual(await sensitive(), { ...NONE, legal: true });
+  assert.equal(await page.isChecked(all), false);
+
+  await page.check(all);
+  await page.waitForTimeout(200);
+  assert.deepEqual(await sensitive(), { eeo: true, consent: true, legal: true, health: true, identity: true });
+  assert.equal(await mixed(), false);
+  for (const k of Object.keys(NONE)) assert.equal(await page.isChecked(`input[name="ai-sensitive-${k}"]`), true, k);
+
+  // Kept when the page is opened again.
+  await page.reload();
+  await page.waitForSelector('input[name="ai-sensitive-identity"]');
+  assert.equal(await page.isChecked('input[name="ai-sensitive-identity"]'), true);
+  assert.equal(await page.isChecked(all), true);
+  await page.uncheck('input[name="ai-sensitive-eeo"]');
+  await page.waitForTimeout(200);
+  assert.equal(await mixed(), true);
+  assert.deepEqual(await sensitive(), { eeo: false, consent: true, legal: true, health: true, identity: true });
+
+  // From mixed, "All of them" switches every one on; again, every one off.
+  await page.check(all);
+  await page.waitForTimeout(200);
+  assert.deepEqual(await sensitive(), { eeo: true, consent: true, legal: true, health: true, identity: true });
+  await page.uncheck(all);
+  await page.waitForTimeout(200);
+  assert.deepEqual(await sensitive(), NONE);
+  for (const k of Object.keys(NONE)) assert.equal(await page.isChecked(`input[name="ai-sensitive-${k}"]`), false, k);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
 test('backup downloads a JobToFill JSON file, with passwords and cards unless left out', async () => {
   const { readFile } = await import('node:fs/promises');
   const page = await openExt('options/options.html#backup');

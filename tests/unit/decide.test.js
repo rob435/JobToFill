@@ -114,3 +114,84 @@ test('forAi: never contact details, diversity answers or what is left empty on p
   // "If other, please specify" after a diversity question belongs to it.
   assert.equal(decide.forAi(desc('If other, please specify'), null, p, {}, 'eeo.race'), null);
 });
+
+test('hidesAnswer: the field before a question for the AI never passes on a private answer or a secret', () => {
+  for (const type of [
+    'dob',
+    'age',
+    'pronouns',
+    'name.prefix',
+    'job.adjustments',
+    'eeo.gender',
+    'eeo.race',
+    'account.password',
+    'account.username',
+    'cc.number',
+    'cc.cvc',
+    'otp',
+  ]) {
+    assert.equal(decide.hidesAnswer(type), true, type);
+    // A diversity answer passes once the AI answers those itself (it has them in its own block); nothing else does.
+    const ALL = { eeo: true, consent: true, legal: true, health: true, identity: true };
+    assert.equal(decide.hidesAnswer(type, ALL), !/^eeo\./.test(type), `${type}, everything allowed`);
+  }
+  for (const type of [null, undefined, '', 'job.otherOffers', 'compliance.relatives', 'edu.school', 'custom'])
+    assert.equal(decide.hidesAnswer(type), false, String(type));
+});
+
+test('forAi: what the rules leave empty goes to the AI for the kinds the candidate allows, and only those', () => {
+  const p = student();
+  const ALL = { eeo: true, consent: true, legal: true, health: true, identity: true };
+  const NONE = { eeo: false, consent: false, legal: false, health: false, identity: false };
+  const ai = (d, type, allow, extra = {}) =>
+    decide.forAi(d, type ? { type, ...extra } : null, p, {}, extra.prev || null, null, allow);
+  const gender = radios('Gender', 'Woman', 'Man', 'Prefer not to say');
+  // A diversity answer left on "— don't fill —", one no option matches, Menzies' income-support question.
+  assert.equal(ai(gender, 'eeo.gender', NONE), null);
+  assert.equal(ai(gender, 'eeo.gender', undefined), null);
+  assert.equal(ai(gender, 'eeo.gender', { ...ALL, eeo: false }), null);
+  assert.deepEqual(ai(gender, 'eeo.gender', { eeo: true }), { guess: null });
+  p.eeo.gender = 'Female';
+  assert.deepEqual(ai(gender, 'eeo.gender', { eeo: true }), { guess: { type: 'eeo.gender', value: 'Female' } });
+  const support = radios('Did your household receive income support during your school years?', 'Yes', 'No');
+  assert.equal(ai(support, 'eeo.incomeSupport', NONE), null);
+  assert.deepEqual(ai(support, 'eeo.incomeSupport', { eeo: true }), { guess: null });
+  // Northern Ireland's community background, the rules' to leave whatever the job: the AI's to decline once allowed.
+  const community = radios('Community background', 'Protestant community', 'Roman Catholic community', 'Neither');
+  assert.equal(ai(community, 'eeo.community', NONE), null);
+  assert.deepEqual(ai(community, 'eeo.community', { eeo: true }), { guess: null });
+  // "If other, please specify" after a diversity question, once those are the AI's too.
+  const specify = desc('If other, please specify');
+  assert.equal(ai(specify, null, NONE, { prev: 'eeo.race' }), null);
+  assert.deepEqual(ai(specify, null, { eeo: true }, { prev: 'eeo.race' }), { guess: null });
+  assert.equal(ai(specify, null, ALL, { prev: 'cc.number' }), null, 'never after a card');
+  // Sanctions statements the profile can't settle, without the rules' "It depends".
+  const sanctions = radios('Are you a citizen or resident of Cuba, Iran, North Korea or Syria?', 'Yes', 'No');
+  assert.equal(ai(sanctions, 'compliance.sanctions', NONE), null);
+  assert.deepEqual(ai(sanctions, 'compliance.sanctions', { legal: true }), { guess: null });
+  // A government-official question the profile leaves empty goes either way: legal allowed only changes the answer.
+  const official = radios('Are you a current or former government official?', 'Yes', 'No');
+  assert.deepEqual(ai(official, 'compliance.government', NONE), { guess: null });
+  assert.deepEqual(ai(official, 'compliance.government', { legal: true }), { guess: null });
+  // A date of birth in one box, never its day, month or year boxes apart.
+  const dob = desc('Date of birth', { kind: 'date' });
+  assert.equal(ai(dob, 'dob', NONE), null);
+  assert.deepEqual(ai(dob, 'dob', { identity: true }), { guess: null });
+  assert.equal(ai(desc('Day'), 'dob', { identity: true }, { part: 'day' }), null);
+  // Never, whatever is allowed: acknowledgements (the rules' setting), opt-ins, referees, fax numbers, the page's own
+  // search box, other people's email, secrets, uploads, passwords, the CAPTCHA.
+  const box = (q) => desc({ label: q }, { kind: 'checkbox', options: opts(q) });
+  for (const [d, type] of [
+    [box('I have read the privacy notice'), 'consent'],
+    [box('Keep me updated about future opportunities'), 'optIn'],
+    [desc('Referee name'), 'referee'],
+    [desc('Fax'), 'contact.other'],
+    [desc('Search jobs'), 'page'],
+    [desc('Referrer email', { kind: 'email' }), 'email'],
+    [desc('Card number'), 'cc.number'],
+    [desc('Password', { kind: 'password' }), 'account.password'],
+    [desc('CV', { kind: 'file' }), 'file.resume'],
+    [box('I am not a robot'), 'human'],
+  ])
+    assert.equal(ai(d, type, ALL), null, type);
+});

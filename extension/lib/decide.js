@@ -26,6 +26,11 @@
   // "If other, please specify" after a diversity or password question belongs to it.
   const FOLLOW_ON = /^(if|please (specify|explain|state|give|provide)|other\b|specify)\b/;
   const PRIVATE_BEFORE = /^(eeo\.|account\.|cc\.)/;
+  // What the rules leave empty that the AI may answer when the candidate lets it answer that kind of question
+  // (settings.aiSensitive): diversity answers left on "— don't fill —" or matching no option, Menzies' "Did your
+  // household receive income support…?", sanctions statements the profile can't settle, a date of birth the profile
+  // lacks. Declarations stay the rules' (Settings › "Tick acknowledgement boxes"), opt-ins and secrets never go.
+  const MAY_ALLOW = { eeo: /^eeo\./, legal: /^compliance\.sanctions$/, identity: /^dob$/ };
   // A list on its catch-all: the box after it is for the answer the list lacks.
   const OTHER_CHOSEN = /\bother\b|\bnot listed\b|\bsomething else\b/;
   // A follow-up's condition on the choice before it: "If yes, please provide the applicable deadline", "If your answer
@@ -179,13 +184,35 @@
   /** The field a follow-up's condition is on: the list the plan says it follows, else the field before it. */
   const conditionOn = (r, i) => (r && r.follows != null ? r.follows : i - 1);
 
+  /** Does `allow` (settings.aiSensitive) let the AI answer a field of this type the rules left empty? */
+  const allows = (allow, type) =>
+    !!allow && Object.keys(MAY_ALLOW).some((k) => allow[k] === true && MAY_ALLOW[k].test(type || ''));
+
+  // Answers the AI never reads as "the question before" another (its `follows`): diversity answers, a date of birth
+  // or an age, pronouns, a title, adjustments, logins and cards (as a redacted snapshot hides them).
+  const PRIVATE_ANSWER = /^(eeo\.|pronouns$|name\.prefix$|dob$|age$|job\.adjustments$|account\.|cc\.)/;
+
+  /**
+   * Is what a field of this type holds kept from the AI when it is the field before a question? Every secret (a
+   * password, a card, a code), the private types above; a diversity answer only while the candidate keeps those from
+   * the AI (`allow`, settings.aiSensitive: then it is in the AI's own block of them anyway).
+   */
+  function hidesAnswer(type, allow) {
+    if (!type) return false;
+    const def = F().DEFS[type];
+    if (def && def.secret) return true;
+    if (/^eeo\./.test(type) && allows(allow, type)) return false;
+    return PRIVATE_ANSWER.test(type);
+  }
+
   /**
    * Does a field the fill left empty go to the AI? Null when not (an upload, contact details, diversity answers, what
    * the profile leaves empty on purpose, a follow-up whose condition the list before it rules out), else { guess }: what
    * the rules would have put there (a choice none of whose options matched it), or null. `prevType`: the type of the
-   * field before it; `before`: what that field holds, when it is a list (beforeOf()).
+   * field before it; `before`: what that field holds, when it is a list (beforeOf()); `allow`: settings.aiSensitive,
+   * the kinds of question the candidate lets the AI answer too (MAY_ALLOW), none when left out.
    */
-  function forAi(desc, r, profile, context, prevType, before = null) {
+  function forAi(desc, r, profile, context, prevType, before = null, allow = null) {
     if (NO_AI_KINDS.has(desc.kind)) return null;
     const q = U.normalize(M().questionText(desc));
     if (q.length < 3) return null;
@@ -194,16 +221,22 @@
     if (r && r.type === 'custom') guess = { type: 'custom', value: r.answer };
     else if (r && r.type && r.type !== 'na') {
       const def = F().DEFS[r.type];
-      if (NOT_FOR_AI.test(r.type) || !def || def.consent || def.secret || def.file || def.leave) return null;
+      // A date of birth in one box: its day, month and year boxes apart are no question to ask on their own.
+      const allowed = allows(allow, r.type) && !(r.type === 'dob' && r.part);
+      if (!def || def.consent || def.secret || def.file) return null;
+      if (!allowed && (NOT_FOR_AI.test(r.type) || def.leave)) return null;
       const ctx = contextOf(desc, r, context);
       // A grade your profile holds is the rules' to give (or to leave, as a class in a GPA box that wants a number):
       // the AI never turns a 2:1 into a GPA. Nor does it answer a box left empty on purpose.
-      if (F().gradeHeld(r.type, profile, ctx) || F().leftEmpty(r.type, profile, ctx)) return null;
+      if (F().gradeHeld(r.type, profile, ctx) || (!allowed && F().leftEmpty(r.type, profile, ctx))) return null;
       const v = F().resolve(r.type, profile, ctx);
       if (v && (desc.kind === 'checkbox' || (FOLLOW_UP.test(q) && !F().followUpAnswer(v, desc.kind)))) return null;
-      if (v) guess = { type: r.type, value: v.text };
+      // A sanctions answer the rules couldn't settle ("It depends") is no answer to pass on.
+      if (v && v.kind !== 'sanctions') guess = { type: r.type, value: v.text };
     }
-    if (prevType && PRIVATE_BEFORE.test(prevType) && FOLLOW_ON.test(q)) return null;
+    // "Please specify" after a diversity question is the AI's too when diversity questions are.
+    const ownBefore = allows(allow, 'eeo.') ? /^(account\.|cc\.)/ : PRIVATE_BEFORE;
+    if (prevType && ownBefore.test(prevType) && FOLLOW_ON.test(q)) return null;
     return { guess };
   }
 
@@ -260,7 +293,8 @@
    * { type, index, part, action, text, picked, ai, guess, withheld }, the action as field() says, or 'nomatch' (a list
    * none of whose options is yours) or 'none' (nothing recognised). opts: { docs: the documents you have by type
    * ('file.resume'…), consents, context (joined to the plan's), withheld: (item) => why the AI never sees an
-   * aiItem() (answers.withheld), or null }.
+   * aiItem() (answers.withheld), or null, allow: settings.aiSensitive (forAi(); the benchmark leaves it out, as a
+   * fill with the defaults) }.
    */
   function page(descs, profile, opts = {}) {
     const { results, context } = M().plan(descs, profile);
@@ -298,7 +332,7 @@
         const prev = i > 0 && results[i - 1] ? results[i - 1].type : null;
         const on = conditionOn(r, i);
         const before = on >= 0 && out[on] ? beforeOf(descs[on], out[on].text) : null;
-        const ai = forAi(desc, r, profile, ctx, prev, before);
+        const ai = forAi(desc, r, profile, ctx, prev, before, opts.allow);
         const why = ai && opts.withheld ? opts.withheld(aiItem(desc, ai.guess)) : null;
         if (why) entry.withheld = why;
         else if (ai) {
@@ -311,7 +345,19 @@
     return out;
   }
 
-  const decide = { field, picks, forAi, aiItem, beforeOf, conditionOn, carriedBy, page, contextOf, FOLLOW_UP };
+  const decide = {
+    field,
+    picks,
+    forAi,
+    aiItem,
+    hidesAnswer,
+    beforeOf,
+    conditionOn,
+    carriedBy,
+    page,
+    contextOf,
+    FOLLOW_UP,
+  };
   JTF.decide = decide;
   if (typeof module === 'object' && module.exports) module.exports = decide;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
