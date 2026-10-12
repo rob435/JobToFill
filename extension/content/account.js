@@ -517,15 +517,16 @@
   }
 
   /**
-   * What stands between an application's step and its next, from a scan: { application, progress, next (the words of
-   * its "Next"), final (the page offers its submit, or is the last step: the person's), blockers (required fields
-   * still empty, the terms, a CAPTCHA), errors, ready, signature (tells the next step from this one) }.
+   * What stands between an application's step and its next, from a scan: { application, fields (how many), progress,
+   * next (the words of its "Next"), final (the page offers its submit, or is the last step: the person's), blockers
+   * (required fields still empty, the terms, a CAPTCHA), errors, ready, signature (tells the next step from this one) }.
    */
   function stepState(scan) {
     const { fields, results } = scan;
     const st = progress(document);
     const out = {
       application: analyze(scan).kind === 'application',
+      fields: fields.length,
       progress: st,
       next: '',
       final: false,
@@ -538,8 +539,10 @@
         ...fields.slice(0, 12).map((f) => JTF.matcher.questionText(f.desc).slice(0, 60)),
       ].join('|'),
     };
-    if (!out.application) return out;
+    // Also on a step without questions, Workday's Review ("Submit"): the background takes it for the last step only on
+    // the way through the steps before it.
     out.final = controls(document).some((c) => A().submits(c.text)) || (!!st && st.total > 1 && st.step === st.total);
+    if (!out.application) return out;
     const next = nextControl(fields, !!st);
     out.next = next ? next.text : '';
     const label = (f) => U.cleanLabel(JTF.matcher.questionText(f.desc), 60) || f.kind;

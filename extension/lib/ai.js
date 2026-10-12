@@ -276,7 +276,7 @@
     const detail = String((body && body.error && (body.error.message || body.error)) || body || '').slice(0, 300);
     const err = (message, o = {}) => new AIError(message, { status, detail, ...o });
     if (status === 401 || status === 403)
-      return err(`${c.label} rejected the API key. Check it in Settings › Cover letters.`, { code: 'key' });
+      return err(`${c.label} rejected the API key. Check it in Settings › Cover letters & AI.`, { code: 'key' });
     // Anthropic says so in a 400: "Your credit balance is too low to access the Anthropic API."
     if (status === 402 || (status === 400 && /credit balance/i.test(detail)))
       return err(`Your ${c.label} account is out of credit. Top it up, then try again.`, { code: 'credit' });
@@ -286,9 +286,10 @@
       status === 404 ||
       (status === 400 && !setting && /model/i.test(detail) && /not|invalid|exist|support/i.test(detail))
     )
-      return err(`${c.label} doesn’t offer the model “${c.model}”. Pick another one in Settings › Cover letters.`, {
-        code: 'model',
-      });
+      return err(
+        `${c.label} doesn’t offer the model “${c.model}”. Pick another one in Settings › Cover letters & AI.`,
+        { code: 'model' },
+      );
     if (status === 429)
       return err(`${c.label} is rate-limiting requests. Try again in a minute.`, { retry: true, code: 'rate' });
     if (status >= 500) return err(`${c.label} had a problem (${status}). Try again shortly.`, { retry: true });
@@ -297,7 +298,6 @@
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  /** Pull a JSON object out of a reply that may be wrapped in a code fence or chatter. */
   /** Small, safe repairs for JSON that is almost right: trailing commas, curly quotes around keys. */
   function repairJson(s) {
     return s
@@ -507,7 +507,6 @@
 
   const ai = {
     PROVIDERS,
-    DEFAULT_CONFIG,
     AIError,
     resolve,
     problem,

@@ -180,6 +180,14 @@ test('Greenhouse-style form: the copy keeps the form and what was picked, withou
   assert.match(t.pageMap, /\n {2}f\d+ text\* "First Name" filled → name\.first ✓ fill=filled\n/);
   assert.match(t.pageMap, /"Are you legally authorized to work in the United States\?" \[Yes \| No\] chosen "Yes"/);
   assert.match(t.pageMap, /"Gender" \[Male \| Female \| Decline To Self Identify\] filled \(answer withheld\)/);
+  // A redacted page map's structure too (scripts/pagemap.mjs --json saves it): no one in it, saved logins included.
+  const mapped = await h.handler('jtf:pagemap', page, { values: 'redacted' });
+  assert.equal(mapped.error, undefined, mapped.error);
+  const map = JSON.stringify(mapped.map);
+  assertNoPersonalData(map);
+  assert.doesNotMatch(map, /adal_1815|Engine&(amp;)?1843/);
+  assert.match(map, /Account \[username\], password \[password\]/);
+  assert.equal(mapped.map.fields[0].ref, 'f1', 'refs kept');
   await Promise.all([view.close(), page.close()]);
   await h.bg(() =>
     globalThis.JTF.passwords.update((d) => (d.credentials = d.credentials.filter((c) => c.id !== 'snap'))),

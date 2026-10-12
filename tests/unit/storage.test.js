@@ -673,6 +673,28 @@ test('store: quick apply keeps one temporary result, replaced each time, in sess
   );
 });
 
+test('store: a tab’s job is kept for the application, a failed lookup only for minutes, and goes with the tab', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-12T09:00:00Z') });
+  const job = { company: 'Acme', title: 'Analyst', location: 'London', description: 'Reconcile trades every day.' };
+  await store.setTabJob(7, { host: 'acme.com', url: 'https://acme.com/apply', job });
+  // Nothing found but the page's own location (the job site didn't answer): looked up again a few minutes on.
+  await store.setTabJob(8, { host: 'acme.com', url: 'https://acme.com/apply', job: { company: 'Acme', location: '' } });
+  assert.equal((await store.getTabJob(8)).job.company, 'Acme', 'still used for the next step moments later');
+  t.mock.timers.tick(6 * 60e3);
+  assert.equal((await store.getTabJob(7)).job.description, job.description);
+  assert.equal(await store.getTabJob(8), null, 'a failed lookup isn’t remembered for hours');
+  // A summary from the cover letter's reading of the job counts as found.
+  await store.setTabJob(9, { host: 'acme.com', url: 'https://acme.com/apply', job: { summary: 'Operations.' } });
+  t.mock.timers.tick(3 * 3600e3);
+  assert.equal((await store.getTabJob(9)).job.summary, 'Operations.');
+  t.mock.timers.tick(3 * 3600e3);
+  assert.equal(await store.getTabJob(7), null, 'six hours at most');
+  await store.setTabJob(7, { host: 'acme.com', url: 'https://acme.com/apply', job });
+  await store.removeTabJob(7);
+  assert.equal(await store.getTabJob(7), null);
+  assert.ok(!('tabjob:7' in chrome.storage.session._dump()), 'removed when the tab closes');
+});
+
 test('store: quick apply falls back to local storage without session storage', async () => {
   const session = chrome.storage.session;
   delete chrome.storage.session;

@@ -26,7 +26,6 @@
     return t.length > n ? t.slice(0, n).replace(/\s+\S*$/, '') + ' […]' : t;
   };
 
-  /** Letter typography: curly apostrophes and quotes, single spaces, no stray markup. */
   // HTML entities that slip through from a page or the model ("FICC &amp; Equities"), twice-encoded too.
   const ENTITIES = {
     amp: '&',
@@ -55,6 +54,7 @@
     return out;
   }
 
+  /** Letter typography: curly apostrophes and quotes, single spaces, no stray markup. */
   function tidy(s) {
     return decodeEntities(s)
       .replace(/\r/g, '')
@@ -79,9 +79,7 @@
 
   /** Numbers as written ("5,000", "2:1", "3.8") reduced to a comparable form ("5000", "2:1", "3.8"). */
   function numbers(s) {
-    return (String(s || '').match(/\d+(?:[.,:]\d+)*/g) || []).map((n) =>
-      n.replace(/,(?=\d{3}\b)/g, '').replace(/\.$/, ''),
-    );
+    return (String(s || '').match(/\d+(?:[.,:]\d+)*/g) || []).map((n) => n.replace(/,(?=\d{3}\b)/g, ''));
   }
 
   /* ------------------------------------------------------------- materials */
@@ -524,7 +522,6 @@
     ];
   }
 
-  /** Make the model's JSON safe to render: strings only, typography fixed, greeting and sign-off separated. */
   /** The letter object inside a reply, however the model shaped it ({ letter: {…} }, "Paragraphs", a body string). */
   function unwrap(raw) {
     let r = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
@@ -545,6 +542,7 @@
     return { ...r, paragraphs };
   }
 
+  /** Make the model's JSON safe to render: strings only, typography fixed, greeting and sign-off separated. */
   function cleanLetter(raw, defaults) {
     const r = unwrap(raw);
     let paragraphs = r.paragraphs
@@ -1374,7 +1372,6 @@
   }
 
   const letter = {
-    ATTEMPTS,
     LANG_NAMES,
     postingLanguage,
     CLICHES,
@@ -1394,8 +1391,6 @@
     sampleCompanies,
     companyAliases,
     checkLetter,
-    analysePrompt,
-    letterPrompt,
     cleanLetter,
     cleanAnalysis,
     analyse,
@@ -1411,7 +1406,6 @@
     looksLikeTech,
     enforceCv,
     frozenDiffs,
-    cvMasterPrompt,
     checkCv,
     cvText,
     tailor,

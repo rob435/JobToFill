@@ -281,6 +281,14 @@ test('logins on shared portal hosts: one employer’s is not another’s', () =>
   assert.equal(passwords.findCredential(data, host, 'company:other', true), null, 'but no account is known there');
   assert.equal(passwords.findCredential(data, host, 'company:moodysprod', true).password, 'moodys');
   assert.equal(passwords.findCredential(data, 'acme.wd5.myworkdayjobs.com', '', true).password, 'acme');
+  // A page that doesn't say which employer: the host's own login, never Moody's (saved first or last).
+  assert.equal(passwords.findCredential(data, host, '').password, 'legacy');
+  assert.equal(passwords.findCredential({ credentials: [...data.credentials].reverse() }, host, '').password, 'legacy');
+  assert.equal(passwords.findCredential(data, host, '', true).password, 'legacy');
+  // Only Moody's saved there: offered as a guess, but no account is known for the host itself.
+  const moodys = { credentials: [data.credentials[0]] };
+  assert.equal(passwords.findCredential(moodys, host, '').password, 'moodys');
+  assert.equal(passwords.findCredential(moodys, host, '', true), null);
 });
 
 test('dialling codes', () => {

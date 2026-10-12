@@ -581,6 +581,37 @@ test('the box for an answer the list lacks stays empty once the list is on "Othe
   await page.close();
 });
 
+test('one fill at a time per tab: Fill pressed twice joins the running fill, and Undo then puts back everything', async () => {
+  const page = await h.open('greenhouse.html');
+  // The shortcut pressed twice in a row (or Fill pressed during an auto-advance's fill).
+  const [first, second] = await h.bg(
+    async (id) => {
+      const { fillTab } = globalThis.JTFBackground;
+      return Promise.all([fillTab(id, { toast: true, flow: true }), fillTab(id, { toast: true, flow: true })]);
+    },
+    await h.tabId(page),
+  );
+  assert.ok(first.filled > 15, JSON.stringify(first));
+  assert.deepEqual(second, first, 'one fill, its summary to both');
+  assert.equal(await value(page, '#first_name'), 'Ada');
+  const undone = await h.handler('jtf:undo', page);
+  assert.ok(undone.undone > 10, JSON.stringify(undone));
+  for (const id of ['#first_name', '#email', '#q_linkedin', '#school'])
+    assert.equal(await value(page, id), '', `${id} put back as it was`);
+  assert.equal(await selectedText(page, '#q_auth'), '--');
+  // Another kind of fill asked for meanwhile (a letter attached, Quick apply's letter and CV) waits, then runs.
+  const [all, letter] = await h.bg(
+    async (id) => {
+      const { fillTab } = globalThis.JTFBackground;
+      return Promise.all([fillTab(id), fillTab(id, { only: ['name.first'], force: true })]);
+    },
+    await h.tabId(page),
+  );
+  assert.ok(all.filled > 15);
+  assert.equal(letter.filled, 1, 'its own fill, after the first');
+  await page.close();
+});
+
 test('overwrite setting replaces existing values', async () => {
   await h.setSettings({ overwrite: true });
   const page = await h.open('tricky.html');

@@ -202,21 +202,43 @@ async function fillPayload(tabId) {
   return { payload: { profile: filled, settings, docs, jobLocation }, letter: mine };
 }
 
+// tabId -> the fill running in that tab: { plain, done }. Two at once would each take the other's changes for the
+// page's own, and Undo would put back nothing. The same plain fill asked for again (the shortcut pressed twice, Fill
+// during an auto-advance) joins the running one; any other (Quick apply's letter and CV, a letter attached) waits for
+// it, then runs. The account flow's own fills don't wait: it takes one look at a time itself (flowBusy), and a sign-in
+// filled again with another password runs inside the click step of the fill that asked for it.
+const tabFills = new Map();
+const FILL_QUEUE_WAIT = 5 * 60e3; // the longest a fill waits for the one before (which may wait for the AI's answers)
+
 /**
  * Fill the form in a tab. Options: toast (say what happened on the page), only (just these field types,
  * replacing what is there unless force: false), hold (leave these types alone), replace (overwrite these
  * types even when they hold something), consents (tick acknowledgements whatever the setting says), ai
  * (false: no AI answers), aiToast (say on the page when the AI answers are in), waitAi, quick (a fill
  * Quick apply makes itself), flow (a fill the person started: on a sign-in or sign-up page it may sign in or
- * create the account, see accountStep), auto (a fill the account flow made itself, after one of its clicks).
+ * create the account, see accountStep), auto (a fill the account flow made itself, after one of its clicks),
+ * advance (the next step's fill, after auto-advance clicked "Next"), announce (async (summary, lines) => true when it
+ * said on the page what happened, before any click, in place of the fill's own toast).
  */
-async function fillTab(tabId, options) {
+function fillTab(tabId, options) {
   const opts = { toast: false, ...options };
+  const plain = !opts.only && !opts.replace && !opts.hold && !opts.quick && !opts.auto && !opts.consents;
+  const running = tabFills.get(tabId);
+  if (running && plain && running.plain) return running.done;
+  const before = running && !opts.auto ? Promise.race([running.done.catch(() => {}), sleep(FILL_QUEUE_WAIT)]) : null;
+  const entry = { plain };
+  entry.done = (before || Promise.resolve()).then(() => fillOnce(tabId, opts));
+  tabFills.set(tabId, entry);
+  const clear = () => tabFills.get(tabId) === entry && tabFills.delete(tabId);
+  entry.done.then(clear, clear);
+  return entry.done;
+}
+
+/** One fill of a tab (fillTab runs them one at a time). */
+async function fillOnce(tabId, opts) {
   const { payload, letter } = await fillPayload(tabId);
   if (opts.consents) payload.settings = { ...payload.settings, consents: true };
   const { settings } = payload;
-  // Moving through a multi-step application waits for the AI's answers: a step is only left once it is done.
-  if (settings.autoAdvance && !opts.only && opts.waitAi == null) opts.waitAi = true;
   if (opts.only) Object.assign(payload, { only: opts.only, force: opts.force !== false });
   if (opts.replace) payload.replace = opts.replace;
   let hold = opts.hold || null;
@@ -245,7 +267,7 @@ async function fillTab(tabId, options) {
   }
 }
 
-/** fillTab, once its payload is ready: the frames' fills, the AI's turn, the account flow's next step. */
+/** fillOnce, once its payload is ready: the frames' fills, the AI's turn, the account flow's or the steps' next move. */
 async function fillFrames(tabId, opts, payload, letter, aiReady) {
   const { profile, settings } = payload;
   let frames;
@@ -283,11 +305,12 @@ async function fillFrames(tabId, opts, payload, letter, aiReady) {
   // What the rules left empty goes to the AI, in the background: the fill doesn't wait for it.
   const pending = frames.flatMap((f) => (f.pending || []).map((item) => ({ ...item, frameId: f.frameId })));
   summary.pending = pending.length;
+  let run = null;
   if (pending.length && !opts.only && opts.ai !== false) {
     if (aiReady.ok) {
       summary.ai = { status: 'running', stage: 'job', asked: pending.length };
       const aiToast = opts.aiToast != null ? opts.aiToast : opts.toast;
-      const run = answerWithAi(tabId, pending, { toast: aiToast && settings.toast !== false });
+      run = answerWithAi(tabId, pending, { toast: aiToast && settings.toast !== false });
       if (opts.waitAi) summary.ai = await run;
     } else summary.ai = { status: aiReady.reason, asked: pending.length };
   }
@@ -298,27 +321,42 @@ async function fillFrames(tabId, opts, payload, letter, aiReady) {
   }));
   const flowLines = (account && account.lines) || [];
   summary.account = account ? { lines: flowLines, clicked: account.clicked || [] } : null;
-  if (opts.toast && settings.toast !== false)
-    await showToast(tabId, [summaryText(summary), ...flowLines].join('\n'), {
-      undo: summary.undoable,
-      duration: summary.ai && summary.ai.status === 'running' ? 120000 : flowLines.length ? 20000 : undefined,
-    });
-  else if (flowLines.length && settings.toast !== false)
-    await showToast(tabId, flowLines.join('\n'), { duration: 20000 });
-  // A multi-step application's next step (Settings › "Move through multi-step applications for me").
-  const advance =
-    !flowLines.length && !opts.only && settings.autoAdvance && summary.jobContext
-      ? await advanceStep(tabId, payload, opts).catch(() => null)
-      : null;
+  // A multi-step application's next step (Settings › "Move through multi-step applications for me"): from a step of an
+  // application, whether this fill filled anything on it (a returning candidate's My Information is filled already),
+  // or from a step without questions reached by the steps before (Workday's Review).
+  const stepping =
+    !flowLines.length && !opts.only && settings.autoAdvance && (opts.advance || frames.some((f) => f.jobContext));
+  // A step is only left once it is done: the AI's answers first (this fill's, or those an earlier fill still writes).
+  const settle = async () => {
+    if (run) summary.ai = await run;
+    else await aiSettled(tabId);
+  };
+  const advance = stepping
+    ? await advanceStep(tabId, payload, opts, { held: summary.held > 0, settle }).catch(() => null)
+    : null;
   const stepLines = (advance && advance.lines) || [];
-  if (stepLines.length && settings.toast !== false && !opts.toast)
-    await showToast(tabId, stepLines.join('\n'), { duration: 15000 });
-  summary.notes.push(...flowLines, ...stepLines);
+  // Said before any click: the fill's summary (a chained step's empty Review needs none), what the account flow and the
+  // steps do next and why they stop.
+  const lines = [...flowLines, ...stepLines];
+  const said = opts.announce ? await opts.announce(summary, lines).catch(() => false) : false;
+  const head = opts.toast && !(opts.advance && !summary.detected) ? [summaryText(summary)] : [];
+  if (!said && settings.toast !== false && (head.length || lines.length))
+    await showToast(tabId, [...head, ...lines].join('\n'), {
+      undo: !!head.length && summary.undoable,
+      duration: summary.ai && summary.ai.status === 'running' ? 120000 : lines.length ? 20000 : undefined,
+    });
+  summary.notes.push(...lines);
   // The click (or the wait for a CAPTCHA) comes after the toast that announces it.
   if (account && account.act) await account.act().catch(() => {});
   // The next step is filled in the background: the fill that got here is done.
   if (advance && advance.act) advance.act().catch(() => advancing.delete(tabId));
   return summary;
+}
+
+/** Wait (a few minutes at most) for the AI answers a fill started on this tab to be in. */
+async function aiSettled(tabId) {
+  const until = Date.now() + 240e3;
+  while (Date.now() < until && aiRuns.has(tabId) && aiRuns.get(tabId).status === 'running') await sleep(500);
 }
 
 /*
@@ -331,16 +369,24 @@ const ADVANCE_STEPS = 12;
 const ADVANCE_WAIT = 20e3; // how long the next step may take to show
 const advancing = new Map(); // tabId -> { steps }: the steps clicked through since the Fill you pressed
 
-/** After a fill: the step's next move, { lines, act? }, or null when it isn't a step of an application. */
-async function advanceStep(tabId, payload, opts) {
-  const states = await callFrames(tabId, 'stepState', [{ profile: payload.profile }]).catch(() => []);
-  const page =
-    states.find((s) => s.application && s.next) || states.find((s) => s.application && (s.final || s.progress));
+/**
+ * After a fill: the step's next move, { lines, act? }, or null when it isn't a step of an application. `held`: the
+ * fill left uploads on this step for the letter and CV Quick apply is still writing; `settle()`: waits for the AI's
+ * answers, before the step is looked at again and left.
+ */
+async function advanceStep(tabId, payload, opts, { held, settle } = {}) {
   const steps = opts.advance && advancing.has(tabId) ? advancing.get(tabId).steps : 0;
+  const look = async () => {
+    const states = await callFrames(tabId, 'stepState', [{ profile: payload.profile }]).catch(() => []);
+    // A step without questions (Workday's Review) only counts on the way through the steps before it.
+    const step = (s) => s.application || (steps > 0 && !s.fields);
+    return states.find((s) => s.application && s.next) || states.find((s) => step(s) && (s.final || s.progress));
+  };
   const end = (line) => {
     advancing.delete(tabId);
     return line ? { lines: [line] } : null;
   };
+  let page = await look();
   if (!page) return end('');
   const p = page.progress;
   const where = p && p.total ? ` (step ${p.step} of ${p.total})` : '';
@@ -350,6 +396,13 @@ async function advanceStep(tabId, payload, opts) {
       steps || (p && p.total > 1) ? `That’s the last step${where}: check your application and submit it yourself.` : '',
     );
   if (!page.next) return end('');
+  // Quick apply's fill puts them in, and carries on from there.
+  if (held) return end('JobToFill carries on to the next step once your cover letter and CV are in.');
+  if (settle) {
+    await settle();
+    page = await look();
+    if (!page || page.final || !page.next) return advanceStep(tabId, payload, opts);
+  }
   const carry = 'then press Fill to carry on';
   if (page.errors.length) return end(`The page says “${page.errors[0]}”: fix that, ${carry}.`);
   if (page.blockers.some((b) => b.kind === 'captcha')) return end(`Complete the “I’m not a robot” check, ${carry}.`);
@@ -382,6 +435,7 @@ async function advanceStep(tabId, payload, opts) {
 /** Wait for the step after `before` to show (a new page, or the same one drawn anew), but not for a refusal. */
 async function nextStepShown(tabId, before, profile) {
   const until = Date.now() + ADVANCE_WAIT;
+  let last = null;
   await sleep(800);
   while (Date.now() < until) {
     const tab = await api.tabs.get(tabId).catch(() => null);
@@ -389,9 +443,12 @@ async function nextStepShown(tabId, before, profile) {
     if (tab.status !== 'loading') {
       const states = await callFrames(tabId, 'stepState', [{ profile }]).catch(() => []);
       const now = states.find((s) => s.frameId === before.frameId) || states[0];
-      if (now && now.application && now.signature !== before.signature) return true;
+      // Another step: one with questions at once, one without (Workday's Review) once it stays the same for a look,
+      // so a step still being drawn isn't taken for it.
+      if (now && now.signature !== before.signature && (now.application || now.signature === last)) return true;
       // Still the same step, now with an error ("Please fill in all required fields"): it was turned down.
       if (now && now.signature === before.signature && now.errors.length) return false;
+      last = now ? now.signature : null;
     }
     await sleep(500);
   }
@@ -469,6 +526,9 @@ function summaryText(s) {
   if (s.ticked) lines.push(tickedText(s.ticked));
   lines.push(...s.notes.slice(0, 2));
   if (s.ai && s.ai.status === 'running') lines.push(`Answering ${plural(s.ai.asked, 'more question')} with AI…`);
+  // Waited for before the next step: this toast takes the place of the AI's own, so it says what that would.
+  else if (s.ai && s.ai.status === 'done' && s.ai.filled)
+    lines.push(`AI answered ${plural(s.ai.filled, 'question')} (dashed orange outline). Read them before you submit.`);
   else if (s.ai && s.ai.status === 'setup')
     lines.push(`${plural(s.ai.asked, 'question')} left: add an AI key in JobToFill settings to answer them.`);
   return lines.join('\n');
@@ -553,8 +613,27 @@ function newCredential(host, username, password, portal, note) {
 
 // tabId -> where the last password filled in that tab came from ({ source, host, portal, username, id, isDefault }),
 // so an account created with your default password can be remembered, and a login that turns out wrong forgotten.
-// Never the password itself.
-const lastSecrets = new Map();
+// Never the password itself. Kept in session storage beside the flow (secrets:<tabId>), so a worker restarted while a
+// CAPTCHA is waited for still knows which password went in; get() is async.
+const secretsKey = (tabId) => `secrets:${tabId}`;
+const lastSecrets = {
+  kept: new Map(),
+  set(tabId, entry) {
+    this.kept.set(tabId, entry);
+    sessionArea()
+      .set({ [secretsKey(tabId)]: entry })
+      .catch(() => {});
+  },
+  async get(tabId) {
+    return this.kept.has(tabId) ? this.kept.get(tabId) : sessionGet(secretsKey(tabId), undefined);
+  },
+  delete(tabId) {
+    this.kept.delete(tabId);
+    sessionArea()
+      .remove(secretsKey(tabId))
+      .catch(() => {});
+  },
+};
 
 /** The password rules a sign-up page sent (its help text and attributes), as passwords.parseRules reads them. */
 function rulesFrom(msg) {
@@ -669,8 +748,10 @@ async function documentFor(msg, sender) {
   const fill = fillInProgress(sender);
   if (!fill) return { error: 'No fill in progress.' };
   if (fill.letter) {
+    // The letter written for this application, and its tailored CV for the CV upload only (never a transcript's).
     const letter = (await store.getLetters()).find((l) => l.id === fill.letter);
-    const doc = letter && (msg.which === 'coverLetter' ? letter.pdf : letter.useCv ? letter.cv : null);
+    const doc =
+      letter && (msg.which === 'coverLetter' ? letter.pdf : msg.which === 'resume' && letter.useCv ? letter.cv : null);
     if (doc) return { name: doc.name, type: doc.type, dataUrl: doc.dataUrl };
   }
   const { profile } = await store.getActive();
@@ -960,7 +1041,18 @@ async function pageMapTab(tabId, opts = {}) {
     }
   });
   const redact = redaction.redactor(profile, { files, ...(await snapshotSecrets(hosts)) });
-  return { map, text: redact.text(text) };
+  return { map: redactedMap(map, redact), text: redact.text(text) };
+}
+
+/** Every text in a page map through the redactor (`scripts/pagemap.mjs --json` saves it), its refs left as they are. */
+function redactedMap(map, redact) {
+  const walk = (v, key) => {
+    if (typeof v === 'string') return key === 'ref' || key === 'local' ? v : redact.text(v);
+    if (Array.isArray(v)) return v.map((x) => walk(x));
+    if (!v || typeof v !== 'object') return v;
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, k)]));
+  };
+  return walk(map);
 }
 
 /**
@@ -1101,6 +1193,7 @@ api.tabs.onCreated.addListener(async (tab) => {
 api.tabs.onRemoved.addListener((tabId) => {
   const area = trailArea();
   if (area) area.remove(trailKey(tabId)).catch(() => {});
+  store.removeTabJob(tabId).catch(() => {});
 });
 
 /**
@@ -1708,9 +1801,36 @@ async function quickStart(tabId) {
 
 /** Quick apply's first fill: your details (acknowledgements ticked) while the letter and CV are written. */
 async function quickFirstFill(tabId) {
+  // Said before the fill clicks anything (a sign-in, the step's "Next"): what Quick apply is doing, with what the account
+  // flow and the steps do next. Once the letter is in (that fill has said its piece), the fill's own toast says those.
+  const announce = async (summary, next) => {
+    if (!(await quickRunningFor(tabId))) return false;
+    const flow = (summary.account && summary.account.lines) || [];
+    const lines = [];
+    if (summary.filled) lines.push(`Quick apply: your details are in (${plural(summary.filled, 'field')}).`);
+    lines.push(...flow);
+    lines.push(
+      summary.detected || summary.held
+        ? 'Now writing your cover letter and tailoring your CV: they go in by themselves when ready (a minute or two), no need to press Fill.'
+        : 'Quick apply is writing your cover letter and tailoring your CV.',
+    );
+    lines.push(...next.slice(flow.length));
+    if (summary.ticked) lines.push(tickedText(summary.ticked));
+    if (summary.ai && summary.ai.status === 'running')
+      lines.push(`The AI is answering ${plural(summary.ai.asked, 'other question')}.`);
+    await showToast(tabId, lines.join('\n'), { undo: summary.undoable, duration: 30000 });
+    return true;
+  };
   let summary;
   try {
-    summary = await fillTab(tabId, { quick: true, hold: QUICK_DOCS, consents: true, aiToast: false, flow: true });
+    summary = await fillTab(tabId, {
+      quick: true,
+      hold: QUICK_DOCS,
+      consents: true,
+      aiToast: false,
+      flow: true,
+      announce,
+    });
   } catch (err) {
     return { error: String((err && err.message) || err) };
   }
@@ -1718,20 +1838,6 @@ async function quickFirstFill(tabId) {
   await sessionArea()
     .set({ [quickFirstKey(tabId)]: { filled: summary.filled, detected: summary.detected, ticked: summary.ticked } })
     .catch(() => {});
-  // Unless the letter is already done and the last fill has said its piece.
-  if (!(await quickRunningFor(tabId))) return summary;
-  const lines = [];
-  if (summary.filled) lines.push(`Quick apply: your details are in (${plural(summary.filled, 'field')}).`);
-  if (summary.account && summary.account.lines.length) lines.push(...summary.account.lines);
-  lines.push(
-    summary.detected || summary.held
-      ? 'Now writing your cover letter and tailoring your CV: they go in by themselves when ready (a minute or two), no need to press Fill.'
-      : 'Quick apply is writing your cover letter and tailoring your CV.',
-  );
-  if (summary.ticked) lines.push(tickedText(summary.ticked));
-  if (summary.ai && summary.ai.status === 'running')
-    lines.push(`The AI is answering ${plural(summary.ai.asked, 'other question')}.`);
-  await showToast(tabId, lines.join('\n'), { undo: summary.undoable, duration: 30000 });
   return summary;
 }
 
@@ -1764,12 +1870,21 @@ async function quickFill(tabId, letterId, options) {
   const prior = aiRuns.get(tabId);
   const busy = !!prior && prior.status === 'running';
   const replace = ['file.coverLetter', 'coverLetter', ...(withCv ? ['file.resume'] : [])];
-  const summary = await fillTab(tabId, { quick: true, consents: true, replace, ai: !busy, aiToast: true });
+  const doneText = (summary) => {
+    const run = summary.ai && summary.ai.status === 'running' ? summary.ai : aiRuns.get(tabId);
+    return quickDoneText(summary, first, { withCv, run: run ? runView(run) : null });
+  };
+  let done = null;
+  // Said before the fill clicks anything: on an application in steps it carries on to the next one from here.
+  const announce = async (summary, next) => {
+    if (busy) prior.toast = true;
+    done = doneText(summary);
+    await showToast(tabId, [done.text, ...next].join('\n'), { undo: summary.undoable, duration: 20000 });
+    return true;
+  };
+  const summary = await fillTab(tabId, { quick: true, consents: true, replace, ai: !busy, aiToast: true, announce });
   if (summary.error) return { error: summary.error };
-  if (busy) prior.toast = true;
-  const run = summary.ai && summary.ai.status === 'running' ? summary.ai : aiRuns.get(tabId);
-  const done = quickDoneText(summary, first, { withCv, run: run ? runView(run) : null });
-  await showToast(tabId, done.text, { undo: summary.undoable, duration: 20000 });
+  done = done || doneText(summary);
   return {
     filled: summary.filled + (first.filled || 0),
     detected: summary.detected,
@@ -2087,7 +2202,7 @@ async function accountKnown(page) {
  * exists. Returns the new login's id (taken back if the site then says the account already existed).
  */
 async function rememberDefault(tabId, page) {
-  const last = lastSecrets.get(tabId);
+  const last = await lastSecrets.get(tabId);
   if (!last || last.source !== 'default' || last.host !== page.host) return null;
   let id = null;
   await passwords.update((data) => {
@@ -2159,7 +2274,7 @@ function clickStep(tabId, flow, page, which, line, after) {
       // The code it emails: watched for in this tab, whatever "Fill codes by themselves" says.
       if (which === 'submit' && page.kind === 'signup' && (await otpReady())) await watchOtp(tabId).catch(() => {});
       // Which password went in, before the next page's fill says another.
-      const made = which === 'submit' && page.kind === 'signup' ? lastSecrets.get(tabId) : null;
+      const made = which === 'submit' && page.kind === 'signup' ? await lastSecrets.get(tabId) : null;
       const { profile } = await store.getActive();
       const [res] = await callFrames(tabId, 'accountClick', [which, { profile, ignore }], [page.frameId]).catch(() => [
         null,
@@ -2209,7 +2324,7 @@ function refillStep(tabId, flow, line) {
 async function loginStep(tabId, flow, page, opts) {
   const host = page.host;
   const stop = (line) => ({ lines: [line], end: true, clicked: flow.clicks.map((c) => c.label) });
-  const tried = lastSecrets.get(tabId);
+  const tried = await lastSecrets.get(tabId);
   const made = flow.stage === 'registered';
   // Waiting for the email: another look at the page changes nothing, but your own Fill means you verified it.
   if (flow.stage === 'verify-email') {
@@ -2567,6 +2682,8 @@ api.tabs.onUpdated.addListener(async (tabId, info, tab) => {
 api.tabs.onRemoved.addListener((tabId) => {
   endFlow(tabId);
   lastSecrets.delete(tabId);
+  advancing.delete(tabId);
+  aiRuns.delete(tabId);
 });
 
 /** The page's CAPTCHA was solved (or its terms accepted): check the page again and take the next step. */
@@ -2656,20 +2773,10 @@ async function runWatchChecks() {
   await discover.pool(list, 2, async (entry) => {
     const state = (await store.getWatchState(entry.id)) || {};
     const res = await discover.check({ ...entry, seen: state.seen }, { fetch: fetchFn });
-    const items = [...res.roles, ...res.programmes];
-    const added = items
-      .filter((it) => res.fresh.includes(discover.itemKey(it)))
-      .map((it) => ({ ...it, foundAt: Date.now() }));
-    const next = await store.setWatchState(entry.id, {
-      // A failed check keeps what was seen, so a firm's site being down doesn't make everything "new" later.
-      seen: res.status === 'unreachable' ? state.seen || null : [...new Set([...(state.seen || []), ...res.keys])],
-      fresh: [...added, ...((state && state.fresh) || [])],
-      checkedAt: res.checkedAt,
-      status: res.status,
-      roles: res.roles.length,
-      programmes: res.programmes.length,
-    });
-    fresh += next.fresh.length;
+    // Merged with what is stored when it is written: a "Mark as seen" pressed while this check ran stays, and a firm
+    // removed meanwhile stays removed (null).
+    const next = await store.setWatchState(entry.id, (now) => discover.afterCheck(now, res, Date.now()));
+    if (next) fresh += next.fresh.length;
   });
   await updateBadge();
   return { checked: list.length, fresh };
