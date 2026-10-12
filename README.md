@@ -78,7 +78,7 @@ Firefox removes temporary add-ons when it restarts.
 
 ### After installing
 
-In both browsers the settings page opens on install. Fill in your profile and pin the toolbar icon. The “Get started” checklist at the top of the settings page shows what’s still to do.
+In both browsers the settings page opens on install. Fill in your profile and pin the toolbar icon. The “Get started” checklist at the top of the settings page shows what’s still to do: each step links to where it’s done and is ticked off as you go. Hide it once you’re set, or bring it back from Settings › _Settings_.
 
 **Your details survive re-installs.** Removing an extension deletes everything it stored (and so does Firefox’s restart for temporary add-ons). JobToFill therefore keeps a copy in **Downloads › JobToFill › jobtofill-backup.json**, rewritten half a minute after each change. When it is added again and starts out empty, the settings page and the popup offer to restore that file in one click. Automatic backups can be switched off under _Backup & restore_.
 
