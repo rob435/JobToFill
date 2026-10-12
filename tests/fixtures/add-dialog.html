@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Apply: Graduate Analyst – Careers</title>
+  <style>
+    body { font: 15px/1.4 system-ui, sans-serif; margin: 24px auto; max-width: 680px; }
+    label { display: block; margin: 10px 0 4px; }
+    .modal { position: fixed; inset: 15% 20%; background: #fff; border: 1px solid #888; padding: 16px; }
+    #state { background: #f4f4f4; padding: 8px; font-size: 12px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <!--
+    Sections whose "Add" opens a dialog instead of adding a row to the page (an "Add a job" modal, as on Avature and
+    older SuccessFactors sites): the fill clicks Add once, sees no entry appear, and closes what opened with its own
+    Cancel (Escape does nothing here), then fills the rest. Education's dialog is made on the click; Work Experience's
+    was in the page all along, hidden, like the cookie panel that stays hidden throughout.
+  -->
+  <h1>Graduate Analyst</h1>
+  <form id="application" onsubmit="return false">
+    <h2>My Information</h2>
+    <label for="first">First Name</label><input id="first" name="first">
+    <label for="last">Last Name</label><input id="last" name="last">
+    <label for="li">LinkedIn profile</label><input id="li" name="linkedin">
+    <section id="education">
+      <h3>Education</h3>
+      <p>Add the schools and universities you have attended.</p>
+      <button type="button" id="add-edu">Add</button>
+    </section>
+    <section id="experience">
+      <h3>Work Experience</h3>
+      <p>Tell us where you have worked.</p>
+      <button type="button" id="add-exp">Add</button>
+    </section>
+    <label for="why">Why do you want to work here?</label><textarea id="why" name="why"></textarea>
+  </form>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="exp-title" id="exp-dialog" hidden>
+    <h4 id="exp-title">Add a job</h4>
+    <label for="exp-company">Company</label><input id="exp-company">
+    <button type="button" class="save">Save</button> <button type="button" class="cancel">Cancel</button>
+  </div>
+  <div role="dialog" aria-label="Cookie preferences" id="cookies" hidden><p>Cookie preferences</p><button type="button">Close</button></div>
+  <template id="edu-template">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="edu-title" id="edu-dialog">
+      <h4 id="edu-title">Add a school</h4>
+      <label for="edu-school">School</label><input id="edu-school">
+      <button type="button" class="save">Save</button> <button type="button" class="cancel">Cancel</button>
+    </div>
+  </template>
+  <pre id="state"></pre>
+  <script>
+    const log = { opened: [], closed: [] };
+    const show = () => {
+      document.getElementById('state').textContent = JSON.stringify({
+        ...log,
+        open: Array.from(document.querySelectorAll('[role=dialog]')).filter((d) => !d.hidden).map((d) => d.id),
+      });
+    };
+    const wire = (dialog, close) => {
+      dialog.querySelector('.cancel').addEventListener('click', () => {
+        log.closed.push(dialog.id);
+        close();
+        show();
+      });
+    };
+    document.getElementById('add-edu').addEventListener('click', () => {
+      const dialog = document.getElementById('edu-template').content.firstElementChild.cloneNode(true);
+      document.body.append(dialog);
+      wire(dialog, () => dialog.remove());
+      log.opened.push(dialog.id);
+      show();
+    });
+    const exp = document.getElementById('exp-dialog');
+    wire(exp, () => (exp.hidden = true));
+    document.getElementById('add-exp').addEventListener('click', () => {
+      exp.hidden = false;
+      log.opened.push(exp.id);
+      show();
+    });
+    show();
+  </script>
+</body>
+</html>

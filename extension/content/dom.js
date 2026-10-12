@@ -116,6 +116,29 @@
     return true;
   }
 
+  // The least a box handed a password or card must show: a chat widget's 2×2 px password box at 2% opacity is
+  // "visible" to isVisible, but no person could see what goes into it.
+  const SECRET_MIN_PX = 8;
+  const SECRET_MIN_OPACITY = 0.1;
+
+  /**
+   * Can a person see this box well enough to be handing it a password or card number: visible, at least 8×8 px in a
+   * frame at least that big, and not faded below 10% by itself or anything around it (shadow hosts included).
+   */
+  function showsSecret(el) {
+    if (!isVisible(el)) return false;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < SECRET_MIN_PX || rect.height < SECRET_MIN_PX) return false;
+    const win = el.ownerDocument.defaultView;
+    if (win.innerWidth < SECRET_MIN_PX || win.innerHeight < SECRET_MIN_PX) return false;
+    let opacity = 1;
+    for (let n = el; n && n.nodeType === 1; n = n.parentElement || (n.getRootNode() && n.getRootNode().host)) {
+      const own = parseFloat(win.getComputedStyle(n).opacity);
+      if (Number.isFinite(own)) opacity *= own;
+    }
+    return opacity >= SECRET_MIN_OPACITY;
+  }
+
   // The rows of a dropdown built from plain elements, each carrying the value it puts in the form (Jane Street's
   // `li data-dropdown-selection="LinkedIn"`).
   const VALUE_ROW = 'li[data-dropdown-selection], li[data-value], li[data-option-value]';
@@ -1251,8 +1274,8 @@
     collect,
     describe,
     kindOf,
-    isEditor,
     isVisible,
+    showsSecret,
     textOf,
     visibleText,
     deepActiveElement,

@@ -191,6 +191,43 @@ test('a code from a sender that only mentions the site is offered with “Use it
   await page.close();
 });
 
+/** The text of JobToFill's toast (in a closed shadow root: CDP sees through it). */
+async function toastText(page) {
+  const cdp = await h.context.newCDPSession(page);
+  try {
+    const { root } = await cdp.send('DOM.getDocument', { depth: -1, pierce: true });
+    const texts = [];
+    const walk = (node, inUi) => {
+      const ui = inUi || /^jobtofill/i.test(node.nodeName);
+      if (ui && node.nodeType === 3) texts.push(node.nodeValue);
+      for (const child of [...(node.children || []), ...(node.shadowRoots || [])]) walk(child, ui);
+    };
+    walk(root, false);
+    return texts.join(' ').replace(/\s+/g, ' ');
+  } finally {
+    await cdp.detach();
+  }
+}
+
+test('right-click “Insert verification code”: with no code box in focus, nothing is claimed', { skip }, async () => {
+  // A code from a sender the watcher won't vouch for: only the right-click puts it in.
+  const mail = codeMail('551177', 'security@bank.example', { name: 'Example Bank', subject: 'Your login code' });
+  mailbox = [mail];
+  const used = () => h.bg(async () => (await chrome.storage.session.get('otpUsed')).otpUsed || []);
+  const page = await h.open('otp-single.html');
+  await page.$eval('#code', (el) => el.blur());
+  await h.menu(page, 'jtf-otp');
+  assert.equal(await value(page, '#code'), '');
+  assert.match(await toastText(page), /Click into the code box first/);
+  assert.ok(!(await used()).includes(mail.id), 'the code stays unused for the next try');
+  await page.focus('#code');
+  await h.menu(page, 'jtf-otp');
+  assert.equal(await value(page, '#code'), '551177');
+  assert.match(await toastText(page), /Inserted the code from Example Bank/);
+  assert.ok((await used()).includes(mail.id));
+  await page.close();
+});
+
 test('a coupon box (and a gift card PIN row) is left alone', { skip }, async () => {
   mailbox = [codeMail('904417')];
   const page = await h.open('coupon.html');

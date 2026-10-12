@@ -36,7 +36,19 @@
     for (const type of ['keydown', 'keyup']) el.dispatchEvent(new KeyboardEvent(type, keyInit(k)));
   }
 
+  /**
+   * Would a click send its form: a <button> of no type (or type="submit") in a form, or a submit or image input? An
+   * upload dialog's bare <button>Cancel</button> or its "Upload File" submits the whole application around it.
+   */
+  const submits = (el) =>
+    !!el && !!el.form && /^(button|input)$/.test(el.localName) && (el.type === 'submit' || el.type === 'image');
+
+  /**
+   * Click like a mouse. Every click the fill makes goes through here, and none ever lands on a control that sends its
+   * form (see submits): false then, and nothing is clicked.
+   */
   function pointerClick(el) {
+    if (submits(el)) return false;
     const view = el.ownerDocument.defaultView;
     const rect = el.getBoundingClientRect();
     const init = {
@@ -57,6 +69,7 @@
     el.dispatchEvent(new PointerEvent('pointerup', init));
     el.dispatchEvent(new MouseEvent('mouseup', mouse));
     el.dispatchEvent(new MouseEvent('click', mouse));
+    return true;
   }
 
   function nativeSetter(el) {
@@ -1528,8 +1541,7 @@
           ? /navigation--previous/.test(b.className) || /^previous\b/i.test(b.getAttribute('aria-label') || '')
           : /navigation--next/.test(b.className) || /^next\b/i.test(b.getAttribute('aria-label') || ''),
       );
-      if (!arrow || arrow.disabled) return;
-      pointerClick(arrow);
+      if (!arrow || arrow.disabled || !pointerClick(arrow)) return;
       await sleep(i % 12 === 11 ? 20 : 0);
       const now = cal() && shownPeriod(cal());
       if (!now || (step === 'year' ? now.year : now.year * 12 + now.month) === at) return;
@@ -1641,7 +1653,7 @@
       if (!dom().isVisible(el) || el.closest('[data-jtf-ui]') || el.disabled) return false;
       // Never a link that leaves the page or a button that submits its form.
       if (el.localName === 'a' && !/^(#|javascript:|$)/i.test((el.getAttribute('href') || '').trim())) return false;
-      if (el.form && el.matches('button:not([type="button"]):not([type="reset"]), input[type="submit"]')) return false;
+      if (submits(el)) return false;
       return /:_attachIcon$/.test(el.id) || UPLOAD_TRIGGER.test(triggerText(el)) || el.matches(RESUME_METHOD);
     });
     // The innermost of nested candidates (a link inside a focusable tile).
@@ -1680,11 +1692,15 @@
     return out;
   }
 
-  /** The "Upload from Device" choice a tile's menu or dialog just showed (never Dropbox, Google…). */
+  /**
+   * The "Upload from Device" choice a tile's menu or dialog just showed (never Dropbox, Google…, nor a dialog's own
+   * "Upload File" that submits the form around it).
+   */
   function deviceOption(doc, trigger, before) {
     return (
       Array.from(doc.querySelectorAll(MENU_ITEMS)).find((el) => {
         if (before.has(el) || trigger.contains(el) || el.closest('[data-jtf-ui]') || !dom().isVisible(el)) return false;
+        if (submits(el)) return false;
         const t = triggerText(el);
         return t.length <= 60 && DEVICE_OPTION.test(t) && !CLOUD_OPTION.test(t);
       }) || null
@@ -1701,7 +1717,10 @@
   const shownDialogs = (page) => Array.from(page.querySelectorAll(DIALOG)).filter((d) => dom().isVisible(d));
   const CLOSE_TEXT = /^(close|cancel|dismiss|x|×|✕)$/i;
 
-  /** Close dialogs a click opened: Escape, then each one's own Close button (never a submit). */
+  /**
+   * Close the dialogs a click opened (`opened`: those elements, showing now and not before): Escape, then each one's
+   * own Close or Cancel button, never one that submits (an upload dialog's bare <button>Cancel</button> in the form).
+   */
   async function closeDialogs(page, opened) {
     key(page.activeElement || page.body, 'Escape');
     await sleep(200);
@@ -1709,7 +1728,8 @@
       if (!d.isConnected || !dom().isVisible(d)) continue;
       const close = Array.from(d.querySelectorAll('button, [role="button"], a')).find(
         (b) =>
-          !b.matches('[type="submit"], input') &&
+          b.localName !== 'input' &&
+          !submits(b) &&
           [b.getAttribute('aria-label'), b.getAttribute('title'), dom().textOf(b)].some((t) =>
             CLOSE_TEXT.test((t || '').trim()),
           ),
@@ -1751,8 +1771,9 @@
       page.removeEventListener('click', catchPicker, true);
     }
     if (!input) {
-      // A dialog that opened instead (Eploy's "Upload CV", a page in a frame whose file only goes in with its own
-      // "Upload File" button, which is never pressed for you) is closed again: that upload is yours.
+      // A dialog that opened instead is closed again, and that upload is yours: Eploy's "Upload CV", a page in a frame
+      // whose file only goes in with its own "Upload File" submit button (a frame's buttons are never looked at, and a
+      // button that submits is never pressed, see submits).
       const opened = shownDialogs(page).filter((d) => !dialogsBefore.has(d));
       if (opened.length) await closeDialogs(page, opened);
       // Close a menu that offered nothing usable.
@@ -1822,6 +1843,10 @@
   async function apply(field, v, opts) {
     const { el, kind, members, desc } = field;
     const history = opts.history;
+    // A password or card number is only typed into a box a person can see (a widget's 2 px box at 2% opacity is
+    // not one). A list's choice is one of the page's own options, so it isn't held to that.
+    if (v && v.sensitive && !/^(select|combo|combobox)$/.test(kind) && !dom().showsSecret(el))
+      return { status: 'skipped', reason: 'too small or faint to see' };
     // `correct`: what the site chose for you is replaced when it isn't yours (a country taken from your IP address).
     const had = hasValue(field);
     const correcting = had && !opts.overwrite && !!opts.correct && !agrees(field, v);
@@ -2070,26 +2095,59 @@
       const clear = a.querySelector(
         '[class*="clear-indicator"], [class*="clearIndicator"], [aria-label="Clear" i], [aria-label*="clear selection" i], [title="Clear" i], [title^="Remove all" i], [title*="clear selection" i]',
       );
-      if (clear) {
-        pointerClick(clear);
-        return true;
-      }
-      const removes = a.querySelectorAll(
-        '[class*="multi-value__remove"], [class*="multiValueRemove"], [aria-label^="Remove" i], [title^="Remove" i], [data-automation-id="DELETE_charm"]',
-      );
+      if (clear) return pointerClick(clear);
+      const removes = Array.from(
+        a.querySelectorAll(
+          '[class*="multi-value__remove"], [class*="multiValueRemove"], [aria-label^="Remove" i], [title^="Remove" i], [data-automation-id="DELETE_charm"]',
+        ),
+      ).filter((r) => !submits(r));
       if (removes.length && chipsOf(el).length) {
-        Array.from(removes).forEach((r) => pointerClick(r));
+        removes.forEach((r) => pointerClick(r));
         return true;
       }
     }
     return false;
   }
 
+  /** Which of an undo entry's boxes or choices are ticked now; null for any other field. */
+  const ticks = (h) =>
+    h.kind === 'radio' || h.kind === 'checkboxes'
+      ? h.members.map(isChecked)
+      : h.kind === 'checkbox'
+        ? [isChecked(h.el)]
+        : null;
+
+  /** What an undo entry's field holds now, to tell whether undoing it changed anything. */
+  function heldNow(h) {
+    const ticked = ticks(h);
+    if (ticked) return ticked.join();
+    if (h.kind === 'select') return Array.from(h.el.options, (o) => o.selected).join();
+    if (h.kind === 'file') return Array.from(h.el.files || [], (f) => f.name).join('\n');
+    if (h.picked) return boxText(h.el) + h.el.value;
+    return isEditable(h.el) ? h.el.innerHTML : textIn(h.el);
+  }
+
+  /**
+   * Did a click in undoing `h` change it, though the widget may only show it once it redraws (React draws after the
+   * click): a dropdown's clear, a box ticked or unticked, a choice ticked again. Never a radio choice taken away, which
+   * no click does (Ashby's Yes/No, Radix): a group that had no answer before keeps the fill's.
+   */
+  function clickedBack(h, before) {
+    if (h.picked) return true;
+    if (!before) return false;
+    const members = h.members || [h.el];
+    const prev = h.members ? h.prev : [h.prev];
+    return members.some((m, i) => m.localName !== 'input' && before[i] !== prev[i] && (prev[i] || h.kind !== 'radio'));
+  }
+
+  /** Put back what each entry's field held before the fill. Returns how many fields that changed. */
   function undo(history) {
     let n = 0;
     for (const h of history.slice().reverse()) {
       try {
         if (!h.el.isConnected) continue;
+        const was = heldNow(h);
+        const before = ticks(h);
         if (h.kind === 'select') {
           if (h.prevMany) h.prevMany.forEach((on, i) => h.el.options[i] && (h.el.options[i].selected = on));
           else h.el.selectedIndex = h.prev;
@@ -2112,7 +2170,7 @@
         } else {
           typeValue(h.el, h.prev || '');
         }
-        n++;
+        if (heldNow(h) !== was || clickedBack(h, before)) n++;
       } catch (err) {
         /* element went away or refused; keep going */
       }
@@ -2161,7 +2219,6 @@
 
   JTF.fill = {
     apply,
-    verify,
     repair,
     undo,
     hasValue,
@@ -2172,5 +2229,6 @@
     peekOptions,
     uploadTriggers,
     attachVia,
+    closeDialogs,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

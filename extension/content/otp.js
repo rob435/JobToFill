@@ -329,6 +329,18 @@
 
   /* --------------------------------------------------------------- watch */
 
+  /**
+   * Is this the tab's top frame? Asked of the page's window: in Firefox a content script's global is a sandbox of its
+   * own, never the same object as `top`, so "Check your inbox" pages never got their link opened there.
+   */
+  function isTop() {
+    try {
+      return window.self === window.top;
+    } catch (err) {
+      return false;
+    }
+  }
+
   let scheduled = false;
   let lastTextCheck = 0;
   let textTimer = null;
@@ -342,7 +354,7 @@
     }
     // Reading the page's text is the costly part: at most every few seconds, and not once a link is awaited. A look
     // skipped for that is taken later (the notice may be drawn just after the last one).
-    if (root === root.top && options && options.links !== false && !state.link) {
+    if (isTop() && options && options.links !== false && !state.link) {
       const wait = TEXT_EVERY - (Date.now() - lastTextCheck);
       if (wait > 0) {
         if (!textTimer)
@@ -393,10 +405,13 @@
     }, WATCH_FOR);
   }
 
-  /** The box the person right-clicked: "Insert verification code from email". */
+  /**
+   * "Insert verification code from email": `code` into the box the person right-clicked, which has the focus. True
+   * once it holds it, false when it didn't take it, null when no box has the focus.
+   */
   function fillFocused(code) {
     const el = document.activeElement;
-    if (!el || el.localName !== 'input') return false;
+    if (!el || el.localName !== 'input') return null;
     const target = findTarget();
     if (target && target.inputs.includes(el)) return fillCode(target, code);
     return fillCode({ inputs: [el] }, code);

@@ -1063,12 +1063,6 @@
     return { on: true, marks: boxes.length };
   }
 
-  /** The element a ref of this frame's last map stands for (a field's box, a button, a frame), if still there. */
-  function element(ref) {
-    const item = state.last && state.last.refs.get(ref);
-    return item && item.anchor && item.anchor.isConnected ? item.anchor : null;
-  }
-
   /* ---------------------------------------------------------------- reveal */
 
   // How long a revealed field stays outlined, and the fade at the end of it.
@@ -1186,6 +1180,6 @@
     api.pageMapReveal = reveal;
   }
 
-  Object.assign(PM, { capture, marks, element, reveal, register });
+  Object.assign(PM, { capture, marks, reveal, register });
   register();
 })(typeof globalThis !== 'undefined' ? globalThis : this);

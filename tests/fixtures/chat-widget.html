@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Apply: Software Engineer – Acme Careers</title>
+  <style>
+    body { font: 15px/1.4 system-ui, sans-serif; margin: 24px auto; max-width: 640px; }
+    label { display: block; margin: 10px 0 4px; }
+    iframe { display: block; width: 360px; height: 180px; border: 1px solid #ccc; margin: 12px 0; }
+  </style>
+</head>
+<body>
+  <!--
+    An application with frames that ask for a password and a card. A support chat's sign-in, framed from another site
+    (the way Intercom-style widgets are), must get neither your default password nor a card: only a login saved for
+    that very site would go there. A frame on the page's own site gets the default password and the card, but not into
+    a box nobody could see: a 2×2 px password box, a card box faded to 5%.
+  -->
+  <h1>Software Engineer</h1>
+  <form id="application">
+    <label for="first">First name</label><input id="first" name="first_name">
+    <label for="last">Last name</label><input id="last" name="last_name">
+  </form>
+  <script>
+    const other = location.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+    for (const [id, host, variant] of [
+      ['chat', other, 'normal'],
+      ['own', location.hostname, 'normal'],
+      ['faint', location.hostname, 'faint'],
+    ]) {
+      const f = document.createElement('iframe');
+      f.id = id;
+      f.title = 'Chat with us';
+      f.src = `http://${host}:${location.port}/chat-widget-frame.html?${variant}`;
+      document.body.appendChild(f);
+    }
+  </script>
+</body>
+</html>
