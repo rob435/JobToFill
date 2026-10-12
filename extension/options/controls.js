@@ -17,7 +17,13 @@ export function control(spec, value, onChange) {
       name: spec.path,
       onchange: () => onChange(box.checked),
     });
-    return el('label', { className: 'check field' + (spec.wide ? ' wide' : '') }, box, spec.label);
+    // The text in its own element, so the grid can line the box up with the boxes beside it.
+    return el(
+      'label',
+      { className: 'check field' + (spec.wide ? ' wide' : '') },
+      box,
+      el('span', { textContent: spec.label }),
+    );
   }
   if (spec.type === 'month') return monthControl(spec, value, onChange);
 
@@ -158,8 +164,8 @@ export function table(headers, rows) {
   );
 }
 
-/** Password box with Show / Copy buttons. */
-export function secretInput(value, onChange, name) {
+/** Password box with Show / Copy buttons. `label` names the box when nothing around it does (a table cell). */
+export function secretInput(value, onChange, name, label) {
   const input = el('input', {
     type: 'password',
     value: value || '',
@@ -167,6 +173,7 @@ export function secretInput(value, onChange, name) {
     autocomplete: 'off',
     spellcheck: false,
   });
+  if (label) input.setAttribute('aria-label', label);
   if (onChange) input.addEventListener('change', () => onChange(input.value));
   const show = el('button', {
     type: 'button',

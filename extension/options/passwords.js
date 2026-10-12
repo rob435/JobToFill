@@ -10,10 +10,11 @@ const INTRO =
 
 const labelled = (label, ...controls) =>
   el('label', { className: 'field' }, el('span', { textContent: label }), ...controls);
-const masked = (number) => {
-  const digits = String(number || '').replace(/\D/g, '');
-  return digits ? '•••• ' + digits.slice(-4) : '';
-};
+const last4 = (number) =>
+  String(number || '')
+    .replace(/\D/g, '')
+    .slice(-4);
+const masked = (number) => (last4(number) ? '•••• ' + last4(number) : '');
 
 /** Passwords an older version kept in its encrypted vault: moved over once, with that vault's master password. */
 function legacyGroup(refresh) {
@@ -128,7 +129,7 @@ function loginsGroup(data, profile, save) {
           const target = d.credentials.find((x) => x.id === c.id);
           if (target) Object.assign(target, patch, { updatedAt: Date.now() });
         });
-      const secret = secretInput(c.password, (password) => edit({ password }));
+      const secret = secretInput(c.password, (password) => edit({ password }), '', `Password for ${c.host}`);
       const user = el('input', {
         value: c.username || '',
         autocomplete: 'off',
@@ -148,7 +149,13 @@ function loginsGroup(data, profile, save) {
         el(
           'td',
           {},
-          el('button', { type: 'button', className: 'small danger', textContent: 'Delete', onclick: remove }),
+          el('button', {
+            type: 'button',
+            className: 'small danger',
+            textContent: 'Delete',
+            attrs: { 'aria-label': `Delete the login for ${c.host}` },
+            onclick: remove,
+          }),
         ),
       );
     });
@@ -225,6 +232,9 @@ function cardsGroup(data, profile, save) {
           name: 'defaultCard',
           checked: selected === c.id,
           title: 'Use this card',
+          attrs: {
+            'aria-label': `Use ${c.label || fields.cardBrand(c.number) || 'the card'} ending ${last4(c.number)}`,
+          },
           onchange: () => save((d) => (d.defaultCardId = c.id)),
         }),
       ),
@@ -232,7 +242,17 @@ function cardsGroup(data, profile, save) {
       el('td', { textContent: c.name }),
       el('td', { className: 'mono', textContent: masked(c.number) }),
       el('td', { className: 'mono', textContent: `${util.pad2(c.expMonth)}/${String(c.expYear).slice(-2)}` }),
-      el('td', {}, el('button', { type: 'button', className: 'small danger', textContent: 'Delete', onclick: remove })),
+      el(
+        'td',
+        {},
+        el('button', {
+          type: 'button',
+          className: 'small danger',
+          textContent: 'Delete',
+          attrs: { 'aria-label': `Delete the card ending ${last4(c.number)}` },
+          onclick: remove,
+        }),
+      ),
     );
   });
 

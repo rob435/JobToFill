@@ -1,18 +1,33 @@
+/* JobToFill settings page. Shared tokens and controls are in ../ui/theme.css. */
+
+:root {
+  --scroll-shadow: rgba(20, 16, 40, 0.16);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --scroll-shadow: rgba(0, 0, 0, 0.6);
+  }
+}
+
 .layout {
   display: grid;
   grid-template-columns: 236px minmax(0, 1fr);
   min-height: 100vh;
 }
 
+/* The panel runs the whole height of the page; what's in it stays in view, and scrolls itself when the window is
+   shorter than the list of sections. */
 .sidebar {
-  position: sticky;
-  top: 0;
-  align-self: start;
-  height: 100vh;
-  overflow: auto;
-  padding: 18px 12px;
   background: var(--surface);
   border-right: 1px solid var(--border);
+}
+.sidebar-inner {
+  position: sticky;
+  top: 0;
+  max-height: 100vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 12px;
 }
 .brand {
   display: flex;
@@ -42,14 +57,38 @@
 #nav a:hover {
   background: var(--surface-2);
 }
+#nav a:focus-visible {
+  outline-offset: -2px;
+}
 #nav a[aria-current='page'] {
   background: var(--primary-weak);
   color: var(--primary);
   font-weight: 650;
 }
 
+/* For the keyboard: straight past the list of sections. */
+.skip {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 20;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--primary-text);
+  font-weight: 600;
+  text-decoration: none;
+  transform: translateY(-200%);
+}
+.skip:focus {
+  transform: none;
+}
+
 main {
   min-width: 0;
+}
+#sections:focus {
+  outline: none;
 }
 
 .topbar {
@@ -61,6 +100,7 @@ main {
   align-items: center;
   gap: 10px 16px;
   padding: 12px 32px;
+  background: var(--bg);
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
@@ -69,16 +109,34 @@ main {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 .profile-picker select {
   width: auto;
   min-width: 160px;
+  max-width: min(320px, 60vw);
   font-weight: 600;
 }
 .profile-actions {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+/* Set apart from the others, so it isn't hit by accident. */
+.profile-actions .danger {
+  margin-left: 8px;
+}
+.profile-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.profile-form input {
+  flex: 1 1 160px;
+  min-width: 120px;
+  max-width: 240px;
+  padding: 4px 9px;
 }
 .save-state {
   margin-left: auto;
@@ -115,6 +173,17 @@ main {
   margin-bottom: 16px;
   box-shadow: var(--shadow);
 }
+/* One rhythm between whatever a card holds: fields, toggles, tables, buttons. */
+.group > :where(* + *) {
+  margin-top: 14px;
+}
+.group > :where(:last-child) {
+  margin-bottom: 0;
+}
+/* A lone button in a card ("Choose backup file…") keeps to the same rhythm as a block would. */
+.group > button {
+  display: block;
+}
 .group > h2 {
   font-size: 14px;
   margin-bottom: 14px;
@@ -137,6 +206,7 @@ main {
   display: grid;
   gap: 5px;
   align-content: start;
+  min-width: 0;
 }
 .field.wide {
   grid-column: 1 / -1;
@@ -148,14 +218,68 @@ main {
 }
 .field small {
   font-size: 12px;
+  line-height: 1.4;
   color: var(--muted);
 }
+
+/* Side by side, the boxes line up even when one label takes two lines ("Need adjustments for the recruitment
+   process?"): each field spans four rows of the grid (label, box, and two for a second box or notes), so the labels
+   of a row share one height and sit just above their boxes. */
+@supports (grid-template-rows: subgrid) {
+  .grid {
+    row-gap: 0;
+  }
+  .grid > .field {
+    grid-row: span 4;
+    grid-template-rows: subgrid;
+    row-gap: 0;
+    padding-bottom: 12px;
+  }
+  .grid > .field > :first-child {
+    align-self: end;
+  }
+  .grid > .field > :not(:first-child) {
+    margin-top: 5px;
+  }
+  /* A checkbox field ("I currently work here") sits on the row of the boxes beside it. */
+  .grid > .field.check {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 8px;
+  }
+  .grid > .field.check > * {
+    grid-row: 2;
+    align-self: center;
+    margin-top: 5px;
+  }
+}
+
 .check {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   font-weight: 500;
   cursor: pointer;
+}
+/* On the first line of a label that wraps. */
+.check > input {
+  margin-top: 3px;
+}
+.field.check > span {
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+}
+.check.top strong {
+  font-weight: 600;
+}
+/* The explanation under a switch's name, the same size wherever it is. */
+.check.top .muted {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.45;
 }
 
 .entry {
@@ -181,6 +305,7 @@ main {
 }
 .entry-tools {
   display: flex;
+  flex: none;
   gap: 4px;
 }
 .entry-tools button {
@@ -198,6 +323,10 @@ main {
 }
 .answer-row:first-child {
   border-top: 0;
+  padding-top: 0;
+}
+.answer-row:last-child {
+  margin-bottom: 14px;
 }
 .answer-row textarea {
   min-height: 40px;
@@ -219,8 +348,9 @@ main {
 
 .banner {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
+  gap: 12px 16px;
   margin: 20px 32px 0;
   max-width: 856px;
   padding: 14px 16px;
@@ -230,7 +360,7 @@ main {
 }
 .banner p {
   margin: 0;
-  flex: 1;
+  flex: 1 1 320px;
 }
 .banner.info {
   border-color: var(--primary);
@@ -240,10 +370,107 @@ main {
   overflow-wrap: anywhere;
 }
 
+/* Get started: the steps left, each a link to where it's done. */
+.setup {
+  margin: 20px 32px 0;
+  max-width: 856px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.setup-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+.setup-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+.setup-count {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.setup-head button {
+  margin-left: auto;
+}
+.setup-bar {
+  height: 5px;
+  margin: 10px 0 14px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.setup-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+}
+.setup-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 10px 18px;
+}
+.setup-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+.setup-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+.setup-steps li.done .setup-mark {
+  border-color: var(--ok);
+  background: var(--ok);
+  color: var(--surface);
+}
+.setup-steps a,
+.setup-steps .setup-step {
+  font-weight: 600;
+}
+.setup-steps li.done a,
+.setup-steps li.done .setup-step {
+  color: var(--muted);
+  font-weight: 500;
+}
+.setup-steps .pill {
+  margin-left: 6px;
+  padding: 0 7px;
+  font-size: 11px;
+  vertical-align: 1px;
+}
+.setup-steps small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
 .doc-card {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  gap: 10px 14px;
   padding: 14px;
   border: 1px dashed var(--border-strong);
   border-radius: 10px;
@@ -265,15 +492,21 @@ main {
   flex: none;
 }
 .doc-info {
-  flex: 1;
+  flex: 1 1 200px;
   min-width: 0;
 }
 .doc-info strong {
   display: block;
 }
+/* A long file name ("Ada_Lovelace_Curriculum_Vitae_…_final_v3.pdf") wraps instead of pushing the buttons off. */
+.doc-info .muted {
+  overflow-wrap: anywhere;
+}
 .doc-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
+  margin-left: auto;
 }
 
 table {
@@ -293,16 +526,47 @@ th {
   color: var(--muted);
   font-weight: 650;
 }
+tbody tr:last-child > td {
+  border-bottom: 0;
+}
+/* A row of boxes and buttons (saved logins, cards) lines its text up with them, a little closer together. */
+tr:has(input, button) > td {
+  vertical-align: middle;
+  padding-inline: 6px;
+}
+/* Buttons in a cell side by side ("PDF", "Delete"), the cell still a table cell. */
+td.row {
+  display: table-cell;
+  white-space: nowrap;
+}
+td.row > * + * {
+  margin-left: 6px;
+}
 td.mono,
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12.5px;
 }
-td a {
+/* A page title wraps between words in a column wide enough to read; an address breaks anywhere. */
+td > a {
+  display: inline-block;
+  min-width: 10em;
   overflow-wrap: anywhere;
 }
+td > input:not([type='radio'], [type='checkbox']) {
+  min-width: 7em;
+}
+/* A table wider than the window scrolls sideways, with a shadow at the edge that has more. */
 .table-wrap {
   overflow-x: auto;
+  background:
+    linear-gradient(to right, var(--surface) 30%, transparent) left / 32px 100% no-repeat local,
+    linear-gradient(to left, var(--surface) 30%, transparent) right / 32px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, var(--scroll-shadow), transparent) left / 12px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, var(--scroll-shadow), transparent) right / 12px 100% no-repeat scroll;
+}
+details > summary {
+  cursor: pointer;
 }
 
 .row {
@@ -317,12 +581,6 @@ td a {
 .narrow {
   max-width: 280px;
 }
-.check.top {
-  align-items: flex-start;
-}
-.check.top input {
-  margin-top: 3px;
-}
 .doc-info small {
   display: block;
 }
@@ -333,6 +591,9 @@ td a {
   display: grid;
   gap: 10px;
 }
+.stack > p {
+  margin: 0;
+}
 .inline-form {
   display: flex;
   gap: 8px;
@@ -342,6 +603,9 @@ td a {
 .inline-form .field {
   flex: 1 1 180px;
 }
+.inline-form .field:has(.secret) {
+  flex-basis: 300px;
+}
 .error {
   color: var(--danger);
   font-size: 13px;
@@ -350,18 +614,41 @@ td a {
   color: var(--ok);
   font-size: 13px;
 }
+/* An empty message line takes no room until there is something to say. */
+.error:empty,
+.success:empty {
+  display: none;
+}
 .empty {
   color: var(--muted);
-  padding: 10px 0;
+  padding: 12px 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  text-align: center;
 }
 
+/* A password with Show / Copy (/ Generate) beside it: the box keeps room to type in. */
 .secret {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
 }
 .secret input {
+  flex: 1 1 8em;
+  min-width: 6em;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.secret button {
+  flex: none;
+}
+/* In a table row the box and its buttons stay on one line. */
+td > .secret {
+  flex-wrap: nowrap;
+}
+td > .secret input {
+  flex: 1 1 6em;
+  min-width: 5em;
 }
 
 .callout {
@@ -372,41 +659,6 @@ td a {
 }
 .callout.warn {
   background: var(--warn-weak);
-}
-
-@media (max-width: 760px) {
-  .layout {
-    grid-template-columns: 1fr;
-  }
-  .sidebar {
-    position: static;
-    height: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-  }
-  #nav {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-  .nav-title {
-    width: 100%;
-  }
-  .topbar,
-  #sections {
-    padding-left: 16px;
-    padding-right: 16px;
-  }
-  .answer-row {
-    grid-template-columns: 1fr;
-  }
-  .answer-row .remove {
-    margin-top: 0;
-    justify-self: start;
-  }
-  .banner {
-    margin: 16px 16px 0;
-  }
 }
 
 .answers-list {
@@ -428,4 +680,108 @@ td a {
   margin: 0 0 12px;
   padding-left: 20px;
   line-height: 1.7;
+}
+
+/* Narrow windows: the sections become one bar along the top that scrolls sideways, and stays in view. */
+@media (max-width: 760px) {
+  .layout {
+    display: block;
+  }
+  .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-inner {
+    position: static;
+    display: flex;
+    align-items: center;
+    max-height: none;
+    overflow: visible;
+    padding: 0 0 0 16px;
+  }
+  .brand {
+    flex: none;
+    padding: 0 12px 0 0;
+    border-right: 1px solid var(--border);
+    font-size: 15px;
+    gap: 8px;
+  }
+  .brand img {
+    width: 24px;
+    height: 24px;
+  }
+  #nav {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 24px 8px 16px;
+    scroll-padding: 0 24px 0 16px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    /* Fades at the edges show there is more to scroll to. */
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 24px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 24px), transparent);
+  }
+  #nav::-webkit-scrollbar {
+    display: none;
+  }
+  #nav a {
+    flex: none;
+    white-space: nowrap;
+    padding: 6px 10px;
+  }
+  /* The two groups, Profile and Extension, parted by a line. */
+  .nav-title {
+    display: none;
+  }
+  .nav-title ~ .nav-title {
+    display: block;
+    flex: none;
+    width: 1px;
+    height: 20px;
+    margin: 0 6px;
+    overflow: hidden;
+    background: var(--border-strong);
+    color: transparent;
+    font-size: 0;
+  }
+  .topbar {
+    position: static;
+    padding: 10px 16px;
+  }
+  #sections {
+    padding: 20px 16px 48px;
+  }
+  .banner,
+  .setup {
+    margin: 16px 16px 0;
+  }
+  .answer-row {
+    grid-template-columns: 1fr;
+  }
+  .answer-row .remove {
+    margin-top: 0;
+    justify-self: start;
+  }
+}
+
+@media (max-width: 520px) {
+  .brand span {
+    display: none;
+  }
+  .section-head h1 {
+    font-size: 20px;
+  }
+  .group,
+  .setup {
+    padding: 14px;
+  }
+  .save-state {
+    margin-left: 0;
+  }
 }
