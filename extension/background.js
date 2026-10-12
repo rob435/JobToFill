@@ -1442,9 +1442,12 @@ async function answerRound(tabId, pending, ctx) {
       .map((x) => String(x || '').trim())
       .filter(Boolean)
       .join('\n\n');
+    // The kinds of sensitive question the person lets the AI answer too (Settings › Cover letters & AI): none unless
+    // switched on.
+    const allow = store.aiSensitiveSettings(settings);
     written = await answers.answer(
       chat,
-      { profile, kit, cvText, job: ctx.job, bank, guidance, today: Date.now() },
+      { profile, kit, cvText, job: ctx.job, bank, guidance, allow, today: Date.now() },
       rest,
       {
         signal: controller.signal,
@@ -1516,7 +1519,8 @@ async function answerRound(tabId, pending, ctx) {
  */
 async function answerWithAi(tabId, pending, opts = {}) {
   const prior = aiRuns.get(tabId);
-  if (prior && prior.status === 'running') prior.controller.abort();
+  const replacing = !!prior && prior.status === 'running';
+  if (replacing) prior.controller.abort();
   const controller = new AbortController();
   const run = {
     status: 'running',
@@ -1532,10 +1536,15 @@ async function answerWithAi(tabId, pending, opts = {}) {
     toast: !!opts.toast,
   };
   aiRuns.set(tabId, run);
+  // A run another one replaced (Fill or "Answer with AI" pressed again) finishes on its own: it no longer speaks for
+  // the tab, nor lets go of the page's keep-alive the new run is using.
+  const current = () => aiRuns.get(tabId) === run;
   const report = (patch) => {
     Object.assign(run, patch);
-    broadcast(tabId, run);
+    if (current()) broadcast(tabId, run);
   };
+  // The replaced run's keep-alive gives way to this one's, whose time limit counts from now.
+  if (replacing) await callFrames(tabId, 'release', [], [0]).catch(() => {});
   await callFrames(tabId, 'hold', [240000], [0]).catch(() => {});
   try {
     const { profile, settings } = await store.getActive();
@@ -1581,15 +1590,15 @@ async function answerWithAi(tabId, pending, opts = {}) {
       cost: ctx.cost,
       finishedAt: Date.now(),
     });
-    if (run.toast) await showToast(tabId, aiSummaryText(run), { undo: total.filled > 0 });
+    if (run.toast && current()) await showToast(tabId, aiSummaryText(run), { undo: total.filled > 0 });
     return runView(run);
   } catch (err) {
     const error = err && err.name === 'AbortError' ? 'Stopped.' : String((err && err.message) || err);
     report({ status: 'error', stage: 'done', error });
-    if (run.toast && error !== 'Stopped.') await showToast(tabId, aiSummaryText(run));
+    if (run.toast && current() && error !== 'Stopped.') await showToast(tabId, aiSummaryText(run));
     return runView(run);
   } finally {
-    callFrames(tabId, 'release', [], [0]).catch(() => {});
+    if (current()) callFrames(tabId, 'release', [], [0]).catch(() => {});
   }
 }
 

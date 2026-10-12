@@ -1,7 +1,8 @@
 // AI answers end to end, with a scripted stand-in for the AI provider: the questions a fill leaves empty go to
 // the model with the job's description (read from the page), the answers are checked (an invented number goes
 // back to be fixed), filled in and remembered, so filling the page again doesn't ask the model twice.
-// Diversity questions, declarations and legal questions without answer guidance never reach the model.
+// Diversity questions, declarations and legal questions without answer guidance never reach the model, unless the
+// person lets the AI answer that kind (Settings › Cover letters & AI); passwords and opt-ins never do.
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -10,13 +11,37 @@ import { PROFILE, checked, launch, selectedText, until, value } from './harness.
 const ESSAY = (n) =>
   `I want to join Acme Capital’s Rates desk because the work is building pricing and risk tools in Python that traders use every day. I built a reconciliation tool in Python that checks ${n} trades a night, and explaining breaks to traders is how I learnt that a tool is only useful when people trust it.`;
 
-/** An OpenAI-compatible endpoint that answers application questions by their wording, and records every call. */
+/**
+ * What a model makes of the sensitive questions (tests/fixtures/ai-sensitive.html): answered only where the system
+ * prompt has the rules for their kind (Settings › Cover letters & AI), skipped as the default rules say otherwise.
+ */
+function sensitive(q, system) {
+  const may = (re) => re.test(system);
+  if (/sexual orientation/i.test(q.question) && may(/EQUAL-OPPORTUNITY ANSWERS/))
+    return { id: q.id, answer: 'I don’t wish to answer' };
+  if (/government official|convicted/i.test(q.question) && may(/nothing to declare/)) return { id: q.id, answer: 'No' };
+  if (/adjustments/i.test(q.question) && may(/no adjustments or accommodations needed/))
+    return { id: q.id, answer: 'No' };
+  if (/^signature$/i.test(q.question)) return { id: q.id, answer: 'Ada Lovelace' };
+  if (/national insurance/i.test(q.question)) return { id: q.id, answer: 'QQ 12 34 56 C' };
+  if (/passport/i.test(q.question)) return { id: q.id, answer: '123456789' };
+  if (/keep me updated/i.test(q.question)) return { id: q.id, answer: 'Yes' };
+  return null;
+}
+
+/**
+ * An OpenAI-compatible endpoint that answers application questions by their wording, and records every call. `delay`
+ * (ms, changeable) holds each reply back, as a slow model would.
+ */
 function mockAi() {
   const calls = [];
+  const state = { delay: 0 };
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));
-    req.on('end', () => {
+    req.on('end', () => setTimeout(() => respond(body), state.delay));
+    function respond(body) {
+      if (res.destroyed) return;
       const json = JSON.parse(body || '{}');
       const system = (json.messages && json.messages[0] && json.messages[0].content) || '';
       const last = json.messages.at(-1).content;
@@ -31,6 +56,8 @@ function mockAi() {
           const questions = JSON.parse(last.slice(last.indexOf('QUESTIONS:') + 'QUESTIONS:'.length));
           reply = {
             answers: questions.map((q) => {
+              const kept = sensitive(q, system);
+              if (kept) return kept;
               if (/^why/i.test(q.question)) return { id: q.id, answer: ESSAY('90,000'), basis: 'material' };
               if (/python/i.test(q.question)) return { id: q.id, answer: 'Yes', basis: 'material' };
               if (/product/i.test(q.question)) return { id: q.id, answer: 'Rates and inflation', basis: 'posting' };
@@ -52,9 +79,9 @@ function mockAi() {
           usage: { prompt_tokens: 10, completion_tokens: 10, cost: 0.0001 },
         }),
       );
-    });
+    }
   });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, calls })));
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, calls, state })));
 }
 
 let h;
@@ -232,4 +259,131 @@ test('the job behind an application is found for the AI on a linked HTML page (o
   const cached = await h.bg((id) => globalThis.JTF.store.getTabJob(id), await h.tabId(page));
   assert.match(cached.job.description, /Reconcile trades/);
   await page.close();
+});
+
+const NONE = { eeo: false, consent: false, legal: false, health: false, identity: false };
+const ALL = { eeo: true, consent: true, legal: true, health: true, identity: true };
+/** The questions the model was asked in these calls. */
+const askedIn = (calls) =>
+  calls
+    .filter((c) => c.last.includes('QUESTIONS:'))
+    .flatMap((c) => JSON.parse(c.last.slice(c.last.indexOf('QUESTIONS:') + 10)).map((q) => q.question));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('sensitive questions stay back until switched on; then each kind is answered by its own rules', async () => {
+  const profileId = await h.bg(async () => (await globalThis.JTF.store.getActive()).profile.id);
+  const notes = 'Built a reconciliation tool in Python that checks 40,000 trades a night. Explained breaks to traders.';
+  const setNotes = (text) => h.bg(([id, n]) => globalThis.JTF.store.saveKit(id, { notes: n }), [profileId, text]);
+  await setNotes(`${notes}\nNational Insurance number: QQ123456C.`);
+  try {
+    // The default: what was always asked still is, nothing sensitive goes, and the date of birth filled just before
+    // "Why…?" isn't passed on as the question before it.
+    await h.bg(() => globalThis.JTF.api.storage.local.set({ answers: [] }));
+    let from = ai.calls.length;
+    let page = await h.open('ai-sensitive.html');
+    let r = await fillAndWait(page);
+    assert.equal(r.ai.status, 'done', JSON.stringify(r.ai));
+    assert.notEqual(await value(page, '#dob'), '', 'the rules fill the date of birth');
+    let asked = askedIn(ai.calls.slice(from));
+    assert.ok(asked.some((q) => /^Why/.test(q)));
+    assert.ok(
+      asked.some((q) => /government official/.test(q)),
+      'asked as before, and skipped without the legal rules',
+    );
+    for (const re of [
+      /convicted/,
+      /adjustments/,
+      /National Insurance/,
+      /Passport/,
+      /sexual orientation/,
+      /^Signature$/,
+    ])
+      assert.ok(!asked.some((q) => re.test(q)), String(re));
+    assert.ok(!asked.some((q) => /Keep me updated/.test(q)));
+    const sent = ai.calls
+      .slice(from)
+      .map((c) => c.last)
+      .join('\n');
+    assert.doesNotMatch(sent, /1990/, 'never the date of birth');
+    assert.match(sent, /"question": "Date of birth",\s*"answer": "\(not answered\)"/);
+    for (const sel of ['#official', '#convicted', '#adjustments', '#orientation'])
+      assert.equal(await selectedText(page, sel), 'Select...', sel);
+    for (const sel of ['#ni', '#passport', '#signature']) assert.equal(await value(page, sel), '', sel);
+    assert.equal(await checked(page, '#updates'), false);
+    assert.match(r.ai.skipped.map((s) => s.reason).join(' | '), /in Settings › Cover letters & AI/);
+    await page.close();
+
+    // Every kind switched on.
+    await h.setSettings({ aiSensitive: ALL });
+    await h.bg(() => globalThis.JTF.api.storage.local.set({ answers: [] }));
+    from = ai.calls.length;
+    page = await h.open('ai-sensitive.html');
+    r = await fillAndWait(page);
+    assert.equal(r.ai.status, 'done', JSON.stringify(r.ai));
+    assert.equal(await selectedText(page, '#orientation'), 'I don’t wish to answer'.replace('’', "'"));
+    assert.equal(await selectedText(page, '#official'), 'No', 'a government official question the profile left open');
+    assert.equal(await selectedText(page, '#convicted'), 'No');
+    assert.equal(await selectedText(page, '#adjustments'), 'No');
+    assert.equal(await value(page, '#signature'), 'Ada Lovelace');
+    assert.equal(await value(page, '#ni'), 'QQ 12 34 56 C', 'the number the candidate’s notes give');
+    assert.equal(await value(page, '#passport'), '', 'a passport number nothing gives is never made up');
+    assert.equal(await checked(page, '#updates'), false);
+    asked = askedIn(ai.calls.slice(from));
+    assert.ok(!asked.some((q) => /Keep me updated/.test(q)), 'an opt-in is never even asked');
+    const calls = ai.calls.slice(from).filter((c) => /answer job application form questions/.test(c.system));
+    assert.match(calls[0].system, /Questions the candidate has asked you to answer too:/);
+    assert.match(calls[0].last, /EQUAL-OPPORTUNITY ANSWERS[^\n]*\nGender: Female/);
+    await page.close();
+  } finally {
+    await h.setSettings({ aiSensitive: NONE });
+    await setNotes(notes);
+  }
+});
+
+test('pressed again while the AI is still writing: the new run keeps the page awake and alone speaks for the tab', async () => {
+  await h.bg(() => {
+    globalThis.JTF.api.storage.local.set({ answers: [] });
+    // The keep-alive ports the page opens while the AI works.
+    globalThis.__holds = { open: 0 };
+    globalThis.JTF.api.runtime.onConnect.addListener((port) => {
+      if (port.name !== 'jtf-hold') return;
+      globalThis.__holds.open++;
+      port.onDisconnect.addListener(() => globalThis.__holds.open--);
+    });
+  });
+  const watcher = await h.extPage('options/options.html');
+  await watcher.call(() => {
+    window.__seen = [];
+    (globalThis.browser || globalThis.chrome).runtime.onMessage.addListener((m) => {
+      if (m && m.type === 'jtf:ai-progress') window.__seen.push(m.run.status);
+    });
+  });
+  ai.state.delay = 3000;
+  try {
+    const page = await h.open('ai-questions.html');
+    const tabId = await h.tabId(page);
+    await h.bg((id) => globalThis.JTFBackground.answerPage(id, {}), tabId);
+    await until(h.bg, () => globalThis.__holds.open === 1, null, 10000);
+    const second = await h.bg((id) => globalThis.JTFBackground.answerPage(id, {}), tabId);
+    assert.equal(second.status, 'running');
+    // The first run has stopped by now: its end neither closes the keep-alive nor tells the popup "Stopped.".
+    await sleep(1500);
+    assert.equal(await h.bg(() => globalThis.__holds.open), 1, 'the page still keeps the background awake');
+    const status = (id) => globalThis.JTFBackground.handlers['jtf:ai-status']({ tabId: id }).run.status;
+    assert.equal(await h.bg(status, tabId), 'running');
+    assert.ok(!(await watcher.call(() => window.__seen)).includes('error'), 'no “Stopped.” for the run going on');
+    // The second run finishes, and lets go.
+    await until(
+      h.bg,
+      (id) => globalThis.JTFBackground.handlers['jtf:ai-status']({ tabId: id }).run.status === 'done',
+      tabId,
+      30000,
+    );
+    await until(h.bg, () => globalThis.__holds.open === 0, null, 5000);
+    assert.ok(!(await watcher.call(() => window.__seen)).includes('error'));
+    await page.close();
+  } finally {
+    ai.state.delay = 0;
+    await watcher.close();
+  }
 });

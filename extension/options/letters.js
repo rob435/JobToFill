@@ -470,6 +470,86 @@ function layoutGroup(kit, saveKit, profile) {
   );
 }
 
+// The kinds of question the AI never sees unless switched on (settings.aiSensitive, answers.withheld).
+const SENSITIVE = [
+  [
+    'eeo',
+    'Diversity and equal opportunity',
+    'Answered from Voluntary disclosures; one you left on “— don’t fill —” gets “Prefer not to say”. Your answers go to your AI provider.',
+  ],
+  [
+    'consent',
+    'Declarations and consents',
+    '“The information I have provided is accurate”, privacy notices, typed signatures (your full legal name) and whether AI helped (it did). Marketing and talent-pool opt-ins are never ticked.',
+  ],
+  [
+    'legal',
+    'Government, legal and security vetting',
+    'Public officials, criminal and regulatory history, clearance, background checks, where you’ve lived. Answered from your profile and answer guidance; where they say nothing, as someone with nothing to declare. Only switch this on if that’s true of you.',
+  ],
+  ['health', 'Health and adjustments', 'Where your profile and guidance say nothing: no adjustments needed.'],
+  [
+    'identity',
+    'ID numbers and date of birth',
+    'Only numbers in your profile, CV or answer guidance; never made up. Passwords and card numbers are never sent.',
+  ],
+];
+
+/** "Questions the AI may also answer": a switch for each sensitive kind, and one for all of them (mixed when some). */
+function sensitiveGroup(settings) {
+  const allow = store.aiSensitiveSettings(settings);
+  const toggle = (name, label, hint, onchange) => {
+    const box = el('input', { type: 'checkbox', name, onchange });
+    const row = el(
+      'label',
+      { className: 'check top' },
+      box,
+      el(
+        'span',
+        {},
+        el('strong', { textContent: label }),
+        el('br'),
+        el('span', { className: 'muted', textContent: hint }),
+      ),
+    );
+    return [box, row];
+  };
+  const save = () => store.saveSettings({ aiSensitive: { ...allow } });
+  const sync = () => {
+    for (const [key, box] of boxes) box.checked = allow[key];
+    const on = SENSITIVE.filter(([key]) => allow[key]).length;
+    all.checked = on === SENSITIVE.length;
+    all.indeterminate = on > 0 && on < SENSITIVE.length;
+  };
+  const [all, allRow] = toggle(
+    'ai-sensitive-all',
+    'All of them',
+    'Every question on an application can then be answered, as below.',
+    () => {
+      for (const [key] of SENSITIVE) allow[key] = all.checked;
+      sync();
+      save();
+    },
+  );
+  const boxes = [];
+  const rows = SENSITIVE.map(([key, label, hint]) => {
+    const [box, row] = toggle(`ai-sensitive-${key}`, label, hint, () => {
+      allow[key] = box.checked;
+      sync();
+      save();
+    });
+    boxes.push([key, box]);
+    return row;
+  });
+  sync();
+  return el(
+    'div',
+    { className: 'field wide', attrs: { role: 'group', 'aria-label': 'Questions the AI may also answer' } },
+    el('span', { textContent: 'Questions the AI may also answer' }),
+    el('div', { className: 'stack' }, allRow, ...rows),
+  );
+}
+
 async function answersGroup(kit, saveKit, settings, profile, refresh) {
   const box = el('input', { type: 'checkbox', checked: settings.aiAnswers !== false, name: 'ai-answers' });
   box.addEventListener('change', async () => {
@@ -518,7 +598,7 @@ async function answersGroup(kit, saveKit, settings, profile, refresh) {
   );
   return group(
     'Answers to new questions',
-    'After each fill, questions JobToFill has no saved answer for (“Why Figma?”, “Which desk interests you most?”, “Do you have practical Python experience?”) are answered by the same AI model from your CV, notes and the job’s description, then checked like letters: choices must be one of the options, and written answers keep to the word limit and use only facts from your material. Diversity questions, declarations and ID numbers are never sent. Answers are outlined in dashed orange for you to read before submitting.',
+    'After each fill, questions JobToFill has no saved answer for (“Why Figma?”, “Which desk interests you most?”, “Do you have practical Python experience?”) are answered by the same AI model from your CV, notes and the job’s description, then checked like letters: choices must be one of the options, and written answers keep to the word limit and use only facts from your material. Diversity questions, declarations and ID numbers are only sent if you switch them on below, and legal and health questions only with answer guidance or switched on; passwords, card details and marketing opt-ins never are. Answers are outlined in dashed orange for you to read before submitting.',
     el(
       'label',
       { className: 'check top' },
@@ -535,19 +615,24 @@ async function answersGroup(kit, saveKit, settings, profile, refresh) {
         }),
       ),
     ),
-    control(
-      {
-        path: 'kit.answerNotes',
-        type: 'textarea',
-        rows: 6,
-        label: 'Answer guidance',
-        hint: 'Facts and rules the AI may rely on for questions your CV doesn’t settle. Only what’s true for every application.',
-        placeholder:
-          'e.g. I have never applied to or worked for any of these firms before, and have no relatives working at them.\nI have no criminal convictions and no regulatory history.\nI don’t need any adjustments for interviews.\nI’m happy to work in the office five days a week.\nI haven’t taken the SAT, ACT or GRE.',
-        wide: true,
-      },
-      kit.answerNotes,
-      (v) => saveKit({ answerNotes: v }),
+    el(
+      'div',
+      { className: 'stack spaced' },
+      sensitiveGroup(settings),
+      control(
+        {
+          path: 'kit.answerNotes',
+          type: 'textarea',
+          rows: 6,
+          label: 'Answer guidance',
+          hint: 'Facts and rules the AI may rely on for questions your CV doesn’t settle. Only what’s true for every application.',
+          placeholder:
+            'e.g. I have never applied to or worked for any of these firms before, and have no relatives working at them.\nI have no criminal convictions and no regulatory history.\nI don’t need any adjustments for interviews.\nI’m happy to work in the office five days a week.\nI haven’t taken the SAT, ACT or GRE.',
+          wide: true,
+        },
+        kit.answerNotes,
+        (v) => saveKit({ answerNotes: v }),
+      ),
     ),
     rows.length
       ? table(['When', 'Application (click to see the answers)', 'Answers', ''], rows)
