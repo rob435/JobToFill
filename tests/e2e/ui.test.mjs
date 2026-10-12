@@ -81,8 +81,9 @@ test('profile edits autosave, including list entries and custom answers', async 
 
 test('multiple profiles: create, switch, delete', async () => {
   const page = await openExt('options/options.html#personal');
-  page.once('dialog', (d) => d.accept('Shopping'));
   await page.click('#profile-new');
+  await page.fill('#profile-name', 'Shopping');
+  await page.press('#profile-name', 'Enter');
   await page.waitForFunction(
     () => document.querySelector('#profile-select').selectedOptions[0]?.textContent === 'Shopping',
   );

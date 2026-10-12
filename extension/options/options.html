@@ -9,31 +9,34 @@
     <link rel="stylesheet" href="options.css" />
   </head>
   <body>
+    <a class="skip" href="#sections">Skip to the section</a>
     <div class="layout">
       <aside class="sidebar">
-        <div class="brand">
-          <img src="../icons/icon48.png" alt="" width="28" height="28" />
-          <span>JobToFill</span>
+        <div class="sidebar-inner">
+          <div class="brand">
+            <img src="../icons/icon48.png" alt="" width="28" height="28" />
+            <span>JobToFill</span>
+          </div>
+          <nav id="nav" aria-label="Sections">
+            <p class="nav-title">Profile</p>
+            <a href="#personal">Personal &amp; contact</a>
+            <a href="#links">Links</a>
+            <a href="#work">Work eligibility</a>
+            <a href="#education">Education</a>
+            <a href="#experience">Experience</a>
+            <a href="#writing">Skills &amp; writing</a>
+            <a href="#documents">Resume &amp; files</a>
+            <a href="#letters">Cover letters &amp; AI</a>
+            <a href="#answers">Custom answers</a>
+            <a href="#eeo">Voluntary disclosures</a>
+            <p class="nav-title">Extension</p>
+            <a href="#passwords">Passwords &amp; cards</a>
+            <a href="#email">Email codes</a>
+            <a href="#history">Application log</a>
+            <a href="#settings">Settings</a>
+            <a href="#backup">Backup &amp; restore</a>
+          </nav>
         </div>
-        <nav id="nav" aria-label="Sections">
-          <p class="nav-title">Profile</p>
-          <a href="#personal">Personal &amp; contact</a>
-          <a href="#links">Links</a>
-          <a href="#work">Work eligibility</a>
-          <a href="#education">Education</a>
-          <a href="#experience">Experience</a>
-          <a href="#writing">Skills &amp; writing</a>
-          <a href="#documents">Resume &amp; files</a>
-          <a href="#letters">Cover letters &amp; AI</a>
-          <a href="#answers">Custom answers</a>
-          <a href="#eeo">Voluntary disclosures</a>
-          <p class="nav-title">Extension</p>
-          <a href="#passwords">Passwords &amp; cards</a>
-          <a href="#email">Email codes</a>
-          <a href="#history">Application log</a>
-          <a href="#settings">Settings</a>
-          <a href="#backup">Backup &amp; restore</a>
-        </nav>
       </aside>
 
       <main>
@@ -43,12 +46,18 @@
             <select id="profile-select"></select>
           </label>
           <div class="profile-actions">
-            <button id="profile-new" class="small" type="button">New</button>
-            <button id="profile-dup" class="small" type="button">Duplicate</button>
-            <button id="profile-rename" class="small" type="button">Rename</button>
-            <button id="profile-delete" class="small danger" type="button">Delete</button>
+            <button id="profile-new" class="small" type="button" aria-label="New profile">New</button>
+            <button id="profile-dup" class="small" type="button" aria-label="Duplicate profile">Duplicate</button>
+            <button id="profile-rename" class="small" type="button" aria-label="Rename profile">Rename</button>
+            <button id="profile-delete" class="small danger" type="button" aria-label="Delete profile">Delete</button>
           </div>
-          <span id="save-state" class="save-state" aria-live="polite"></span>
+          <form id="profile-form" class="profile-form" hidden>
+            <label for="profile-name" id="profile-name-label" class="muted"></label>
+            <input id="profile-name" type="text" autocomplete="off" maxlength="80" required />
+            <button id="profile-submit" class="small primary" type="submit"></button>
+            <button id="profile-cancel" class="small" type="button">Cancel</button>
+          </form>
+          <span id="save-state" class="save-state" role="status"></span>
         </header>
 
         <div id="access" class="banner" hidden>
@@ -66,7 +75,9 @@
           <input id="restore-file" type="file" accept="application/json,.json" hidden />
         </div>
 
-        <div id="sections"></div>
+        <section id="setup" class="setup" aria-label="Get started" hidden></section>
+
+        <div id="sections" tabindex="-1"></div>
       </main>
     </div>
 

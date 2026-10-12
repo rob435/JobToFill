@@ -64,6 +64,8 @@
     // On a multi-step application: click the step's own "Next" once it is done, and fill the next one; never the
     // step that submits (background.js advanceStep). Off unless switched on.
     autoAdvance: false,
+    // The settings page's "Get started" checklist was hidden by the person (it also goes once setup is done).
+    setupDismissed: false,
   };
 
   // answerNotes: the candidate's own rules for answers ("I have never applied to any of these firms").

@@ -167,4 +167,14 @@ export function openShortcutSettings() {
   return api.tabs.create({ url: 'chrome://extensions/shortcuts' });
 }
 
+/** Is the toolbar button pinned? true or false, or null where the browser doesn't say. */
+export async function toolbarPinned() {
+  try {
+    const { isOnToolbar } = await api.action.getUserSettings();
+    return typeof isOnToolbar === 'boolean' ? isOnToolbar : null;
+  } catch (err) {
+    return null;
+  }
+}
+
 export const isFirefox = util.isFirefox();
