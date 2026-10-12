@@ -76,7 +76,8 @@ tests/
                        sharing an id);
                        docs/ CVs in many PDF/Word flavours (make.mjs rebuilds them), jobs/ trimmed
                        real job pages and ATS API replies, letters/ an application and its job posting
-scripts/               build, static checks, icon rendering
+scripts/               build, release (signing for Firefox, the GitHub release), static checks, icons, the firms registry,
+                       page maps
 ```
 
 ## Running it
@@ -91,9 +92,10 @@ npm run format        # Prettier + ESLint fixes
 npm run test:unit     # fast, no browser
 npm run test:e2e      # the extension in headless Chromium (HEADED=1 to watch)
 npm run test:firefox  # the same fill and page tests in Firefox (FIREFOX_BIN=/path/to/firefox if it isn't on PATH)
-npm run build         # dist/ zips for the Chrome Web Store and Firefox Add-ons
-npm run sign:firefox  # a signed .xpi for a permanent Firefox install (needs AMO API keys, see README › Install)
-                      # .github/workflows/release.yml runs it and publishes the GitHub release
+npm run build         # dist/: zips for the Chrome Web Store and Firefox Add-ons, and one to load unpacked (keeps the key)
+npm run release       # a release: the signed .xpi, the Chrome zip and updates.json in dist/release/ (needs AMO API keys,
+                      # see README › Install; -- --dry-run needs none, -- --publish makes the GitHub release).
+                      # .github/workflows/release.yml (Actions › Release) runs it with --publish
 ```
 
 Adding support for a new kind of field usually means adding a rule to `RULES` (`extension/lib/fields-rules.js`) and a definition to `DEFS` in the part for its topic (`extension/lib/fields-education.js` for `edu.*`, `fields-diversity.js` for `eeo.*`…), plus a case in `tests/unit/classify.test.js`.

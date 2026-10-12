@@ -33,7 +33,7 @@ JobToFill isn’t in the extension stores yet. One `extension/` folder works unp
 3. Turn on **Developer mode** and click **Load unpacked**.
 4. Choose the unzipped folder (the one with `manifest.json` in it).
 
-To update, unzip the new release over the same folder and click the reload arrow on JobToFill’s card.
+To update, unzip the new release over the same folder and click the reload arrow on JobToFill’s card (unpacked extensions don’t update themselves). The zip keeps the extension’s pinned ID, as a clone’s `extension/` folder does, so moving the folder or switching between the zip and a clone keeps your details.
 
 **From source**
 
@@ -66,7 +66,7 @@ Each release carries `jobtofill.xpi` (the signed Firefox add-on, which installs 
 
 To ship your latest changes, run the workflow again. A fork signs with its own Mozilla account, so it needs an add-on ID of its own first (`browser_specific_settings.gecko.id` in `extension/manifest.json`): Mozilla ties each ID to the account that signed it first.
 
-The same signing works from your own computer: `RELEASE_NUMBER=<higher than the last> WEB_EXT_API_KEY=… WEB_EXT_API_SECRET=… npm run sign:firefox` leaves `jobtofill.xpi` in `dist/release/`.
+Leave the workflow’s “Release number” box empty: each release is numbered one past the last (the manifest’s version plus that number, 1.2.0.18 after 1.2.0.17), since Firefox only updates to a higher version. The same release works from your own computer: `WEB_EXT_API_KEY=… WEB_EXT_API_SECRET=… npm run release` leaves `jobtofill.xpi`, `jobtofill-chrome.zip` and `updates.json` in `dist/release/` (add `-- --publish` to create the GitHub release with the `gh` CLI, or `-- --dry-run` to see what it would do without any keys).
 
 **Firefox: temporary install** (for development)
 
@@ -292,7 +292,7 @@ A dedicated password manager is still the stronger choice for your important acc
 - Toolbar → _Show detected fields_ labels every field: green means ready, amber means your profile lacks it, grey means JobToFill doesn’t know the question. Toolbar → _Page map_ lists every field with what it was taken for: “✗ no value” means your profile has no answer, “(none: for AI)” that no rule knows the question.
 - A field that already had a value is left alone unless _Overwrite fields that already have a value_ is on.
 - Fill the gap once: right-click the box › _Insert from profile_, or type the answer and click _Learn from this page_ to keep it. For a question that differs on every site, add a rule under Settings › _Custom answers_ (“why do you want to work” → your answer).
-- Still wrong? Click _Save a snapshot for a bug report_ at the bottom of the popup and attach the file to a [new issue](https://github.com/rob435/JobToFill/issues/new). It holds the form with your details taken out, and what JobToFill did with each field, so the form can be rebuilt as a test.
+- Still wrong? Click _Save a snapshot for a bug report_ at the bottom of the popup and attach the file to a [“A form fills wrongly” issue](https://github.com/rob435/JobToFill/issues/new?template=form-fills-wrongly.yml). It holds the form with your details taken out, and what JobToFill did with each field, so the form can be rebuilt as a test.
 
 ### AI answers don’t appear
 
@@ -370,9 +370,9 @@ npm run test:unit   # fast, no browser
 npm run test:e2e    # the extension in headless Chromium (HEADED=1 to watch)
 ```
 
-The demo includes Greenhouse-, Workday- and Lever-style applications, searchable dropdowns, a checkout, sign-up/login pages, a cross-origin embed and a page of deliberately tricky fields. `npm run build` writes store-ready zips for both browsers to `dist/`.
+The demo includes Greenhouse-, Workday- and Lever-style applications, searchable dropdowns, a checkout, sign-up/login pages, a cross-origin embed and a page of deliberately tricky fields. `npm run build` writes the zips to `dist/`: one for each store, and one to load unpacked. You need Node.js 22.13 or newer.
 
-- [CONTRIBUTING.md](CONTRIBUTING.md): how to report a form that fills wrongly and how to send a change.
+- [CONTRIBUTING.md](CONTRIBUTING.md): how to report a form that fills wrongly and how to send a change; [SECURITY.md](SECURITY.md): how to report a vulnerability privately.
 - [docs/development.md](docs/development.md): the code’s layout, every command, and how to measure a change on live forms, on the detection benchmark and on the AI evals.
 - [docs/features.md](docs/features.md): the complete feature spec. Read its section before changing what JobToFill does.
 - [CLAUDE.md](CLAUDE.md): the rules every change keeps (it never submits, nothing leaves the browser, what the AI never sees), for people and coding agents alike.
