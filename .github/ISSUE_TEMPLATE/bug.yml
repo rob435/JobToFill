@@ -1,0 +1,62 @@
+name: Something else is broken
+description: The popup, the settings, cover letters and CVs, AI answers, email codes, job-portal accounts, Discover…
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A form that fills wrongly has [its own form](https://github.com/rob435/JobToFill/issues/new?template=form-fills-wrongly.yml), with a snapshot of the page. A security problem goes [to the owner privately](https://github.com/rob435/JobToFill/security/advisories/new), never in an issue.
+
+        Issues are public: leave out your API keys, passwords and personal details.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what JobToFill did, and what you expected instead. Quote any message it showed word for word.
+      placeholder: |
+        Write cover letter on a Workday posting: “Couldn’t find the job description on this page.” The description is on the page.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen again
+      description: The steps from a fresh start, with the page addresses if a page is involved.
+      placeholder: |
+        1. Open https://…
+        2. Click …
+    validations:
+      required: true
+  - type: textarea
+    id: errors
+    attributes:
+      label: Errors from the extension
+      description: In Chrome, `chrome://extensions` › JobToFill › **Errors** (with Developer mode on); in Firefox, `about:debugging#/runtime/this-firefox` › JobToFill › **Inspect** › Console. Paste what is there, with anything personal taken out.
+      render: text
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and its version
+      description: Shown on `chrome://version` (`edge://version` in Edge, `about:support` in Firefox).
+      placeholder: Chrome 141, Firefox 144
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: JobToFill version
+      description: At the bottom of the toolbar popup. From a git clone, the commit too (`git log -1 --format=%h`).
+      placeholder: v1.2.0.18
+    validations:
+      required: true
+  - type: dropdown
+    id: ai
+    attributes:
+      label: AI provider, if the AI features are involved
+      options:
+        - Not involved
+        - Claude (Anthropic)
+        - OpenRouter
+        - DeepSeek
+        - Another OpenAI-compatible provider
+      default: 0

@@ -1,0 +1,9 @@
+# LF everywhere, also in a Windows checkout: Prettier checks for it, and fixtures keep their bytes.
+* text=auto eol=lf
+
+# Never converted: test CVs and documents (ada-aes128.pdf would pass for text), fonts, icons.
+*.pdf binary
+*.docx binary
+*.odt binary
+*.ttf binary
+*.png binary

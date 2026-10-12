@@ -1,13 +1,16 @@
-// Packages the extension for the stores:
-//   dist/chrome/   + dist/jobtofill-chrome-<version>.zip    Chrome, Edge, Brave, Opera, Vivaldi, Arc
-//   dist/firefox/  + dist/jobtofill-firefox-<version>.zip   Firefox 142+ (desktop and Android)
+// Packages the extension:
+//   dist/chrome/          + dist/jobtofill-chrome-<version>.zip           the Chrome Web Store (Edge Add-ons too)
+//   dist/chrome-unpacked/ + dist/jobtofill-chrome-unpacked-<version>.zip  Load unpacked in Chrome, Edge, Brave, Opera,
+//                                                                         Vivaldi, Arc (the release's jobtofill-chrome.zip)
+//   dist/firefox/         + dist/jobtofill-firefox-<version>.zip          Firefox 142+ (desktop and Android), for signing
 //
-// extension/manifest.json already works unpacked in both browsers; each store copy just drops
-// the keys the other browser needs so store validators report no warnings. "key" only pins the
-// extension ID of the unpacked folder (so moving it keeps your data); the stores assign their own.
+// extension/manifest.json already works unpacked in both browsers; each copy drops the keys the other browser needs,
+// so neither shows warnings. "key" pins the extension ID of an unpacked install, so a folder moved, replaced by a
+// newer release or loaded again keeps your data: the unpacked copy keeps it, the store copies drop it (the stores
+// assign their own ID; Firefox goes by browser_specific_settings.gecko.id).
 // Usage: npm run build
-// FIREFOX_VERSION and FIREFOX_UPDATE_URL (set by scripts/firefox-release.mjs) give the Firefox copy
-// its own version and the address Firefox checks for updates of a self-distributed install.
+// RELEASE_VERSION (set by scripts/release.mjs) gives every copy the release's version, 1.2.0 -> 1.2.0.18;
+// FIREFOX_UPDATE_URL the address Firefox checks for updates of a self-distributed install.
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,19 +21,24 @@ const source = path.join(root, 'extension');
 const dist = path.join(root, 'dist');
 const manifest = JSON.parse(await readFile(path.join(source, 'manifest.json'), 'utf8'));
 
+/** Chromium's manifest: the service worker, without Firefox's settings. */
+function chromium(m) {
+  m.background = { service_worker: m.background.service_worker };
+  delete m.browser_specific_settings;
+}
+
 const TARGETS = {
   chrome(m) {
+    chromium(m);
     delete m.key;
-    m.background = { service_worker: m.background.service_worker };
-    delete m.browser_specific_settings;
   },
+  'chrome-unpacked': chromium,
   firefox(m) {
     delete m.key;
     m.background = { scripts: m.background.scripts };
     // Firefox's background page has a DOM of its own; offscreen documents are a Chromium API.
     m.permissions = m.permissions.filter((p) => p !== 'offscreen');
     delete m.minimum_chrome_version;
-    if (process.env.FIREFOX_VERSION) m.version = process.env.FIREFOX_VERSION;
     if (process.env.FIREFOX_UPDATE_URL) m.browser_specific_settings.gecko.update_url = process.env.FIREFOX_UPDATE_URL;
   },
 };
@@ -42,6 +50,7 @@ for (const [name, transform] of Object.entries(TARGETS)) {
   const dir = path.join(dist, name);
   await cp(source, dir, { recursive: true });
   const m = structuredClone(manifest);
+  if (process.env.RELEASE_VERSION) m.version = process.env.RELEASE_VERSION;
   transform(m);
   await writeFile(path.join(dir, 'manifest.json'), JSON.stringify(m, null, 2) + '\n');
   const filename = `jobtofill-${name}-${m.version}.zip`;

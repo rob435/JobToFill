@@ -1,0 +1,29 @@
+# At most two update pull requests a month: one for the workflows' actions, one for the npm tools.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
+
+  # Every npm package is a development tool: the extension itself has no dependencies. Most are the widget libraries
+  # the fixture pages are built with, and a minor update there is what real sites will ship next, so CI trying it is
+  # worth one pull request a month. Major versions change the widgets' markup and are taken by hand.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 1
+    groups:
+      tools-and-fixture-libraries:
+        patterns: ['*']
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+      # Pinned to the Chromium build that cloud sessions have (PLAYWRIGHT_BROWSERS_PATH): move it by hand, with
+      # .claude/hooks/session-start.sh in mind.
+      - dependency-name: playwright
