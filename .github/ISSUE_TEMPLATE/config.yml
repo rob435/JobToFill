@@ -1,0 +1,9 @@
+# Every issue starts from a form: a report without the site, the page and a snapshot can rarely be acted on.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/rob435/JobToFill/security/advisories/new
+    about: A way for a page or another extension to read your details, keys or passwords. Never in a public issue.
+  - name: How to install and use it
+    url: https://github.com/rob435/JobToFill#install
+    about: Installing from a release, loading it unpacked, and what each button does.

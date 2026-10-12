@@ -1,0 +1,24 @@
+name: An idea or a request
+description: A kind of question or field it should know, a job site or widget to support, or something new it should do.
+labels: ['enhancement']
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What you’d like
+      description: What you were doing, what got in the way, and what JobToFill could do about it.
+      placeholder: Graduate schemes ask “Which office would you prefer?” as a list of cities; it could pick my first-choice city.
+    validations:
+      required: true
+  - type: textarea
+    id: wording
+    attributes:
+      label: Where it comes up
+      description: For a question or a field, its wording exactly as forms put it, the options it offers, and a page that asks it (the rules match the words forms really use). For a site, its address.
+      placeholder: |
+        “Please select your preferred office location” [London | Manchester | Edinburgh | No preference], on https://…
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: How you do it today, other ways it could work, screenshots.

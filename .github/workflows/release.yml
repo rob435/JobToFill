@@ -1,0 +1,73 @@
+# Publishes a GitHub release people install from (scripts/release.mjs): jobtofill.xpi, signed by Mozilla as an
+# unlisted add-on (signed for you, not listed on addons.mozilla.org) so regular Firefox keeps it and updates itself
+# from here; jobtofill-chrome.zip to unzip and load unpacked in Chrome, Edge, Brave and the like; and updates.json,
+# which every signed copy checks at releases/latest/download/updates.json.
+#
+# One-time setup: add two repository secrets (Settings › Secrets and variables › Actions) holding your
+# addons.mozilla.org API credentials (https://addons.mozilla.org/developers/addon/api/key/):
+#   AMO_API_KEY     the "JWT issuer"  (user:12345:678)
+#   AMO_API_SECRET  the "JWT secret"
+# Then: Actions › Release › Run workflow. Run it again whenever you want installs to update.
+#
+# The version is the manifest version plus a release number one higher than the last release's tag (firefox-v1.2.0.17,
+# then v1.2.0.18): Mozilla signs each version once and Firefox only updates to a higher one. "Release number" sets it
+# by hand, e.g. after a run that Mozilla signed but that failed to publish.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_number:
+        description: Release number (leave empty for one more than the last release)
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+# Two releases at once would take the same number.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Sign and publish
+    runs-on: ubuntu-latest
+    # Mozilla's automatic review of an unlisted add-on usually takes minutes; the script waits up to 30.
+    timeout-minutes: 60
+    steps:
+      - name: Check the Mozilla API credentials
+        env:
+          AMO_API_KEY: ${{ secrets.AMO_API_KEY }}
+          AMO_API_SECRET: ${{ secrets.AMO_API_SECRET }}
+        run: |
+          if [ -z "$AMO_API_KEY" ] || [ -z "$AMO_API_SECRET" ]; then
+            echo "::error title=Mozilla API credentials missing::Add the repository secrets AMO_API_KEY and AMO_API_SECRET (README › Install)."
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+        with:
+          # Every tag and commit, for what changed since the last release. No token left in .git for npm's scripts.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test:unit
+      - name: Sign and publish
+        run: npm run release -- --publish
+        env:
+          RELEASE_NUMBER: ${{ inputs.release_number }}
+          WEB_EXT_API_KEY: ${{ secrets.AMO_API_KEY }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_API_SECRET }}
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: jobtofill-release
+          path: dist/release/
+          if-no-files-found: ignore

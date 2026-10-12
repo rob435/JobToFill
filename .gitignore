@@ -1,8 +1,16 @@
-node_modules/
+# No trailing slash: a git worktree's node_modules is often a link to the main checkout's.
+node_modules
 dist/
+# CI's JUnit reports of the e2e tests.
 test-results/
 *.log
 .DS_Store
 tests/live/*-report.json
+# scripts/firms.mjs's downloads.
 .cache/
 tests/eval/runs/
+# Claude Code: worktrees of parallel sessions, and personal settings.
+.claude/worktrees/
+.claude/settings.local.json
+# API keys for the eval and the surveys, if you keep them in a file.
+.env
