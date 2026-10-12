@@ -497,14 +497,23 @@ function letterForPdf() {
   };
 }
 
+/** The letter as its PDF lays it out, to tell whether a PDF was made from the text as it is now. */
+const letterSource = () => JSON.stringify(letterForPdf());
+
 async function renderLetterPdf() {
-  const out = await pdfdoc.coverLetter(letterForPdf(), {
+  // What is laid out is the letter at this moment: an edit made while it renders makes this PDF out of date.
+  const letter = letterForPdf();
+  const out = await pdfdoc.coverLetter(letter, {
     fonts: await fonts(),
     paper: state.kit.paper || 'a4',
     fit: true,
   });
   if (state.letterPdf && state.letterPdf.url) URL.revokeObjectURL(state.letterPdf.url);
-  state.letterPdf = { ...out, url: URL.createObjectURL(new Blob([out.bytes], { type: 'application/pdf' })) };
+  state.letterPdf = {
+    ...out,
+    source: JSON.stringify(letter),
+    url: URL.createObjectURL(new Blob([out.bytes], { type: 'application/pdf' })),
+  };
   if (state.showing === 'letter') showPreview('letter');
   return state.letterPdf;
 }
@@ -591,6 +600,14 @@ function renderChecks() {
 }
 
 let editTimer = null;
+
+/** An edit's PDF laid out, the checks run again, and the letter saved. */
+async function afterEdit() {
+  await renderLetterPdf();
+  renderChecks();
+  await saveEntry();
+}
+
 function onEdit() {
   const letter = state.result.letter;
   letter.salutation = $('#salutation').value.trim();
@@ -600,16 +617,47 @@ function onEdit() {
     .map((p) => p.replace(/\s*\n\s*/g, ' ').trim())
     .filter(Boolean);
   clearTimeout(editTimer);
-  editTimer = setTimeout(async () => {
-    await renderLetterPdf();
-    renderChecks();
-    await saveEntry();
+  editTimer = setTimeout(() => {
+    editTimer = null;
+    afterEdit().catch(() => {});
   }, 500);
+}
+
+/** Another tab brought forward (the application, to press Fill): an edit still waiting is saved now. */
+function onHidden() {
+  if (document.visibilityState !== 'hidden' || !editTimer) return;
+  clearTimeout(editTimer);
+  editTimer = null;
+  afterEdit().catch(() => {});
+}
+
+/**
+ * The page closing: an edit not saved yet is kept, its PDF too when the one laid out is of this text; else the
+ * stored PDF is marked as made from an earlier text, to be laid out again before it is used. A save that reads
+ * storage first never lands, as the page is gone before the read comes back: Chromium takes one write onto the
+ * letters as last seen stored, Firefox (which drops that) a message to the background (keepEdits).
+ */
+function flushOnHide() {
+  if (!state.result || !state.entry || !storedLetters || letterSource() === savedSource) return;
+  const i = storedLetters.findIndex((l) => l.id === state.entry.id);
+  if (i < 0) return;
+  const now = entryNow();
+  const edit = { id: state.entry.id, letter: now.letter, text: now.text, pdfStale: now.pdfStale };
+  if (!now.pdfStale) edit.pdf = now.pdf;
+  const letters = storedLetters.slice();
+  letters[i] = { ...letters[i], ...edit };
+  storedLetters = letters;
+  api.storage.local.set({ letters }).catch(() => {});
+  send({ type: 'jtf:keep', letter: edit }).catch(() => {});
 }
 
 /* ---------------------------------------------------------------- saving */
 
 let saving = Promise.resolve();
+// The letter as last saved (letterSource), and every letter as last seen stored: for the write made as the page
+// closes (flushOnHide).
+let savedSource = null;
+let storedLetters = null;
 
 /**
  * Save the letter (and `extra`, such as the CV) for this application. One save at a time: the CV, tailored beside
@@ -620,10 +668,15 @@ function saveEntry(extra) {
   return saving;
 }
 
-async function writeEntry(extra) {
+/**
+ * The entry for the letter as it is now (a copy: an edit made while it is saved isn't half in it). `pdfStale`: the
+ * PDF laid out last was of an earlier text (an edit still waiting for its layout), or there is none.
+ */
+function entryNow(extra) {
   const pdf = state.letterPdf;
   const posting = state.job.posting;
-  const entry = {
+  const source = letterSource();
+  return {
     ...(state.entry ? { id: state.entry.id } : {}),
     profileId: state.profile.id,
     url: (state.context && state.context.url) || posting.url,
@@ -635,7 +688,7 @@ async function writeEntry(extra) {
       company: state.analysis.company || posting.company,
       location: posting.location,
     },
-    letter: state.result.letter,
+    letter: structuredClone(state.result.letter),
     header: state.result.header,
     options: state.result.options,
     analysis: state.analysis,
@@ -649,9 +702,16 @@ async function writeEntry(extra) {
           dataUrl: bytesToDataUrl(pdf.bytes, 'application/pdf'),
         }
       : null,
+    pdfStale: !pdf || pdf.source !== source,
+    source,
     ...extra,
   };
+}
+
+async function writeEntry(extra) {
+  const { source, ...entry } = entryNow(extra);
   state.entry = await store.saveLetter(entry);
+  savedSource = source;
   return state.entry;
 }
 
@@ -696,6 +756,7 @@ async function useForApplication() {
   }
   status.textContent = 'Attaching…';
   clearTimeout(editTimer);
+  editTimer = null;
   await renderLetterPdf();
   await saveEntry(cvExtra());
   const r = await send({ type: 'jtf:attach', tabId, letterId: state.entry.id });
@@ -865,7 +926,10 @@ async function reopen(previous) {
   state.kit = await store.getKit(state.profile.id);
   state.cvText = (await readCv()).text;
   for (const id of ['cv', 'analyse', 'write', 'check']) step(id, 'done', id === 'write' ? 'your earlier letter' : '');
+  savedSource = letterSource();
   await renderLetterPdf();
+  // Closed straight after an edit last time: its PDF is laid out from the text now, and kept.
+  if (previous.pdfStale) await saveEntry();
   step('pdf', 'done', 'one page');
   fillEditor();
   $('#stop').hidden = true;
@@ -1333,6 +1397,12 @@ async function boot() {
     run('job');
   };
   for (const id of ['#salutation', '#body', '#closing']) $(id).addEventListener('input', onEdit);
+  storedLetters = await store.getLetters();
+  api.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.letters) storedLetters = changes.letters.newValue || [];
+  });
+  document.addEventListener('visibilitychange', onHidden);
+  window.addEventListener('pagehide', flushOnHide);
   const rewrite = () => run(state.analysis ? 'write' : 'cv');
   $('#rewrite').onclick = rewrite;
   $('#instructions').addEventListener('keydown', (e) => e.key === 'Enter' && rewrite());

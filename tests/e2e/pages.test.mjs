@@ -63,6 +63,50 @@ test('month/year pickers save YYYY-MM', async () => {
   await settings.close();
 });
 
+test('typed into the settings page just before its tab is closed: kept, a profile box and a saved login alike', async () => {
+  await h.bg(() =>
+    globalThis.JTF.passwords.update((d) => {
+      d.credentials.push({
+        id: 'closing1',
+        host: 'closing.example.com',
+        username: 'a@example.com',
+        password: 'Old-1!',
+      });
+    }),
+  );
+  // Typed, and the tab closed in the same breath: well inside the pause before the page saves by itself.
+  const typeAndClose = async (url, selector, text) => {
+    const settings = await h.extPage(url);
+    await until(settings.call, (s) => !!document.querySelector(s), selector);
+    await settings.call(
+      ([s, t]) => {
+        const api = globalThis.browser || globalThis.chrome;
+        const box = document.querySelector(s);
+        box.value = t;
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+        api.tabs.getCurrent().then((tab) => api.tabs.remove(tab.id));
+        return true;
+      },
+      [selector, text],
+    );
+    await settings.close().catch(() => {});
+  };
+  await typeAndClose('options/options.html#personal', 'input[name="personal.pronouns"]', 'they/them');
+  await until(h.bg, async () => (await globalThis.JTF.store.getActive()).profile.personal.pronouns === 'they/them');
+  await typeAndClose(
+    'options/options.html#passwords',
+    'input[aria-label="Password for closing.example.com"]',
+    'New-pass2!',
+  );
+  await until(
+    h.bg,
+    async () =>
+      (await globalThis.JTF.passwords.read()).credentials.find((c) => c.id === 'closing1').password === 'New-pass2!',
+  );
+  await h.bg(() => globalThis.JTF.passwords.update((d) => (d.credentials = [])));
+  await h.setProfile({ personal: PROFILE.personal });
+});
+
 test('passwords left in an old encrypted vault move over once from the settings page', async () => {
   // What an older version left behind: its vault, AES-256-GCM with a PBKDF2-SHA256 key from the master password.
   await h.bg(async (master) => {

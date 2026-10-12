@@ -1,5 +1,5 @@
 /* JobToFill settings — the "Passwords & cards" section. */
-import { el } from '../ui/common.js';
+import { api, el } from '../ui/common.js';
 import { grid, group, sectionHead, secretInput, table } from './controls.js';
 
 const { store, passwords, util, fields } = globalThis.JTF;
@@ -15,6 +15,73 @@ const last4 = (number) =>
     .replace(/\D/g, '')
     .slice(-4);
 const masked = (number) => (last4(number) ? '•••• ' + last4(number) : '');
+
+/* ---------------------------------------------------------- typed edits */
+
+// What is typed into a saved login or the default password is saved as you type, not only when the box loses focus
+// (a "change" never comes when the tab is closed straight after typing), and without drawing the section again
+// under your cursor. `typed`: the edits not written yet, by credential id (DEFAULT for the default password).
+const DEFAULT = Symbol('default password');
+const typed = new Map();
+let typingTimer = null;
+// The passwords as last seen stored, for the write made as the page closes (see flushOnHide).
+let stored = null;
+
+/** Put typed edits into passwords data `d`. */
+function applyTyped(d, edits) {
+  for (const [id, patch] of edits) {
+    if (id === DEFAULT) Object.assign(d, patch);
+    else {
+      const target = (d.credentials || []).find((x) => x.id === id);
+      if (target) Object.assign(target, patch, { updatedAt: Date.now() });
+    }
+  }
+}
+
+/** Write what was typed; a box typed in again meanwhile is written next time. */
+async function writeTyped() {
+  clearTimeout(typingTimer);
+  const edits = [...typed];
+  if (!edits.length) return;
+  await passwords.update((d) => applyTyped(d, edits));
+  for (const [id, patch] of edits) if (typed.get(id) === patch) typed.delete(id);
+}
+
+/** Note an edit as it is typed, written half a second after the last key. */
+function onType(id, patch) {
+  typed.set(id, { ...typed.get(id), ...patch });
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(() => writeTyped().catch(() => {}), 500);
+}
+
+/**
+ * The page closing: edits not written yet are kept. A write that reads storage first never lands, as the page is
+ * gone before the read comes back: Chromium takes one write onto the passwords as last seen stored, Firefox (which
+ * drops that) a message to the background (keepEdits).
+ */
+function flushOnHide() {
+  if (!typed.size) return;
+  const edits = [...typed];
+  typed.clear();
+  if (stored) {
+    const d = structuredClone(stored);
+    applyTyped(d, edits);
+    passwords.write(d).catch(() => {});
+  }
+  const logins = edits.filter(([id]) => id !== DEFAULT).map(([id, patch]) => ({ id, ...patch }));
+  const fallback = edits.find(([id]) => id === DEFAULT);
+  api.runtime
+    .sendMessage({ type: 'jtf:keep', logins, ...(fallback ? { defaultPassword: fallback[1].defaultPassword } : {}) })
+    .catch(() => {});
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') writeTyped().catch(() => {});
+});
+window.addEventListener('pagehide', flushOnHide);
+api.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.passwords) stored = changes.passwords.newValue || null;
+});
 
 /** Passwords an older version kept in its encrypted vault: moved over once, with that vault's master password. */
 function legacyGroup(refresh) {
@@ -86,13 +153,7 @@ function signupGroup(data, settings, save) {
     ),
   );
   const fallback = secretInput(data.defaultPassword, (v) => save((d) => (d.defaultPassword = v)), 'defaultPassword');
-  // Saved as you type too (a "change" never comes if the tab is closed straight after typing), without
-  // re-drawing the section under your cursor.
-  let typing = null;
-  fallback.input.addEventListener('input', () => {
-    clearTimeout(typing);
-    typing = setTimeout(() => passwords.update((d) => (d.defaultPassword = fallback.input.value)).catch(() => {}), 500);
-  });
+  fallback.input.addEventListener('input', () => onType(DEFAULT, { defaultPassword: fallback.input.value }));
   fallback.row.append(
     el('button', {
       type: 'button',
@@ -130,11 +191,13 @@ function loginsGroup(data, profile, save) {
           if (target) Object.assign(target, patch, { updatedAt: Date.now() });
         });
       const secret = secretInput(c.password, (password) => edit({ password }), '', `Password for ${c.host}`);
+      secret.input.addEventListener('input', () => onType(c.id, { password: secret.input.value }));
       const user = el('input', {
         value: c.username || '',
         autocomplete: 'off',
         attrs: { 'aria-label': `Username for ${c.host}` },
         onchange: () => edit({ username: user.value.trim() }),
+        oninput: () => onType(c.id, { username: user.value.trim() }),
       });
       const remove = () => {
         if (confirm(`Delete the saved password for ${c.host}?`))
@@ -319,6 +382,7 @@ function cardsGroup(data, profile, save) {
 
 export async function renderPasswords({ state, refresh }) {
   const data = await passwords.read();
+  stored = structuredClone(data);
   const settings = await store.getSettings();
   const save = async (fn) => {
     await passwords.update(fn);

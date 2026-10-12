@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { isFirefox, launch } from './harness.mjs';
+import { isFirefox, launch, until } from './harness.mjs';
 
 const test = (name, fn) => base(name, { skip: isFirefox && 'uses Playwright page APIs' }, fn);
 
@@ -395,4 +395,103 @@ test('Discover lists registry firms, and watched firms’ new programmes show on
   assert.equal((await h.bg(() => globalThis.JTFBackground.checkWatchlist())).fresh, 0);
   assert.deepEqual(pageErrors, []);
   await page.close();
+});
+
+test('settings: what Learn from this page saves while the page is open stays, through edits made there', async () => {
+  const page = await openExt('options/options.html#personal');
+  await page.waitForSelector('input[name="contact.phone"]');
+  // Popup › Learn from this page › Save, as saveLearned writes it: skills and a custom answer.
+  const learn = (skills, id) =>
+    h.bg(
+      async ([s, i]) => {
+        const { profile } = await globalThis.JTF.store.getActive();
+        profile.skills = s;
+        profile.customAnswers.push({ id: i, question: `learned ${i}`, answer: 'Analytical' });
+        await globalThis.JTF.store.saveProfile(profile);
+      },
+      [skills, id],
+    );
+  const stored = (fn, arg) => until(h.bg, fn, arg, 5000);
+  // The person last clicked into a box here, then went to the application's tab: the box still has focus.
+  await page.focus('input[name="contact.phone"]');
+  await learn('Python, SQL, Haskell', 'learned1');
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(() => document.activeElement.name), 'contact.phone', 'the box keeps its focus');
+  // One edit here later doesn't write the page's old copy over it.
+  await page.fill('input[name="personal.middleName"]', 'Augusta');
+  await page.waitForSelector('#save-state.saved');
+  await page.waitForTimeout(300);
+  let p = await profile();
+  assert.equal(p.personal.middleName, 'Augusta');
+  assert.equal(p.skills, 'Python, SQL, Haskell');
+  assert.ok(p.customAnswers.some((a) => a.id === 'learned1'));
+
+  // In the middle of typing: what is typed is saved beside the change, and typing carries on where it was.
+  await page.fill('input[name="personal.preferredName"]', 'Ada');
+  await learn('Python, SQL, Haskell, OCaml', 'learned2');
+  await stored(async () => (await globalThis.JTF.store.getActive()).profile.personal.preferredName === 'Ada');
+  await page.keyboard.type(' L');
+  await page.waitForSelector('#save-state.saved');
+  await page.waitForTimeout(300);
+  assert.equal(await page.inputValue('input[name="personal.preferredName"]'), 'Ada L');
+  p = await profile();
+  assert.equal(p.personal.preferredName, 'Ada L');
+  assert.equal(p.skills, 'Python, SQL, Haskell, OCaml');
+  assert.deepEqual(
+    p.customAnswers.filter((a) => /^learned/.test(a.id)).map((a) => a.id),
+    ['learned1', 'learned2'],
+  );
+  // And the page shows it.
+  await page.click('#nav a[href="#writing"]');
+  assert.equal(await page.inputValue('textarea[name="skills"]'), 'Python, SQL, Haskell, OCaml');
+
+  // Typed just before the tab is closed: saved all the same.
+  await page.click('#nav a[href="#personal"]');
+  await page.fill('input[name="personal.pronouns"]', 'she/they');
+  await page.close();
+  await stored(async () => (await globalThis.JTF.store.getActive()).profile.personal.pronouns === 'she/they');
+  p = await profile();
+  assert.equal(p.skills, 'Python, SQL, Haskell, OCaml');
+  assert.deepEqual(errors, []);
+});
+
+test('passwords: a saved login’s username and password are saved as typed, also when the tab closes straight after', async () => {
+  await h.bg(() =>
+    globalThis.JTF.passwords.update((d) => {
+      d.credentials.push({
+        id: 'typed1',
+        host: 'typed.example.com',
+        username: 'old@example.com',
+        password: 'Old-pass1!',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    }),
+  );
+  // Polled in the background until the saved login holds `value` in `key`.
+  const saved = (key, value) =>
+    until(
+      h.bg,
+      async ([k, v]) => (await globalThis.JTF.passwords.read()).credentials.find((c) => c.id === 'typed1')[k] === v,
+      [key, value],
+      5000,
+    );
+  const page = await openExt('options/options.html#passwords');
+  const row = 'tbody tr:has(td:text-is("typed.example.com"))';
+  await page.waitForSelector(row);
+  // Typed, still in the box: saved after a pause, and the section isn't drawn again under the cursor.
+  await page.fill(`${row} input[aria-label^="Username"]`, 'new@example.com');
+  await saved('username', 'new@example.com');
+  assert.equal(
+    await page.evaluate(() => document.activeElement.getAttribute('aria-label')),
+    'Username for typed.example.com',
+  );
+  // Typed, then the tab closed at once: no "change" ever comes.
+  await page.fill(`${row} .secret input`, 'New-pass2!');
+  await page.close();
+  await saved('password', 'New-pass2!');
+  await h.bg(() =>
+    globalThis.JTF.passwords.update((d) => (d.credentials = d.credentials.filter((c) => c.id !== 'typed1'))),
+  );
+  assert.deepEqual(errors, []);
 });

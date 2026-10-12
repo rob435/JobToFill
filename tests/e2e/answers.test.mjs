@@ -340,6 +340,63 @@ test('sensitive questions stay back until switched on; then each kind is answere
   }
 });
 
+test('an AI answer goes into the question it was written for, whatever the page did while it was written', async () => {
+  let page = await h.open('ai-questions-grow.html');
+  let tabId = await h.tabId(page);
+  // What a fill hands the AI (the questions it left, each with an id), and the AI's answers coming back.
+  const pending = () =>
+    h.bg(async (id) => {
+      const { profile, settings } = await globalThis.JTF.store.getActive();
+      return (await globalThis.JTFBackground.callFrames(id, 'pending', [{ profile, settings, ai: false }], [0]))[0]
+        .items;
+    }, tabId);
+  const apply = (list) =>
+    h.bg(
+      ([id, answers]) =>
+        globalThis.JTFBackground.callFrames(id, 'applyAnswers', [answers, { settings: {} }], [0]).then((f) => f[0]),
+      [tabId, list],
+    );
+  const answer = (item, text) => ({ id: item.id, question: item.question, value: text, kind: 'text' });
+  const boxes = () => page.$$eval('textarea', (list) => Object.fromEntries(list.map((t) => [t.id, t.value])));
+
+  // A question appears above them (a CV parse, a follow-up an answer revealed) and the page is read again before
+  // the answers are back (Quick apply's second fill, Fill pressed while the AI writes).
+  const project = (await pending()).find((i) => /project you are proud of/.test(i.question));
+  await page.$eval('#slot', (slot) => {
+    slot.innerHTML =
+      '<div class="field"><label for="q0">Why do you want an internship?</label><textarea id="q0"></textarea></div>';
+  });
+  const again = await pending();
+  assert.ok(!again.some((i) => i.id === project.id), 'an id is never handed out again');
+  const r = await apply([answer(project, 'The difference engine.')]);
+  assert.equal(r.filled, 1, JSON.stringify(r));
+  assert.deepEqual(await boxes(), { q0: '', qa: '', qb: 'The difference engine.', qc: '' });
+
+  // The same boxes re-rendered one question further down (a list keyed by position): the box the id was given to
+  // now asks something else, so the answer goes to the box that asks its question now.
+  await page.close();
+  page = await h.open('ai-questions-grow.html?shifted');
+  tabId = await h.tabId(page);
+  const team = (await pending()).find((i) => /which team/i.test(i.question));
+  await page.$eval('#questions', (list) => {
+    const labels = Array.from(list.querySelectorAll('label'));
+    const texts = labels.map((l) => l.textContent);
+    labels.forEach((l, i) => (l.textContent = i ? texts[i - 1] : 'Why do you want an internship?'));
+    const last = document.createElement('div');
+    last.className = 'field';
+    last.innerHTML = '<label for="qd"></label><textarea id="qd"></textarea>';
+    last.querySelector('label').textContent = texts[texts.length - 1];
+    list.append(last);
+  });
+  const moved = await apply([answer(team, 'The engine team.')]);
+  assert.equal(moved.filled, 1, JSON.stringify(moved));
+  assert.deepEqual(await boxes(), { qa: '', qb: '', qc: '', qd: 'The engine team.' });
+  // And nowhere when no box asks its question any more.
+  const gone = await apply([{ ...answer(team, 'Again.'), question: 'Which office would you like to work in?' }]);
+  assert.deepEqual(gone.results, [{ id: team.id, status: 'gone' }]);
+  await page.close();
+});
+
 test('pressed again while the AI is still writing: the new run keeps the page awake and alone speaks for the tab', async () => {
   await h.bg(() => {
     globalThis.JTF.api.storage.local.set({ answers: [] });
