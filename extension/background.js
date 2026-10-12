@@ -2683,6 +2683,9 @@ api.tabs.onRemoved.addListener((tabId) => {
   endFlow(tabId);
   lastSecrets.delete(tabId);
   advancing.delete(tabId);
+  // A run still asking the model for a closed tab would spend the person's credit on answers with nowhere to go.
+  const run = aiRuns.get(tabId);
+  if (run && run.status === 'running') run.controller.abort();
   aiRuns.delete(tabId);
 });
 

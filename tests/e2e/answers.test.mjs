@@ -387,3 +387,22 @@ test('pressed again while the AI is still writing: the new run keeps the page aw
     await watcher.close();
   }
 });
+
+test('a tab closed while the AI is writing stops the run: no more calls on the person’s key', async () => {
+  ai.state.delay = 3000;
+  try {
+    const before = ai.calls.length;
+    const page = await h.open('ai-questions.html');
+    const tabId = await h.tabId(page);
+    await h.bg((id) => globalThis.JTFBackground.answerPage(id, {}), tabId);
+    const status = (id) => (globalThis.JTFBackground.handlers['jtf:ai-status']({ tabId: id }).run || {}).status;
+    await until(h.bg, status, tabId, 10000);
+    // The question round is with the model now; closing the tab aborts it, so it never comes back to be checked.
+    await sleep(500);
+    await page.close();
+    await sleep(4500);
+    assert.equal(ai.calls.length, before, 'the request in flight was dropped, and nothing was asked after it');
+  } finally {
+    ai.state.delay = 0;
+  }
+});
