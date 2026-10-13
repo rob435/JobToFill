@@ -4,7 +4,8 @@ A Manifest V3 browser extension (Chromium and Firefox, one codebase) that fills 
 forms from a saved profile, answers what the rules can't with the person's own AI key, writes cover letters and
 tailors CVs. Plain JavaScript, no bundler, no runtime dependencies. `docs/features.md` is the product spec: read
 its section before changing behaviour. `docs/development.md` has the file tree and the measuring tools. `README.md`
-is the user guide (quick start, install, settings reference, privacy, troubleshooting).
+is a short user guide; `docs/install.md`, `using.md`, `settings.md`, `privacy.md` and `troubleshooting.md` have the
+detail. Keep the README short: only what everyone needs.
 
 ## Invariants (never break these)
 
@@ -15,7 +16,7 @@ is the user guide (quick start, install, settings reference, privacy, troublesho
   (a dropdown, a calendar's arrows, a chip's ×, an upload tile's "From Device", a dialog's Close) and never presses
   anything that would submit a form (`fill.js`'s submit check).
 - **Nothing leaves the browser** except to the AI provider the person chose (with their key) and Nylas for codes.
-  README › _Privacy and security_ is a promise: a new data flow needs an opt-in and a line there.
+  `docs/privacy.md` is a promise: a new data flow needs an opt-in and a line there.
 - **What the AI never sees** (`lib/answers.js` `withheld()`): passwords, card and bank details, and marketing /
   talent-pool / SMS opt-ins, whatever the settings. Unless the person switches that kind on (Settings › _Cover
   letters & AI_ › _Questions the AI may also answer_, `settings.aiSensitive`, all off by default): diversity /
@@ -96,9 +97,9 @@ npm run test:e2e    # every e2e file (minutes); CI also runs the Firefox list in
 
 Done means: `npm run lint` clean, `npm run test:unit` green, the e2e files for every area you touched green (all of
 them for changes to `dom.js`, `fill.js`, `matcher.js` or `fields*.js`), and the docs updated for any behaviour a
-person would notice: `docs/features.md` for what it does, README › _Settings reference_ for a new setting, README ›
-_Privacy and security_ for a new data flow. Firefox isn't installed in cloud sessions; CI covers it, so keep tests
-to what both drivers share (see `tests/e2e/harness.mjs`).
+person would notice: `docs/features.md` for what it does, `docs/settings.md` for a new setting, `docs/privacy.md` for a
+new data flow. Firefox isn't installed in cloud sessions; CI covers it, so keep tests to what both drivers share (see
+`tests/e2e/harness.mjs`).
 
 ## Style
 

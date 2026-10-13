@@ -17,9 +17,9 @@ JobToFill holds a lot about the person using it, so these are vulnerabilities:
 - Personal details, documents or keys sent anywhere except the AI provider the person chose (with their key) and Nylas (for emailed codes), or sent there before the person switched that on.
 - The AI being sent what it must never see: diversity and equal-opportunity answers, declarations, identity numbers.
 - Personal details left in a bug-report snapshot or a redacted page map.
-- JobToFill submitting an application, or clicking anything beyond what the README lists.
+- JobToFill submitting an application, or clicking anything beyond what [docs/privacy.md](docs/privacy.md) lists.
 
-Not in scope: someone who can already open the browser profile or the Downloads folder reading what is kept there. Logins, cards and keys are stored unencrypted by design, as the README says.
+Not in scope: someone who can already open the browser profile or the Downloads folder reading what is kept there. Logins, cards and keys are stored unencrypted by design, as [docs/privacy.md](docs/privacy.md) says.
 
 ## What JobToFill holds
 
@@ -27,4 +27,4 @@ Not in scope: someone who can already open the browser profile or the Downloads 
 - **In the Downloads folder:** `JobToFill/jobtofill-backup.json`, rewritten after each change unless automatic backups are off: plain JSON, logins, cards and API keys included (the keys can be left out).
 - **In the browser’s session memory only:** the last few job pages each tab showed, to find the job behind an application.
 
-There are no servers and no analytics. Everything that does leave the browser, and when, is in the README’s [Privacy and security](README.md#privacy-and-security).
+There are no servers and no analytics. Everything that does leave the browser, and when, is in [docs/privacy.md](docs/privacy.md).
