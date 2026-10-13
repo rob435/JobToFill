@@ -713,6 +713,8 @@
     addEntries,
     wait,
     stopWait,
+    // Whether the page is still watching for what blocks its submit (for the background's tests).
+    waiting: () => !!waiter,
     captcha,
     inCaptcha,
     portal: () => A().portal(location.href, hints()),

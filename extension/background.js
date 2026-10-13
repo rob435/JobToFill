@@ -2179,6 +2179,13 @@ async function putFlow(flow) {
 }
 
 async function endFlow(tabId) {
+  // A page still watching for its CAPTCHA to be solved stops looking: the flow it would carry on is over. Read as
+  // stored (getFlow ends an expired flow, so it would come back here).
+  const flow = await sessionGet(flowKey(tabId), null);
+  if (flow && flow.waiting)
+    execute(tabId, [flow.waiting.frameId], {
+      func: () => globalThis.__jtf && globalThis.__jtf.accountStop(),
+    }).catch(() => {});
   await sessionArea()
     .remove(flowKey(tabId))
     .catch(() => {});
