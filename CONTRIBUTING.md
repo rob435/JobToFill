@@ -45,7 +45,7 @@ CI runs lint, the unit tests and both browsers’ end-to-end tests on every push
 - `npm run lint` clean and `npm run test:unit` green.
 - The end-to-end files for every area you touched green; all of them for changes to `dom.js`, `fill.js`, `matcher.js` or `fields*.js`. A fix for one site must not break another.
 - A change to the rules or to `dom.js`: `npm run bench -- --save /tmp/before.json` before, `npm run bench -- --baseline /tmp/before.json` after (`--pages` too for `dom.js`), and every field that got worse looked at. The corpus is private: if you can’t run it, say so in the pull request.
-- The README updated for anything a person would notice: a Features bullet with the real question wording, and a line in _Privacy and security_ for any new data flow (which also needs an opt-in).
+- The docs updated for anything a person would notice: a bullet in `docs/features.md` with the real question wording, a row in `docs/settings.md` for a new setting, and a line in `docs/privacy.md` for any new data flow (which also needs an opt-in). The README stays short: change it only for what everyone needs to know.
 - The invariants in [CLAUDE.md](CLAUDE.md) still hold. Above all: it never submits an application, and nothing leaves the browser except to the AI provider the person chose and to Nylas.
 
 Tests stay to what both browser drivers share (`tests/e2e/harness.mjs`), since CI runs many of them in Firefox too.

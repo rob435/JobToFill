@@ -95,7 +95,7 @@ npm run test:e2e      # the extension in headless Chromium (HEADED=1 to watch)
 npm run test:firefox  # the same fill and page tests in Firefox (FIREFOX_BIN=/path/to/firefox if it isn't on PATH)
 npm run build         # dist/: zips for the Chrome Web Store and Firefox Add-ons, and one to load unpacked (keeps the key)
 npm run release       # a release: the signed .xpi, the Chrome zip and updates.json in dist/release/ (needs AMO API keys,
-                      # see README › Install; -- --dry-run needs none, -- --publish makes the GitHub release).
+                      # see docs/install.md; -- --dry-run needs none, -- --publish makes the GitHub release).
                       # .github/workflows/release.yml (Actions › Release) runs it with --publish
 ```
 

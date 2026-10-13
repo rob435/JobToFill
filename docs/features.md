@@ -1,6 +1,6 @@
 # JobToFill features
 
-The complete feature spec: what JobToFill does on each kind of page, with the real wording of the questions it answers. The [README](../README.md) has the short version and how to install and set it up; its [Privacy and security](../README.md#privacy-and-security) section says what leaves your browser. If you change how JobToFill behaves, read the section here first: every case below is something a test, or a person filling an application, relies on.
+The complete feature spec: what JobToFill does on each kind of page, with the real wording of the questions it answers. The [README](../README.md) has the short version and how to install and set it up; [Privacy and security](privacy.md) says what leaves your browser. If you change how JobToFill behaves, read the section here first: every case below is something a test, or a person filling an application, relies on.
 
 - [Job applications](#job-applications): reading the form, dropdowns and editors, education and work history, files, your own answers, applications in steps
 - [Screening questions](#screening-questions): right to work, where you found the job, dates, interview slots, sanctions, conflicts of interest, equal opportunity
@@ -64,7 +64,7 @@ The complete feature spec: what JobToFill does on each kind of page, with the re
 
 ## AI answers
 
-Answers to questions it has never seen, written by the AI provider you choose, with your own key (see the README’s [Setting up AI](../README.md#setting-up-ai-optional)).
+Answers to questions it has never seen, written by the AI provider you choose, with your own key (see [Setting up AI](using.md#setting-up-ai-optional)).
 
 - **Every question the rules leave empty is answered by AI as part of the same fill:** open questions (_"Why do you want to join Figma?"_, _"Describe how Belvedere Trading makes money"_, _"In 150 words, why Real Estate Asset Management?"_), firm-specific choices (_"Which desk interests you most?"_, _"Rank your top areas of finance"_, _"Which engineering work at Figma? First choice"_) and yes/no questions your material settles (_"Do you have practical Python experience?"_, _"Did you take the SAT?"_, _"Are you a member of a university society?"_).
 - **Written for this job.** It uses the job's real description, found the same way as for cover letters: the page, the job site's listing, the letter you wrote for this application, or Trackr's company note. It also uses your CV, profile and notes, plus your answer guidance. The earlier answers you gave for other employers are reused as your own words, never with the other firm's name.
@@ -164,6 +164,31 @@ Answers to questions it has never seen, written by the AI provider you choose, w
 - **Show detected fields** labels every field with what JobToFill thinks it is: green means ready, amber means your profile lacks it, grey means unknown.
 - **Undo** puts back whatever was on the page before the fills since the last Undo, each box as it was before the first of them: pressing Fill twice, or Quick apply’s two fills, are taken back together with the AI’s answers. Pressing **Alt+Shift+F** again while a fill runs doesn’t start a second one beside it (a fill of another kind, like Quick apply’s letter and CV, waits its turn), so Undo still has everything.
 - **Page map.** Toolbar → _Page map_ opens, in a tab beside the page, the page as JobToFill and the AI see it: every field numbered (f1, f2…) with its question, options, what’s picked and what JobToFill takes it for (“→ name.first ✓”, “✗ no value” when your profile has no answer, “(none: for AI)” when no rule knows the question), the buttons and frames, and the form’s step, alerts and dialogs. Click a line and the page scrolls to that field and outlines it; _Only fields that need something_ cuts a long form down to what’s missing, invalid or left for the AI. _Copy for an AI chat_ and _Save as text_ give the same map with your details replaced by placeholders, as in a bug-report snapshot.
-- **Save a snapshot for a bug report.** When a form trips JobToFill up, the link at the bottom of the popup saves one HTML file: a copy of the form with your values and personal details taken out (see [Privacy](../README.md#privacy-and-security)), and a trace of what JobToFill saw and did with each field (what it took each question for, how it wrote the answer, what the page said). Attach it to a bug report and the form can be rebuilt as a test, without anyone needing your login.
+- **Save a snapshot for a bug report.** When a form trips JobToFill up, the link at the bottom of the popup saves one HTML file: a copy of the form with your values and personal details taken out (see [Privacy](privacy.md)), and a trace of what JobToFill saw and did with each field (what it took each question for, how it wrote the answer, what the page said). Attach it to a bug report and the form can be rebuilt as a test, without anyone needing your login.
 - Only empty fields are filled unless you turn on _Overwrite_, and filled fields are outlined. One exception: a country the site chose for you is put right. Workday picks the _Country / Territory_ and the phone code's country from where your connection seems to be (Italy on a VPS there); when that isn't your country it becomes yours, the chip "Italy (+39)" becomes "United Kingdom (+44)", and the address fields are filled once the page has switched to that country's (_County_ and _City_ instead of _Province_ and _City (Comune)_).
 - Light and dark mode, an automatic backup file, and import/export.
+
+## Roadmap
+
+What an application autofiller should do. Implemented ✅ · Ideas for later 💡
+
+- ✅ Standard contact/address fields with `autocomplete` support, so it also works as a general autofill
+- ✅ ATS-aware detection (Workday, Greenhouse, Lever patterns) with a scoring engine rather than one regex per site
+- ✅ Screening questions with tricky-wording handling; EEO answers opt-in
+- ✅ Repeated education/experience sections, split month/year dates, ranges, country/state codes
+- ✅ React/Vue/Angular-safe value setting; custom dropdown automation; iframes and shadow DOM
+- ✅ Every answer read back and put right: typed or pasted where setting it didn’t hold, rewritten where the page’s rules turn it down, and anything left listed
+- ✅ Rich-text editors, lists that follow earlier answers, late-drawn forms, numbers over several boxes
+- ✅ Resume/cover letter auto-attach; per-profile documents
+- ✅ Custom Q&A rules and _Learn from this page_
+- ✅ Passwords and cards: per-site generated passwords for ATS sign-ups, cards for checkout
+- ✅ Inspect overlay, undo, application log, multiple profiles, backup/restore
+- ✅ One codebase for Chromium browsers and Firefox, tested end-to-end in both
+- ✅ **AI answers** for every question the rules can’t answer (“Why us?”, firm-specific choices, yes/no questions your CV settles), checked against your material and the posting
+- ✅ **Add another**: a section’s own _Add_ clicked for each extra education/job entry (Workday’s _My Experience_)
+- ✅ **Auto-advance** multi-step applications (fill, then _Next_, then fill again), always stopping before _Submit_
+- 💡 **Cover-letter templates** with `{company}` / `{role}` filled from the job posting
+- 💡 **Resume import** to parse a PDF/DOCX or LinkedIn export into the profile
+- 💡 **Application tracker** with status (applied → interview → offer) and follow-up reminders, built on the existing log
+- 💡 Optional encrypted **sync** between browsers, and Chrome Web Store / Firefox Add-ons listings
+- 💡 More languages for label detection (rules already cover some German, French and Spanish)
