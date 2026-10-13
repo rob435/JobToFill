@@ -690,12 +690,17 @@ async function recentGroup(refresh) {
       el(
         'td',
         { className: 'row' },
-        l.pdf
+        l.pdf || l.pdfStale
           ? el('button', {
               type: 'button',
               className: 'small',
               textContent: 'PDF',
-              onclick: async () => download(await (await fetch(l.pdf.dataUrl)).blob(), l.pdf.name),
+              // Laid out again by the background when the studio closed before the PDF caught up with an edit.
+              onclick: async () => {
+                const pdf =
+                  (await api.runtime.sendMessage({ type: 'jtf:letter-pdf', id: l.id }).catch(() => null)) || l.pdf;
+                if (pdf && pdf.dataUrl) download(await (await fetch(pdf.dataUrl)).blob(), pdf.name);
+              },
             })
           : null,
         el('button', {

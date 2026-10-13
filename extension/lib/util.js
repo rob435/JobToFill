@@ -127,6 +127,14 @@
     return !!(api && api.runtime && typeof api.runtime.getBrowserInfo === 'function');
   }
 
+  /** Bytes as a data: URL, built in slices (one long String.fromCharCode.apply overflows the stack). */
+  function dataUrl(bytes, type) {
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000)
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return `data:${type};base64,${btoa(bin)}`;
+  }
+
   const util = {
     MONTHS,
     normalize,
@@ -142,6 +150,7 @@
     mergeDefaults,
     hostMatches,
     isFirefox,
+    dataUrl,
   };
   JTF.util = util;
 

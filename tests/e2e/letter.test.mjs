@@ -308,6 +308,14 @@ test('studio: an edit made just before the studio is closed is kept, and its PDF
   assert.equal(kept.pdfStale, true, 'the PDF is of the text before the edit, and says so');
   assert.equal(kept.pdf.dataUrl, before.pdf.dataUrl);
 
+  // Settings › Letters › PDF (and a fill attaching it) get the text as it is now, laid out by the background.
+  const got = await h.bg((id) => globalThis.JTFBackground.handlers['jtf:letter-pdf']({ id }), kept.id);
+  assert.notEqual(got.dataUrl, before.pdf.dataUrl);
+  const text = await h.bg(async (url) => (await globalThis.JTF.doctext.fromDataUrl(url)).text, got.dataUrl);
+  assert.match(text.replace(/\s+/g, ' '), /I could start in September\./);
+  const relaid = await saved('laid out');
+  assert.equal(relaid.pdf.dataUrl, got.dataUrl, 'and saved, so it is laid out once');
+
   // Opened again: the edit is there, and the PDF is laid out from it and saved.
   studio = await open();
   assert.match(await studio.call(() => document.querySelector('#body').value), /I could start in September\.$/);

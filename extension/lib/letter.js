@@ -1371,6 +1371,19 @@
     return best && best[1] > 5 && best[1] > counts.en * 1.3 ? best[0] : 'en';
   }
 
+  /** What a letter's PDF lays out, from { letter, header }: the studio's result or a stored letter alike. */
+  function pdfInput({ letter, header }) {
+    return {
+      name: header.name,
+      contact: header.contact,
+      date: header.date,
+      salutation: letter.salutation,
+      paragraphs: letter.paragraphs,
+      closing: letter.closing,
+      signature: header.name,
+    };
+  }
+
   const letter = {
     LANG_NAMES,
     postingLanguage,
@@ -1399,6 +1412,7 @@
     write,
     shorten,
     asText,
+    pdfInput,
     sameJob,
     coverage,
     cleanCv,

@@ -49,12 +49,6 @@ const send = (message) => api.runtime.sendMessage(message);
 
 /* --------------------------------------------------------------- helpers */
 
-function bytesToDataUrl(bytes, type) {
-  let bin = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-  return `data:${type};base64,${btoa(bin)}`;
-}
-
 const slug = (s) =>
   util
     .normalize(s)
@@ -484,18 +478,7 @@ function fonts() {
   return fontsPromise;
 }
 
-function letterForPdf() {
-  const { letter, header } = state.result;
-  return {
-    name: header.name,
-    contact: header.contact,
-    date: header.date,
-    salutation: letter.salutation,
-    paragraphs: letter.paragraphs,
-    closing: letter.closing,
-    signature: header.name,
-  };
-}
+const letterForPdf = () => L.pdfInput(state.result);
 
 /** The letter as its PDF lays it out, to tell whether a PDF was made from the text as it is now. */
 const letterSource = () => JSON.stringify(letterForPdf());
@@ -699,7 +682,7 @@ function entryNow(extra) {
           name: fileName('letter'),
           type: 'application/pdf',
           size: pdf.bytes.length,
-          dataUrl: bytesToDataUrl(pdf.bytes, 'application/pdf'),
+          dataUrl: util.dataUrl(pdf.bytes, 'application/pdf'),
         }
       : null,
     pdfStale: !pdf || pdf.source !== source,
@@ -778,7 +761,7 @@ function cvExtra(use = $('#cv-use').checked) {
       name: fileName('cv'),
       type: 'application/pdf',
       size: state.cv.pdf.bytes.length,
-      dataUrl: bytesToDataUrl(state.cv.pdf.bytes, 'application/pdf'),
+      dataUrl: util.dataUrl(state.cv.pdf.bytes, 'application/pdf'),
     },
     cvChanges: state.cv.result.cv.changes,
   };

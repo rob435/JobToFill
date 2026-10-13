@@ -29,6 +29,7 @@ if (typeof importScripts === 'function') {
     'lib/store.js',
     'lib/ai.js',
     'lib/letter.js',
+    'lib/pdfdoc.js',
     'lib/answers.js',
     'lib/jobpage.js',
     'lib/pagemap.js',
@@ -50,6 +51,8 @@ const {
   otp,
   nylas,
   pagemap,
+  pdfdoc,
+  letter: letters,
   redact: redaction,
 } = globalThis.JTF;
 const llm = globalThis.JTF.ai;
@@ -744,6 +747,54 @@ async function secretsFor(msg, sender) {
   return out;
 }
 
+let letterFonts = null;
+/** The fonts letters are set in, read once per background (and again after a failed read). */
+function fontsForLetters() {
+  letterFonts =
+    letterFonts ||
+    pdfdoc
+      .loadFonts(async (file) => {
+        const res = await fetch(api.runtime.getURL('fonts/' + file));
+        if (!res.ok) throw new Error(`Missing font ${file}`);
+        return new Uint8Array(await res.arrayBuffer());
+      })
+      .catch((err) => {
+        letterFonts = null;
+        throw err;
+      });
+  return letterFonts;
+}
+
+/**
+ * A letter's PDF as its text is now. The studio closed before its layout caught up with an edit (`pdfStale`): it is
+ * laid out again here, as the studio would, and saved, so a form never gets a PDF older than the text pasted beside it.
+ */
+async function freshLetterPdf(letter) {
+  if (!letter.pdfStale || !letter.letter || !letter.header) return letter.pdf;
+  const kit = await store.getKit(letter.profileId);
+  const out = await pdfdoc.coverLetter(letters.pdfInput(letter), {
+    fonts: await fontsForLetters(),
+    paper: kit.paper || 'a4',
+    fit: true,
+  });
+  const pdf = {
+    name: (letter.pdf && letter.pdf.name) || 'cover_letter.pdf',
+    type: 'application/pdf',
+    size: out.bytes.length,
+    dataUrl: util.dataUrl(out.bytes, 'application/pdf'),
+  };
+  await store.saveLetter({ id: letter.id, pdf, pdfStale: false });
+  return pdf;
+}
+
+/** A stored letter's PDF for Settings › Letters: the text as it is now (laid out again if the studio didn't). */
+async function letterPdf(msg) {
+  const letter = (await store.getLetters()).find((l) => l.id === msg.id);
+  if (!letter) return { error: 'That letter no longer exists.' };
+  const pdf = await freshLetterPdf(letter);
+  return pdf ? { name: pdf.name, dataUrl: pdf.dataUrl } : { error: 'This letter has no PDF yet.' };
+}
+
 async function documentFor(msg, sender) {
   const fill = fillInProgress(sender);
   if (!fill) return { error: 'No fill in progress.' };
@@ -751,7 +802,12 @@ async function documentFor(msg, sender) {
     // The letter written for this application, and its tailored CV for the CV upload only (never a transcript's).
     const letter = (await store.getLetters()).find((l) => l.id === fill.letter);
     const doc =
-      letter && (msg.which === 'coverLetter' ? letter.pdf : msg.which === 'resume' && letter.useCv ? letter.cv : null);
+      letter &&
+      (msg.which === 'coverLetter'
+        ? await freshLetterPdf(letter).catch(() => letter.pdf)
+        : msg.which === 'resume' && letter.useCv
+          ? letter.cv
+          : null);
     if (doc) return { name: doc.name, type: doc.type, dataUrl: doc.dataUrl };
   }
   const { profile } = await store.getActive();
@@ -775,10 +831,7 @@ api.storage.onChanged.addListener((changes, areaName) => {
 /** Firefox's background page can make blob URLs; Chromium's service worker can't, so it gets a data URL. */
 function fileUrl(text, type) {
   if (typeof URL.createObjectURL === 'function') return URL.createObjectURL(new Blob([text], { type }));
-  const bytes = new TextEncoder().encode(text);
-  let bin = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-  return `data:${type};base64,` + btoa(bin);
+  return util.dataUrl(new TextEncoder().encode(text), type);
 }
 
 const jsonUrl = (json) => fileUrl(json, 'application/json');
@@ -2847,6 +2900,7 @@ const HANDLERS = {
   'jtf:scrape': (msg) => scrapeInTab(msg.url),
   'jtf:attach': (msg) => attachLetter(msg.tabId, msg.letterId),
   'jtf:keep': keepEdits,
+  'jtf:letter-pdf': letterPdf,
   'jtf:ai-status': (msg) => {
     const run = aiRuns.get(msg.tabId);
     return { run: run ? runView(run) : null };
