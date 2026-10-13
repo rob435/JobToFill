@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Apply: Engine Engineer - Babbage Works</title>
+</head>
+<body>
+  <h1>Engine Engineer</h1>
+  <!-- Questions the rules don't know, for the AI. While its answers are being written the page changes under them:
+       #slot gets a question of its own above them (a CV parse, a follow-up an answer revealed), or a list keyed by
+       position re-renders and the same boxes now carry other questions (React with index keys). -->
+  <form id="application">
+    <div class="field"><label for="first_name">First Name</label><input id="first_name" name="first_name"></div>
+    <div class="field"><label for="linkedin">LinkedIn profile</label><input id="linkedin" name="linkedin"></div>
+    <div id="slot"></div>
+    <div id="questions">
+      <div class="field"><label for="qa">What first got you interested in difference engines?</label><textarea id="qa" name="qa"></textarea></div>
+      <div class="field"><label for="qb">Describe a project you are proud of.</label><textarea id="qb" name="qb"></textarea></div>
+      <div class="field"><label for="qc">Which team would you most like to join, and why?</label><textarea id="qc" name="qc"></textarea></div>
+    </div>
+  </form>
+</body>
+</html>

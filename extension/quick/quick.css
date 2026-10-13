@@ -10,6 +10,10 @@
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
+.topbar h1 {
+  font-size: 15px;
+  white-space: nowrap;
+}
 .grow {
   flex: 1;
 }
@@ -48,11 +52,14 @@ main {
 #changes ul {
   margin: 0;
   padding-left: 18px;
+  overflow-wrap: anywhere;
 }
 
 .job-title {
+  margin: 0;
   font-weight: 650;
   font-size: 16px;
+  overflow-wrap: anywhere;
 }
 .note {
   margin: 8px 0 0;
@@ -61,8 +68,18 @@ main {
 
 .bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+@media (max-width: 640px) {
+  .topbar {
+    flex-wrap: wrap;
+    padding: 10px 14px;
+  }
+  main {
+    padding: 12px;
+  }
 }
 .tabs {
   display: flex;

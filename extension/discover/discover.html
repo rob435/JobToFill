@@ -11,12 +11,14 @@
   <body>
     <header class="topbar">
       <img src="../icons/icon32.png" alt="" width="24" height="24" />
-      <strong>Discover internships</strong>
-      <span class="muted small">Reputable firms that keep a low profile</span>
+      <h1>Discover internships</h1>
+      <span class="muted small tagline">Reputable firms that keep a low profile</span>
       <span class="grow"></span>
-      <div class="tabs" role="tablist">
-        <button id="tab-find" role="tab" type="button" aria-selected="true">Find firms</button>
-        <button id="tab-watch" role="tab" type="button" aria-selected="false">Watchlist <span id="watch-count" class="pill"></span></button>
+      <div class="tabs" role="tablist" aria-label="Discover">
+        <button id="tab-find" role="tab" type="button" aria-selected="true" aria-controls="find-view">Find firms</button>
+        <button id="tab-watch" role="tab" type="button" aria-selected="false" aria-controls="watch-view">
+          Watchlist <span id="watch-count" class="pill"></span>
+        </button>
       </div>
     </header>
 
@@ -27,7 +29,7 @@
         <div class="row"><button id="access-allow" class="primary" type="button">Allow</button></div>
       </section>
 
-      <div id="find-view">
+      <div id="find-view" role="tabpanel" aria-labelledby="tab-find">
         <form id="query" class="card">
           <div class="card-head">
             <h2>What are you looking for?</h2>
@@ -67,8 +69,11 @@
           <div class="row">
             <label class="check"><input id="hide-trackr" type="checkbox" checked /> Leave out firms Trackr already lists</label>
             <label class="check" id="ai-wrap"
-              ><input id="use-ai" type="checkbox" /> Ask the AI for more ideas
-              <span class="muted small">(each one checked against the SEC, Wikipedia and its own website)</span></label
+              ><input id="use-ai" type="checkbox" />
+              <span
+                >Ask the AI for more ideas
+                <span class="muted small">(each one checked against the SEC, Wikipedia and its own website)</span></span
+              ></label
             >
           </div>
           <div class="row">
@@ -94,21 +99,24 @@
         </section>
       </div>
 
-      <div id="watch-view" hidden>
+      <div id="watch-view" role="tabpanel" aria-labelledby="tab-watch" hidden>
         <section class="card">
           <div class="card-head">
             <h2>Watchlist</h2>
             <div class="row">
               <span id="watch-status" class="muted small" aria-live="polite"></span>
-              <button id="watch-seen" class="small" type="button">Mark all as seen</button>
-              <button id="watch-check" class="small primary" type="button">Check now</button>
+              <button id="watch-seen" class="small" type="button" hidden>Mark all as seen</button>
+              <button id="watch-check" class="small primary" type="button" hidden>Check now</button>
             </div>
           </div>
           <p class="muted small">
             Watched firms are checked every six hours. New internships and programme pages show up here and as a number on the toolbar
             button.
           </p>
-          <p id="watch-empty" class="muted">Nothing watched yet. Search for firms and press <strong>Watch</strong> on the ones you like.</p>
+          <div id="watch-empty" class="empty">
+            <p class="muted">Nothing watched yet. Search for firms and press <strong>Watch</strong> on the ones you like.</p>
+            <div class="row"><button id="watch-find" class="primary" type="button">Find firms</button></div>
+          </div>
           <ol id="watchlist" class="firms"></ol>
         </section>
       </div>

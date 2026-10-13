@@ -46,21 +46,32 @@
     if (bad) throw new NylasError(bad, { code: 'setup' });
     const url = new URL(baseOf(config) + path);
     for (const [k, v] of Object.entries(params || {})) if (v != null && v !== '') url.searchParams.set(k, String(v));
+    // The time limit covers the body too: a reply that stalls after its headers would otherwise hang the code watcher.
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT);
+    let timer = null;
+    const late = new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error('timed out'));
+      }, TIMEOUT);
+    });
     let res;
+    let raw;
     try {
-      res = await (fetchImpl || root.fetch.bind(root))(url.href, {
-        headers: { Authorization: `Bearer ${String(config.apiKey).trim()}`, Accept: 'application/json' },
-        credentials: 'omit',
-        signal: controller.signal,
-      });
+      const read = async () => {
+        res = await (fetchImpl || root.fetch.bind(root))(url.href, {
+          headers: { Authorization: `Bearer ${String(config.apiKey).trim()}`, Accept: 'application/json' },
+          credentials: 'omit',
+          signal: controller.signal,
+        });
+        raw = await res.text();
+      };
+      await Promise.race([read(), late]);
     } catch (err) {
       throw new NylasError(`Couldn’t reach Nylas (${(err && err.message) || err}).`, { code: 'network' });
     } finally {
       clearTimeout(timer);
     }
-    const raw = await res.text();
     let data;
     try {
       data = raw ? JSON.parse(raw) : null;
@@ -113,7 +124,7 @@
     }));
   }
 
-  const nylas = { REGIONS, NylasError, problem, grants, messages };
+  const nylas = { REGIONS, problem, grants, messages };
   JTF.nylas = nylas;
   if (typeof module === 'object' && module.exports) module.exports = nylas;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -10,28 +10,39 @@
   <body>
     <header class="bar">
       <img src="../icons/icon32.png" alt="" width="22" height="22" />
-      <strong>JobToFill</strong>
+      <h1>JobToFill</h1>
       <select id="profile" aria-label="Active profile" title="Active profile" hidden></select>
     </header>
 
     <main>
-      <section id="access" class="card warn" hidden>
+      <section id="access" class="card banner warn" hidden>
         <p><strong>Allow JobToFill on websites</strong><br />Needed once so it can fill forms, including ones embedded from other sites.</p>
         <button id="access-allow" class="primary small" type="button">Allow</button>
       </section>
 
-      <section id="restore" class="card" hidden>
+      <section id="restore" class="card banner" hidden>
         <p><strong>Restore your details</strong><br />A backup from before JobToFill was re-added is waiting.</p>
         <button id="restore-open" class="primary small" type="button">Restore</button>
+      </section>
+
+      <section id="setup-profile" class="card banner" hidden>
+        <p>
+          <strong>Add your details first</strong><br />JobToFill fills forms from your profile, and it’s empty: your name, email and CV are
+          enough to start.
+        </p>
+        <button id="setup-profile-open" class="primary small" type="button">Set up</button>
       </section>
 
       <button id="fill" class="primary big" type="button">
         <span>Fill this page</span>
         <kbd id="shortcut" hidden></kbd>
       </button>
-      <p id="page-note" class="note" hidden>Open a job application or checkout page to fill it.</p>
+      <p id="page-note" class="note" hidden>
+        JobToFill can’t work on this page: browser pages, extension pages and add-on stores are off-limits. Open a job application or
+        checkout page, then click the JobToFill button again.
+      </p>
 
-      <div class="letter-row">
+      <div class="letter-row" role="group" aria-label="Cover letter">
         <button id="write-letter" class="letter" type="button" title="Find this job’s description and write a cover letter for it">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path
@@ -63,7 +74,7 @@
         Last quick apply
       </button>
 
-      <section id="watch-news" class="card" hidden>
+      <section id="watch-news" class="card banner" hidden>
         <p><strong id="watch-news-text"></strong><br />New internships at firms on your Discover watchlist.</p>
         <button id="watch-news-open" class="primary small" type="button">Show</button>
       </section>
@@ -71,7 +82,7 @@
       <section id="result" class="card" hidden aria-live="polite"></section>
       <section id="ai" class="card ai" hidden aria-live="polite"></section>
 
-      <div class="tools">
+      <div class="tools" role="group" aria-label="Tools for this page">
         <button id="inspect" class="tool" type="button" aria-pressed="false" title="Label every field with what JobToFill thinks it is">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M11 4a7 7 0 1 0 4.4 12.4l4.1 4.1 1.4-1.4-4.1-4.1A7 7 0 0 0 11 4Zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z" />
@@ -109,7 +120,7 @@
 
       <section id="learn-panel" class="card" hidden>
         <div class="card-head">
-          <strong>Save for next time</strong>
+          <h2>Save for next time</h2>
           <button id="learn-close" class="link" type="button">Close</button>
         </div>
         <p id="learn-empty" class="muted small" hidden>Nothing new to learn here. Type your answers into the form first, then try again.</p>

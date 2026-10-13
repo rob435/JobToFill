@@ -11,33 +11,33 @@
   <body>
     <header class="topbar">
       <img src="../icons/icon32.png" alt="" width="24" height="24" />
-      <strong>Last quick apply</strong>
+      <h1>Last quick apply</h1>
       <span id="when" class="muted small"></span>
       <span class="grow"></span>
-      <button id="clear" class="small" type="button" hidden>Clear</button>
+      <button id="clear" class="small" type="button" title="Forget this letter and CV now" hidden>Clear</button>
     </header>
 
     <main>
       <section id="empty" class="card" hidden>
         <h2>Nothing stored</h2>
         <p class="muted">
-          There is no quick apply to show. After you use <strong>Quick apply</strong> in the toolbar popup, its letter and CV appear here
-          until you run another one, clear them, or close the browser.
+          There is no quick apply to show. To make one, open a job application, click the JobToFill button in the toolbar, then
+          <strong>Quick apply</strong>. Its letter and CV appear here until you run another one, clear them, or close the browser.
         </p>
       </section>
 
       <section id="result" hidden>
         <div class="summary">
           <div>
-            <div id="job" class="job-title"></div>
+            <h2 id="job" class="job-title"></h2>
             <div id="site" class="muted small"></div>
           </div>
           <p id="note" class="note small" hidden></p>
         </div>
         <div class="bar">
           <div class="tabs" role="tablist">
-            <button id="tab-letter" role="tab" type="button" aria-selected="true">Letter</button>
-            <button id="tab-cv" role="tab" type="button" aria-selected="false">CV</button>
+            <button id="tab-letter" role="tab" type="button" aria-selected="true" aria-controls="preview">Letter</button>
+            <button id="tab-cv" role="tab" type="button" aria-selected="false" aria-controls="preview">CV</button>
           </div>
           <span class="grow"></span>
           <button id="download-pdf" class="small" type="button">Download PDF</button>

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Apply: Graduate Analyst – Careers</title>
+  <style>
+    body { font: 15px/1.4 system-ui, sans-serif; margin: 24px auto; max-width: 680px; }
+    label, .label { display: block; margin: 10px 0 4px; font-weight: 600; }
+    .modal { position: fixed; inset: 20% 20%; background: #fff; border: 1px solid #888; padding: 16px; }
+    #state { background: #f4f4f4; padding: 8px; font-size: 12px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <!--
+    An upload tile that opens a dialog inside the application's own <form> (as on ASP.NET sites like Eploy, here in the
+    page rather than in a frame). The dialog's buttons are bare <button>s: no type, so each one submits the whole
+    application. Its "Upload File" (which the upload menus' "Upload from Device" rule would take) and its "Cancel" must
+    never be pressed for you; the ✕, a type="button", closes it. With ?cancel-only the dialog has nothing but a bare
+    Cancel: it is left open, never pressed. Escape does nothing, as in a modal box.
+  -->
+  <h1>Graduate Analyst</h1>
+  <form id="application" action="/apply" method="post">
+    <label for="first">First Name</label><input id="first" name="first">
+    <label for="last">Last Name</label><input id="last" name="last">
+    <label for="email">Email</label><input id="email" type="email" name="email">
+    <div class="row">
+      <span class="label">Resume<span class="required">*</span></span>
+      <button type="button" id="upload-resume">Upload a resume</button> <span id="resume-name">No file chosen</span>
+    </div>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="up-title" id="upload-dialog" hidden>
+      <h2 id="up-title">Upload your resume</h2>
+      <p>Drag your file here.</p>
+      <button id="upload-file" name="upload">Upload File</button>
+      <button id="upload-cancel" name="cancel">Cancel</button>
+      <button type="button" id="upload-close" aria-label="Close">✕</button>
+    </div>
+    <button type="submit" id="submit-application">Submit application</button>
+  </form>
+  <pre id="state"></pre>
+  <script>
+    const dialog = document.getElementById('upload-dialog');
+    if (location.search === '?cancel-only') {
+      document.getElementById('upload-file').remove();
+      document.getElementById('upload-close').remove();
+    }
+    const state = { submittedBy: null, dialog: false, closed: false };
+    const show = () => {
+      state.dialog = !dialog.hidden;
+      document.getElementById('state').textContent = JSON.stringify(state);
+    };
+    document.getElementById('upload-resume').addEventListener('click', () => {
+      dialog.hidden = false;
+      show();
+    });
+    const close = document.getElementById('upload-close');
+    if (close)
+      close.addEventListener('click', () => {
+        dialog.hidden = true;
+        state.closed = true;
+        show();
+      });
+    document.getElementById('application').addEventListener('submit', (e) => {
+      e.preventDefault();
+      state.submittedBy = e.submitter ? e.submitter.id : 'the form';
+      show();
+    });
+    show();
+  </script>
+</body>
+</html>

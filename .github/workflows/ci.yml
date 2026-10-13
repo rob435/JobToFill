@@ -2,45 +2,87 @@ name: CI
 
 on:
   push:
+    branches: ['**']
   pull_request:
+  workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  # One run per branch or pull request: a newer push cancels the run before it. Every run on main is kept.
+  group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Each job's `if`: a pull request from a branch of this repository was already tested by that branch's push, so only
+# pull requests from forks run again.
 jobs:
   lint:
     name: Lint, unit tests, build
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run lint
       - run: npm run test:unit
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: jobtofill-extension
           path: dist/*.zip
 
   chromium:
     name: End-to-end (Chromium)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+      # Downloads Chromium only when the cache missed; the system libraries it needs are installed either way.
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
+      - run: mkdir -p test-results && npm run test:e2e
+        env:
+          # The usual output in the log, and a JUnit report of every test for the artefact.
+          NODE_OPTIONS: >-
+            --test-reporter=spec --test-reporter-destination=stdout
+            --test-reporter=junit --test-reporter-destination=test-results/e2e-chromium.xml
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-chromium-results
+          path: test-results/
 
   firefox:
     name: End-to-end (Firefox)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -49,6 +91,14 @@ jobs:
         id: firefox
         with:
           firefox-version: latest
-      - run: npm run test:firefox
+      - run: mkdir -p test-results && npm run test:firefox
         env:
           FIREFOX_BIN: ${{ steps.firefox.outputs.firefox-path }}
+          NODE_OPTIONS: >-
+            --test-reporter=spec --test-reporter-destination=stdout
+            --test-reporter=junit --test-reporter-destination=test-results/e2e-firefox.xml
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-firefox-results
+          path: test-results/

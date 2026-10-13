@@ -9,20 +9,63 @@
   const JTF = root.JTF;
   const U = JTF.util;
 
-  // lastFill: what the latest fill changed (AI answers are added to it, so one Undo takes both back);
-  // pending: the questions it left empty, by id, for the AI's answers; hold: keeps the background awake.
+  // history: what fills and the AI's answers changed since the last Undo, each field once (see remember);
+  // pending: the questions left empty for the AI, by an id never given to another (see pendingQuestions), and
+  // `asked` how many ids were handed out; hold: keeps the background awake.
   // aiFilled: field -> the answer the AI put there (remembered with the application, so not "learnt" again).
   // attached: upload -> the file names a fill put there, by type (a new letter takes the place of the one before).
   const state = {
     history: [],
-    lastFill: [],
     overlay: null,
     ui: null,
     pending: new Map(),
+    asked: 0,
     hold: null,
     aiFilled: new WeakMap(),
     attached: new WeakMap(),
   };
+
+  // This copy of the script's own mark on the ids it hands out: one injected after the page changed doesn't reuse
+  // an earlier copy's.
+  const RUN = Math.random().toString(36).slice(2, 8);
+
+  /**
+   * Add what a fill or the AI changed to what Undo takes back: everything since the last Undo, each field to what it
+   * held before it was first changed. A second fill (Fill pressed again, Quick apply's second fill) adds to the
+   * first's instead of taking its place, and a field both changed goes back to what the person had.
+   */
+  function remember(entries) {
+    // Boxes gone from the page (a step of a multi-step application left behind) have nothing to put back.
+    state.history = state.history.filter((h) => h.el.isConnected);
+    const known = new Set(state.history.map((h) => h.el));
+    for (const h of entries) {
+      if (known.has(h.el) || !h.el.isConnected) continue;
+      known.add(h.el);
+      state.history.push(h);
+    }
+  }
+
+  // Fills, the AI's answers, Undo and clicks on the page's own buttons take turns in this frame: Fill pressed again
+  // while the first is still typing (or Quick apply's second fill while the AI writes) waits for it rather than
+  // filling the same boxes at once. One stuck for two minutes stops holding up the next.
+  const TURN_WAIT = 120000;
+  let turn = Promise.resolve();
+
+  /** `fn`, run once every earlier call made through serial() has finished (or TURN_WAIT has passed). */
+  function serial(fn) {
+    return (...args) => {
+      const before = turn;
+      const run = new Promise((resolve) => {
+        const timer = setTimeout(resolve, TURN_WAIT);
+        before.then(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      }).then(() => fn(...args));
+      turn = run.catch(() => {});
+      return run;
+    };
+  }
 
   function send(message) {
     return JTF.api.runtime.sendMessage(message).catch((err) => ({ error: String((err && err.message) || err) }));
@@ -188,25 +231,56 @@
       position: 'fixed',
       right: '16px',
       bottom: '16px',
-      maxWidth: '340px',
+      // Never wider than a phone's screen, less its margins.
+      maxWidth: 'min(360px, calc(100vw - 32px))',
+      boxSizing: 'border-box',
       display: 'flex',
       gap: '10px',
       alignItems: 'flex-start',
-      padding: '12px 14px',
+      padding: '12px 10px 12px 14px',
       borderRadius: '12px',
+      // The light edge keeps it apart from a dark page.
+      border: '1px solid rgba(255, 255, 255, 0.16)',
       background: '#17142b',
       color: '#f4f2ff',
       font: FONT,
-      boxShadow: '0 10px 30px rgba(0, 0, 0, 0.25)',
+      textAlign: 'left',
+      overflowWrap: 'anywhere',
+      boxShadow: '0 10px 30px rgba(0, 0, 0, 0.3)',
       opacity: '0',
       transform: 'translateY(8px)',
       transition: 'opacity 0.18s, transform 0.18s',
     },
     dot: { flex: 'none', width: '10px', height: '10px', marginTop: '4px', borderRadius: '50%', background: '#8b74ff' },
-    message: { flex: '1', whiteSpace: 'pre-line' },
-    button: { all: 'unset', cursor: 'pointer', color: '#b9abff', fontWeight: '600', marginLeft: '4px', font: FONT },
+    message: { flex: '1', minWidth: '0', whiteSpace: 'pre-line' },
+    button: {
+      all: 'unset',
+      flex: 'none',
+      cursor: 'pointer',
+      color: '#c9bfff',
+      fontWeight: '600',
+      marginLeft: '4px',
+      padding: '0 2px',
+      borderRadius: '4px',
+      font: FONT,
+    },
+    close: {
+      all: 'unset',
+      flex: 'none',
+      cursor: 'pointer',
+      width: '20px',
+      height: '20px',
+      marginTop: '-1px',
+      borderRadius: '4px',
+      color: '#c9c4e0',
+      font: '18px/20px system-ui, sans-serif',
+      textAlign: 'center',
+    },
     tag: {
       position: 'absolute',
+      maxWidth: '260px',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
       padding: '1px 6px',
       borderRadius: '6px',
       font: '600 11px/16px system-ui, sans-serif',
@@ -237,26 +311,64 @@
     return state.ui;
   }
 
-  let toastTimer = null;
+  /** A toast button the keyboard can see: the page's CSS can't reach in here, so the ring is drawn by hand. */
+  function toastButton(style, text, label, onClick) {
+    const button = make('button', style, text);
+    button.type = 'button';
+    if (label) button.setAttribute('aria-label', label);
+    if (label) button.title = label;
+    button.addEventListener('click', onClick);
+    button.addEventListener('focus', () => Object.assign(button.style, { outline: '2px solid #c9bfff' }));
+    button.addEventListener('blur', () => Object.assign(button.style, { outline: 'none' }));
+    button.addEventListener('mouseenter', () => Object.assign(button.style, { color: '#ffffff' }));
+    button.addEventListener('mouseleave', () => Object.assign(button.style, { color: style.color }));
+    return button;
+  }
+
   function toast(message, opts) {
     const view = ui();
     if (view.toast) view.toast.remove();
     const box = make('div', STYLES.toast);
     box.setAttribute('role', 'status');
     box.append(make('span', STYLES.dot), make('span', STYLES.message, message));
-    if (opts && opts.undo && state.history.length) {
-      const undo = make('button', STYLES.button, 'Undo');
-      undo.addEventListener('click', () => {
-        api.undo();
-        box.remove();
-      });
-      box.append(undo);
-    }
+    // Each toast its own timer: one that was replaced only ever removes itself.
+    let timer = null;
+    const close = () => {
+      clearTimeout(timer);
+      box.remove();
+    };
+    if (opts && opts.undo && state.history.length)
+      box.append(
+        toastButton(STYLES.button, 'Undo', null, () => {
+          api.undo();
+          close();
+        }),
+      );
+    // It can sit over the page's own buttons (Workday's "Next" bar), or stay up for minutes while the AI works.
+    box.append(toastButton(STYLES.close, '×', 'Dismiss', close));
     view.shadow.append(box);
     view.toast = box;
     requestAnimationFrame(() => Object.assign(box.style, { opacity: '1', transform: 'none' }));
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => box.remove(), (opts && opts.duration) || 6000);
+    // Held while the pointer or focus is on it, so there's time to read it and reach Undo.
+    let left = (opts && opts.duration) || 6000;
+    let since = 0;
+    const arm = () => {
+      if (timer || box.matches(':hover, :focus-within')) return;
+      since = Date.now();
+      timer = setTimeout(close, left);
+    };
+    const hold = () => {
+      if (!timer) return;
+      clearTimeout(timer);
+      timer = null;
+      left = Math.max(2500, left - (Date.now() - since));
+    };
+    box.addEventListener('mouseenter', hold);
+    box.addEventListener('focusin', hold);
+    // After the event, when :hover and :focus-within have caught up.
+    box.addEventListener('mouseleave', () => setTimeout(arm));
+    box.addEventListener('focusout', () => setTimeout(arm));
+    arm();
     return true;
   }
 
@@ -318,14 +430,22 @@
     });
   }
 
+  /** Fill the page; what it changed joins what Undo takes back, even when it stops part-way with an error. */
   async function fill(payload) {
+    const history = [];
+    try {
+      return await fillPage(payload, history);
+    } finally {
+      remember(history);
+    }
+  }
+
+  async function fillPage(payload, history) {
     const { profile, settings } = payload;
     state.profile = profile;
     // A CAPTCHA's own frame (reCAPTCHA's "I'm not a robot" box): nothing in it is ever touched.
     if (JTF.accounts.isCaptchaFrame(location.href))
       return { url: location.href, frame: 'captcha', filled: 0, detected: 0 };
-    // A fill that changes nothing keeps the previous one undoable.
-    const history = [];
     // A page the account flow landed on after one of its clicks (the application after signing in) is still drawing
     // its form: it is filled once it has gone quiet.
     if (payload.settleFirst) await settle(4000, 800);
@@ -696,11 +816,11 @@
     report.missing = [...new Set(report.missing)];
     report.missingTypes = [...new Set(report.missingTypes)];
     report.unmatched = [...new Set(report.unmatched)];
-    if (history.length) state.history = history;
-    state.lastFill = history;
+    remember(history);
     report.undoable = state.history.length > 0;
     // Only a job application's leftovers go to the AI (never a checkout's gift message or a sign-up page).
-    if (!only && context.jobContext) report.pending = await pendingQuestions(profile, context, { peek: !!payload.ai });
+    if (!only && context.jobContext)
+      report.pending = await pendingQuestions(profile, context, { peek: !!payload.ai, settings });
     // What kind of page this is now (sign-in, sign-up, emailed code…), for signing in and creating accounts.
     report.account = JTF.flow.analyze(scan(profile), { ignore: payload.accountIgnore });
     return report;
@@ -868,15 +988,25 @@
   /* ----------------------------------------------------------- AI answers */
 
   const MAX_PENDING = 40;
+  // Questions kept for answers still to come: several reads' worth (Quick apply's second fill, the AI's second
+  // round), the oldest let go first.
+  const KEPT_PENDING = MAX_PENDING * 8;
+
+  /** What a field asks, as the AI was given it (decide.aiItem), to tell one question from another. */
+  const askedOf = (field) => U.normalize(U.cleanLabel(JTF.matcher.questionText(field.desc), 600));
 
   /**
    * The questions the fill left empty, for the AI to answer: ones nothing recognised, recognised ones the
    * profile has nothing for, and choices none of whose options matched the profile's answer (`guess`). Each
    * comes with its options (a custom dropdown is opened to read them when `peek`) and the question before it.
+   * `settings.aiSensitive` lets the kinds of question the candidate allows through (decide.forAi).
+   * Each gets an id of its own that no later read hands out again: the page can grow a question above it (a CV
+   * parse, a revealed follow-up) and be read again before the AI's answers come back, and an answer still goes to
+   * the question it was written for.
    */
-  async function pendingQuestions(profile, context, { peek }) {
+  async function pendingQuestions(profile, context, { peek, settings }) {
     const { fields, results } = scan(profile);
-    state.pending = new Map();
+    const allow = (settings && settings.aiSensitive) || null;
     const items = [];
     const prevOf = (i) => (i > 0 ? { field: fields[i - 1], r: results[i - 1] } : null);
     for (let i = 0; i < fields.length && items.length < MAX_PENDING; i++) {
@@ -887,7 +1017,7 @@
       const prevType = prev && prev.r && prev.r.type;
       const on = JTF.decide.conditionOn(r, i);
       const before = fields[on] ? JTF.decide.beforeOf(fields[on].desc, JTF.fill.currentValue(fields[on])) : null;
-      const asked = JTF.decide.forAi(field.desc, r, profile, context, prevType, before);
+      const asked = JTF.decide.forAi(field.desc, r, profile, context, prevType, before, allow);
       if (!asked) continue;
       const item = JTF.decide.aiItem(field.desc, asked.guess);
       if (!field.desc.options && peek && (field.kind === 'combo' || field.kind === 'combobox')) {
@@ -896,8 +1026,8 @@
         if (seen && seen.options.length && seen.options.length <= 150) item.options = seen.options;
         if (seen && seen.multi) item.multiple = true;
       }
-      const id = String(i);
-      state.pending.set(id, field);
+      const id = `${RUN}-${++state.asked}`;
+      state.pending.set(id, { field, question: U.normalize(item.question) });
       items.push({
         id,
         ...item,
@@ -905,15 +1035,31 @@
         follows: prev
           ? {
               question: U.cleanLabel(JTF.matcher.questionText(prev.field.desc), 200),
-              answer:
-                prevType && /^(eeo\.|account\.|cc\.)/.test(prevType)
-                  ? ''
-                  : JTF.fill.currentValue(prev.field).slice(0, 200),
+              // Never a date of birth, a password or a diversity answer the AI isn't answering itself.
+              answer: JTF.decide.hidesAnswer(prevType, allow) ? '' : JTF.fill.currentValue(prev.field).slice(0, 200),
             }
           : null,
       });
     }
+    for (const id of state.pending.keys()) {
+      if (state.pending.size <= KEPT_PENDING) break;
+      state.pending.delete(id);
+    }
     return items;
+  }
+
+  /**
+   * The field an AI answer is for: the one its id was given to, while it is on the page and still asks that
+   * question; else the field on the page now that asks it (a re-render made it anew).
+   */
+  function answerField(a, fresh) {
+    const want = U.normalize(a.question);
+    const kept = state.pending.get(String(a.id));
+    if (kept && kept.field.el.isConnected && kept.question === want) {
+      const { el, kind, members } = kept.field;
+      if (askedOf({ desc: JTF.dom.describe(el, kind, members) }) === want) return kept.field;
+    }
+    return fresh().find((f) => askedOf(f) === want) || null;
   }
 
   /** The value object JTF.fill.apply takes for an AI answer. */
@@ -938,21 +1084,28 @@
     return v;
   }
 
-  /** Put the AI's answers into the fields they're for (found again if the page re-rendered them). */
+  /**
+   * Put the AI's answers into the fields they're for (found again if the page re-rendered them). Undo takes them
+   * back with the fill, even when this stops part-way.
+   */
   async function applyAnswers(list, payload) {
+    const history = [];
+    try {
+      return await putAnswers(list, payload, history);
+    } finally {
+      remember(history);
+    }
+  }
+
+  async function putAnswers(list, payload, history) {
     const settings = (payload && payload.settings) || {};
-    const history = state.lastFill || [];
     let filled = 0;
-    let fresh = null;
+    let collected = null;
+    const fresh = () => (collected = collected || JTF.dom.collect(document));
     const results = [];
     const written = [];
     for (const a of list || []) {
-      let field = state.pending.get(String(a.id));
-      if (!field || !field.el.isConnected) {
-        fresh = fresh || JTF.dom.collect(document);
-        const want = U.normalize(a.question);
-        field = fresh.find((f) => U.normalize(JTF.matcher.questionText(f.desc)) === want) || null;
-      }
+      const field = answerField(a, fresh);
       if (!field) {
         results.push({ id: a.id, status: 'gone' });
         continue;
@@ -979,8 +1132,7 @@
       results.push({ id: a.id, status: res.status });
     }
     const checked = await recheck(written, { profile: state.profile, settings, history });
-    if (history.length) state.history = history;
-    state.lastFill = history;
+    remember(history);
     return { filled, results, check: checked.check, undoable: state.history.length > 0 };
   }
 
@@ -1076,6 +1228,8 @@
     const { layer } = ui();
     state.overlay = [];
     let detected = 0;
+    // A label by a field at the right edge stays on the page instead of widening it (a sideways scroll on a phone).
+    const pageWidth = document.documentElement.scrollWidth;
     fields.forEach((field, i) => {
       const r = results[i];
       const def = r && r.type ? JTF.fields.DEFS[r.type] : null;
@@ -1121,6 +1275,12 @@
       layer.append(tag);
       state.overlay.push(tag);
     });
+    // All read, then all moved: one layout, however many fields.
+    const widths = state.overlay.map((tag) => tag.offsetWidth);
+    state.overlay.forEach((tag, i) => {
+      const over = parseFloat(tag.style.left) + widths[i] - pageWidth;
+      if (over > 0) tag.style.left = Math.max(0, parseFloat(tag.style.left) - over) + 'px';
+    });
     return { on: true, detected, total: fields.length };
   }
 
@@ -1142,8 +1302,10 @@
       toast(`Your profile has no ${JTF.fields.labelOf(type)} yet.`);
       return { ok: false, reason: 'missing' };
     }
-    state.history = [];
-    const res = await JTF.fill.apply(field, v, { overwrite: true, comboboxes: true, history: state.history });
+    const history = [];
+    const res = await JTF.fill
+      .apply(field, v, { overwrite: true, comboboxes: true, history })
+      .finally(() => remember(history));
     if (res.status === 'filled' && payload.settings.highlight !== false) JTF.fill.highlight(field.el);
     return { ok: res.status === 'filled' };
   }
@@ -1178,47 +1340,54 @@
 
   /* ------------------------------------------------- sign-in and sign-up */
 
-  // The background drives signing in and creating accounts (and checks every step); these read the page and
-  // click its own controls. Clicks only happen through JTF.flow.click(), which re-checks everything.
+  // The background drives signing in, creating accounts and moving through an application's steps (and checks
+  // every step); these read the page and click its own controls. Every click goes through JTF.flow (click() on
+  // sign-in and sign-up pages, advance() for a step's "Next", addEntries() for a section's "Add"), which reads the
+  // button's words again and never clicks one that submits.
   const accountScan = (payload) => scan((payload && payload.profile) || state.profile || null);
 
+  // Everything that changes the page (or opens its menus to read them) takes its turn through serial(); reading it
+  // (accountState, a bug report's snapshot) and waiting on it (accountWait) don't wait for a fill.
   const api = {
     version: 1,
-    fill,
-    applyAnswers,
+    fill: serial(fill),
+    applyAnswers: serial(applyAnswers),
     accountState: (payload) => JTF.flow.analyze(accountScan(payload), { ignore: payload && payload.ignore }),
-    accountClick(which, payload) {
+    accountClick: serial((which, payload) => {
       const res = JTF.flow.click(which, accountScan(payload), { ignore: payload && payload.ignore });
       return Object.assign({}, res, { state: res.state ? { kind: res.state.kind, ready: res.state.ready } : null });
-    },
+    }),
     accountWait: (token, payload) =>
       JTF.flow.wait(token, () => accountScan(payload), (payload && payload.timeout) || 5 * 60e3),
+    /** Stop watching for the CAPTCHA or terms the flow waited on: the flow has ended (background.js endFlow). */
     accountStop: () => JTF.flow.stopWait(),
     // A multi-step application's step (Settings › "Move through multi-step applications for me"): what stands
     // between it and its next, and its own "Next" clicked when nothing does.
     stepState: (payload) => JTF.flow.stepState(accountScan(payload)),
-    advance(label, payload) {
+    advance: serial((label, payload) => {
       const res = JTF.flow.advance(accountScan(payload), label);
       return { clicked: res.clicked || '', refused: res.refused || '' };
-    },
-    async pending(payload) {
+    }),
+    pending: serial(async (payload) => {
       const { context } = scan(payload.profile);
       context.jobLocation = jobLocation(payload);
-      return { items: await pendingQuestions(payload.profile, context, { peek: !!payload.ai }) };
-    },
+      return {
+        items: await pendingQuestions(payload.profile, context, { peek: !!payload.ai, settings: payload.settings }),
+      };
+    }),
     hold,
     release() {
       if (state.hold) state.hold();
       return true;
     },
-    learn,
+    learn: serial(learn),
     jobContext,
     /** Where the job is, as a fill reads it from this page (for the detection benchmark's reading of a saved page). */
     jobLocation: () => ({ jobLocation: jobLocation(null) }),
     inspect,
     toast,
-    fillActive,
-    insertPassword,
+    fillActive: serial(fillActive),
+    insertPassword: serial(insertPassword),
     /**
      * A redacted copy of this frame's form for a bug report, with what the last fills here did (content/snapshot.js).
      * A CAPTCHA's frame is left out.
@@ -1234,15 +1403,12 @@
     },
     /** Does this field still hold the answer the AI put there (for the page map)? */
     aiFilled: (field) => state.aiFilled.has(field.el) && state.aiFilled.get(field.el) === JTF.fill.currentValue(field),
-    /** Entries from another part of the content script (the AI assist) join the undoable fill. */
-    appendHistory(entries) {
-      if (entries && entries.length) state.history = state.history.concat(entries);
-    },
-    undo() {
+    /** Put back what every fill and AI answer changed since the last Undo, once the one under way has finished. */
+    undo: serial(() => {
       const n = JTF.fill.undo(state.history);
       JTF.fill.clearHighlights();
       return { undone: n };
-    },
+    }),
   };
   Object.defineProperty(root, '__jtf', { value: api, configurable: true });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -383,6 +383,88 @@ test('discover: a watchlist check reports only what wasn’t there before', asyn
   assert.deepEqual(second.fresh, ['r:https://x/2']);
 });
 
+const acmeJob = (n) => ({
+  title: `Summer Internship ${n}`,
+  absolute_url: `https://boards.greenhouse.io/acme/jobs/${n}`,
+});
+const acmeKey = (j) => D.itemKey({ title: j.title, url: j.absolute_url });
+/** A watched firm whose Greenhouse board lists `board.jobs`, answering once `board.gate` (if any) settles. */
+async function watchAcme(id) {
+  const board = { jobs: [], gate: null };
+  const fetch = mockFetch({
+    'https://boards-api.greenhouse.io/v1/boards/acme/jobs': async () => {
+      await board.gate;
+      return { ok: true, status: 200, text: async () => JSON.stringify({ jobs: board.jobs }) };
+    },
+  });
+  const entry = {
+    id,
+    firm: byName('HBK Capital Management'),
+    boards: [{ ats: 'greenhouse', slug: 'acme' }],
+    pages: [],
+  };
+  await JTF.store.saveWatch(entry);
+  /** One check, merged as background.js runWatchChecks() merges it. */
+  const check = async (meanwhile) => {
+    const state = await JTF.store.getWatchState(id);
+    const running = D.check({ ...entry, seen: state.seen }, { fetch, now: NOW });
+    if (meanwhile) await meanwhile();
+    const res = await running;
+    return { res, next: await JTF.store.setWatchState(id, (now) => D.afterCheck(now, res, NOW)) };
+  };
+  return { board, check };
+}
+
+test('discover: a role listed all along stays seen, however many others came and went', async () => {
+  installChrome();
+  await JTF.store.loadAll();
+  const { board, check } = await watchAcme('w1');
+  // Months of checks: role 1 first, then 999 others that came and went.
+  const old = [acmeJob(1), ...Array.from({ length: 999 }, (_, i) => acmeJob(1000 + i))];
+  await JTF.store.setWatchState('w1', { seen: old.map(acmeKey), fresh: [] });
+  // Today: role 1 still open, and one new role.
+  board.jobs = [acmeJob(1), acmeJob(5000)];
+  const a = await check();
+  assert.deepEqual(a.res.fresh, [acmeKey(acmeJob(5000))], 'only the new role is new');
+  assert.equal(a.next.seen.length, 1000, 'the seen list stays at its limit');
+  assert.deepEqual(a.next.seen.slice(-2), [acmeKey(acmeJob(1)), acmeKey(acmeJob(5000))], 'what is listed goes last');
+  await JTF.store.setWatchState('w1', { fresh: [] }); // "Mark as seen"
+  const b = await check();
+  assert.deepEqual(b.res.fresh, [], 'role 1, open all along, isn’t “new” again');
+  assert.deepEqual(b.next.fresh, []);
+  // A firm's site that doesn't answer keeps what was seen.
+  board.jobs = [];
+  const down = D.afterCheck(b.next, { ...b.res, status: 'unreachable', keys: [], roles: [], fresh: [] }, NOW);
+  assert.equal(down.seen, b.next.seen);
+});
+
+test('discover: a check merges with what changed while it ran: “Mark as seen” stays, a removed firm stays removed', async () => {
+  installChrome();
+  await JTF.store.loadAll();
+  const acme = await watchAcme('w2');
+  await JTF.store.setWatchState('w2', { seen: [], fresh: [{ title: 'Summer Internship 9', url: 'https://x/9' }] });
+  acme.board.jobs = [acmeJob(1)];
+  let open;
+  acme.board.gate = new Promise((resolve) => (open = resolve));
+  // The board is slow to answer; meanwhile the person presses "Mark as seen".
+  const { next } = await acme.check(async () => {
+    await JTF.store.setWatchState('w2', { fresh: [] });
+    open();
+  });
+  assert.deepEqual(
+    next.fresh.map((f) => f.url),
+    ['https://boards.greenhouse.io/acme/jobs/1'],
+    'only the role found now is new: the one marked seen stays seen',
+  );
+
+  const gone = await watchAcme('w3');
+  gone.board.jobs = [acmeJob(2)];
+  await JTF.store.setWatchState('w3', { seen: [], fresh: [] });
+  const after = await gone.check(() => JTF.store.removeWatch('w3'));
+  assert.equal(after.next, null, 'nothing is written back for a firm removed during the check');
+  assert.equal(await JTF.store.getWatchState('w3'), null);
+});
+
 /* ---------------------------------------------------------------- Trackr */
 
 test('discover: Trackr’s company list, to leave out', async () => {

@@ -269,6 +269,62 @@ test('studio: reopening the same application offers the letter already written',
   await apply.close();
 });
 
+test('studio: an edit made just before the studio is closed is kept, and its PDF laid out again next time', async () => {
+  const apply = await h.open('letters/apply.html?job=R-1234');
+  const tabId = await h.tabId(apply);
+  const open = async () => {
+    const studio = await h.extPage(`studio/studio.html?tab=${tabId}`);
+    await until(studio.call, () => !!document.querySelector('#previous'), null, 30000);
+    await studio.call(() =>
+      [...document.querySelectorAll('#previous button')].find((b) => b.textContent === 'Open it').click(),
+    );
+    await until(studio.call, () => !document.querySelector('#editor').hidden, null, 15000);
+    return studio;
+  };
+  // The saved letter for this job (polled in the background): any, with the edit, or with the edit's own PDF.
+  const saved = (want) =>
+    until(
+      h.bg,
+      async (w) => {
+        const l = (await globalThis.JTF.store.getLetters()).find((x) => (x.jobIds || []).includes('R-1234'));
+        const edited = /start in September/.test(l.text);
+        return w === 'any' || (edited && (w === 'edited' || l.pdfStale === false)) ? l : null;
+      },
+      want,
+      10000,
+    );
+  const before = await saved('any');
+
+  let studio = await open();
+  await studio.call(() => {
+    const box = document.querySelector('#body');
+    box.value += '\n\nI could start in September.';
+    box.dispatchEvent(new Event('input'));
+  });
+  // Closed straight away, inside the half second the studio waits before laying out the PDF and saving.
+  await studio.close();
+  const kept = await saved('edited');
+  assert.equal(kept.letter.paragraphs.at(-1), 'I could start in September.');
+  assert.equal(kept.pdfStale, true, 'the PDF is of the text before the edit, and says so');
+  assert.equal(kept.pdf.dataUrl, before.pdf.dataUrl);
+
+  // Settings › Letters › PDF (and a fill attaching it) get the text as it is now, laid out by the background.
+  const got = await h.bg((id) => globalThis.JTFBackground.handlers['jtf:letter-pdf']({ id }), kept.id);
+  assert.notEqual(got.dataUrl, before.pdf.dataUrl);
+  const text = await h.bg(async (url) => (await globalThis.JTF.doctext.fromDataUrl(url)).text, got.dataUrl);
+  assert.match(text.replace(/\s+/g, ' '), /I could start in September\./);
+  const relaid = await saved('laid out');
+  assert.equal(relaid.pdf.dataUrl, got.dataUrl, 'and saved, so it is laid out once');
+
+  // Opened again: the edit is there, and the PDF is laid out from it and saved.
+  studio = await open();
+  assert.match(await studio.call(() => document.querySelector('#body').value), /I could start in September\.$/);
+  const fresh = await saved('laid out');
+  assert.notEqual(fresh.pdf.dataUrl, before.pdf.dataUrl);
+  await studio.close();
+  await apply.close();
+});
+
 test('studio: a job that cannot be found asks for the description', async () => {
   const page = await h.open('signup.html');
   const studio = await h.extPage(`studio/studio.html?tab=${await h.tabId(page)}`);

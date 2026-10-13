@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Create Account – Careers</title>
+  <style>
+    body { font: 15px/1.4 system-ui, sans-serif; margin: 0; }
+    header { display: flex; justify-content: flex-end; padding: 8px 16px; background: #0b3b69; }
+    header button { background: none; border: 0; color: #fff; }
+    main { max-width: 420px; margin: 24px auto; }
+    label { display: block; margin: 10px 0 4px; }
+    input { display: block; width: 100%; }
+  </style>
+</head>
+<body>
+  <!--
+    A Workday-style sign-up page told the address already has an account: the way back to sign in is the "Sign In"
+    after the form ("Already have an account? Sign In"), never the header's "Sign In", which only opens a menu (its
+    utilityButtonSignIn). Both say the same; the one after the form is pressed.
+  -->
+  <header><button type="button" id="header-signin" aria-haspopup="true" aria-expanded="false">Sign In</button></header>
+  <main>
+    <h2>Create Account</h2>
+    <div role="alert" class="error">An account with this email address already exists.</div>
+    <form id="signup" onsubmit="return false">
+      <label for="email">Email Address</label><input id="email" type="email" autocomplete="email">
+      <label for="pw">Password</label><input id="pw" type="password" autocomplete="new-password">
+      <label for="pw2">Verify New Password</label><input id="pw2" type="password" autocomplete="new-password">
+      <button type="submit" id="create">Create Account</button>
+    </form>
+    <p>Already have an account? <button type="button" id="footer-signin">Sign In</button></p>
+    <div id="state">nothing pressed</div>
+  </main>
+  <script>
+    for (const id of ['header-signin', 'footer-signin', 'create'])
+      document.getElementById(id).addEventListener('click', () => {
+        document.getElementById('state').textContent = id;
+      });
+  </script>
+</body>
+</html>

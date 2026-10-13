@@ -1792,6 +1792,28 @@ test('Trackr: where the user came from names the programme — a hint that break
     { now, historySearch: historyOf(visits), fetch: mockFetch(routes) },
   );
   assert.notEqual(other.posting && other.posting.title, 'Markets - Sales and Trading - Off-Cycle Internship');
+
+  // Trackr's answer stalls after its headers: the lookup gives up in time (and ends the request), and the job is
+  // still found without its hint.
+  let signal = null;
+  const stalled = {
+    ...routes,
+    [API]: (url, init) => {
+      signal = init.signal;
+      const body = new Promise((resolve, reject) =>
+        init.signal.addEventListener('abort', () => reject(new Error('The operation was aborted.'))),
+      );
+      return { ok: true, status: 200, url, headers: new Map(), text: () => body };
+    },
+  };
+  const opts = { now, historySearch: historyOf(visits), fetch: mockFetch(stalled), timeout: 300 };
+  const late = await Promise.race([
+    jp.find(ctx, opts),
+    new Promise((resolve) => setTimeout(() => resolve('still waiting'), 5000)),
+  ]);
+  assert.notEqual(late, 'still waiting');
+  assert.equal(signal.aborted, true);
+  assert.equal(late.tried.find((t) => t.url === API).outcome, 'Trackr: failed: timed out');
 });
 
 test('closed jobs: a job address that redirects to a list of open positions is reported as closed, not as a posting', async () => {

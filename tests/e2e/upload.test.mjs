@@ -46,6 +46,22 @@ test('Eploy: an "Upload CV" that opens a dialog with its own Upload File button 
   await page.close();
 });
 
+test('an upload dialog inside the form: its bare "Upload File" and "Cancel" (submit buttons) are never pressed', async () => {
+  const page = await h.open('upload-dialog.html');
+  const summary = await h.fill(page);
+  assert.equal(summary.error, undefined);
+  assert.equal(await value(page, '#first'), 'Ada');
+  const s = JSON.parse(await page.$eval('#state', (el) => el.textContent));
+  assert.deepEqual(s, { submittedBy: null, dialog: false, closed: true }, 'closed with its ✕, the form never sent');
+  // A dialog whose only way out is a bare Cancel is left open rather than pressed.
+  await page.goto(h.url('upload-dialog.html?cancel-only'));
+  await h.fill(page);
+  assert.equal(await value(page, '#last'), 'Lovelace');
+  const left = JSON.parse(await page.$eval('#state', (el) => el.textContent));
+  assert.deepEqual(left, { submittedBy: null, dialog: true, closed: false });
+  await page.close();
+});
+
 test('Dayforce: two uploads sharing an id, the CV in the one its label sits beside, never the box that imports it', async () => {
   const page = await h.open('dayforce-upload.html');
   const summary = await h.fill(page);

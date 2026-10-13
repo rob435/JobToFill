@@ -4,7 +4,8 @@ import globals from 'globals';
 const extension = { ...globals.browser, ...globals.webextensions };
 
 export default [
-  { ignores: ['node_modules/', 'dist/'] },
+  // .claude/worktrees/: other Claude Code sessions' checkouts, linted in their own.
+  { ignores: ['node_modules/', 'dist/', '.claude/worktrees/'] },
   js.configs.recommended,
   {
     // Classic scripts shared by the background, content scripts, extension pages and the Node tests.

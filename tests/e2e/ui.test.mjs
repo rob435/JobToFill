@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { isFirefox, launch } from './harness.mjs';
+import { isFirefox, launch, until } from './harness.mjs';
 
 const test = (name, fn) => base(name, { skip: isFirefox && 'uses Playwright page APIs' }, fn);
 
@@ -81,8 +81,9 @@ test('profile edits autosave, including list entries and custom answers', async 
 
 test('multiple profiles: create, switch, delete', async () => {
   const page = await openExt('options/options.html#personal');
-  page.once('dialog', (d) => d.accept('Shopping'));
   await page.click('#profile-new');
+  await page.fill('#profile-name', 'Shopping');
+  await page.press('#profile-name', 'Enter');
   await page.waitForFunction(
     () => document.querySelector('#profile-select').selectedOptions[0]?.textContent === 'Shopping',
   );
@@ -157,6 +158,60 @@ test('settings toggles persist', async () => {
   const s = await h.bg(() => globalThis.JTF.store.getSettings());
   assert.equal(s.overwrite, true);
   await page.uncheck('input[name=overwrite]');
+  await page.close();
+});
+
+test('questions the AI may also answer: each switch saves, and “All of them” switches all five (mixed when some)', async () => {
+  const sensitive = async () => (await h.bg(() => globalThis.JTF.store.getSettings())).aiSensitive;
+  const NONE = { eeo: false, consent: false, legal: false, health: false, identity: false };
+  const page = await openExt('options/options.html#letters');
+  await page.waitForSelector('input[name="ai-sensitive-all"]');
+  const all = 'input[name="ai-sensitive-all"]';
+  const mixed = () => page.$eval(all, (box) => box.indeterminate);
+  assert.deepEqual(await sensitive(), NONE, 'all off by default');
+  assert.equal(await page.isChecked(all), false);
+  assert.equal(await mixed(), false);
+  for (const text of [
+    'Diversity and equal opportunity',
+    'Declarations and consents',
+    'Government, legal and security vetting',
+    'Health and adjustments',
+    'ID numbers and date of birth',
+    'Only switch this on if that’s true of you.',
+  ])
+    assert.ok(await page.getByText(text).count(), text);
+
+  await page.check('input[name="ai-sensitive-legal"]');
+  await page.waitForFunction(() => document.querySelector('input[name="ai-sensitive-all"]').indeterminate);
+  await page.waitForTimeout(200);
+  assert.deepEqual(await sensitive(), { ...NONE, legal: true });
+  assert.equal(await page.isChecked(all), false);
+
+  await page.check(all);
+  await page.waitForTimeout(200);
+  assert.deepEqual(await sensitive(), { eeo: true, consent: true, legal: true, health: true, identity: true });
+  assert.equal(await mixed(), false);
+  for (const k of Object.keys(NONE)) assert.equal(await page.isChecked(`input[name="ai-sensitive-${k}"]`), true, k);
+
+  // Kept when the page is opened again.
+  await page.reload();
+  await page.waitForSelector('input[name="ai-sensitive-identity"]');
+  assert.equal(await page.isChecked('input[name="ai-sensitive-identity"]'), true);
+  assert.equal(await page.isChecked(all), true);
+  await page.uncheck('input[name="ai-sensitive-eeo"]');
+  await page.waitForTimeout(200);
+  assert.equal(await mixed(), true);
+  assert.deepEqual(await sensitive(), { eeo: false, consent: true, legal: true, health: true, identity: true });
+
+  // From mixed, "All of them" switches every one on; again, every one off.
+  await page.check(all);
+  await page.waitForTimeout(200);
+  assert.deepEqual(await sensitive(), { eeo: true, consent: true, legal: true, health: true, identity: true });
+  await page.uncheck(all);
+  await page.waitForTimeout(200);
+  assert.deepEqual(await sensitive(), NONE);
+  for (const k of Object.keys(NONE)) assert.equal(await page.isChecked(`input[name="ai-sensitive-${k}"]`), false, k);
+  assert.deepEqual(errors, []);
   await page.close();
 });
 
@@ -340,4 +395,103 @@ test('Discover lists registry firms, and watched firms’ new programmes show on
   assert.equal((await h.bg(() => globalThis.JTFBackground.checkWatchlist())).fresh, 0);
   assert.deepEqual(pageErrors, []);
   await page.close();
+});
+
+test('settings: what Learn from this page saves while the page is open stays, through edits made there', async () => {
+  const page = await openExt('options/options.html#personal');
+  await page.waitForSelector('input[name="contact.phone"]');
+  // Popup › Learn from this page › Save, as saveLearned writes it: skills and a custom answer.
+  const learn = (skills, id) =>
+    h.bg(
+      async ([s, i]) => {
+        const { profile } = await globalThis.JTF.store.getActive();
+        profile.skills = s;
+        profile.customAnswers.push({ id: i, question: `learned ${i}`, answer: 'Analytical' });
+        await globalThis.JTF.store.saveProfile(profile);
+      },
+      [skills, id],
+    );
+  const stored = (fn, arg) => until(h.bg, fn, arg, 5000);
+  // The person last clicked into a box here, then went to the application's tab: the box still has focus.
+  await page.focus('input[name="contact.phone"]');
+  await learn('Python, SQL, Haskell', 'learned1');
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(() => document.activeElement.name), 'contact.phone', 'the box keeps its focus');
+  // One edit here later doesn't write the page's old copy over it.
+  await page.fill('input[name="personal.middleName"]', 'Augusta');
+  await page.waitForSelector('#save-state.saved');
+  await page.waitForTimeout(300);
+  let p = await profile();
+  assert.equal(p.personal.middleName, 'Augusta');
+  assert.equal(p.skills, 'Python, SQL, Haskell');
+  assert.ok(p.customAnswers.some((a) => a.id === 'learned1'));
+
+  // In the middle of typing: what is typed is saved beside the change, and typing carries on where it was.
+  await page.fill('input[name="personal.preferredName"]', 'Ada');
+  await learn('Python, SQL, Haskell, OCaml', 'learned2');
+  await stored(async () => (await globalThis.JTF.store.getActive()).profile.personal.preferredName === 'Ada');
+  await page.keyboard.type(' L');
+  await page.waitForSelector('#save-state.saved');
+  await page.waitForTimeout(300);
+  assert.equal(await page.inputValue('input[name="personal.preferredName"]'), 'Ada L');
+  p = await profile();
+  assert.equal(p.personal.preferredName, 'Ada L');
+  assert.equal(p.skills, 'Python, SQL, Haskell, OCaml');
+  assert.deepEqual(
+    p.customAnswers.filter((a) => /^learned/.test(a.id)).map((a) => a.id),
+    ['learned1', 'learned2'],
+  );
+  // And the page shows it.
+  await page.click('#nav a[href="#writing"]');
+  assert.equal(await page.inputValue('textarea[name="skills"]'), 'Python, SQL, Haskell, OCaml');
+
+  // Typed just before the tab is closed: saved all the same.
+  await page.click('#nav a[href="#personal"]');
+  await page.fill('input[name="personal.pronouns"]', 'she/they');
+  await page.close();
+  await stored(async () => (await globalThis.JTF.store.getActive()).profile.personal.pronouns === 'she/they');
+  p = await profile();
+  assert.equal(p.skills, 'Python, SQL, Haskell, OCaml');
+  assert.deepEqual(errors, []);
+});
+
+test('passwords: a saved login’s username and password are saved as typed, also when the tab closes straight after', async () => {
+  await h.bg(() =>
+    globalThis.JTF.passwords.update((d) => {
+      d.credentials.push({
+        id: 'typed1',
+        host: 'typed.example.com',
+        username: 'old@example.com',
+        password: 'Old-pass1!',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    }),
+  );
+  // Polled in the background until the saved login holds `value` in `key`.
+  const saved = (key, value) =>
+    until(
+      h.bg,
+      async ([k, v]) => (await globalThis.JTF.passwords.read()).credentials.find((c) => c.id === 'typed1')[k] === v,
+      [key, value],
+      5000,
+    );
+  const page = await openExt('options/options.html#passwords');
+  const row = 'tbody tr:has(td:text-is("typed.example.com"))';
+  await page.waitForSelector(row);
+  // Typed, still in the box: saved after a pause, and the section isn't drawn again under the cursor.
+  await page.fill(`${row} input[aria-label^="Username"]`, 'new@example.com');
+  await saved('username', 'new@example.com');
+  assert.equal(
+    await page.evaluate(() => document.activeElement.getAttribute('aria-label')),
+    'Username for typed.example.com',
+  );
+  // Typed, then the tab closed at once: no "change" ever comes.
+  await page.fill(`${row} .secret input`, 'New-pass2!');
+  await page.close();
+  await saved('password', 'New-pass2!');
+  await h.bg(() =>
+    globalThis.JTF.passwords.update((d) => (d.credentials = d.credentials.filter((c) => c.id !== 'typed1'))),
+  );
+  assert.deepEqual(errors, []);
 });

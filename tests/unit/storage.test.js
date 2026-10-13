@@ -175,6 +175,45 @@ test('store: acknowledgement boxes are ticked by default; older settings are swi
   assert.equal((await store.getSettings()).consents, false, 'switched off afterwards, it stays off');
 });
 
+test('store: the questions the AI may also answer are all off by default, kept key by key, and in backups', async () => {
+  const NONE = { eeo: false, consent: false, legal: false, health: false, identity: false };
+  assert.deepEqual((await store.getSettings()).aiSensitive, NONE, 'a fresh install');
+  // Settings saved before the setting existed, and saved with only some of it (or junk in it), get the rest off.
+  await chrome.storage.local.set({ settings: { revision: 2, consents: true } });
+  assert.deepEqual((await store.getSettings()).aiSensitive, NONE);
+  await chrome.storage.local.set({
+    settings: { revision: 2, aiSensitive: { legal: true, eeo: 'yes', mystery: true } },
+  });
+  assert.deepEqual((await store.getSettings()).aiSensitive, { ...NONE, legal: true });
+  assert.deepEqual(store.aiSensitiveSettings(null), NONE);
+  assert.deepEqual(store.aiSensitiveSettings({ aiSensitive: { health: true } }), { ...NONE, health: true });
+  // One switch saved leaves the others as they were.
+  await store.saveSettings({ aiSensitive: { eeo: true } });
+  assert.deepEqual((await store.getSettings()).aiSensitive, { ...NONE, legal: true, eeo: true });
+  await store.saveSettings({ aiSensitive: { legal: false }, overwrite: true });
+  const saved = await store.getSettings();
+  assert.deepEqual(saved.aiSensitive, { ...NONE, eeo: true });
+  assert.equal(saved.overwrite, true);
+  // Changing what a read returned changes nothing stored, and never the defaults.
+  saved.aiSensitive.identity = true;
+  assert.equal((await store.getSettings()).aiSensitive.identity, false);
+  assert.deepEqual(store.DEFAULT_SETTINGS.aiSensitive, NONE);
+
+  // In the backup file, and back from it; a backup from before the setting existed gets the defaults.
+  const exported = JSON.parse(JSON.stringify(await store.exportData()));
+  assert.deepEqual(exported.settings.aiSensitive, { ...NONE, eeo: true });
+  installChrome();
+  await store.importData(exported);
+  assert.deepEqual((await store.getSettings()).aiSensitive, { ...NONE, eeo: true });
+  delete exported.settings.aiSensitive;
+  installChrome();
+  await store.importData(exported);
+  assert.deepEqual((await store.getSettings()).aiSensitive, NONE);
+  installChrome();
+  await store.importData({ ...exported, settings: { ...exported.settings, aiSensitive: { identity: true } } });
+  assert.deepEqual((await chrome.storage.local.get('settings')).settings.aiSensitive, { ...NONE, identity: true });
+});
+
 test('store: concurrent saves do not drop each other', async () => {
   const { profile } = await store.getActive();
   const b = await store.createProfile('Second');
@@ -632,6 +671,28 @@ test('store: quick apply keeps one temporary result, replaced each time, in sess
     (await store.getLetters()).map((l) => l.id),
     ['keep'],
   );
+});
+
+test('store: a tab’s job is kept for the application, a failed lookup only for minutes, and goes with the tab', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-12T09:00:00Z') });
+  const job = { company: 'Acme', title: 'Analyst', location: 'London', description: 'Reconcile trades every day.' };
+  await store.setTabJob(7, { host: 'acme.com', url: 'https://acme.com/apply', job });
+  // Nothing found but the page's own location (the job site didn't answer): looked up again a few minutes on.
+  await store.setTabJob(8, { host: 'acme.com', url: 'https://acme.com/apply', job: { company: 'Acme', location: '' } });
+  assert.equal((await store.getTabJob(8)).job.company, 'Acme', 'still used for the next step moments later');
+  t.mock.timers.tick(6 * 60e3);
+  assert.equal((await store.getTabJob(7)).job.description, job.description);
+  assert.equal(await store.getTabJob(8), null, 'a failed lookup isn’t remembered for hours');
+  // A summary from the cover letter's reading of the job counts as found.
+  await store.setTabJob(9, { host: 'acme.com', url: 'https://acme.com/apply', job: { summary: 'Operations.' } });
+  t.mock.timers.tick(3 * 3600e3);
+  assert.equal((await store.getTabJob(9)).job.summary, 'Operations.');
+  t.mock.timers.tick(3 * 3600e3);
+  assert.equal(await store.getTabJob(7), null, 'six hours at most');
+  await store.setTabJob(7, { host: 'acme.com', url: 'https://acme.com/apply', job });
+  await store.removeTabJob(7);
+  assert.equal(await store.getTabJob(7), null);
+  assert.ok(!('tabjob:7' in chrome.storage.session._dump()), 'removed when the tab closes');
 });
 
 test('store: quick apply falls back to local storage without session storage', async () => {

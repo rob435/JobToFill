@@ -352,8 +352,10 @@
       (c) =>
         JTF.util.hostMatches(host, c.host) && (!portal ? !exact || !c.portal : c.portal ? c.portal === portal : !exact),
     );
-    // This portal's own login first, then the most specific saved host (careers.acme.com over acme.com).
-    matches.sort((a, b) => !!b.portal - !!a.portal || b.host.length - a.host.length);
+    // This portal's own login first (on a page that doesn't say which employer, the host's own, never one saved for
+    // another employer there), then the most specific saved host (careers.acme.com over acme.com).
+    const own = (c) => (c.portal || '') === (portal || '');
+    matches.sort((a, b) => own(b) - own(a) || b.host.length - a.host.length);
     return matches[0] || null;
   }
 

@@ -3354,19 +3354,28 @@
       for (const r of trackrRequests(tr)) {
         let timer = null;
         let found = null;
+        // The time limit covers the body too, and ends the request: a reply that stalls after its headers would
+        // otherwise hold up find(), which waits for this hint.
+        const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+        const read = async () => {
+          const res = await fetchFn(r.url, {
+            method: 'GET',
+            headers: r.headers,
+            ...(ctl ? { signal: ctl.signal } : {}),
+          });
+          if (!res || res.ok === false) return null;
+          return typeof res.json === 'function' ? res.json() : parseJsonLoose(await res.text());
+        };
         try {
-          const res = await Promise.race([
-            fetchFn(r.url, { method: 'GET', headers: r.headers }),
+          const data = await Promise.race([
+            read(),
             new Promise((_, reject) => {
-              timer = setTimeout(() => reject(new Error('timed out')), timeout);
+              timer = setTimeout(() => {
+                if (ctl) ctl.abort();
+                reject(new Error('timed out'));
+              }, timeout);
             }),
           ]);
-          const data =
-            res && res.ok !== false
-              ? typeof res.json === 'function'
-                ? await res.json()
-                : parseJsonLoose(await res.text())
-              : null;
           found = trackrProgramme(ctx, data, tr);
           log.push({
             url: r.url,
@@ -3626,13 +3635,12 @@
     rankHistory,
     compare,
     find,
-    // Exposed for tests and the studio.
+    // Exposed for the unit tests (and the eval's dataset builder: descriptionUrls).
     descriptionUrls,
     urlJobIds,
     textJobIds,
     titleSimilarity,
     companyMatch,
-    findPostingInJson,
     trackrHint,
     trackrRequests,
     trackrProgramme,

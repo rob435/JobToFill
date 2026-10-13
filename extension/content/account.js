@@ -192,6 +192,10 @@
   const ACCOUNT_TYPES =
     /^(account\.|email$|human$|otp$|consent$|name\.|phone|address\.|location$|nationality$|pronouns$)/;
 
+  // The controls analyze() chose to switch pages ('to-signup', 'to-signin'), by the state it returned: click() presses
+  // that very one, never the first of the same wording (Workday's header "Sign In", which only opens a menu).
+  const switches = new WeakMap();
+
   /**
    * What kind of page this frame is, from a scan ({ fields, results } as main.js makes them):
    *   kind     'login' | 'signup' | 'verify' | 'chooser' | 'application' | 'none'
@@ -209,7 +213,6 @@
       kind: 'none',
       url: location.href,
       host: location.hostname,
-      top: root === root.top,
       portal: A().portal(location.href, hints()),
       pure: false,
       ready: false,
@@ -335,6 +338,7 @@
         : null;
     out.toSignup = up ? up.text : '';
     out.toSignin = back ? back.text : '';
+    switches.set(out, { 'to-signup': up || null, 'to-signin': back || null });
     const codeFilled = out.kind !== 'verify' || codes.every(hasValue);
     out.ready =
       !!submit &&
@@ -461,8 +465,7 @@
       );
       target = submitFor(st.kind, anchor && anchor.el);
     } else if (which === 'to-signup' || which === 'to-signin') {
-      const label = which === 'to-signup' ? st.toSignup : st.toSignin;
-      target = label ? controls(document).find((c) => c.text === label) : null;
+      target = (switches.get(st) || {})[which] || null;
     } else if (which === 'to-email' && st.kind === 'chooser') {
       target = controls(document).find((c) => c.intent === 'to-email' && c.text === st.toEmail) || null;
     }
@@ -514,15 +517,16 @@
   }
 
   /**
-   * What stands between an application's step and its next, from a scan: { application, progress, next (the words of
-   * its "Next"), final (the page offers its submit, or is the last step: the person's), blockers (required fields
-   * still empty, the terms, a CAPTCHA), errors, ready, signature (tells the next step from this one) }.
+   * What stands between an application's step and its next, from a scan: { application, fields (how many), progress,
+   * next (the words of its "Next"), final (the page offers its submit, or is the last step: the person's), blockers
+   * (required fields still empty, the terms, a CAPTCHA), errors, ready, signature (tells the next step from this one) }.
    */
   function stepState(scan) {
     const { fields, results } = scan;
     const st = progress(document);
     const out = {
       application: analyze(scan).kind === 'application',
+      fields: fields.length,
       progress: st,
       next: '',
       final: false,
@@ -535,8 +539,10 @@
         ...fields.slice(0, 12).map((f) => JTF.matcher.questionText(f.desc).slice(0, 60)),
       ].join('|'),
     };
-    if (!out.application) return out;
+    // Also on a step without questions, Workday's Review ("Submit"): the background takes it for the last step only on
+    // the way through the steps before it.
     out.final = controls(document).some((c) => A().submits(c.text)) || (!!st && st.total > 1 && st.step === st.total);
+    if (!out.application) return out;
     const next = nextControl(fields, !!st);
     out.next = next ? next.text : '';
     const label = (f) => U.cleanLabel(JTF.matcher.questionText(f.desc), 60) || f.kind;
@@ -575,6 +581,8 @@
   };
   const SECTION_HEADING = 'h1, h2, h3, h4, h5, h6, [role="heading"], legend';
   const DIALOGS = '[role="dialog"], [role="alertdialog"], dialog[open], [aria-modal="true"]';
+  // Only those showing: a page keeps hidden ones ready (a cookie panel, the dialog an "Add" opens).
+  const shownDialogs = () => Array.from(document.querySelectorAll(DIALOGS)).filter(shown);
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   /** The section headed "Education" or "Work Experience" (`kind` edu / exp) that has its own "Add": { el } or null. */
@@ -623,7 +631,7 @@
         const add = controls(section.el)
           .filter((c) => A().stepIntent(c.text) === 'add' && !A().denied(c.text))
           .pop();
-        const dialogs = document.querySelectorAll(DIALOGS).length;
+        const dialogs = new Set(shownDialogs());
         if (!add || !press(add.el, sameStepControl).ok) break;
         let grew = false;
         for (let waited = 0; waited < 2500 && !grew; waited += 250) {
@@ -632,7 +640,9 @@
           grew = !!now && entriesIn(now, kind, scanner()) > before;
         }
         if (!grew) {
-          if (document.querySelectorAll(DIALOGS).length > dialogs) JTF.fill.closeDialogs(document, dialogs);
+          // An "Add" that opened a dialog ("Add a job" in a modal) rather than a row: closed again, the entry yours.
+          const opened = shownDialogs().filter((d) => !dialogs.has(d));
+          if (opened.length) await JTF.fill.closeDialogs(document, opened);
           break;
         }
         added++;
@@ -703,9 +713,10 @@
     addEntries,
     wait,
     stopWait,
+    // Whether the page is still watching for what blocks its submit (for the background's tests).
+    waiting: () => !!waiter,
     captcha,
     inCaptcha,
-    isRequired,
     portal: () => A().portal(location.href, hints()),
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

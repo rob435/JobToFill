@@ -46,6 +46,7 @@
       "lib/store.js",
       "lib/ai.js",
       "lib/letter.js",
+      "lib/pdfdoc.js",
       "lib/answers.js",
       "lib/jobpage.js",
       "lib/pagemap.js",

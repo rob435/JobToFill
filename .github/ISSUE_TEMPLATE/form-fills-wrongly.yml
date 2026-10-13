@@ -1,0 +1,83 @@
+name: A form fills wrongly
+description: A field left empty or given the wrong answer, a dropdown or upload that didn’t take, a question it misread.
+title: 'Fills wrongly: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting it. With a snapshot of the page, the form can be rebuilt as a test, so the fix holds for everyone who applies there.
+
+        Issues are public: leave your own details out of everything you write here.
+  - type: input
+    id: site
+    attributes:
+      label: Employer and job site
+      description: Who the application is for, and the system the form runs on if the address or the page shows it (Workday, Greenhouse, Lever, Ashby, SuccessFactors, Oracle, Avature…).
+      placeholder: Bain & Company on Avature
+    validations:
+      required: true
+  - type: input
+    id: address
+    attributes:
+      label: Page address
+      description: The address of the form itself, which can differ from the job posting’s. If it carries your email or a long token after the “?”, cut that part.
+      placeholder: https://job-boards.greenhouse.io/…
+    validations:
+      required: true
+  - type: textarea
+    id: fields
+    attributes:
+      label: What went wrong, field by field
+      description: For each field, its question as the form words it, what JobToFill did (left it empty, or what it put there) and what you expected.
+      placeholder: |
+        “Are you legally authorised to work in the UK?”: left empty; expected Yes.
+        “Degree”: picked Bachelor of Arts; expected Bachelor of Science.
+        “Available from”: typed 06/28/2027; the form wants 28/06/2027.
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        ### The bug-report snapshot
+
+        On the form, after the fill, open JobToFill from the toolbar and click **Save a snapshot for a bug report** at the bottom of the popup. It saves one HTML file, `jobtofill-snapshot-<site>-<date>.html`: a copy of the form, with a trace of what JobToFill took each question for and what it did with it.
+
+        It is made to be shared. Whatever you typed into the form is left out, and your name, email, phone, address, postcode, date of birth, links, employers, file names, saved logins, longer written answers and equal-opportunity answers are replaced by placeholders such as `[first name]` wherever they appear. City, country, school, degree and job titles stay, because the form’s own lists need them. Scripts are removed, and nothing in the file runs when it is opened.
+
+        **Open it in your browser and read it before you attach it.** Like everything in an issue, anyone can see it.
+  - type: textarea
+    id: snapshot
+    attributes:
+      label: Snapshot
+      description: Drag the snapshot file into this box (GitHub takes HTML files up to 25 MB; zip a bigger one first). If you can’t make one, say why.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: Before you send it
+      options:
+        - label: I opened the snapshot and it holds nothing I mind being public (or I attached none).
+          required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and its version
+      description: Shown on `chrome://version` (`edge://version` in Edge, `about:support` in Firefox).
+      placeholder: Chrome 141, Firefox 144
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: JobToFill version
+      description: At the bottom of the toolbar popup, and at the top of the snapshot file. From a git clone, the commit too (`git log -1 --format=%h`).
+      placeholder: v1.2.0.18
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Your profile’s answer for the fields that went wrong, if it matters (without personal details), or a screenshot of the form.

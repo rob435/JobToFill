@@ -1,6 +1,16 @@
 /* JobToFill settings — application log, settings and backup sections. */
-import { api, download, el, fillShortcut, isFirefox, openShortcutSettings, plural } from '../ui/common.js';
+import {
+  api,
+  download,
+  el,
+  fillShortcut,
+  isFirefox,
+  openShortcutSettings,
+  plural,
+  toolbarPinned,
+} from '../ui/common.js';
 import { group, sectionHead, table } from './controls.js';
+import { setupComplete, setupSteps } from './setup.js';
 
 const { store } = globalThis.JTF;
 
@@ -102,7 +112,14 @@ const TOGGLES = [
   ],
 ];
 
-export async function renderSettings() {
+/** Hidden by the person while something it lists is still to do (the optional steps aside)? */
+async function setupHidden(settings, profile) {
+  if (!settings.setupDismissed) return false;
+  const resume = !!(await store.docInfo(profile.id)).resume;
+  return !setupComplete(setupSteps({ profile, resume, pinned: await toolbarPinned() }));
+}
+
+export async function renderSettings({ state }) {
   const settings = await store.getSettings();
   const toggle = ([key, label, hint]) =>
     el(
@@ -151,6 +168,23 @@ export async function renderSettings() {
         'You can also right-click any page or field: “Fill this page”, “Insert from profile” and “Generate strong password”.',
       ),
     ),
+    // The checklist at the top of the page, once hidden, can come back from here.
+    (await setupHidden(settings, state.profile))
+      ? group(
+          'Get started',
+          null,
+          el('button', {
+            type: 'button',
+            textContent: 'Show the Get started list again',
+            onclick: async (e) => {
+              const card = e.currentTarget.closest('.group');
+              await store.saveSettings({ setupDismissed: false });
+              card.remove();
+              window.scrollTo(0, 0);
+            },
+          }),
+        )
+      : null,
   ];
 }
 

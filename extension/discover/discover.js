@@ -109,7 +109,7 @@ async function search(event) {
       state.trackr && q.hideTrackr
         ? ` Trackr lists ${state.trackr.names.length.toLocaleString('en-GB')} names; those are left out.`
         : '';
-    status(`${plural(results.length, 'firm')} match.${left}`);
+    status(results.length ? `${plural(results.length, 'firm')} match.${left}` : `No firms match.${left}`);
     if (useAi) await askAi(q, await consent);
   } catch (err) {
     status(String((err && err.message) || err), true);
@@ -172,7 +172,7 @@ function mergeWiki(results, similar, q) {
 async function askAi(q, consented) {
   state.config = await store.aiConfig();
   const problem = ai.problem(state.config);
-  if (problem) return status(`${problem} (Settings › Cover letters) The registry results are above.`, true);
+  if (problem) return status(`${problem} (Settings › Cover letters & AI) The registry results are above.`, true);
   if (!consented) return status('Firefox didn’t allow sending the search to your AI provider.', true);
   status('Asking the AI for more firms, then checking each one…');
   const exclude = state.results.slice(0, 60).map((r) => r.firm.name);
@@ -440,7 +440,13 @@ function renderResults() {
   const list = visible();
   $('#results-card').hidden = false;
   $('#results-title').textContent = plural(list.length, 'firm');
-  $('#results').replaceChildren(...list.slice(0, state.shown).map(firmCard));
+  // Nothing to list: what to change to get something.
+  const none = $('#only-open').checked
+    ? 'No firm checked so far has anything open. Check more firms (“Check careers”, “Check the top 10”), or untick “Only firms with something open”.'
+    : 'No firms match. Try “Anywhere”, any size, more kinds of firm, or fewer words in “Name contains”.';
+  $('#results').replaceChildren(
+    ...(list.length ? list.slice(0, state.shown).map(firmCard) : [el('li', { className: 'muted', textContent: none })]),
+  );
   $('#more').hidden = list.length <= state.shown;
 }
 
@@ -505,7 +511,12 @@ function ago(t) {
 }
 
 function renderWatch() {
+  const fresh = state.watch.some((w) => ((state.watchStates[w.id] || {}).fresh || []).length);
   $('#watch-empty').hidden = !!state.watch.length;
+  // Nothing watched: nothing to check or mark; nothing new: nothing to mark as seen.
+  $('#watch-check').hidden = !state.watch.length;
+  $('#watch-seen').hidden = !state.watch.length;
+  $('#watch-seen').disabled = !fresh;
   const cards = state.watch.map((w) => {
     const st = state.watchStates[w.id] || { fresh: [] };
     const freshKeys = new Set(st.fresh.map(D.itemKey));
@@ -629,9 +640,13 @@ async function start() {
   $('#tab-watch').addEventListener('click', () => showTab('watch'));
   $('#watch-check').addEventListener('click', checkWatchNow);
   $('#watch-seen').addEventListener('click', markSeen);
+  $('#watch-find').addEventListener('click', () => {
+    showTab('find');
+    $('#search').focus();
+  });
   state.config = await store.aiConfig();
   $('#use-ai').disabled = !!ai.problem(state.config);
-  if ($('#use-ai').disabled) $('#ai-wrap').title = 'Add an AI key under Settings › Cover letters first.';
+  if ($('#use-ai').disabled) $('#ai-wrap').title = 'Add an AI key under Settings › Cover letters & AI first.';
   await Promise.all([
     loadRegistry(),
     loadWatch(),

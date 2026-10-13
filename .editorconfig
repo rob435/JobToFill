@@ -7,3 +7,8 @@ indent_style = space
 indent_size = 2
 insert_final_newline = true
 trim_trailing_whitespace = true
+
+# Fixtures copy real pages and documents as they are (oleeo-vacancy.html keeps its trailing spaces): don't tidy them.
+[tests/fixtures/**]
+trim_trailing_whitespace = false
+insert_final_newline = unset

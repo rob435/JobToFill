@@ -252,6 +252,40 @@ test('a CAPTCHA on the sign-in page is left to you; signing in follows once it i
   await page.close();
 });
 
+test('a flow that ends while a CAPTCHA waits stops the page watching for it', { skip }, async () => {
+  await h.bg(() =>
+    globalThis.JTF.passwords.update((d) =>
+      d.credentials.push({
+        id: 'sf',
+        host: 'localhost',
+        portal: 'company:moodysprod',
+        username: 'ada@example.com',
+        password: 'Saved-Pass-77',
+      }),
+    ),
+  );
+  const page = await h.open('successfactors-login.html?company=MoodysProd');
+  const tabId = await h.tabId(page);
+  await flowFill(page);
+  const flow = await flowOf(tabId);
+  assert.ok(flow && flow.waiting, 'the flow waits for the CAPTCHA');
+  const watching = () =>
+    h.bg(
+      async ([id, frameId]) => {
+        const [r] = await globalThis.JTF.api.scripting.executeScript({
+          target: { tabId: id, frameIds: [frameId] },
+          func: () => globalThis.JTF.flow.waiting(),
+        });
+        return r.result;
+      },
+      [tabId, flow.waiting.frameId],
+    );
+  assert.equal(await watching(), true);
+  await h.bg((id) => globalThis.JTFBackground.endFlow(id), tabId);
+  await eventually(async () => (await watching()) === false, 5000, 'the page to stop watching');
+  await page.close();
+});
+
 test('no account yet: create it, type the emailed code, and land on the application', { skip }, async () => {
   await h.setSettings({ passwordStrategy: 'default' });
   await h.bg((pw) => globalThis.JTF.passwords.update((d) => (d.defaultPassword = pw)), DEFAULT_PASSWORD);
@@ -310,6 +344,17 @@ test('an account that already exists: back to sign in, with the default password
     username: 'ada@example.com',
     password: DEFAULT_PASSWORD,
   });
+  await page.close();
+});
+
+test('back to sign in: the “Sign In” after the sign-up form, never the header’s menu button', { skip }, async () => {
+  const page = await h.open('signup-two-signins.html');
+  const tabId = await h.tabId(page);
+  const [st] = await h.bg((id) => globalThis.JTFBackground.callFrames(id, 'accountState', [{}]), tabId);
+  assert.deepEqual([st.kind, st.exists, st.toSignin], ['signup', true, 'Sign In']);
+  const [res] = await h.bg((id) => globalThis.JTFBackground.callFrames(id, 'accountClick', ['to-signin', {}]), tabId);
+  assert.equal(res.clicked, 'Sign In');
+  assert.equal(await page.$eval('#state', (el) => el.textContent), 'footer-signin');
   await page.close();
 });
 

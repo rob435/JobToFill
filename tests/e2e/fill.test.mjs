@@ -134,6 +134,69 @@ test('Lever-style form: div labels, url fields, radio custom question, EEO', asy
   await page.close();
 });
 
+test('two fills at once take turns, and Undo takes back every fill since the last Undo', async () => {
+  const page = await h.open('lever.html');
+  const tabId = await h.tabId(page);
+  const boxes = ['name', 'email', 'phone', 'org', 'urls[LinkedIn]', 'urls[GitHub]', 'urls[Portfolio]'].map(
+    (name) => `input[name="${name}"]`,
+  );
+  const lists = ['eeo[gender]', 'eeo[race]', 'eeo[veteran]'].map((name) => `select[name="${name}"]`);
+  const empty = async () => {
+    for (const box of [...boxes, 'textarea[name=comments]']) assert.equal(await value(page, box), '', box);
+    for (const list of lists) assert.equal(await selectedText(page, list), 'Select ...', list);
+    assert.equal(await checked(page, 'input[name="cards[abc][field0]"][value=Yes]'), false);
+  };
+  // The frame asked to fill twice at once (Fill pressed twice, Quick apply's second fill while the first runs).
+  const fillTwice = (id) =>
+    globalThis.JTF.store.getActive().then(({ profile, settings }) => {
+      const fill = () =>
+        globalThis.JTFBackground.callFrames(id, 'fill', [{ profile, settings, docs: {} }], [0]).then((f) => f[0]);
+      return Promise.all([fill(), fill()]);
+    });
+  const [first, second] = await h.bg(fillTwice, tabId);
+  assert.ok(first.filled >= 12, JSON.stringify(first));
+  assert.equal(second.filled, 0, 'the second waited, then found every box filled');
+  assert.equal(await value(page, 'input[name=name]'), 'Ada Lovelace', 'typed once, not twice over');
+  assert.equal(await selectedText(page, 'select[name="eeo[gender]"]'), 'Female');
+  const undone = await h.handler('jtf:undo', page);
+  assert.ok(undone.undone >= first.filled - 1, JSON.stringify(undone));
+  await empty();
+
+  // Filled again after the person emptied a box: Undo goes back to before the first fill, not just the second.
+  await h.fill(page);
+  await typeInto(page, 'input[name=org]', '');
+  const again = await h.fill(page);
+  assert.equal(again.filled, 1, JSON.stringify(again));
+  assert.equal(await value(page, 'input[name=org]'), 'Analytical Engines Inc');
+  await h.handler('jtf:undo', page);
+  await empty();
+
+  // A fill that stops part-way with an error: what it had already filled can still be undone.
+  await h.bg(
+    (id) =>
+      globalThis.JTF.api.scripting.executeScript({
+        target: { tabId: id, frameIds: [0] },
+        func: () => {
+          const fill = globalThis.JTF.fill;
+          const highlight = fill.highlight;
+          let n = 0;
+          fill.highlight = (...args) => {
+            if (++n < 4) return highlight(...args);
+            fill.highlight = highlight;
+            throw new Error('Stopped part-way');
+          };
+        },
+      }),
+    tabId,
+  );
+  await h.fill(page);
+  assert.equal(await value(page, 'input[name=name]'), 'Ada Lovelace');
+  assert.equal(await value(page, 'textarea[name=comments]'), '', 'the fill stopped before the end');
+  assert.ok((await h.handler('jtf:undo', page)).undone >= 4);
+  await empty();
+  await page.close();
+});
+
 test('searchable dropdowns: react-select style, async search, free-text autocomplete', async () => {
   const page = await h.open('combobox.html');
   const r = await h.fill(page);
@@ -581,6 +644,37 @@ test('the box for an answer the list lacks stays empty once the list is on "Othe
   await page.close();
 });
 
+test('one fill at a time per tab: Fill pressed twice joins the running fill, and Undo then puts back everything', async () => {
+  const page = await h.open('greenhouse.html');
+  // The shortcut pressed twice in a row (or Fill pressed during an auto-advance's fill).
+  const [first, second] = await h.bg(
+    async (id) => {
+      const { fillTab } = globalThis.JTFBackground;
+      return Promise.all([fillTab(id, { toast: true, flow: true }), fillTab(id, { toast: true, flow: true })]);
+    },
+    await h.tabId(page),
+  );
+  assert.ok(first.filled > 15, JSON.stringify(first));
+  assert.deepEqual(second, first, 'one fill, its summary to both');
+  assert.equal(await value(page, '#first_name'), 'Ada');
+  const undone = await h.handler('jtf:undo', page);
+  assert.ok(undone.undone > 10, JSON.stringify(undone));
+  for (const id of ['#first_name', '#email', '#q_linkedin', '#school'])
+    assert.equal(await value(page, id), '', `${id} put back as it was`);
+  assert.equal(await selectedText(page, '#q_auth'), '--');
+  // Another kind of fill asked for meanwhile (a letter attached, Quick apply's letter and CV) waits, then runs.
+  const [all, letter] = await h.bg(
+    async (id) => {
+      const { fillTab } = globalThis.JTFBackground;
+      return Promise.all([fillTab(id), fillTab(id, { only: ['name.first'], force: true })]);
+    },
+    await h.tabId(page),
+  );
+  assert.ok(all.filled > 15);
+  assert.equal(letter.filled, 1, 'its own fill, after the first');
+  await page.close();
+});
+
 test('overwrite setting replaces existing values', async () => {
   await h.setSettings({ overwrite: true });
   const page = await h.open('tricky.html');
@@ -750,6 +844,93 @@ test('the default password is only used when that strategy is chosen', async () 
   assert.equal(await value(login, '#pw'), 'Default-Pass-123!');
   await h.setSettings({ passwordStrategy: 'generate' });
   await login.close();
+});
+
+test('passwords and cards: never into another site’s frame, nor into a box too small or faint to see', async () => {
+  await h.bg(() =>
+    globalThis.JTF.passwords.update((d) => {
+      d.credentials = [];
+      d.defaultPassword = 'Default-Pass-123!';
+      if (!d.cards.some((c) => c.id === 'k1'))
+        d.cards.push({ id: 'k1', name: 'Ada Lovelace', number: '4242424242424242', expMonth: 4, expYear: 2029 });
+      d.defaultCardId = 'k1';
+    }),
+  );
+  await h.setSettings({ passwordStrategy: 'default' });
+  try {
+    const page = await h.open('chat-widget.html');
+    const frame = (host, variant) => frameWith(page, `${host}:${h.port}/chat-widget-frame.html?${variant}`, '#card');
+    const [chat, own, faint] = [
+      await frame('127.0.0.1', 'normal'),
+      await frame('localhost', 'normal'),
+      await frame('localhost', 'faint'),
+    ];
+    const r = await h.fill(page);
+    assert.equal(await value(page, '#first'), 'Ada');
+    // A support chat framed from another site: neither your default password nor the card.
+    assert.deepEqual([await value(chat, '#password'), await value(chat, '#card')], ['', '']);
+    assert.ok(
+      r.notes.includes('Password not filled into a frame from 127.0.0.1: only a login saved for that site goes there.'),
+      JSON.stringify(r.notes),
+    );
+    assert.ok(r.notes.includes('Card not filled into a frame from 127.0.0.1.'), JSON.stringify(r.notes));
+    // A frame on the page's own site gets both, but not into a 2×2 px box or one faded to 5%.
+    assert.deepEqual(
+      [await value(own, '#password'), await value(own, '#card')],
+      ['Default-Pass-123!', '4242424242424242'],
+    );
+    assert.deepEqual([await value(faint, '#password'), await value(faint, '#card')], ['', '']);
+    const allowed = await h.bg(() => {
+      const { passwordAllowedIn } = globalThis.JTFBackground;
+      const tab = { url: 'https://www.acme.com/careers' };
+      return [
+        passwordAllowedIn({ frameId: 0, url: 'https://www.acme.com/careers', tab }),
+        passwordAllowedIn({ frameId: 2, url: 'https://apply.acme.com/login', tab }),
+        passwordAllowedIn({ frameId: 2, url: 'https://careers-acme.icims.com/jobs/1/login?in_iframe=1', tab }),
+        passwordAllowedIn({ frameId: 2, url: 'https://widget.chat.example/messenger', tab }),
+        passwordAllowedIn({ frameId: 2, url: 'https://docs.google.com/forms/d/1/viewform', tab }),
+      ];
+    });
+    assert.deepEqual(allowed, [true, true, true, false, false]);
+    await page.close();
+  } finally {
+    await h.setSettings({ passwordStrategy: 'generate' });
+  }
+});
+
+test('a frame whose fill fails says what went wrong, never “No fillable fields found”', async () => {
+  const page = await h.open('greenhouse.html');
+  const tabId = await h.tabId(page);
+  // A bug in the page's fill, as a site's markup might set off.
+  await h.bg(async (id) => {
+    await globalThis.JTFBackground.ensureInjected(id);
+    await globalThis.JTF.api.scripting.executeScript({
+      target: { tabId: id },
+      func: () => {
+        globalThis.JTF.matcher.plan = () => {
+          throw new Error('Simulated failure');
+        };
+      },
+    });
+  }, tabId);
+  const r = await h.fill(page);
+  assert.equal(r.error, 'JobToFill ran into an error on this page and stopped: “Simulated failure”.');
+  assert.equal(await h.bg((s) => globalThis.JTFBackground.summaryText(s), r), r.error, 'what the toast says');
+  await page.close();
+});
+
+test('Undo counts only what it put back: an ARIA radio no click can empty isn’t “restored”', async () => {
+  const page = await h.open('undo-choices.html');
+  const r = await h.fill(page);
+  assert.equal(r.filled, 3, JSON.stringify(r));
+  assert.equal(await page.$eval('#auth [aria-checked="true"]', (el) => el.dataset.value), 'yes');
+  assert.equal(await page.$eval('input[name="sponsorship"]:checked', (el) => el.value), 'no');
+  const undo = await h.handler('jtf:undo', page);
+  assert.equal(await value(page, '#first'), '');
+  assert.equal(await page.$$eval('input[name="sponsorship"]:checked', (list) => list.length), 0);
+  assert.equal(await page.$eval('#auth [aria-checked="true"]', (el) => el.dataset.value), 'yes', 'still checked');
+  assert.equal(undo.undone, 2, 'the name and the sponsorship answer');
+  await page.close();
 });
 
 test('passwords are not handed to insecure origins', async () => {

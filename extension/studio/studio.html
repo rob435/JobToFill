@@ -11,8 +11,8 @@
   <body>
     <header class="topbar">
       <img src="../icons/icon32.png" alt="" width="24" height="24" />
-      <strong>Cover letter</strong>
-      <span id="profile-name" class="muted"></span>
+      <h1>Cover letter</h1>
+      <span id="profile-name" class="muted" title="The profile the letter is written from"></span>
       <span class="grow"></span>
       <span id="cost" class="muted small" title="What the AI calls on this page cost, as reported by the provider"></span>
       <button id="open-settings" class="small" type="button">Settings</button>
@@ -76,7 +76,7 @@
             <ul id="job-tried-list"></ul>
           </details>
           <div class="row">
-            <button id="job-change" class="small" type="button">Wrong job? Paste it</button>
+            <button id="job-change" class="small" type="button" hidden>Wrong job? Paste it</button>
             <button id="job-history" class="small" type="button" hidden>Also search my browsing history</button>
           </div>
           <div id="job-manual" class="stack" hidden>
@@ -84,6 +84,7 @@
               ><span>The job’s web address, or the whole job description</span>
               <textarea id="job-manual-text" rows="5" placeholder="https://… or paste the description"></textarea>
             </label>
+            <p id="job-manual-error" class="error small" role="alert" hidden></p>
             <div class="row">
               <button id="job-manual-use" class="primary small" type="button">Use this</button>
               <button id="job-manual-cancel" class="small" type="button">Cancel</button>
@@ -92,10 +93,12 @@
         </section>
 
         <section id="progress-card" class="card" hidden>
-          <ol id="steps" class="steps"></ol>
-          <p id="error" class="error" hidden></p>
+          <h2 id="progress-title">Writing your letter</h2>
+          <ol id="steps" class="steps" aria-label="Steps"></ol>
+          <p id="error" class="error" role="alert" hidden></p>
           <div class="row">
             <button id="retry" class="small" type="button" hidden>Try again</button>
+            <button id="error-settings" class="small" type="button" hidden>Open settings</button>
             <button id="stop" class="small" type="button" hidden>Stop</button>
           </div>
         </section>
@@ -114,11 +117,7 @@
           <label class="field"><span>Sign-off</span><input id="closing" type="text" /></label>
           <ul id="checks" class="checks"></ul>
           <div class="ask">
-            <input
-              id="instructions"
-              type="text"
-              placeholder="Ask for changes, e.g. “mention my chess”, “more about data quality”, “shorter”"
-            />
+            <input id="instructions" type="text" aria-label="Changes to ask for" placeholder="Ask for changes, e.g. “shorter”" />
             <button id="rewrite" type="button">Rewrite</button>
           </div>
           <div class="row actions">
@@ -138,6 +137,7 @@
             Rewords and reorders your CV around this job’s keywords, without adding anything that isn’t already in it. Every change is
             listed so you can check it.
           </p>
+          <p id="cv-error" class="error small" role="alert" hidden></p>
           <div class="row">
             <button id="cv-make" type="button">Tailor my CV</button>
             <label class="check" id="cv-use-wrap" hidden><input id="cv-use" type="checkbox" /> Upload this CV for this application</label>
@@ -157,12 +157,12 @@
 
       <aside class="preview">
         <div class="tabs" role="tablist">
-          <button id="tab-letter" role="tab" type="button" aria-selected="true">Letter</button>
-          <button id="tab-cv" role="tab" type="button" aria-selected="false" hidden>CV</button>
+          <button id="tab-letter" role="tab" type="button" aria-selected="true" aria-controls="preview">Letter</button>
+          <button id="tab-cv" role="tab" type="button" aria-selected="false" aria-controls="preview" hidden>CV</button>
           <span class="grow"></span>
           <a id="open-pdf" class="small" href="#" target="_blank" rel="noopener" hidden>Open in a new tab</a>
         </div>
-        <div id="preview-empty" class="preview-empty muted">The PDF appears here.</div>
+        <div id="preview-empty" class="preview-empty muted">The letter appears here as a PDF once it’s written.</div>
         <iframe id="preview" title="PDF preview" hidden></iframe>
       </aside>
     </div>

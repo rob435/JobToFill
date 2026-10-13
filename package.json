@@ -3,6 +3,12 @@
   "version": "1.2.0",
   "private": true,
   "description": "Browser extension that autofills job applications and everyday forms.",
+  "homepage": "https://github.com/rob435/JobToFill#readme",
+  "bugs": "https://github.com/rob435/JobToFill/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rob435/JobToFill.git"
+  },
   "scripts": {
     "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "node --test \"tests/unit/*.test.js\"",
@@ -11,7 +17,8 @@
     "lint": "eslint . && prettier --check . && node scripts/check.mjs && npm run build --silent && web-ext lint --source-dir dist/firefox --warnings-as-errors",
     "format": "prettier --write . && eslint --fix .",
     "build": "node scripts/build.mjs",
-    "sign:firefox": "node scripts/firefox-release.mjs",
+    "release": "node scripts/release.mjs",
+    "sign:firefox": "node scripts/release.mjs",
     "chrome": "web-ext run --target chromium",
     "firefox": "web-ext run --target firefox-desktop",
     "demo": "node tests/fixtures/serve.mjs",
@@ -74,6 +81,6 @@
     "yup": "^1.7.1"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   }
 }

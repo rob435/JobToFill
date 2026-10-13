@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Apply: Graduate Analyst – Careers</title>
+  <style>
+    body { font: 15px/1.4 system-ui, sans-serif; margin: 24px auto; max-width: 640px; }
+    label, .q { display: block; margin: 10px 0 4px; }
+    [role='radio'] { display: inline-block; border: 1px solid #888; padding: 2px 10px; margin-right: 6px; cursor: pointer; }
+    [role='radio'][aria-checked='true'] { background: #def; }
+  </style>
+</head>
+<body>
+  <!--
+    What Undo can and can't take back. A typed box and a native radio group are emptied again; an ARIA radio group
+    (Radix's RadioGroup, Ashby's Yes/No) can't be: clicking its checked choice keeps it checked, and nothing else
+    empties it. "Restored N fields" counts only the first two.
+  -->
+  <h1>Graduate Analyst</h1>
+  <form id="application" onsubmit="return false">
+    <label for="first">First Name</label><input id="first" name="first">
+    <span class="q" id="auth-q">Are you legally authorized to work in the United States?</span>
+    <div role="radiogroup" aria-labelledby="auth-q" id="auth">
+      <div role="radio" aria-checked="false" tabindex="0" data-value="yes">Yes</div>
+      <div role="radio" aria-checked="false" tabindex="-1" data-value="no">No</div>
+    </div>
+    <fieldset>
+      <legend>Will you now or in the future require sponsorship for employment visa status?</legend>
+      <label><input type="radio" name="sponsorship" value="yes"> Yes</label>
+      <label><input type="radio" name="sponsorship" value="no"> No</label>
+    </fieldset>
+  </form>
+  <script>
+    for (const r of document.querySelectorAll('[role=radio]'))
+      r.addEventListener('click', () => {
+        for (const o of document.querySelectorAll('[role=radio]')) o.setAttribute('aria-checked', String(o === r));
+      });
+  </script>
+</body>
+</html>

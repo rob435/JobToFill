@@ -16,6 +16,7 @@
  *   trackrCompanies({ fetch, now })        → { names: [normalised], domains: [], at }  everyone Trackr lists
  *   careers(firm, { fetch, now })          → { status, pages, boards, roles, programmes, log }
  *   check(entry, { fetch, now })           → { roles, programmes, keys, fresh: [key], status, log }  (watchlist)
+ *   afterCheck(state, res, now)            → what that check changes in the firm's stored state (store.setWatchState)
  *   suggest(chat, query, firms, { fetch }) → { found: [result], rejected: [{ name, why }] }  AI ideas, verified
  *
  * A firm is { id, name, aliases, domain, site, cities, country, employees, aum (USD bn), funds, crd, wiki,
@@ -1335,6 +1336,29 @@
     return { ...res, keys, fresh, checkedAt: now };
   }
 
+  /**
+   * What a check (`res`, from check()) changes in a watched firm's stored state: the new roles and programmes go first
+   * in `fresh`, and what is listed now goes last in `seen`, so past its limit the oldest keys no longer listed make way,
+   * never a role listed all along (which would come back as "new"). A check that couldn't reach the firm keeps what was
+   * seen, so a site being down doesn't make everything "new" later.
+   */
+  function afterCheck(state, res, now) {
+    const before = (state && state.fresh) || [];
+    const added = [...res.roles, ...res.programmes]
+      .filter((it) => res.fresh.includes(itemKey(it)) && !before.some((f) => itemKey(f) === itemKey(it)))
+      .map((it) => ({ ...it, foundAt: now }));
+    const listed = new Set(res.keys);
+    const seen = (state && state.seen) || null;
+    return {
+      seen: res.status === 'unreachable' ? seen : [...(seen || []).filter((k) => !listed.has(k)), ...listed],
+      fresh: [...added, ...before],
+      checkedAt: res.checkedAt,
+      status: res.status,
+      roles: res.roles.length,
+      programmes: res.programmes.length,
+    };
+  }
+
   /* ------------------------------------------------------------------ AI */
 
   /**
@@ -1450,7 +1474,6 @@
     NICHES,
     SIZES,
     PLACES,
-    TRACKR_API,
     roleKind,
     normName,
     coreName,
@@ -1469,23 +1492,18 @@
     trackrCompanies,
     wikiSimilar,
     wikiFind,
-    wikidataSite,
-    secFind,
     links,
     careerLinks,
     detectBoards,
     boardRequest,
     parseBoard,
-    phenomData,
-    guessSlugs,
-    boardIsFirm,
     programmesFromText,
     deadlineIn,
     emails,
-    pageIsFirm,
     careers,
     itemKey,
     check,
+    afterCheck,
     suggest,
     verify,
   };

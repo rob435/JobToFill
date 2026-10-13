@@ -5,7 +5,7 @@
  *   profiles      { [id]: profile }
  *   profileOrder  [id, ...]
  *   settings      see DEFAULT_SETTINGS
- *   doc:<id>:<which>  { name, type, size, dataUrl, updatedAt }   (resume / coverLetter files)
+ *   doc:<id>:<which>  { name, type, size, dataUrl, updatedAt }   (resume / coverLetter / transcript files)
  *   history       [{ date, url, host, title, filled }]  newest first
  *   passwords     saved logins, your default password and payment cards, plain JSON (passwords.js); in backups
  *   vault         the encrypted vault of older versions, until it is moved into passwords or discarded (passwords.js)
@@ -50,6 +50,11 @@
     searchHistory: false,
     // Questions the rules leave empty are answered by the AI (when a key is set up) as part of each fill.
     aiAnswers: true,
+    // Questions the AI never sees unless switched on here (Settings › Cover letters & AI, answers.withheld): eeo
+    // (diversity and social-mobility monitoring), consent (declarations, typed signatures, AI-use disclosures; never
+    // marketing opt-ins), legal (government officials, criminal and regulatory history, sanctions, vetting and checks),
+    // health (adjustments, medical questions), identity (ID numbers and date of birth; never passwords or cards).
+    aiSensitive: { eeo: false, consent: false, legal: false, health: false, identity: false },
     // Verification codes from email (Nylas): auto: watch pages for code boxes and fill them by themselves;
     // links: open the "verify your email" link when a page says one was sent.
     otp: { auto: true, links: true },
@@ -59,6 +64,8 @@
     // On a multi-step application: click the step's own "Next" once it is done, and fill the next one; never the
     // step that submits (background.js advanceStep). Off unless switched on.
     autoAdvance: false,
+    // The settings page's "Get started" checklist was hidden by the person (it also goes once setup is done).
+    setupDismissed: false,
   };
 
   // answerNotes: the candidate's own rules for answers ("I have never applied to any of these firms").
@@ -93,11 +100,24 @@
     };
   }
 
+  /** The kinds of question the AI may also answer: each of DEFAULT_SETTINGS.aiSensitive, true only when switched on. */
+  function aiSensitiveSettings(settings) {
+    const saved = (settings && settings.aiSensitive) || {};
+    return Object.fromEntries(Object.keys(DEFAULT_SETTINGS.aiSensitive).map((k) => [k, saved[k] === true]));
+  }
+
+  /** Saved settings over the defaults, nested ones key by key (settings saved before a key existed get its default). */
+  function withDefaults(saved) {
+    const settings = Object.assign({}, DEFAULT_SETTINGS, saved || {});
+    settings.aiSensitive = aiSensitiveSettings(settings);
+    return settings;
+  }
+
   async function loadAll() {
     const data = await area().get(['profiles', 'profileOrder', 'settings']);
     let profiles = data.profiles || {};
     let order = (data.profileOrder || Object.keys(profiles)).filter((id) => profiles[id]);
-    const settings = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
+    const settings = withDefaults(data.settings);
     let dirty = false;
     if (data.settings && !(data.settings.revision >= 2)) {
       settings.consents = true;
@@ -131,7 +151,12 @@
   }
 
   const saveSettings = exclusive(async function saveSettings(patch) {
-    const settings = Object.assign(await getSettings(), patch);
+    const settings = await getSettings();
+    const sensitive = settings.aiSensitive;
+    Object.assign(settings, patch);
+    // { aiSensitive: { legal: true } } switches that one on and leaves the others as they were.
+    if (patch && patch.aiSensitive)
+      settings.aiSensitive = aiSensitiveSettings({ aiSensitive: { ...sensitive, ...patch.aiSensitive } });
     await area().set({ settings });
     return settings;
   });
@@ -556,12 +581,17 @@
   const sessionArea = () => (JTF.api.storage && JTF.api.storage.session) || null;
   const tabJobKey = (tabId) => `tabjob:${tabId}`;
   const TAB_JOB_TTL = 6 * 3600000;
+  // A job found without its description or summary (the job site didn't answer, the page didn't say) is looked up
+  // again after a few minutes rather than for the rest of the application.
+  const TAB_JOB_RETRY = 5 * 60000;
 
   async function getTabJob(tabId) {
     const s = sessionArea();
     if (!s || tabId == null) return null;
     const got = (await s.get(tabJobKey(tabId)).catch(() => ({})))[tabJobKey(tabId)];
-    return got && Date.now() - got.at < TAB_JOB_TTL ? got : null;
+    if (!got) return null;
+    const found = !!got.job && !!(got.job.description || got.job.summary);
+    return Date.now() - got.at < (found ? TAB_JOB_TTL : TAB_JOB_RETRY) ? got : null;
   }
 
   /** { url, job: { company, title, location, url, description, summary, companyNotes } } for a tab. */
@@ -569,6 +599,12 @@
     const s = sessionArea();
     if (!s || tabId == null) return;
     await s.set({ [tabJobKey(tabId)]: { ...entry, at: Date.now() } }).catch(() => {});
+  }
+
+  /** The tab was closed: its job goes with it. */
+  async function removeTabJob(tabId) {
+    const s = sessionArea();
+    if (s && tabId != null) await s.remove(tabJobKey(tabId)).catch(() => {});
   }
 
   /* ---------------------------------------------------------------- history */
@@ -681,8 +717,15 @@
     return out;
   }
 
+  /**
+   * Change what a watched firm's checks found. `patch` is the fields to change, or a function of what is stored now
+   * that returns them: a check that took a minute merges with a "Mark as seen" pressed meanwhile instead of undoing it.
+   * Nothing is written back for a firm no longer on the watchlist (removed during the check): returns null.
+   */
   const setWatchState = exclusive(async function setWatchState(id, patch) {
-    const state = Object.assign({ seen: null, fresh: [] }, await getWatchState(id), patch);
+    if (!(await getWatchlist()).some((w) => w.id === id)) return null;
+    const current = Object.assign({ seen: null, fresh: [] }, await getWatchState(id));
+    const state = Object.assign(current, typeof patch === 'function' ? patch(current) : patch);
     if (Array.isArray(state.seen)) state.seen = state.seen.slice(-SEEN_LIMIT);
     state.fresh = (state.fresh || []).slice(0, 30);
     await area().set({ ['watch:' + id]: state });
@@ -766,7 +809,7 @@
     const order = (data.profileOrder || Object.keys(data.profiles)).filter((id) => data.profiles[id]);
     const profiles = {};
     for (const id of order) profiles[id] = JTF.fields.upgradeProfile(data.profiles[id]);
-    const set = { profiles, profileOrder: order, settings: Object.assign({}, DEFAULT_SETTINGS, data.settings || {}) };
+    const set = { profiles, profileOrder: order, settings: withDefaults(data.settings) };
     if (data.history) set.history = data.history;
     if (Array.isArray(data.answers)) set.answers = data.answers;
     if (Array.isArray(data.watchlist)) set.watchlist = data.watchlist.filter((w) => w && w.id && w.firm);
@@ -826,6 +869,7 @@
     setNylas,
     backsUp,
     otpSettings,
+    aiSensitiveSettings,
     getLetters,
     saveLetter,
     removeLetter,
@@ -837,12 +881,12 @@
     answerBank,
     getTabJob,
     setTabJob,
+    removeTabJob,
     otherJob,
     getQuickApply,
     saveQuickApply,
     getQuickStatus,
     setQuickStatus,
-    removeQuickLetters,
     clearQuickApply,
     getHistory,
     addHistory,

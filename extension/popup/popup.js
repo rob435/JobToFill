@@ -17,6 +17,8 @@ const { store, util, ai } = globalThis.JTF;
 let tab = null;
 // The tab the popup is for, once init has looked it up (a click on Fill can come before that).
 let tabFound = null;
+// A page JobToFill can't run on (the browser's own pages, add-on stores): the page's buttons stay off.
+let offPage = false;
 let suggestions = [];
 
 const send = (message) => api.runtime.sendMessage({ tabId: tab.id, ...message });
@@ -53,6 +55,15 @@ async function renderProfiles() {
     ),
   );
   select.hidden = order.length < 2;
+  select.title = `Active profile: ${(profiles[settings.activeProfileId] || {}).name || ''}`;
+  renderSetupPrompt(profiles[settings.activeProfileId]);
+}
+
+/** A profile with no name and no email fills next to nothing: say so, with the way to set it up. */
+function renderSetupPrompt(profile) {
+  const p = profile || {};
+  const named = (p.personal && (p.personal.firstName || p.personal.lastName)) || (p.contact && p.contact.email);
+  $('#setup-profile').hidden = !!named;
 }
 
 /* ----------------------------------------------------------------- fill */
@@ -71,14 +82,30 @@ const resultLine = (label, items) =>
     items.slice(0, 8).join(', ') + (items.length > 8 ? '…' : ''),
   );
 
+/** The browser's own wording for a tab that went away or a page that didn't answer, as what to do about it. */
+function explain(message) {
+  if (/no tab with id|tab was closed/i.test(message))
+    return 'The tab this was for has closed. Open the page again, then click the JobToFill button there.';
+  if (/receiving end does not exist|could not establish connection/i.test(message))
+    return 'The page didn’t answer: it may still be loading. Reload it, then try again.';
+  return message;
+}
+
 function renderResult(r) {
   if (r.error)
     return showResult(
       el('div', { className: 'result-head' }, el('span', { className: 'pill bad', textContent: 'Can’t fill' })),
-      el('p', { className: 'result-list', textContent: r.error }),
+      el('p', { className: 'result-list', textContent: explain(r.error) }),
     );
   if (!r.detected)
-    return showResult(el('div', { className: 'result-head', textContent: 'No form fields found on this page.' }));
+    return showResult(
+      el('div', { className: 'result-head', textContent: 'No form fields found on this page.' }),
+      el('p', {
+        className: 'result-list',
+        textContent:
+          'If the form is still loading, or opens after a click (“Apply”, “Start application”), open it and try again.',
+      }),
+    );
 
   const skipped = r.skipped
     ? el('span', {
@@ -189,7 +216,7 @@ function renderAi(run) {
   const body = [];
   if (run.status === 'running') {
     head.append(
-      el('strong', {
+      el('h2', {
         className: 'ai-busy',
         textContent: run.asked ? `AI: ${plural(run.asked, 'question')}` : 'AI answers',
       }),
@@ -202,11 +229,11 @@ function renderAi(run) {
       }),
     );
   } else if (run.status === 'setup' || run.status === 'off' || run.status === 'consent') {
-    head.append(el('strong', { textContent: `${plural(run.asked, 'question')} still empty` }));
+    head.append(el('h2', { textContent: `${plural(run.asked, 'question')} still empty` }));
     const why = {
       setup:
-        'Add an API key (OpenRouter or DeepSeek) and the AI answers questions like these from your CV and the job.',
-      off: 'AI answers are switched off in settings.',
+        'Connect an AI model with your own key (Claude, OpenRouter, DeepSeek or another provider) and it answers questions like these from your CV and the job.',
+      off: 'AI answers are switched off in Settings › Cover letters & AI. You can still have these answered once.',
       consent: 'JobToFill needs your permission to send your CV and the job to your AI provider.',
     }[run.status];
     body.push(
@@ -220,12 +247,20 @@ function renderAi(run) {
       ),
     );
   } else if (run.status === 'error') {
-    head.append(el('strong', { textContent: 'AI answers' }), aiButton('Try again', answerWithAi));
-    body.push(el('p', { className: 'result-list', textContent: run.error || 'Something went wrong.' }));
+    head.append(el('h2', { textContent: 'AI answers' }), aiButton('Try again', answerWithAi));
+    body.push(
+      el('p', { className: 'result-list', textContent: run.error || 'Something went wrong.' }),
+      // A rejected key, a model that's gone, credit run out: all put right in the AI settings.
+      el(
+        'div',
+        { className: 'result-actions' },
+        aiButton('Open AI settings', () => openOptions('letters')),
+      ),
+    );
   } else {
     const filled = run.filled || 0;
     head.append(
-      el('strong', {
+      el('h2', {
         textContent: filled ? `AI answered ${plural(filled, 'question')}` : 'AI answers',
       }),
       aiButton('Answer empty ones', answerWithAi),
@@ -317,6 +352,7 @@ async function fill() {
   const button = $('#fill');
   const label = button.firstElementChild;
   button.disabled = true;
+  button.classList.add('busy');
   label.textContent = 'Filling…';
   try {
     tab = tab || (await tabFound);
@@ -324,7 +360,8 @@ async function fill() {
   } catch (err) {
     renderResult({ error: String(err.message || err) });
   } finally {
-    button.disabled = false;
+    button.disabled = offPage;
+    button.classList.remove('busy');
     label.textContent = 'Fill this page';
   }
 }
@@ -354,7 +391,8 @@ async function renderQuick() {
         : status.state === 'done'
           ? `Quick apply ${status.message}. Review before submitting.`
           : status.message;
-  $('#quick-apply').disabled = !!mine && status.state === 'running';
+  // Never back on for a page JobToFill can't run on (init turned it off).
+  $('#quick-apply').disabled = offPage || (!!mine && status.state === 'running');
 }
 
 /**
@@ -524,10 +562,12 @@ async function init() {
   $('#shortcut').textContent = shortcut;
   $('#shortcut').hidden = !shortcut;
 
-  if (!tab || !/^(https?|file):/.test(tab.url || '')) {
+  offPage = !tab || !/^(https?|file):/.test(tab.url || '');
+  if (offPage) {
     for (const id of ['#fill', '#inspect', '#learn', '#pagemap', '#write-letter', '#quick-apply', '#snapshot'])
       $(id).disabled = true;
     $('#page-note').hidden = false;
+    $('#fill').setAttribute('aria-describedby', 'page-note');
   }
 
   $('#write-letter').addEventListener('click', writeLetter);
@@ -546,9 +586,11 @@ async function init() {
   $('#open-options').addEventListener('click', () => openOptions());
   $('#access-allow').addEventListener('click', allowAccess);
   $('#restore-open').addEventListener('click', () => openOptions('backup'));
+  $('#setup-profile-open').addEventListener('click', () => openOptions('personal'));
   $('#profile').addEventListener('change', async (e) => {
     await store.setActive(e.target.value);
     $('#result').hidden = true;
+    await renderProfiles();
   });
 
   // After a re-add, the background found the old backup file and is waiting for a restore.
