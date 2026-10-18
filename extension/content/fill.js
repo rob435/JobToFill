@@ -727,7 +727,10 @@
   /** Workday's search prompts look up what was typed when Enter is pressed. */
   const searchesOnEnter = (el) => el.getAttribute('data-uxi-widget-type') === 'selectinput';
 
-  /** Are `a` and `b` parts of one widget (a box and its toggle button): nothing else to fill around them? */
+  /**
+   * Are `a` and `b` parts of one widget (a box and its toggle button, iCIMS's box and the menu after it): nothing else
+   * to fill around them? The <select> a widget keeps hidden for the form is no other field.
+   */
   function sameWidget(a, b) {
     if (a === b || a.contains(b) || b.contains(a)) return true;
     let common = a.parentElement;
@@ -735,7 +738,10 @@
     if (!common) return false;
     const others = common.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]');
     return !Array.from(others).some(
-      (c) => c.getAttribute('aria-hidden') !== 'true' && ![a, b].some((x) => x.contains(c) || c.contains(x)),
+      (c) =>
+        c.getAttribute('aria-hidden') !== 'true' &&
+        dom().isVisible(c, { ignoreOpacity: true }) &&
+        ![a, b].some((x) => x.contains(c) || c.contains(x)),
     );
   }
 

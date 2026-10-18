@@ -430,6 +430,57 @@
     });
   }
 
+  /**
+   * Watch for this page going away once a fill has put a document in (iCIMS's résumé box sends the whole profile form
+   * the moment a file is chosen, to read the CV): the background is told at once, with the documents put in
+   * (`attached`, by type), so it fills the page that comes back; `gone()` is what it was told, null till then.
+   * Unhooked by fill().
+   */
+  function leaveWatch(attached) {
+    let gone = null;
+    const onLeave = () => {
+      if (gone || !attached.size) return;
+      // This page's own start, so the background tells the one that comes back from it.
+      gone = { docs: [...attached], loadedAt: performance.timeOrigin };
+      send({ type: 'jtf:reloading', ...gone });
+    };
+    window.addEventListener('beforeunload', onLeave);
+    window.addEventListener('pagehide', onLeave);
+    state.leave = () => {
+      window.removeEventListener('beforeunload', onLeave);
+      window.removeEventListener('pagehide', onLeave);
+    };
+    return { gone: () => gone };
+  }
+
+  /**
+   * The form's education and job entries past those your profile lists that hold something already (iCIMS's reading of
+   * a CV of one degree and a school made three education entries): said, as yours to check or remove.
+   */
+  function extraEntries(fields, results, profile) {
+    const out = [];
+    for (const [g, list, one, many] of [
+      ['edu.', 'education', 'Education entry', 'Education entries'],
+      ['exp.', 'experience', 'Job entry', 'Job entries'],
+    ]) {
+      const mine = (profile[list] || []).length;
+      const held = new Set();
+      results.forEach((r, i) => {
+        if (r && r.entry && r.type && r.type.startsWith(g) && (r.index || 0) >= mine && JTF.fill.hasValue(fields[i]))
+          held.add((r.index || 0) + 1);
+      });
+      if (!mine || !held.size) continue;
+      const nums = [...held].sort((a, b) => a - b);
+      const last = nums.pop();
+      out.push(
+        nums.length
+          ? `${many} ${nums.join(', ')} and ${last} aren’t in your profile: check what they hold, or remove them.`
+          : `${one} ${last} isn’t in your profile: check what it holds, or remove it.`,
+      );
+    }
+    return out;
+  }
+
   /** Fill the page; what it changed joins what Undo takes back, even when it stops part-way with an error. */
   async function fill(payload) {
     const history = [];
@@ -437,6 +488,8 @@
       return await fillPage(payload, history);
     } finally {
       remember(history);
+      if (state.leave) state.leave();
+      state.leave = null;
     }
   }
 
@@ -458,8 +511,12 @@
     }
     const { fields, results, context } = scanned;
     context.jobLocation = jobLocation(payload);
+    const hosts = { applicationHosts: payload.applicationHosts };
+    const page = JTF.flow.analyze({ fields, results }, hosts);
+    // A step of nothing the rules know, on an application's address (iCIMS's "Job Specific Questions"): its questions
+    // are the job's, for the AI.
+    if (page.byAddress) context.jobContext = true;
     // On a pure sign-up page in an account flow, the sign-up form's own terms box is part of creating the account.
-    const page = JTF.flow.analyze({ fields, results });
     const accountTerms = !!payload.accountFlow && page.kind === 'signup' && page.pure;
 
     // A username box alone needs nothing more; password and card boxes ask the background for theirs.
@@ -467,7 +524,7 @@
       password: results.some((r) => r && r.type && r.type.startsWith('account.pass')),
       card: results.some((r) => r && r.type && r.type.startsWith('cc.')),
     };
-    const notes = [];
+    const notes = extraEntries(fields, results, profile);
     let secrets = null;
     if (needs.password || needs.card) {
       secrets = await send({
@@ -510,6 +567,13 @@
     // the tailored ones in place of whatever an earlier fill or the person attached.
     const hold = payload.hold ? new Set(payload.hold) : null;
     const replace = payload.replace ? new Set(payload.replace) : null;
+    // A document asked for anew by this fill (the letter Quick apply or the studio just wrote, a tailored CV).
+    const askedAnew = (t) => !!((payload.force && only && only.has(t)) || (replace && replace.has(t)));
+    // The documents put in before the page sent itself away to read them (iCIMS's résumé box): never a second time.
+    const attachedBefore = new Set(payload.attached || []);
+    // What this fill puts in; an upload that sends the page away stops the fill (see leaveWatch).
+    const attached = new Set();
+    const leave = leaveWatch(attached);
     const docCache = {};
     // What the fill decides with besides the page: the passwords and cards it was given, and whether it ticks
     // acknowledgements (a sign-up page's own terms box, in an account flow).
@@ -550,6 +614,10 @@
         continue;
       }
       report.detected++;
+      if (attachedBefore.has(r.type)) {
+        report.skipped++;
+        continue;
+      }
       const label = JTF.fields.labelOf(r.type);
       const v = await documentValue(r.type, payload, docCache);
       if (!v) {
@@ -564,6 +632,7 @@
       if (res.status === 'filled') {
         report.filled++;
         uploaded = true;
+        attached.add(r.type);
         if (settings.highlight !== false) JTF.fill.highlight(res.target);
         if (!res.confirmed) notes.push(`Check that your ${label.toLowerCase()} finished uploading.`);
       } else {
@@ -588,6 +657,10 @@
      * CV, takes the whole set again).
      */
     const fillUpload = async (field, types, label) => {
+      if (attachedBefore.has('file.resume')) {
+        report.skipped++;
+        return 'skipped';
+      }
       const docs = {};
       for (const t of types) {
         const v = await documentValue(t, payload, docCache);
@@ -599,9 +672,8 @@
         return null;
       }
       const have = types.filter((t) => docs[t]);
-      // Asked for anew by this fill (the letter Quick apply or the studio just wrote, a tailored CV), or by Overwrite.
-      const asked = (t) => !!((payload.force && only && only.has(t)) || (replace && replace.has(t)));
-      const renew = have.filter((t) => settings.overwrite || asked(t));
+      // Asked for anew by this fill, or by Overwrite.
+      const renew = have.filter((t) => settings.overwrite || askedAnew(t));
       const el = field.el;
       const kept = (el.files && el.files.length) || 0;
       const text = uploadBox(el).textContent || '';
@@ -611,7 +683,7 @@
         if (kept) {
           put = renew.includes('file.resume') ? have : renew;
           keep = !renew.includes('file.resume');
-        } else put = renew.filter((t) => asked(t) || !shows(text, docs[t]));
+        } else put = renew.filter((t) => askedAnew(t) || !shows(text, docs[t]));
         if (!put.length) {
           report.skipped++;
           return 'skipped';
@@ -635,6 +707,7 @@
       for (const t of put) report.docs[t] = res.status === 'filled' ? 'filled' : report.docs[t] || res.status;
       if (res.status === 'filled') {
         state.attached.set(el, Object.assign({}, before, ...put.map((t) => ({ [t]: docs[t].name }))));
+        put.forEach((t) => attached.add(t));
         report.filled++;
         uploaded = true;
         if (settings.highlight !== false) JTF.fill.highlight(res.target || el);
@@ -646,6 +719,8 @@
     };
     /** Fill one field from the profile; `count` adds what it asks about to the report's lists. */
     const fillOne = async (field, r, { count = true } = {}) => {
+      // The page is on its way out (an upload sent it to be read): the one it comes back as is filled instead.
+      if (leave.gone()) return null;
       if (!r || !r.type) {
         if (count) report.unknown++;
         return null;
@@ -662,12 +737,17 @@
       const def = JTF.fields.DEFS[r.type];
       const label = labelFor(field, r);
       if (carried.length > 1) return fillUpload(field, carried, label);
+      if (field.kind === 'file' && attachedBefore.has(r.type)) {
+        report.skipped++;
+        return 'skipped';
+      }
       const question = U.normalize(JTF.matcher.questionText(field.desc));
       // "I'm not a robot" is only ticked when no CAPTCHA stands behind it.
       if (r.type === 'human' && JTF.flow.captcha(document)) return null;
       if (uploaded && !settled && field.kind !== 'file') {
         await settle();
         settled = true;
+        if (leave.gone()) return null;
       }
       const followed = r.followsField ? JTF.fill.currentValue(r.followsField) : null;
       const d = JTF.decide.field(field.desc, r, profile, context, { ctx: extra, followed });
@@ -692,6 +772,17 @@
         traceStep(field, r, null, { status: 'nothing to put' }, 0, 'fill');
         return null;
       }
+      // An upload that lists this very file as taken (iCIMS shows the CV it read, its file box empty again): not again,
+      // unless asked for anew.
+      if (
+        field.kind === 'file' &&
+        v.document &&
+        !askedAnew(r.type) &&
+        shows(uploadBox(field.el).textContent || '', v.document)
+      ) {
+        report.skipped++;
+        return 'skipped';
+      }
       const started = Date.now();
       const res = await JTF.fill.apply(field, v, {
         overwrite: settings.overwrite || !!payload.force || !!(replace && replace.has(r.type)),
@@ -705,8 +796,10 @@
       if (res.status === 'filled') {
         report.filled++;
         if (def && def.consent) report.ticked++;
-        if (field.kind === 'file') uploaded = true;
-        else filledKeys.add(keyOf(r, question));
+        if (field.kind === 'file') {
+          uploaded = true;
+          attached.add(r.type);
+        } else filledKeys.add(keyOf(r, question));
         if (res.check) written.push({ field, v, check: res.check, label, key: keyOf(r, question) });
         if (settings.highlight !== false) JTF.fill.highlight(res.target || field.el);
       } else if (res.status === 'skipped') {
@@ -744,6 +837,8 @@
         .sort(([a], [b]) => (b.kind === 'file') - (a.kind === 'file'));
     }
     for (const [field, r] of todo) if (!done.has(field.el)) await fillOne(field, r);
+    // An upload sent the page away to be read (iCIMS's résumé box): the background fills the page it comes back as.
+    if (leave.gone()) return Object.assign(report, { reloading: leave.gone(), undoable: false });
 
     // A late CV parse can still clear or re-render fields after they were filled (by this fill or an earlier
     // one, as Quick apply's details go in before its CV): fill those again.
@@ -822,7 +917,7 @@
     if (!only && context.jobContext)
       report.pending = await pendingQuestions(profile, context, { peek: !!payload.ai, settings });
     // What kind of page this is now (sign-in, sign-up, emailed code…), for signing in and creating accounts.
-    report.account = JTF.flow.analyze(scan(profile), { ignore: payload.accountIgnore });
+    report.account = JTF.flow.analyze(scan(profile), { ignore: payload.accountIgnore, ...hosts });
     return report;
   }
 
@@ -1363,9 +1458,12 @@
     accountStop: () => JTF.flow.stopWait(),
     // A multi-step application's step (Settings › "Move through multi-step applications for me"): what stands
     // between it and its next, and its own "Next" clicked when nothing does.
-    stepState: (payload) => JTF.flow.stepState(accountScan(payload)),
+    stepState: (payload) =>
+      JTF.flow.stepState(accountScan(payload), { applicationHosts: payload && payload.applicationHosts }),
     advance: serial((label, payload) => {
-      const res = JTF.flow.advance(accountScan(payload), label);
+      const res = JTF.flow.advance(accountScan(payload), label, {
+        applicationHosts: payload && payload.applicationHosts,
+      });
       return { clicked: res.clicked || '', refused: res.refused || '' };
     }),
     pending: serial(async (payload) => {

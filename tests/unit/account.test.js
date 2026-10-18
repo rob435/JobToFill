@@ -79,8 +79,18 @@ test('on an application: a step’s own "Next" and a section’s "Add", never an
   // A bare "Continue": only on a page that shows its steps (content/account.js decides).
   assert.equal(step('Continue'), 'continue');
   assert.equal(step('Proceed'), 'continue');
-  for (const t of ['Add', 'Add Another', '+ Add another education', 'Add work experience'])
+  for (const t of [
+    'Add',
+    'Add Another',
+    '+ Add another education',
+    'Add work experience',
+    'Add More (Education)',
+    'Add More (Professional Experience)',
+  ])
     assert.equal(step(t), 'add', t);
+  // iCIMS's "Finish Later" keeps the application to carry on with: no step's way on, and not the one that sends it.
+  assert.equal(step('Finish Later'), null);
+  assert.equal(accounts.submits('Finish Later'), false);
   for (const t of [
     'Submit',
     'Submit Application',

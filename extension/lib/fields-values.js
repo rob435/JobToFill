@@ -143,8 +143,12 @@
       });
     }
     if (part === 'day') {
-      if (!d.day) return null;
-      return val(String(d.day), { kind: 'day', part, date: d, candidates: [U.pad2(d.day), String(d.day)] });
+      // A date kept to the month ("2028-05") in a form that wants its day too (iCIMS's "Date Received / Date Expected
+      // to Receive (Month / Day / Year)"): the 1st, as iCIMS's own reading of a CV puts it.
+      const day = d.day || (d.month ? 1 : 0);
+      if (!day) return null;
+      const date = Object.assign({}, d, { day });
+      return val(String(day), { kind: 'day', part, date, candidates: [U.pad2(day), String(day)] });
     }
     const month = d.month ? U.monthName(d.month) : '';
     const words = month ? [`${month} ${d.year}`, `${month.slice(0, 3)} ${d.year}`] : [];

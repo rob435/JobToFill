@@ -58,8 +58,14 @@ const TYPES = {
 
 export function serve(port = 0) {
   const server = http.createServer(async (req, res) => {
+    // A form sent here (iCIMS's résumé box sends its whole page) comes back as the page it asked for.
+    req.resume();
     const url = new URL(req.url, 'http://x');
-    const file = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
+    let file = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
+    // iCIMS's own addresses (…/jobs/93127/summer-2027-software-engineer-intern/candidate): its portal's page, or with
+    // ?in_iframe=1 the step that page frames.
+    const icims = file.match(/^jobs\/\d+\/[\w-]+\/(login|candidate|questions)$/);
+    if (icims) file = url.searchParams.get('in_iframe') === '1' ? `icims-${icims[1]}.html` : 'icims.html';
     if (file.includes('..')) {
       res.writeHead(400).end();
       return;

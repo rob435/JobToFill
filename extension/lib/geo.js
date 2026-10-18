@@ -491,6 +491,29 @@
     ['BR', '', 'São Paulo'],
   ];
   const UK_NATIONS = ['England', 'Scotland', 'Wales', 'Northern Ireland'];
+  // The UK's postcode areas outside England, and the districts of those that cross a border (Chester's CH5–CH8 and
+  // Shrewsbury's SY15–SY25 are in Wales, Berwick's TD15 in England).
+  const SCOTTISH_AREAS = new Set('AB DD DG EH FK G HS IV KA KW KY ML PA PH TD ZE'.split(' '));
+  const WELSH_AREAS = new Set('CF LD LL NP SA'.split(' '));
+  const CROWN_AREAS = new Set('GY JE IM'.split(' '));
+
+  /** The UK nation a postcode is in ("PA34 4LN" is in Scotland), or '' when it isn't a UK postcode. */
+  function ukNation(postcode) {
+    const m = String(postcode || '')
+      .toUpperCase()
+      .replace(/\s+/g, '')
+      .match(/^([A-Z]{1,2})(\d{1,2})[A-Z]?\d[A-Z]{2}$/);
+    if (!m) return '';
+    const [, area, digits] = m;
+    const district = +digits;
+    if (CROWN_AREAS.has(area)) return '';
+    if (area === 'BT') return 'Northern Ireland';
+    if (area === 'TD' && district === 15) return 'England';
+    if (SCOTTISH_AREAS.has(area)) return 'Scotland';
+    if (WELSH_AREAS.has(area) || (area === 'CH' && district >= 5 && district <= 8)) return 'Wales';
+    if (area === 'SY' && district >= 15 && district <= 25) return 'Wales';
+    return 'England';
+  }
 
   let placeIndex = null;
   /** [name, [place…]] for every city, metro area and region a sentence can name, longest name first. */
@@ -564,6 +587,8 @@
     const nation = UK_NATIONS.find((n) => norm(n) === norm(a.state));
     let region = metro ? metro.region : '';
     if (country === 'GB' && nation) region = nation;
+    // A town the map of metro areas doesn't know ("Oban"): its postcode says which nation.
+    else if (country === 'GB' && !region) region = ukNation(a.postalCode);
     else if (state && REGIONS[country] && REGIONS[country].includes(state)) region = state[0];
     return { country, region, metro: metro ? metro.metro : '' };
   }
@@ -607,6 +632,7 @@
     placesNamed,
     countriesIn,
     whereIs,
+    ukNation,
     within,
     workRights,
     REGIONS,

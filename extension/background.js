@@ -205,6 +205,21 @@ async function fillPayload(tabId) {
   return { payload: { profile: filled, settings, docs, jobLocation }, letter: mine };
 }
 
+/**
+ * The hosts of a tab's frames whose address is a job application's (iCIMS's …/questions?in_iframe=1, Workday's
+ * …/apply), and `also` (the step before's, when auto-advance moved on from it): a step there holding nothing but the
+ * employer's own questions is still part of the application, and those questions are the AI's.
+ */
+async function applicationHosts(tabId, also) {
+  const frames = await execute(tabId, undefined, { func: () => location.href }).catch(() => []);
+  const hosts = new Set(also || []);
+  for (const f of frames) {
+    const url = typeof f.result === 'string' ? f.result : '';
+    if (url && jobpage.ats(url).stage === 'application') hosts.add(new URL(url).hostname);
+  }
+  return [...hosts];
+}
+
 // tabId -> the fill running in that tab: { plain, done }. Two at once would each take the other's changes for the
 // page's own, and Undo would put back nothing. The same plain fill asked for again (the shortcut pressed twice, Fill
 // during an auto-advance) joins the running one; any other (Quick apply's letter and CV, a letter attached) waits for
@@ -255,6 +270,7 @@ async function fillOnce(tabId, opts) {
   // With AI answers on, the page opens custom dropdowns it left empty to read their options for the model.
   const aiReady = opts.only || opts.ai === false ? { ok: false, reason: 'off' } : await aiAvailable(settings);
   payload.ai = aiReady.ok;
+  payload.applicationHosts = await applicationHosts(tabId, opts.applicationHosts);
   payload.accountFlow = !!opts.flow && !opts.only && settings.accountFlow !== false;
   if (opts.auto) payload.settleFirst = true;
   if (payload.accountFlow) {
@@ -276,19 +292,36 @@ async function fillFrames(tabId, opts, payload, letter, aiReady) {
   let frames;
   const names = [profile.personal.firstName, profile.personal.lastName, profile.personal.preferredName];
   beginFill(tabId, profile.contact.email, letter && letter.id, names);
+  pageReloads.delete(tabId);
   try {
-    frames = await callFrames(tabId, 'fill', [payload]);
+    frames = await orReload(tabId, callFrames(tabId, 'fill', [payload]));
   } catch (err) {
-    return { error: await explainError(err, tabId) };
+    // A frame that went away mid-fill (Firefox then turns down the whole call) because an upload sent it to be read.
+    if (!pageReloads.has(tabId)) return { error: await explainError(err, tabId) };
+    frames = [];
   } finally {
     endFill(tabId);
   }
+  // An upload sent its page away to be read (iCIMS's résumé box): the page it comes back as is filled instead. Each
+  // time takes a document not put in before, so it ends.
+  const gone = frames.find((f) => f.reloading);
+  const reload = pageReloads.get(tabId) || (gone && { frameId: gone.frameId, ...gone.reloading });
+  if (reload && reload.docs.some((t) => !(payload.attached || []).includes(t)))
+    return refill(tabId, opts, payload, letter, aiReady, reload);
 
   // A sign-in step that asks for an emailed code: look out for it even when automatic watching is off.
   const tab = await api.tabs.get(tabId).catch(() => null);
   if (!opts.only && tab && !tab.incognito && (await otpReady())) watchOtp(tabId).catch(() => {});
 
   const summary = mergeReports(frames);
+  // What went in before the page drew itself again from your CV (see refill).
+  if (opts.reloaded) {
+    for (const t of opts.reloaded.docs) summary.docs[t] = 'filled';
+    summary.filled += opts.reloaded.docs.length;
+    summary.notes.unshift(
+      'The site read your CV and drew the form again from it: JobToFill filled the form again from your profile.',
+    );
+  }
   summary.letter = letter ? { id: letter.id, company: letter.posting && letter.posting.company } : null;
   summary.quickHeld = !!payload.quickHeld;
   if (payload.quickHeld && summary.held)
@@ -335,7 +368,11 @@ async function fillFrames(tabId, opts, payload, letter, aiReady) {
     else await aiSettled(tabId);
   };
   const advance = stepping
-    ? await advanceStep(tabId, payload, opts, { held: summary.held > 0, settle }).catch(() => null)
+    ? await advanceStep(tabId, payload, opts, {
+        held: summary.held > 0,
+        settle,
+        hosts: stepHosts(payload, frames),
+      }).catch(() => null)
     : null;
   const stepLines = (advance && advance.lines) || [];
   // Said before any click: the fill's summary (a chained step's empty Review needs none), what the account flow and the
@@ -354,6 +391,77 @@ async function fillFrames(tabId, opts, payload, letter, aiReady) {
   // The next step is filled in the background: the fill that got here is done.
   if (advance && advance.act) advance.act().catch(() => advancing.delete(tabId));
   return summary;
+}
+
+/** The hosts this step of an application is on: those its address names, and the frames the fill took for one. */
+const stepHosts = (payload, frames) => [
+  ...new Set([...(payload.applicationHosts || []), ...frames.filter((f) => f.jobContext && f.host).map((f) => f.host)]),
+];
+
+// tabId -> { frameId, docs, loadedAt }: the frame a fill's upload sent away to be read (iCIMS's résumé box), what went
+// in, and when the page that went had started.
+const pageReloads = new Map();
+// tabId -> what the fill running there does on hearing of one (see orReload).
+const reloadWatch = new Map();
+// How long a page's other frames are waited for once one of them has gone away to be read.
+const RELOAD_GRACE = 2000;
+
+/**
+ * A fill's call into a tab's frames: what they answer or, a moment after an upload sent one frame's page away to be
+ * read, nothing. Firefox never answers for a page that went away during the call; the page that comes back is filled
+ * instead (see refill).
+ */
+function orReload(tabId, call) {
+  return new Promise((resolve, reject) => {
+    const watch = () => setTimeout(() => resolve([]), RELOAD_GRACE);
+    reloadWatch.set(tabId, watch);
+    call.then(resolve, reject).finally(() => {
+      if (reloadWatch.get(tabId) === watch) reloadWatch.delete(tabId);
+    });
+  });
+}
+
+/**
+ * A fill whose upload sent its page away (iCIMS's résumé box sends the whole profile form, to read the CV): once the
+ * page is back, it is filled again. The documents that went in are not put in a second time, and what the site read
+ * from the CV gives way to your profile's answers whatever Overwrite says: the site wrote it, not you.
+ */
+async function refill(tabId, opts, payload, letter, aiReady, reload) {
+  pageReloads.delete(tabId);
+  if (!(await frameBack(tabId, reload)))
+    return { error: 'The page reloaded once your CV went in, and hasn’t come back: press Fill when it has.' };
+  const docs = [...new Set([...(payload.attached || []), ...reload.docs])];
+  const again = {
+    ...payload,
+    attached: docs,
+    settleFirst: true,
+    settings: { ...payload.settings, overwrite: true },
+    applicationHosts: await applicationHosts(tabId, payload.applicationHosts),
+  };
+  return fillFrames(tabId, { ...opts, reloaded: { docs } }, again, letter, aiReady);
+}
+
+/**
+ * Wait (half a minute at most) for the frame a page went away from (`frameId`) to hold its next one, loaded: a page
+ * that started after `loadedAt`, the one that went (whatever else injected itself there since, the code watch).
+ */
+async function frameBack(tabId, { frameId, loadedAt }) {
+  const look = () =>
+    api.scripting
+      .executeScript({
+        target: { tabId, frameIds: [frameId] },
+        func: (was) => document.readyState === 'complete' && performance.timeOrigin > was,
+        args: [Number(loadedAt) || 0],
+      })
+      .catch(() => []);
+  for (const until = Date.now() + 30e3; Date.now() < until;) {
+    await sleep(300);
+    if (!(await api.tabs.get(tabId).catch(() => null))) return false;
+    // Firefox holds a look into a page still loading until it has loaded: never past the wait.
+    const [r] = await Promise.race([look(), sleep(Math.max(0, until - Date.now())).then(() => [])]);
+    if (r && r.result === true) return true;
+  }
+  return false;
 }
 
 /** Wait (a few minutes at most) for the AI answers a fill started on this tab to be in. */
@@ -377,10 +485,12 @@ const advancing = new Map(); // tabId -> { steps }: the steps clicked through si
  * fill left uploads on this step for the letter and CV Quick apply is still writing; `settle()`: waits for the AI's
  * answers, before the step is looked at again and left.
  */
-async function advanceStep(tabId, payload, opts, { held, settle } = {}) {
+async function advanceStep(tabId, payload, opts, { held, settle, hosts = [] } = {}) {
   const steps = opts.advance && advancing.has(tabId) ? advancing.get(tabId).steps : 0;
   const look = async () => {
-    const states = await callFrames(tabId, 'stepState', [{ profile: payload.profile }]).catch(() => []);
+    const states = await callFrames(tabId, 'stepState', [{ profile: payload.profile, applicationHosts: hosts }]).catch(
+      () => [],
+    );
     // A step without questions (Workday's Review) only counts on the way through the steps before it.
     const step = (s) => s.application || (steps > 0 && !s.fields);
     return states.find((s) => s.application && s.next) || states.find((s) => step(s) && (s.final || s.progress));
@@ -422,21 +532,27 @@ async function advanceStep(tabId, payload, opts, { held, settle } = {}) {
   return {
     lines: [`Clicking “${page.next}” for the next step${where}…`],
     act: async () => {
-      const [res] = await callFrames(tabId, 'advance', [page.next, { profile: payload.profile }], [page.frameId]);
+      const [res] = await callFrames(
+        tabId,
+        'advance',
+        [page.next, { profile: payload.profile, applicationHosts: hosts }],
+        [page.frameId],
+      );
       const stop = (line) => {
         advancing.delete(tabId);
         return payload.settings.toast !== false ? showToast(tabId, line, { duration: 15000 }) : null;
       };
       if (!res || !res.clicked) return stop(`JobToFill couldn’t click “${page.next}”: carry on yourself.`);
-      if (!(await nextStepShown(tabId, page, payload.profile)))
+      if (!(await nextStepShown(tabId, page, payload.profile, hosts)))
         return stop(`The page didn’t move on after “${page.next}”: check it for a message.`);
-      await fillTab(tabId, { toast: true, advance: true });
+      // The next step is part of the same application, whatever its address says.
+      await fillTab(tabId, { toast: true, advance: true, applicationHosts: hosts });
     },
   };
 }
 
 /** Wait for the step after `before` to show (a new page, or the same one drawn anew), but not for a refusal. */
-async function nextStepShown(tabId, before, profile) {
+async function nextStepShown(tabId, before, profile, hosts) {
   const until = Date.now() + ADVANCE_WAIT;
   let last = null;
   await sleep(800);
@@ -444,7 +560,7 @@ async function nextStepShown(tabId, before, profile) {
     const tab = await api.tabs.get(tabId).catch(() => null);
     if (!tab) return false;
     if (tab.status !== 'loading') {
-      const states = await callFrames(tabId, 'stepState', [{ profile }]).catch(() => []);
+      const states = await callFrames(tabId, 'stepState', [{ profile, applicationHosts: hosts }]).catch(() => []);
       const now = states.find((s) => s.frameId === before.frameId) || states[0];
       // Another step: one with questions at once, one without (Workday's Review) once it stays the same for a look,
       // so a step still being drawn isn't taken for it.
@@ -520,8 +636,13 @@ function tickedText(n) {
 
 function summaryText(s) {
   if (s.error) return s.error;
-  if (!s.detected) return 'No fillable fields found on this page.';
-  const lines = [`Filled ${s.filled} field${s.filled === 1 ? '' : 's'}.`];
+  if (!s.detected && !s.unknown) return 'No fillable fields found on this page.';
+  // Only questions your profile can't answer (iCIMS's "Job Specific Questions"): the AI's line says the rest.
+  const lines = [
+    s.filled || !s.pending
+      ? `Filled ${s.filled} field${s.filled === 1 ? '' : 's'}.`
+      : 'None of these questions is in your profile.',
+  ];
   if (s.missing.length)
     lines.push(`Add to your profile: ${s.missing.slice(0, 5).join(', ')}${s.missing.length > 5 ? '…' : ''}`);
   if (s.check && s.check.length) lines.push(checkText(s.check));
@@ -2932,11 +3053,20 @@ const HANDLERS = {
   'jtf:otp-claim': otpClaim,
   'jtf:otp-filled': otpFilled,
   'jtf:flow-ready': flowReady,
+  // An upload sent the page away to be read, during a fill (see refill).
+  'jtf:reloading': (msg, sender) => {
+    if (!fillInProgress(sender)) return { ok: false };
+    const docs = [].concat(msg.docs || []).map(String);
+    pageReloads.set(sender.tab.id, { frameId: sender.frameId || 0, docs, loadedAt: Number(msg.loadedAt) || 0 });
+    const watch = reloadWatch.get(sender.tab.id);
+    if (watch) watch();
+    return { ok: true };
+  },
 };
 
 // prettier-ignore
 const CONTENT_ONLY = new Set([
-  'jtf:secrets', 'jtf:document', 'jtf:otp', 'jtf:otp-claim', 'jtf:otp-filled', 'jtf:flow-ready',
+  'jtf:secrets', 'jtf:document', 'jtf:otp', 'jtf:otp-claim', 'jtf:otp-filled', 'jtf:flow-ready', 'jtf:reloading',
 ]);
 const isExtensionPage = (sender) => !!sender.url && sender.url.startsWith(api.runtime.getURL(''));
 const isContentScript = (sender) => !!sender.tab && !isExtensionPage(sender);

@@ -173,6 +173,15 @@ test('name attributes and ATS automation ids', () => {
     typeOf(desc({ label: 'Phone', name: 'phone_country_code' }, { kind: 'select', options: opts('+1', '+44') })),
     'phone.countryCode',
   );
+  // iCIMS's "Type" in "Phones (1)" and in "Addresses (1)", told apart by their ids.
+  const type = (id, ...options) =>
+    typeOf(desc({ label: 'Type', id, name: id }, { kind: 'select', options: opts(...options) }));
+  assert.equal(type('-1_PersonProfileFields.PhoneType', 'Home', 'Mobile', 'Work'), 'phone.type');
+  assert.equal(type('-1_PersonProfileFields.AddressType', 'Mailing', 'Work', 'Home', 'Other'), 'address.type');
+  assert.equal(
+    typeOf(desc({ label: 'Address Type' }, { kind: 'select', options: opts('Home', 'Work') })),
+    'address.type',
+  );
 });
 
 test('autocomplete attributes win, but not the new-password trick', () => {
@@ -368,7 +377,22 @@ test('student and graduate-scheme questions', () => {
   const years = ['1st year', '2nd year', 'Final year'];
   assert.equal(ask('When does your course finish?'), 'edu.end');
   assert.equal(ask('When are you graduating?'), 'edu.end');
-  assert.equal(ask('Did you graduate?', 'radio', ['Yes', 'No']), null);
+  // Whether that degree is finished (iCIMS's "Did You Graduate?" [In Progress | Not Received | Received]), never a date.
+  assert.equal(ask('Did you graduate?', 'radio', ['Yes', 'No']), 'edu.completed');
+  assert.equal(ask('Did You Graduate?', 'select', ['In Progress', 'Not Received', 'Received']), 'edu.completed');
+  // iCIMS's "Highest Degree (Completed or Not Completed)" is each entry's degree, not the highest one you hold.
+  const degrees = ['High School Diploma or Equivalent', 'Some College', "Bachelor's Degree", "Master's Degree"];
+  assert.equal(ask('Highest Degree (Completed or Not Completed)', 'combo', degrees), 'edu.degree');
+  assert.equal(ask('Highest Degree Obtained', 'select', degrees), 'edu.level');
+  // iCIMS's date the degree is (or will be) received, in three parts; its "Country/Region/Location" is a country.
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  assert.equal(ask('Date Received / Date Expected to Receive (Month / Day / Year)', 'select', months), 'edu.end:month');
+  assert.equal(typeOf(desc({ aria: 'Date Received / Date Expected to Receive Year' })), 'edu.end:year');
+  assert.equal(typeOf(desc({ label: 'Country/Region/Location' }, { kind: 'combo' })), 'address.country');
+  assert.equal(typeOf(desc({ label: 'Location (City, Country)' })), 'location');
+  // "— Make a Selection —" is iCIMS's empty choice, never an answer.
+  assert.equal(matcher.isPlaceholder(util.normalize('— Make a Selection —')), true);
+  assert.equal(matcher.isPlaceholder(util.normalize('Please make a selection')), true);
   // A school-leaving year is a date too, answered from a school entry (eduLevelOf), never the degree's.
   assert.equal(ask('High school graduation year'), 'edu.end');
   assert.equal(ask('A level completion year'), 'edu.end');

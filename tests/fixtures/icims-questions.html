@@ -1,0 +1,77 @@
+<!doctype html>
+<!--
+  iCIMS's "Job Specific Questions" step (…/jobs/93127/<job>/questions?in_iframe=1), framed by icims.html: the
+  application's progress (each step's marker carries its own "Step n of 4" for screen readers, the current one
+  marked by its class), six required plain <select>s that start on "— Make a Selection —", then "Finish Later"
+  and the "Submit" that sends the application. Posts its height to the portal page as iCIMS does.
+-->
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8" />
+    <title>Job Specific Questions - Summer 2027 Software Engineer Intern</title>
+    <style>
+      body { margin: 0; font: 16px/1.5 "Source Sans Pro", Arial, sans-serif; color: #222; }
+      .iCIMS_MainWrapper { max-width: 1040px; margin: 0 auto; padding: 0 24px 40px; }
+      .iCIMS_Progress ol { display: flex; list-style: none; margin: 0; padding: 14px 0 0; justify-content: space-between; border-bottom: 1px solid #ddd; }
+      .iCIMS_Progress li { flex: 1; text-align: center; padding-bottom: 12px; }
+      .iCIMS_StepIcon { display: inline-block; width: 22px; height: 22px; line-height: 22px; border-radius: 50%; background: #2e7d32; color: #fff; font-size: 13px; }
+      .iCIMS_Step_Current .iCIMS_StepIcon { background: #1a6d9c; }
+      .iCIMS_Step_Future .iCIMS_StepIcon { background: #bbb; }
+      .iCIMS_StepTitle { display: block; font-weight: 600; }
+      .iCIMS_Step:not(.iCIMS_Step_Current) .iCIMS_StepTitle { visibility: hidden; }
+      .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }
+      h2 { font-size: 24px; margin: 28px 0 8px; }
+      .iCIMS_TableRow { margin: 18px 0; }
+      label { display: block; margin-bottom: 4px; }
+      .iCIMS_Required { color: #c00; }
+      select { width: 340px; height: 52px; font-size: 18px; padding: 0 10px; }
+      .iCIMS_Buttons { display: flex; gap: 12px; justify-content: flex-end; max-width: 1030px; margin-top: 20px; }
+      .iCIMS_Buttons input { width: 238px; height: 46px; font-size: 18px; }
+      .iCIMS_PrimaryButton { background: #1a6d9c; color: #fff; border: 0; }
+    </style>
+  </head>
+  <body>
+    <div class="iCIMS_MainWrapper iCIMS_ApplyProcess">
+      <nav class="iCIMS_Progress" aria-label="Application progress">
+        <ol>
+          <li class="iCIMS_Step iCIMS_Step_Complete"><span class="iCIMS_StepIcon" aria-hidden="true">✔</span><span class="sr-only">Step 1 of 4: Login, completed</span><span class="iCIMS_StepTitle">Login</span></li>
+          <li class="iCIMS_Step iCIMS_Step_Complete"><span class="iCIMS_StepIcon" aria-hidden="true">✔</span><span class="sr-only">Step 2 of 4: Candidate Profile, completed</span><span class="iCIMS_StepTitle">Candidate Profile</span></li>
+          <li class="iCIMS_Step iCIMS_Step_Current"><span class="iCIMS_StepIcon" aria-hidden="true">3</span><span class="sr-only">Step 3 of 4: Job Specific Questions, current step</span><span class="iCIMS_StepTitle">Job Specific Questions</span></li>
+          <li class="iCIMS_Step iCIMS_Step_Future"><span class="iCIMS_StepIcon" aria-hidden="true">4</span><span class="sr-only">Step 4 of 4: Review</span><span class="iCIMS_StepTitle">Review</span></li>
+        </ol>
+      </nav>
+      <form id="questionsForm" name="questionsForm" method="post" action="questions?in_iframe=1&amp;submitted=1">
+        <input type="hidden" name="hashed" value="-100200300" />
+        <h2 class="iCIMS_SubHeader iCIMS_SubHeader_Questions">Job Specific Questions</h2>
+        <p class="iCIMS_InfoMsg"><span class="iCIMS_Required">*</span> Required field.</p>
+        <div id="questions"></div>
+        <div class="iCIMS_Buttons">
+          <input type="submit" name="finishLater" value="Finish Later" class="iCIMS_SecondaryButton" />
+          <input type="submit" id="quesp_form_submit_i" value="Submit" class="iCIMS_PrimaryButton" />
+        </div>
+      </form>
+    </div>
+    <script>
+      (function () {
+        var LEVELS = ['None', 'Coursework or personal projects', 'Internship or research', 'Professional (1+ years)'];
+        var TOPICS = ['FPGA', 'Tcl', 'VHDL', 'C/C++', 'Python', 'Verilog'];
+        var html = '';
+        TOPICS.forEach(function (topic, i) {
+          var id = 'rcf' + (4210 + i);
+          html +=
+            '<div class="iCIMS_TableRow"><label for="' + id + '" id="label_' + id + '">Please select your level of experience or exposure to the following: ' +
+            topic + '<span class="iCIMS_Required">*</span></label><select id="' + id + '" name="' + id +
+            '" class="iCIMS_Forms_Global" aria-required="true"><option value="">— Make a Selection —</option>' +
+            LEVELS.map(function (l, j) { return '<option value="' + (31000 + j) + '">' + l + '</option>'; }).join('') +
+            '</select></div>';
+        });
+        document.getElementById('questions').innerHTML = html;
+        var post = function () {
+          parent.postMessage(JSON.stringify({ height: document.body.offsetHeight + 16 }), '*');
+        };
+        window.addEventListener('load', post);
+        post();
+      })();
+    </script>
+  </body>
+</html>

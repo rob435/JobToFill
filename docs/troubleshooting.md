@@ -13,6 +13,7 @@ What to do when something doesn’t work, and what JobToFill can’t do yet.
 
 - Toolbar → _Show detected fields_ labels every field: green means ready, amber means your profile lacks it, grey means JobToFill doesn’t know the question. Toolbar → _Page map_ lists every field with what it was taken for: “✗ no value” means your profile has no answer, “(none: for AI)” that no rule knows the question.
 - A field that already had a value is left alone unless _Overwrite fields that already have a value_ is on.
+- A form that reads your CV itself fills boxes before JobToFill does. On iCIMS, where the page reloads to read it, what it read gives way to your profile; extra entries it made (a second and third under _Education_ for one degree) are left for you, and the toast names them: check what they hold, or remove them.
 - Fill the gap once: right-click the box › _Insert from profile_, or type the answer and click _Learn from this page_ to keep it. For a question that differs on every site, add a rule under Settings › _Custom answers_ (“why do you want to work” → your answer).
 - Still wrong? Click _Save a snapshot for a bug report_ at the bottom of the popup and attach the file to a [“A form fills wrongly” issue](https://github.com/rob435/JobToFill/issues/new?template=form-fills-wrongly.yml). It holds the form with your details taken out, and what JobToFill did with each field, so the form can be rebuilt as a test.
 
@@ -20,7 +21,7 @@ What to do when something doesn’t work, and what JobToFill can’t do yet.
 
 - Add a key under Settings › _Cover letters & AI_ and click **Test connection**: it says whether the key works, and why not (no credit, a wrong key, a model the provider doesn’t offer). With keys for two providers, the other one takes over when one is out of credit.
 - Check “Answer new questions with AI when I fill a page” is on, or use _Answer them with AI_ in the popup for one page.
-- AI answers run only on job applications, never on checkout or sign-up pages.
+- AI answers run only on job applications, never on checkout or sign-up pages. A step of nothing but the employer’s own questions (iCIMS’s _Job Specific Questions_) counts: it is part of the application.
 - The popup’s AI card lists the questions it left for you, and why. Diversity questions, declarations, ID numbers and your date of birth are held back, and legal and health questions until you’ve written _Answer guidance_; switch any of them on under Settings › _Cover letters & AI_ › _Questions the AI may also answer_ (the popup says which). Passwords, card details and marketing opt-ins never go. A fact your CV, profile and guidance don’t give (a referrer’s name, a test score) is left for you rather than guessed.
 
 ## Firefox removed JobToFill when it restarted

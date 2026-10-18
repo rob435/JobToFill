@@ -1,0 +1,260 @@
+<!doctype html>
+<!--
+  iCIMS's Candidate Profile step (…/jobs/93127/<job>/candidate?in_iframe=1), framed by icims.html, as globalcampus-amd.icims.com draws
+  it: the résumé box that sends the form as soon as a file is chosen (&uploadResume=1), your details, then field
+  collections with "Add More (…)": Phones and Addresses (a Type list each), Education (School from the server's list,
+  "If your school is not listed, enter it here", "Highest Degree (Completed or Not Completed)", "Major / Program of
+  Study", "Did You Graduate?", a date as Month / Day / Year) and Professional Experience. Long lists are iCIMS's
+  searchable dropdowns (icims.js): a hidden <select icimsdropdown-enabled="1"> and the widget after it; the short
+  ones are plain <select>s. The ids carry the entry's prefix ("-1_PersonProfileFields.AddressCity"), labels are
+  label_<id>. Once a résumé has gone in, the page comes back as iCIMS's parse of a CV left it (?uploadResume=1): a
+  US dial code on a British number, the CV's city, three education entries where the CV had one degree and a
+  school, and the job's own wording.
+-->
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8" />
+    <title>Candidate Profile - Summer 2027 Software Engineer Intern</title>
+    <style>
+      body { margin: 0; font: 16px/1.5 "Source Sans Pro", Arial, sans-serif; color: #222; }
+      .iCIMS_MainWrapper { max-width: 1040px; margin: 0 auto; padding: 0 24px 40px; }
+      .iCIMS_NoDisplay { display: none !important; }
+      .iCIMS_Progress ol { display: flex; list-style: none; margin: 0; padding: 14px 0 0; justify-content: space-between; border-bottom: 1px solid #ddd; }
+      .iCIMS_Progress li { flex: 1; text-align: center; padding-bottom: 12px; }
+      .iCIMS_StepIcon { display: inline-block; width: 22px; height: 22px; line-height: 22px; border-radius: 50%; background: #2e7d32; color: #fff; font-size: 13px; }
+      .iCIMS_Step_Current .iCIMS_StepIcon { background: #1a6d9c; }
+      .iCIMS_Step_Future .iCIMS_StepIcon { background: #bbb; }
+      .iCIMS_StepTitle { display: block; font-weight: 600; }
+      .iCIMS_Step:not(.iCIMS_Step_Current) .iCIMS_StepTitle { visibility: hidden; }
+      .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }
+      h2 { font-size: 24px; margin: 28px 0 8px; }
+      .iCIMS_Collection { background: #f4f4f4; padding: 18px 26px; margin: 18px 0; }
+      .iCIMS_CollectionHeader { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 12px; }
+      .iCIMS_Remove { text-decoration: none; color: #333; font-size: 22px; }
+      .iCIMS_Fields { display: flex; flex-wrap: wrap; gap: 6px 8px; }
+      .iCIMS_TableRow { width: 336px; margin-bottom: 10px; }
+      .iCIMS_TableRow.iCIMS_Wide { width: 100%; }
+      label, .iCIMS_FieldLabel { display: block; margin-bottom: 4px; }
+      .iCIMS_Required { color: #c00; }
+      input[type="text"], input[type="email"], textarea, select { box-sizing: border-box; width: 100%; height: 52px; font-size: 18px; padding: 0 12px; }
+      textarea { height: 110px; padding: 10px 12px; }
+      .iCIMS_Date { display: flex; gap: 6px; }
+      .iCIMS_Date select { width: 104px; }
+      .iCIMS_Date select + select { width: 78px; }
+      .iCIMS_Date input { width: 118px; }
+      .iCIMS_AddMore { text-align: right; }
+      .iCIMS_AddMore a { color: #0b5a8c; }
+      .iCIMS_Buttons { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
+      .iCIMS_Buttons input { width: 238px; height: 46px; font-size: 18px; }
+      .iCIMS_PrimaryButton { background: #1a6d9c; color: #fff; border: 0; }
+      #PortalProfileFields\.Resume_Loading { color: #1a6d9c; font-weight: 600; }
+      /* iCIMS's own dropdown styles (its portal stylesheet's new_dropdown group). */
+      .dropdown-hide { position: fixed; visibility: hidden !important; }
+      .dropdown-invisible { display: none !important; }
+      a.dropdown-select { display: block; color: #000; border: 1px solid #6a6a6a; text-decoration: none; cursor: pointer; min-height: 50px; border-radius: 3px; position: relative; padding-left: 4px; padding-right: 16px; background: #fff; }
+      a.dropdown-select.focus, a.dropdown-select:focus { border: 1px solid #66afe9 !important; }
+      .dropdown-arrow-container { width: 16px; height: 100%; float: right; position: absolute; top: 0; right: 2px; }
+      .dropdown-arrow { border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 4px solid black; width: 0; height: 0; display: block; top: 45%; position: absolute; left: 25%; }
+      .dropdown-text { line-height: 30px; text-overflow: ellipsis; overflow: hidden; display: block; margin-top: 10px; margin-left: 10px; white-space: nowrap; }
+      .dropdown-placeholder { color: #686868; }
+      .dropdown-container { border: 1px solid #66afe9; border-top: 0; background: white; position: absolute; z-index: 10000; margin-top: -2px; width: 334px; }
+      input[type="text"].dropdown-search { width: calc(100% - 1em); height: 2em; margin: 0.5em; padding: 0 0 0 8px; font-size: 15px; }
+      .dropdown-results { max-height: 24em; position: relative; overflow-x: hidden; overflow-y: scroll; padding-left: 0; margin: 0; list-style: none; }
+      .dropdown-result { padding: 4px 10px; }
+      .result-selectable:hover, .result-focus { background: #004371; color: white; }
+      .dropdown-loading.hide { display: none; }
+    </style>
+    <script src="/icims.js"></script>
+  </head>
+  <body>
+    <div class="iCIMS_MainWrapper iCIMS_ApplyProcess">
+      <nav class="iCIMS_Progress" aria-label="Application progress">
+        <ol>
+          <li class="iCIMS_Step iCIMS_Step_Complete"><span class="iCIMS_StepIcon" aria-hidden="true">✔</span><span class="sr-only">Step 1 of 4: Login, completed</span><span class="iCIMS_StepTitle">Login</span></li>
+          <li class="iCIMS_Step iCIMS_Step_Current"><span class="iCIMS_StepIcon" aria-hidden="true">2</span><span class="sr-only">Step 2 of 4: Candidate Profile, current step</span><span class="iCIMS_StepTitle">Candidate Profile</span></li>
+          <li class="iCIMS_Step iCIMS_Step_Future"><span class="iCIMS_StepIcon" aria-hidden="true">3</span><span class="sr-only">Step 3 of 4: Job Specific Questions</span><span class="iCIMS_StepTitle">Job Specific Questions</span></li>
+          <li class="iCIMS_Step iCIMS_Step_Future"><span class="iCIMS_StepIcon" aria-hidden="true">4</span><span class="sr-only">Step 4 of 4: Review</span><span class="iCIMS_StepTitle">Review</span></li>
+        </ol>
+      </nav>
+      <form id="profileForm" name="profileForm" method="post" enctype="multipart/form-data" action="candidate?in_iframe=1&amp;hashed=-100200300">
+        <input type="hidden" name="hashed" value="-100200300" />
+        <h2 class="iCIMS_SubHeader iCIMS_SubHeader_Profile">Candidate Profile</h2>
+        <p class="iCIMS_InfoMsg"><span class="iCIMS_Required">*</span> Required field.</p>
+
+        <h2 class="iCIMS_SubHeader">Resume</h2>
+        <div class="iCIMS_Collection" id="iCIMS_Resume_Section">
+          <div class="iCIMS_TableRow iCIMS_Wide">
+            <label for="PortalProfileFields.Resume_File" id="label_PortalProfileFields.Resume_File" class="iCIMS_FieldLabel">Resume<span class="iCIMS_Required">*</span></label>
+            <div id="PortalProfileFields.Resume_Content">
+              <span id="PortalProfileFields.Resume_FileNameLabel" class="iCIMS_NoDisplay">Current file: <span></span></span>
+              <span id="PortalProfileFields.Resume_UploadButtons"><input type="file" id="PortalProfileFields.Resume_File" name="PortalProfileFields.Resume_File" accept=".pdf,.doc,.docx,.rtf,.txt" /></span>
+            </div>
+            <div id="PortalProfileFields.Resume_Loading" class="iCIMS_NoDisplay">Please wait while we read your resume…</div>
+            <input type="hidden" id="PortalProfileFields.Resume" name="PortalProfileFields.Resume" value="false" />
+          </div>
+        </div>
+
+        <h2 class="iCIMS_SubHeader">Contact Information</h2>
+        <div class="iCIMS_Fields" id="contact"></div>
+        <div id="phones"></div>
+        <div id="addresses"></div>
+
+        <h2 class="iCIMS_SubHeader">Education</h2>
+        <div id="education"></div>
+
+        <h2 class="iCIMS_SubHeader">Work Experience</h2>
+        <div id="work"></div>
+
+        <div class="iCIMS_Buttons">
+          <input type="submit" name="finishLater" value="Finish Later" class="iCIMS_SecondaryButton" />
+          <input type="submit" id="cp_form_next" value="Next" class="iCIMS_PrimaryButton" formaction="questions?in_iframe=1&amp;hashed=-100200300" />
+        </div>
+      </form>
+    </div>
+    <script>
+      (function () {
+        var esc = function (s) {
+          return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        };
+        var star = function (req) {
+          return req ? '<span class="iCIMS_Required">*</span>' : '';
+        };
+        var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        // One field: a label_<id> label over a text box, a plain <select>, an iCIMS dropdown, a date in three parts.
+        function field(f) {
+          var id = f.id;
+          var label = '<label for="' + esc(f.kind === 'date' ? id + '_Month' : id) + '" id="label_' + esc(id) + '" class="iCIMS_FieldLabel">' + esc(f.label) + star(f.required) + '</label>';
+          var req = f.required ? ' aria-required="true"' : '';
+          var body;
+          if (f.kind === 'text') body = '<input type="text" id="' + esc(id) + '" name="' + esc(id) + '" class="iCIMS_Forms_Global iCIMS_Forms_TextField" maxlength="' + (f.max || 100) + '"' + req + ' />';
+          else if (f.kind === 'textarea') body = '<textarea id="' + esc(id) + '" name="' + esc(id) + '" class="iCIMS_Forms_Global" maxlength="4000"></textarea>';
+          else if (f.kind === 'select')
+            body = '<select id="' + esc(id) + '" name="' + esc(id) + '" class="iCIMS_Forms_Global"' + req + '>' +
+              f.options.map(function (o) { return '<option value="' + esc(o[0]) + '">' + esc(o[1]) + '</option>'; }).join('') + '</select>';
+          else if (f.kind === 'dropdown')
+            body = '<select id="' + esc(id) + '" name="' + esc(id) + '" class="iCIMS_Forms_Global" icimsdropdown-enabled="1" hash="' + (4000 + id.length) + '"' + req +
+              (f.ajax === false ? ' icimsdropdown-ajax="0"' : '') + (f.parent ? ' data-ddd-parent-link="' + esc(f.parent) + '"' : '') +
+              (f.onchange ? ' onchange="' + esc(f.onchange) + '"' : '') + '><option value="" legacy="true">— Make a Selection —</option>' +
+              (f.options || []).map(function (t) { return '<option value="' + ICIMSFX.idOf(t) + '">' + esc(t) + '</option>'; }).join('') + '</select>';
+          else if (f.kind === 'date') {
+            var part = f.label.replace(/\s*\(Month \/ Day \/ Year\)\s*$/, '');
+            body = '<div class="iCIMS_Date"><select id="' + esc(id) + '_Month" name="' + esc(id) + '_Month" class="iCIMS_Forms_Global" aria-label="' + esc(part) + ' Month"' + req + '><option value=""></option>' +
+              MONTHS.map(function (m, i) { return '<option value="' + (i + 1) + '">' + m + '</option>'; }).join('') + '</select>' +
+              '<select id="' + esc(id) + '_Date" name="' + esc(id) + '_Date" class="iCIMS_Forms_Global" aria-label="' + esc(part) + ' Day"' + req + '><option value=""></option>' +
+              Array.from({ length: 31 }, function (_, i) { return '<option value="' + (i + 1) + '">' + (i + 1) + '</option>'; }).join('') + '</select>' +
+              '<input type="text" id="' + esc(id) + '_Year" name="' + esc(id) + '_Year" class="iCIMS_Forms_Global" maxlength="4" aria-label="' + esc(part) + ' Year"' + req + ' /></div>';
+          }
+          return '<div class="iCIMS_TableRow' + (f.wide ? ' iCIMS_Wide' : '') + '">' + label + body + '</div>';
+        }
+        // A field collection: groups 1…n, all but the first `shown` hidden, each with its "Add More (…)" row and ×.
+        function collection(el, name, title, required, groups, shown, fieldsOf, addLabel) {
+          var html = '';
+          for (var n = 1; n <= groups; n++) {
+            var prefix = String(-n);
+            html += '<div class="iCIMS_Collection' + (n > shown ? ' iCIMS_NoDisplay' : '') + '" data-collection="' + name + '" data-group="' + n + '">' +
+              '<div class="iCIMS_CollectionHeader"><span id="' + name + '_' + prefix + '_label">' + title + ' (' + n + ')' + star(required && n === 1) + '</span>' +
+              (n > 1 ? '<a href="#" class="iCIMS_Remove" aria-label="Remove ' + title + ' (' + n + ')" onclick="return ICIMSFX.hideGroup(\'' + name + '\', ' + n + ')">×</a>' : '') + '</div>' +
+              '<div class="iCIMS_Fields">' + fieldsOf(prefix).map(field).join('') + '</div>' +
+              '<div class="iCIMS_AddMore' + (n < shown || n === groups ? ' iCIMS_NoDisplay' : '') + '"><a href="#" onclick="return ICIMSFX.showGroup(\'' + name + '\', ' + n + ')">' + addLabel + '</a></div></div>';
+          }
+          el.innerHTML = html;
+        }
+
+        var parsed = /[?&]uploadResume=1\b/.test(location.search);
+        document.getElementById('contact').innerHTML = [
+          { id: 'PersonProfileFields.FirstName', label: 'First Name', kind: 'text', required: true },
+          { id: 'PersonProfileFields.MiddleName', label: 'Middle Name', kind: 'text' },
+          { id: 'PersonProfileFields.LastName', label: 'Last Name', kind: 'text', required: true },
+          { id: 'PersonProfileFields.Email', label: 'Email', kind: 'text', required: true },
+          { id: 'rcf3302', label: 'LinkedIn Profile URL', kind: 'text', max: 255 },
+          { id: 'rcf3305', label: 'How did you hear about us?', kind: 'dropdown', required: true, ajax: false,
+            options: ['Career Fair', 'Company Website', 'Employee Referral', 'Glassdoor', 'Handshake', 'Indeed', 'LinkedIn', 'University Career Center', 'Other'] },
+        ].map(field).join('');
+        collection(document.getElementById('phones'), 'Phones', 'Phones', true, 2, 1, function (p) {
+          return [
+            { id: p + '_PersonProfileFields.PhoneType', label: 'Type', kind: 'select', required: true, options: [['', '— Make a Selection —'], ['1', 'Home'], ['2', 'Mobile'], ['3', 'Work'], ['4', 'Other']] },
+            { id: p + '_PersonProfileFields.PhoneNumber', label: 'Number', kind: 'text', required: true, max: 50 },
+          ];
+        }, 'Add More (Phones)');
+        collection(document.getElementById('addresses'), 'Addresses', 'Addresses', true, 2, 1, function (p) {
+          return [
+            { id: p + '_PersonProfileFields.AddressType', label: 'Type', kind: 'select', required: true, options: [['', '— Make a Selection —'], ['1', 'Mailing'], ['2', 'Work'], ['3', 'Home'], ['4', 'Other']] },
+            { id: p + '_PersonProfileFields.AddressStreet1', label: 'Address', kind: 'text', required: true },
+            { id: p + '_PersonProfileFields.AddressStreet2', label: 'Address 2', kind: 'text' },
+            { id: p + '_PersonProfileFields.AddressCity', label: 'City', kind: 'text', required: true },
+            { id: p + '_PersonProfileFields.AddressZip', label: 'Postal Code', kind: 'text', max: 20 },
+            { id: p + '_PersonProfileFields.AddressCountry', label: 'Country/Region/Location', kind: 'dropdown', required: true, onchange: 'ICIMSFX.countryChanged(this)' },
+            { id: p + '_PersonProfileFields.AddressState', label: 'Region (State, Province, County)', kind: 'dropdown', required: true, parent: 'PersonProfileFields.AddressCountry' },
+            { id: p + '_PersonProfileFields.AddressCounty', label: 'County', kind: 'text' },
+          ];
+        }, 'Add More (Addresses)');
+        collection(document.getElementById('education'), 'Education', 'Education', false, 3, parsed ? 3 : 1, function (p) {
+          return [
+            { id: p + '_EducationFields.School', label: 'School', kind: 'dropdown', required: true },
+            { id: p + '_EducationFields.SchoolOther', label: 'If your school is not listed, enter it here', kind: 'text' },
+            { id: p + '_EducationFields.Degree', label: 'Highest Degree (Completed or Not Completed)', kind: 'dropdown', required: true },
+            { id: p + '_EducationFields.Major', label: 'Major / Program of Study', kind: 'dropdown', required: true },
+            { id: p + '_rcf3048', label: 'Did You Graduate?', kind: 'select', options: [['', ''], ['31201', 'In Progress'], ['31202', 'Not Received'], ['31203', 'Received']] },
+            { id: p + '_EducationFields.GraduationDate', label: 'Date Received / Date Expected to Receive (Month / Day / Year)', kind: 'date', required: true },
+          ];
+        }, 'Add More (Education)');
+        collection(document.getElementById('work'), 'WorkExperience', 'Professional Experience', false, 3, 1, function (p) {
+          return [
+            { id: p + '_WorkExperienceFields.Employer', label: 'Employer', kind: 'text' },
+            { id: p + '_WorkExperienceFields.Address', label: 'Address', kind: 'text' },
+            { id: p + '_WorkExperienceFields.City', label: 'City', kind: 'text' },
+            { id: p + '_WorkExperienceFields.Zip', label: 'Postal Code', kind: 'text', max: 20 },
+            { id: p + '_WorkExperienceFields.Country', label: 'Country/Region/Location', kind: 'dropdown', onchange: 'ICIMSFX.countryChanged(this)' },
+            { id: p + '_WorkExperienceFields.State', label: 'Region (State, Province, County)', kind: 'dropdown', parent: 'WorkExperienceFields.Country' },
+            { id: p + '_WorkExperienceFields.Title', label: 'Title', kind: 'text' },
+            { id: p + '_WorkExperienceFields.StartDate', label: 'Start Date (Month / Day / Year)', kind: 'date' },
+            { id: p + '_WorkExperienceFields.EndDate', label: 'End Date (Month / Day / Year)', kind: 'date' },
+            { id: p + '_WorkExperienceFields.Description', label: 'Description', kind: 'textarea', wide: true },
+          ];
+        }, 'Add More (Professional Experience)');
+
+        // What iCIMS read from the CV just uploaded, drawn into the page it sends back.
+        if (parsed) {
+          var name = sessionStorage.getItem('icimsResume') || 'resume.pdf';
+          var label = document.getElementById('PortalProfileFields.Resume_FileNameLabel');
+          label.querySelector('span').textContent = name;
+          label.classList.remove('iCIMS_NoDisplay');
+          document.getElementById('PortalProfileFields.Resume').value = 'true';
+          var set = function (id, v) {
+            document.getElementById(id).value = v;
+          };
+          var pick = function (id, text) {
+            document.getElementById(id).setAttribute('icimsdropdown-selected', ICIMSFX.idOf(text));
+          };
+          var choose = function (id, text) {
+            var s = document.getElementById(id);
+            for (var i = 0; i < s.options.length; i++) if (s.options[i].text === text) s.selectedIndex = i;
+          };
+          set('-1_PersonProfileFields.PhoneNumber', '+1 7700 900123');
+          set('-1_PersonProfileFields.AddressCity', 'Stirling');
+          pick('-1_PersonProfileFields.AddressCountry', 'United Kingdom');
+          pick('-1_EducationFields.Major', 'Economics');
+          choose('-2_EducationFields.GraduationDate_Month', 'Jan');
+          choose('-2_EducationFields.GraduationDate_Date', '1');
+          set('-2_EducationFields.GraduationDate_Year', '2025');
+          pick('-3_EducationFields.School', 'University of Stirling');
+          pick('-3_EducationFields.Major', 'Data Science');
+          choose('-3_EducationFields.GraduationDate_Month', 'May');
+          choose('-3_EducationFields.GraduationDate_Date', '1');
+          set('-3_EducationFields.GraduationDate_Year', '2028');
+          set('-1_WorkExperienceFields.Employer', 'Calder Partners');
+          set('-1_WorkExperienceFields.City', 'Aberdeen');
+          set('-1_WorkExperienceFields.Title', 'Data Engineering');
+          choose('-1_WorkExperienceFields.StartDate_Month', 'Jun');
+          choose('-1_WorkExperienceFields.StartDate_Date', '1');
+          set('-1_WorkExperienceFields.StartDate_Year', '2026');
+          set('-1_WorkExperienceFields.Description', '• Built data pipelines in Python for the analytics team.');
+        }
+        ICIMSFX.initAll();
+        ICIMSFX.resumeUpload(document.getElementById('PortalProfileFields.Resume_File'));
+        window.addEventListener('load', ICIMSFX.resize);
+        ICIMSFX.resize();
+      })();
+    </script>
+  </body>
+</html>

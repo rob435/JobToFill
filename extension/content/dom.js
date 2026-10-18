@@ -201,17 +201,57 @@
     return null;
   }
 
+  // The box a dropdown widget shows its choice in when it is no native control: iCIMS's <a class="dropdown-select"
+  // role="combobox">, a listbox button.
+  const WIDGET_FACE =
+    '[role="combobox"]:not(input, select, textarea), [aria-haspopup="listbox"]:not(input, select, textarea)';
+
   /**
    * The native <select> a custom dropdown keeps for the form while showing itself in its place (select2, chosen,
-   * Choices, Tom Select): hidden, right before the widget or inside it. It holds what the widget's value really is.
+   * Choices, Tom Select; iCIMS's, whose box comes right after it): hidden, right before the widget or inside it. It
+   * holds what the widget's value really is.
    */
   function isStandIn(c) {
     if (c.localName !== 'select' || (c.getAttribute('aria-hidden') !== 'true' && isVisible(c))) return false;
     const next = c.nextElementSibling;
     return (
       !!(c.parentElement && c.parentElement.closest('[role="combobox"]')) ||
-      (!!next && !next.matches(CONTROL_SELECTOR) && !!next.querySelector(CONTROL_SELECTOR))
+      (!!next && !next.matches(CONTROL_SELECTOR) && !!next.querySelector(CONTROL_SELECTOR)) ||
+      (!!next && next.matches(WIDGET_FACE))
     );
+  }
+
+  /**
+   * Does the <select> a widget stands in for list the widget's choices? One that searches its server (iCIMS's
+   * School and Country lists, select2 with remote data) keeps only its placeholder and the one option picked: its
+   * choices are the widget's to show.
+   */
+  function listsChoices(native) {
+    const real = Array.from(native.options).filter(
+      (o) => o.value !== '' && !JTF.matcher.isPlaceholder(U.normalize(o.text)),
+    );
+    return real.length > 1;
+  }
+
+  /**
+   * The search box in a dropdown's open menu (iCIMS's "— Type to Search —", a role="combobox" of its own): typed into
+   * when that dropdown is filled, never a question by itself. The menu follows the box that shows the choice, or that
+   * box names the menu's list. Returns that box, else null.
+   */
+  function menuSearchOf(el) {
+    if (el.localName !== 'input') return null;
+    for (let menu = el.parentElement, i = 0; menu && i < 4; menu = menu.parentElement, i++) {
+      if (!menu.querySelector('[role="listbox"]')) continue;
+      const face = menu.previousElementSibling;
+      if (face && face.matches(WIDGET_FACE) && !face.contains(el)) return face;
+    }
+    const doc = el.getRootNode();
+    for (const id of (el.getAttribute('aria-controls') || '').split(/\s+/).filter(Boolean)) {
+      const owners = doc.querySelectorAll(`[aria-controls~="${CSS.escape(id)}"], [aria-owns~="${CSS.escape(id)}"]`);
+      const face = Array.from(owners).find((o) => o !== el && o.matches(WIDGET_FACE) && !o.contains(el));
+      if (face) return face;
+    }
+    return null;
   }
 
   /** The hidden native <select> the widget `el` belongs to stands in for (see isStandIn), if any. */
@@ -1190,8 +1230,8 @@
         desc.options = [{ text: s.label || s.aria || '', value: optionValue(el) }];
       }
       // A dropdown widget offers the options of the <select> it stands in for (read without opening it), and takes
-      // several when that one does.
-      const list = kind === 'select' ? el : native && native.options.length ? native : null;
+      // several when that one does; one that searches its server shows them only once open.
+      const list = kind === 'select' ? el : native && listsChoices(native) ? native : null;
       if (kind === 'select' || native) desc.multiple = !!(native || el).multiple;
       if (vl) {
         desc.multiple = vl.multiple;
@@ -1236,6 +1276,8 @@
       const owner = el.localName === 'input' ? insideValueList(el) : null;
       if (owner && el.closest('[class*="search" i]') && owner.root.contains(el.closest('[class*="search" i]')))
         continue;
+      // So is the search box of a dropdown's open menu (iCIMS's).
+      if (menuSearchOf(el)) continue;
       const kind = kindOf(el);
       if (!kind || !isUsable(el, kind)) continue;
       if (el.matches(SEGMENT)) {
@@ -1280,6 +1322,7 @@
     visibleText,
     deepActiveElement,
     standsFor,
+    menuSearchOf,
     suggestsBeside,
     isRequired,
     dateSegments,
