@@ -97,7 +97,8 @@ function renderResult(r) {
       el('div', { className: 'result-head' }, el('span', { className: 'pill bad', textContent: 'Can’t fill' })),
       el('p', { className: 'result-list', textContent: explain(r.error) }),
     );
-  if (!r.detected)
+  // A page of questions none of the rules know (iCIMS's "Job Specific Questions") has fields: the AI's to answer.
+  if (!r.detected && !r.unknown)
     return showResult(
       el('div', { className: 'result-head', textContent: 'No form fields found on this page.' }),
       el('p', {

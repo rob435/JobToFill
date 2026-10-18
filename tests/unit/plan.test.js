@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { load, desc, opts } = require('./helpers');
 
-const { matcher, fields, util } = load();
+const { matcher, fields, util, decide, geo } = load();
 
 function sample() {
   const p = fields.createProfile('Test');
@@ -735,7 +735,9 @@ test('"If your institution is not listed above" does not start a second educatio
     ],
     sample(),
   );
-  assert.deepEqual(types(plan), ['edu.school#0', null, 'edu.end#0', 'edu.field#0', 'edu.gpa#0']);
+  // The box for a school the list lacks: the same entry's, filled only when the list took nothing (decide.field).
+  assert.deepEqual(types(plan), ['edu.school#0', 'edu.school#0', 'edu.end#0', 'edu.field#0', 'edu.gpa#0']);
+  assert.deepEqual([plan.results[1].unlisted, plan.results[1].follows], [true, 0]);
 });
 
 test('"If yes, tell us more" boxes stay empty after a No, in every fill pass', () => {
@@ -2565,23 +2567,29 @@ function computingScientist() {
 /** What a fill puts in each box of a page: the option picked, the text typed, or null. */
 function fillPage(page, p) {
   const { results, context } = matcher.plan(page, p);
-  return page.map((d, i) => {
-    const r = results[i];
-    if (!r || !r.type) return null;
-    const v = fields.resolve(r.type, p, {
-      ...context,
-      index: r.index || 0,
-      part: r.part,
-      kind: d.kind,
-      question: util.normalize(matcher.questionText(d)),
-      options: d.options,
-      today: TODAY,
-    });
-    if (!v) return null;
-    if (!d.options) return matcher.formatForText(v, d);
-    const k = matcher.matchOption(d.options, v);
-    return k < 0 ? null : d.options[k].text;
+  const out = [];
+  page.forEach((d, i) => out.push(fillOne(d, results[i], context, p, out)));
+  return out;
+}
+
+/** One box of fillPage: a box for an answer its list lacks stays empty beside what the list took (decide.field). */
+function fillOne(d, r, context, p, before) {
+  if (!r || !r.type) return null;
+  if (r.unlisted && before[r.follows]) return null;
+  const v = fields.resolve(r.type, p, {
+    ...context,
+    index: r.index || 0,
+    entry: !!r.entry,
+    part: r.part,
+    kind: d.kind,
+    question: util.normalize(matcher.questionText(d)),
+    options: d.options,
+    today: TODAY,
   });
+  if (!v) return null;
+  if (!d.options) return matcher.formatForText(v, d);
+  const k = matcher.matchOption(d.options, v);
+  return k < 0 ? null : d.options[k].text;
 }
 
 test('IMC: "If … is not listed, please specify." boxes are for answers the list lacks, never a second entry', () => {
@@ -2625,14 +2633,15 @@ test('IMC: "If … is not listed, please specify." boxes are for answers the lis
     ),
     desc('If residing in another country, please specify.'),
   ];
+  // Each box is its list's, for an answer the list lacks (the same entry, never a second one).
   assert.deepEqual(types(matcher.plan(page, p)), [
     'edu.end#0:year',
-    null,
+    'edu.end#0:year',
     'edu.end#0:month',
     'edu.field#0',
-    null,
+    'edu.field#0',
     'edu.year',
-    null,
+    'edu.year',
     'edu.classification#0',
     null,
   ]);
@@ -2647,6 +2656,9 @@ test('IMC: "If … is not listed, please specify." boxes are for answers the lis
     '60–69% | 6.0–6.9 average | Upper Second',
     null,
   ]);
+  // A year the list hasn't got goes into its box instead.
+  const early = select('When is your expected year of graduation?', '2023', '2024', '2025', '2026');
+  assert.deepEqual(fillPage([early, page[1]], p), [null, '2027']);
   // Asked again in other words right after the list (a native select, or Greenhouse's react-select), it is still the
   // list's "other" box; a second block of the same fields is the second entry.
   assert.deepEqual(types(matcher.plan([years, desc('Graduation year')], p)), ['edu.end#0:year', null]);
@@ -4321,4 +4333,137 @@ test('diversity questions in text boxes: your ethnicity as you gave it, a disabi
   assert.equal(ask(p, 'eeo.disability', ik, { kind: 'textarea' }).text, 'No');
   assert.equal(typeOf('Please describe your disability', 'textarea'), null, 'what it is is yours to say');
   assert.equal(typeOf('Please describe any adjustments you need', 'textarea'), null);
+});
+
+test('iCIMS (AMD’s Candidate Profile): each Education and job entry’s own boxes, and the employer’s address not yours', () => {
+  const p = glasgow();
+  Object.assign(p.address, { line1: '12 Castle Street', city: 'Inverness', state: 'Highland', postalCode: 'IV2 3EG' });
+  p.experience = [
+    Object.assign(fields.blankExperience(), {
+      company: 'Calder Partners',
+      title: 'Data Engineering Intern',
+      location: 'Aberdeen',
+      startDate: '2026-06',
+      endDate: '2026-08',
+    }),
+  ];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const days = Array.from({ length: 31 }, (_, i) => String(i + 1));
+  const at = (section) => (label, extra) =>
+    desc(typeof label === 'string' ? { label, section } : { ...label, section }, extra);
+  // A date in three parts: the label names the Month list, the Day list and the Year box their own aria-labels.
+  const date = (field, label) => [
+    field(`${label} (Month / Day / Year)`, { kind: 'select', options: opts('', ...months) }),
+    field({ aria: `${label} Day` }, { kind: 'select', options: opts('', ...days) }),
+    field({ aria: `${label} Year` }),
+  ];
+  const edu = at('Education');
+  const work = at('Work Experience');
+  const degrees = opts('High School Diploma or Equivalent', 'Some College', "Bachelor's Degree", "Master's Degree");
+  const entry = [
+    edu('School', { kind: 'combo' }),
+    edu('If your school is not listed, enter it here'),
+    edu('Highest Degree (Completed or Not Completed)', { kind: 'combo', options: degrees }),
+    edu('Major / Program of Study', { kind: 'combo' }),
+    edu('Did You Graduate?', { kind: 'select', options: opts('', 'In Progress', 'Not Received', 'Received') }),
+    ...date(edu, 'Date Received / Date Expected to Receive'),
+  ];
+  const job = [
+    work('Employer'),
+    work('Address'),
+    work('City'),
+    work('Postal Code'),
+    work('Country/Region/Location', { kind: 'combo', options: opts('France', 'United Kingdom', 'United States') }),
+    work('Region (State, Province, County)', { kind: 'combo' }),
+    work('Title'),
+    ...date(work, 'Start Date'),
+    ...date(work, 'End Date'),
+    work('Description', { kind: 'textarea' }),
+  ];
+  const plan = matcher.plan([...entry, ...job], p);
+  assert.deepEqual(types(plan), [
+    'edu.school#0',
+    'edu.school#0',
+    'edu.degree#0',
+    'edu.field#0',
+    'edu.completed#0',
+    'edu.end#0:month',
+    'edu.end#0:day',
+    'edu.end#0:year',
+    'exp.company#0',
+    null,
+    'exp.location#0:city',
+    null,
+    'exp.country#0',
+    null,
+    'exp.title#0',
+    'exp.start#0:month',
+    'exp.start#0:day',
+    'exp.start#0:year',
+    'exp.end#0:month',
+    'exp.end#0:day',
+    'exp.end#0:year',
+    'exp.description#0',
+  ]);
+  assert.equal(plan.results[1].unlisted, true, 'the box for a school the list lacks');
+  assert.deepEqual(
+    [9, 11, 13].map((i) => plan.results[i].dropped || null),
+    ['address.line1', 'address.postalCode', 'address.state'],
+    'the employer’s street, postcode and region, set aside',
+  );
+  assert.ok(plan.results.slice(0, 8).every((r) => r.entry) && plan.results[4].entry, 'the entry’s own boxes');
+  // "Did You Graduate?" while the degree runs: In Progress, never "Not Received" (a degree that was not awarded).
+  const values = fillPage([...entry, ...job], p);
+  assert.deepEqual(values.slice(2, 8), ["Bachelor's Degree", 'Computer Science', 'In Progress', 'Jun', '1', '2027']);
+  assert.deepEqual(values.slice(8, 22), [
+    'Calder Partners',
+    null,
+    'Aberdeen',
+    null,
+    'United Kingdom',
+    null,
+    'Data Engineering Intern',
+    'Jun',
+    '1',
+    '2026',
+    'Aug',
+    '1',
+    '2026',
+    null,
+  ]);
+  // Once it has ended, Received; a block past your profile's one entry is yours, not the rules'.
+  const graduated = { entry: true, today: new Date('2027-09-01') };
+  const options = opts('In Progress', 'Not Received', 'Received');
+  assert.equal(matcher.matchOption(options, ask(p, 'edu.completed', 'Did You Graduate?', graduated)), 2);
+  assert.equal(ask(p, 'edu.completed', 'Did You Graduate?', { ...graduated, index: 1 }), null);
+  assert.equal(fields.leftEmpty('edu.school', p, { entry: true, index: 1, question: 'school' }), true);
+  assert.equal(fields.leftEmpty('edu.school', p, { entry: true, index: 0, question: 'school' }), false);
+  p.education = [];
+  assert.equal(fields.leftEmpty('edu.school', p, { entry: true, index: 0, question: 'school' }), false, 'none: AI may');
+});
+
+test('iCIMS: a school its list hasn’t got goes into the box after it; a list that took yours leaves the box', () => {
+  const p = glasgow();
+  const page = [desc('School', { kind: 'combo' }), desc('If your school is not listed, enter it here')];
+  const { results, context } = matcher.plan(page, p);
+  const box = (followed) => decide.field(page[1], results[1], p, context, { followed });
+  assert.deepEqual(box(''), { action: 'fill', value: box('').value });
+  assert.equal(box('').value.text, 'University of Glasgow');
+  assert.equal(box('University of Glasgow').action, 'skip');
+  assert.equal(box('Other').action, 'fill');
+});
+
+test('a UK address’s region: your county, else its nation from your town or postcode', () => {
+  const p = glasgow();
+  Object.assign(p.address, { city: 'Oban', state: 'Argyll and Bute', postalCode: 'PA34 4LN' });
+  const region = (kind) => ask(p, 'address.state', 'Region (State, Province, County)', { kind });
+  assert.equal(matcher.matchOption(opts('Falkirk', 'Argyll and Bute', 'Glasgow City'), region('combo')), 1);
+  assert.equal(matcher.matchOption(opts('England', 'Scotland', 'Wales', 'Northern Ireland'), region('combo')), 1);
+  p.address.state = '';
+  assert.equal(region('combo').text, 'Scotland');
+  assert.equal(region('text'), null, 'a "County" box never gets a nation');
+  assert.deepEqual(
+    ['PA34 4LN', 'CF10 3AT', 'BT1 1AA', 'SW1A 1AA', 'CH5 1AA', 'TD15 1AA', 'JE2 3AB'].map((pc) => geo.ukNation(pc)),
+    ['Scotland', 'Wales', 'Northern Ireland', 'England', 'Wales', 'England', ''],
+  );
 });

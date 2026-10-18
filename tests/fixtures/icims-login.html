@@ -1,0 +1,56 @@
+<!doctype html>
+<!--
+  iCIMS's email-first sign-in, the application's first step (…/jobs/93127/<job>/login?in_iframe=1), framed by
+  icims.html: the progress with "Step 1 of 4: Login" current, a list of the site's languages above the form, the
+  "Email Address" box, the privacy policy to accept and "Next". iCIMS counts the step as the application's (its address
+  is), yet it is a sign-in: neither its language list nor anything else on it is a question for the AI.
+-->
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8" />
+    <title>Login - Summer 2027 Software Engineer Intern</title>
+    <style>
+      body { margin: 0; font: 16px/1.5 "Source Sans Pro", Arial, sans-serif; color: #222; }
+      .iCIMS_MainWrapper { max-width: 1040px; margin: 0 auto; padding: 0 24px 40px; }
+      .iCIMS_Progress ol { display: flex; list-style: none; margin: 0; padding: 14px 0 0; justify-content: space-between; border-bottom: 1px solid #ddd; }
+      .iCIMS_Progress li { flex: 1; text-align: center; padding-bottom: 12px; }
+      .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }
+      .iCIMS_LanguageSelect { display: flex; justify-content: flex-end; gap: 8px; align-items: center; margin: 12px 0; font-size: 14px; }
+      h2 { font-size: 24px; margin: 28px 0 8px; }
+      label { display: block; margin-bottom: 4px; }
+      input[type="text"] { width: 340px; height: 40px; font-size: 18px; padding: 0 10px; }
+      .iCIMS_PrimaryButton { width: 238px; height: 46px; font-size: 18px; background: #1a6d9c; color: #fff; border: 0; margin-top: 20px; }
+    </style>
+  </head>
+  <body>
+    <div class="iCIMS_MainWrapper iCIMS_ApplyProcess">
+      <nav class="iCIMS_Progress" aria-label="Application progress">
+        <ol>
+          <li class="iCIMS_Step iCIMS_Step_Current"><span class="sr-only">Step 1 of 4: Login, current step</span>Login</li>
+          <li class="iCIMS_Step iCIMS_Step_Future"><span class="sr-only">Step 2 of 4: Candidate Profile</span>Candidate Profile</li>
+          <li class="iCIMS_Step iCIMS_Step_Future"><span class="sr-only">Step 3 of 4: Job Specific Questions</span>Job Specific Questions</li>
+          <li class="iCIMS_Step iCIMS_Step_Future"><span class="sr-only">Step 4 of 4: Review</span>Review</li>
+        </ol>
+      </nav>
+      <div class="iCIMS_LanguageSelect">
+        <label for="iCIMS_LanguageDropdown">Choose the language for this site</label>
+        <select id="iCIMS_LanguageDropdown" name="iCIMS_LanguageDropdown">
+          <option value="en_US" selected>English (US)</option>
+          <option value="fr_CA">Français (Canada)</option>
+          <option value="de">Deutsch</option>
+          <option value="ja">日本語</option>
+        </select>
+      </div>
+      <form id="enterEmailForm" name="enterEmailForm" method="post" action="login?in_iframe=1&amp;hashed=-100200300">
+        <h2 class="iCIMS_SubHeader">Please Enter Your Information</h2>
+        <label for="email">Email Address <span class="iCIMS_Required">*</span></label>
+        <input type="text" id="email" name="loginName" autocomplete="email" />
+        <p>
+          <input type="checkbox" id="accept_gdpr" name="accept_gdpr" value="1" />
+          <label for="accept_gdpr" style="display: inline">I have read and accept the <a href="#">Privacy Policy</a></label>
+        </p>
+        <input type="submit" id="enterEmailSubmitButton" value="Next" class="iCIMS_PrimaryButton" />
+      </form>
+    </div>
+  </body>
+</html>

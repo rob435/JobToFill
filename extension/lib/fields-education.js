@@ -399,6 +399,22 @@
     return val('Yes', { candidates: [...words, 'Yes', 'Currently enrolled', 'Enrolled'] });
   }
 
+  /**
+   * Has one education entry finished: Yes ("Received", "Completed") once its end date has passed, No ("In Progress",
+   * "Expected") while it runs, never "Not Received" (a degree that was not awarded). Null without an end date.
+   */
+  function entryGraduated(e, today) {
+    const end = e ? U.parseDate(e.endDate) : null;
+    if (!end) return null;
+    const now = today || new Date();
+    if (end.year * 12 + (end.month || 6) - 1 >= now.getFullYear() * 12 + now.getMonth())
+      return val('In progress', {
+        canonical: null,
+        candidates: ['In progress', 'Ongoing', 'Expected', 'Predicted', 'Pending', 'Currently enrolled', 'No'],
+      });
+    return val('Yes', { candidates: ['Received', 'Yes', 'Completed', 'Graduated', 'Achieved', 'Awarded'] });
+  }
+
   // "Highest Education Obtained", "…qualification you hold": what you have finished. "…currently pursuing" is not.
   const HELD = /\b(obtained|held|hold|completed|attained|achieved|awarded|earned|gained)\b/;
   const UNDER_WAY = /\b(pursuing|studying|current(ly)?|expected|will be|working towards|in progress)\b/;
@@ -565,7 +581,11 @@
     if (row) return countryVal(row[2]);
     const city = U.normalize(p.address.city);
     const words = ' ' + U.normalize(U.isBlank(e.location) ? e.school || e.company : e.location) + ' ';
-    if (city && words.includes(' ' + city + ' ') && JTF.geo.findCountry(p.address.country))
+    const home = JTF.geo.findCountry(p.address.country);
+    if (city && words.includes(' ' + city + ' ') && home) return countryVal(p.address.country);
+    // A town of the country you live in, on its own ("Aberdeen" for someone in Inverness): that country. A city abroad on its
+    // own ("Paris") is not worked out.
+    if (home && !U.isBlank(e.location) && JTF.geo.placesNamed(e.location).some((pl) => pl.country === home[0]))
       return countryVal(p.address.country);
     return null;
   }
@@ -645,6 +665,11 @@
     if (type === 'edu.equivalent') return qualsOf(q).some((x) => heldQuals(p).includes(x));
     // Northern Ireland's community background is yours to give, wherever you are applying.
     if (type === 'eeo.community') return true;
+    // A block of the form's education or job entries past those your profile lists (the second and third that iCIMS
+    // read from a CV of one degree and a school): yours to check, never filled in by the AI.
+    const entries =
+      ctx && ctx.entry ? (/^edu\./.test(type) ? 'education' : /^exp\./.test(type) ? 'experience' : '') : '';
+    if (entries && (p[entries] || []).length && (ctx.index || 0) >= p[entries].length) return true;
     // Capgemini's "What is your postgraduate degree?" when you have none: nothing to give, nothing missing.
     if (/^edu\./.test(type) && LEVEL_ENTRY_TYPES.has(type)) {
       const { e, level } = entryAt(p, 'education', ctx || {});
@@ -900,6 +925,9 @@
         const level = eduLevelOf(ctx.question || '');
         const at = level ? (p.education || []).filter((e) => entryLevels(e).includes(level)) : null;
         if (at && !at.length) return null;
+        // iCIMS's "Did You Graduate?" in each of its Education entries [In Progress | Not Received | Received]: that
+        // entry's own.
+        if (!level && ctx.entry) return entryGraduated((p.education || [])[ctx.index || 0], ctx.today);
         const enrolled = enrolment(at ? { education: at } : p, ctx.today);
         if (!enrolled) return null;
         // Capgemini's "…degree completed or still predicted?" [Completed | Predicted].

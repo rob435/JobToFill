@@ -55,6 +55,9 @@
       context,
       {
         index: r.index || 0,
+        // A box of one education or job entry's block (iCIMS's "Did You Graduate?" in Education (2)), not a question of
+        // its own about your studies.
+        entry: !!r.entry,
         part: r.part,
         kind: desc.kind,
         answer: r.answer,
@@ -116,6 +119,9 @@
       const other = OTHER_CHOSEN.test(U.normalize(opts.followed));
       if (r.type === 'na' ? other || !opts.followed : !other) return { action: 'skip' };
     }
+    // iCIMS's "If your school is not listed, enter it here" after its School list: your school when the list took
+    // nothing (it hasn't got it) or its "Other", never beside the one it took.
+    if (r.unlisted && opts.followed && !OTHER_CHOSEN.test(U.normalize(opts.followed))) return { action: 'skip' };
     let v = F().resolve(r.type, profile, ctx);
     if (v && r.type !== 'custom' && FOLLOW_UP.test(ctx.question) && !F().followUpAnswer(v, desc.kind))
       return { action: 'skip' };
@@ -169,8 +175,9 @@
     if (!said) return false;
     const asked = M().questionText(desc);
     const q = U.normalize(asked);
-    // The plan's "Please specify" box for its list: only once the list is on "Other".
-    if (r && r.part === 'specify') return !OTHER_CHOSEN.test(said);
+    // The plan's "Please specify" box for its list, and its box for an answer the list lacks: only once the list is
+    // on "Other".
+    if (r && (r.part === 'specify' || r.unlisted)) return !OTHER_CHOSEN.test(said);
     if (IF_YES.test(q)) return SAID_NO.test(said);
     if (IF_NO.test(q)) return /^yes\b/.test(said);
     if (IF_OTHER.test(q)) return !OTHER_CHOSEN.test(said);
@@ -214,6 +221,9 @@
    */
   function forAi(desc, r, profile, context, prevType, before = null, allow = null) {
     if (NO_AI_KINDS.has(desc.kind)) return null;
+    // A box the plan set aside as someone else's address (iCIMS's "Address" and "Postal Code" in a job entry: the
+    // employer's) is nobody's to guess.
+    if (r && !r.type && r.dropped && NOT_FOR_AI.test(r.dropped)) return null;
     const q = U.normalize(M().questionText(desc));
     if (q.length < 3) return null;
     if (before != null && conditionFails(desc, r, before)) return null;

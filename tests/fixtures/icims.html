@@ -1,0 +1,71 @@
+<!doctype html>
+<!--
+  An iCIMS career portal's own page, as globalcampus-amd.icims.com serves it at …/jobs/93127/<job>/candidate: the
+  portal's header, and the application in #icims_content_iframe, which the page makes with a script once it has
+  loaded (a <noscript> copy beside it): the same address and query with in_iframe=1, sized to whatever height the
+  framed page posts. serve.mjs serves both at iCIMS's addresses (…/login, …/candidate, …/questions); opened as
+  icims.html it frames the Candidate Profile (?page=questions: Job Specific Questions).
+-->
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8" />
+    <title>Candidate Profile - Summer 2027 Software Engineer Intern</title>
+    <style>
+      body { margin: 0; font: 16px/1.4 "Source Sans Pro", Arial, sans-serif; background: #fff; }
+      .iCIMS_Header_Portal { display: flex; justify-content: space-between; align-items: center; padding: 14px 40px; background: #000; color: #fff; }
+      .iCIMS_Header_Portal a { color: #fff; }
+      #icims_iframe_span { display: block; }
+      .iCIMS_Footer_Portal { padding: 20px 40px; color: #555; font-size: 13px; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <div class="iCIMS_Header_Portal">
+      <a href="#" class="iCIMS_Logo_Portal" aria-label="AMD Careers home">AMD</a>
+      <nav class="iCIMS_Navigation_Portal" aria-label="Portal">
+        <a href="#">Search jobs</a> ·
+        <a href="#" class="iCIMS_ReturningCandidate">Returning Candidate? Log back in!</a>
+      </nav>
+    </div>
+    <script>
+      (function () {
+        var params = new URLSearchParams(location.search);
+        var step = /\/jobs\/\d+\//.test(location.pathname)
+          ? location.pathname
+          : '/jobs/93127/summer-2027-software-engineer-intern/' + (params.get('page') === 'questions' ? 'questions' : 'candidate');
+        params.delete('page');
+        params.set('in_iframe', '1');
+        var src = step + '?' + params.toString();
+        // iCIMS takes resize messages from icims.com frames only; this copy, from its own (local) site.
+        window.addEventListener('message', function (event) {
+          if (event.origin !== location.origin) return;
+          var data = event.data;
+          if (typeof data === 'string') {
+            try {
+              data = JSON.parse(data);
+            } catch (e) {
+              return;
+            }
+          }
+          if (data && data.height && !isNaN(data.height))
+            document.getElementById('icims_content_iframe').height = parseInt(data.height, 10);
+          else if (data && data.pageTitle) document.title = data.pageTitle;
+        });
+        window.addEventListener('load', function () {
+          var frame = document.createElement('iframe');
+          frame.id = 'icims_content_iframe';
+          frame.name = 'icims_content_iframe';
+          frame.src = src;
+          frame.setAttribute('style', 'width: 100%;border: none;margin: 0px');
+          frame.setAttribute('height', '500');
+          frame.setAttribute('title', 'iCIMS Content iFrame');
+          document.getElementById('icims_iframe_span').appendChild(frame);
+        });
+      })();
+    </script>
+    <noscript>
+      <iframe src="/jobs/93127/summer-2027-software-engineer-intern/candidate?in_iframe=1" id="noscript_icims_content_iframe" name="noscript_icims_content_iframe" title="Noscript iCIMS Content iFrame" style="width:100%;" height="500"></iframe>
+    </noscript>
+    <span id="icims_iframe_span" role="main" aria-label="Career Portal"></span>
+    <div class="iCIMS_Footer_Portal">Software Powered by iCIMS · <a href="#">www.icims.com</a></div>
+  </body>
+</html>

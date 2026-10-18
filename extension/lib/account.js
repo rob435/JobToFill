@@ -77,12 +77,14 @@
   const NEXT_PLAIN = /^(?:continue|proceed)$/;
   // Never on the way to the next step: anything that sends, finishes, agrees or pays.
   const SENDS = /\b(?:submit|send|finish|complete|confirm|review|done|agree|accept|sign|pay|withdraw)\b/;
-  // A section's own "Add" for another entry: Workday's "Add" and "Add Another", Greenhouse's "+ Add another education".
+  // A section's own "Add" for another entry: Workday's "Add" and "Add Another", Greenhouse's "+ Add another education",
+  // iCIMS's "Add More (Education)" and "Add More (Professional Experience)".
   const ADD_ENTRY =
-    /^add(?: another| more| new| an?)?(?: (?:work experience|experience|job|position|employment|role|education|school|degree|qualification|entry))?$/;
-  // What sends an application ("Submit", "Submit Application", "Send application", "Finish"): its last step.
+    /^add(?: another| more| new| an?)?(?: (?:professional experience|work experience|work history|employment history|experience|job|position|employment|role|education|school|degree|qualification|entry))?$/;
+  // What sends an application ("Submit", "Submit Application", "Send application", "Finish"): its last step. Not
+  // iCIMS's "Finish Later", which keeps the application to carry on with.
   const SUBMITS =
-    /^(?:submit|send|finish|complete)\b|\bsubmit\b|\bsend (?:my |your |the )?application\b|^apply(?: now)?$/;
+    /^(?:submit|send|finish|complete)\b(?! later\b)|\bsubmit\b(?! later\b)|\bsend (?:my |your |the )?application\b|^apply(?: now)?$/;
 
   /**
    * What clicking a control on an application would do, for the clicks allowed there: 'next' (a step's own "Next",

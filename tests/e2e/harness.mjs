@@ -91,6 +91,11 @@ export const PROFILE = {
   ],
 };
 
+// An iCIMS portal's own address, served by the fixture server (both browsers resolve it to this machine), so that its
+// pages are an application by their address as globalcampus-amd.icims.com's are (jobpage.ats).
+export const ICIMS_HOST = 'globalcampus-acme.icims.com';
+export const ICIMS_JOB = 'jobs/93127/summer-2027-software-engineer-intern';
+
 // A tiny but valid PDF.
 export const RESUME_PDF =
   'data:application/pdf;base64,' + Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n').toString('base64');
@@ -106,7 +111,11 @@ async function chromiumDriver() {
   const context = await chromium.launchPersistentContext(profileDir, {
     channel: 'chromium',
     headless,
-    args: [`--disable-extensions-except=${EXTENSION}`, `--load-extension=${EXTENSION}`],
+    args: [
+      `--disable-extensions-except=${EXTENSION}`,
+      `--load-extension=${EXTENSION}`,
+      `--host-resolver-rules=MAP ${ICIMS_HOST} 127.0.0.1`,
+    ],
   });
   const worker = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
   const origin = `chrome-extension://${new URL(worker.url()).host}`; // URL#origin is "null" for this scheme
@@ -165,6 +174,9 @@ async function firefoxDriver() {
       // As in a Firefox without data-collection consent: the cover letter writer then doesn't stop
       // to ask (tests can't click a browser permission prompt).
       'extensions.dataCollectionPermissions.enabled': false,
+      // The iCIMS portal's address is this machine's, over plain HTTP (icims.com is on Firefox's HSTS preload list).
+      'network.dns.localDomains': ICIMS_HOST,
+      'network.stricttransportsecurity.preloadlist': false,
     },
   });
   await browser.installExtension(EXTENSION);

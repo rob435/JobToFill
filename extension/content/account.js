@@ -196,6 +196,29 @@
   // that very one, never the first of the same wording (Workday's header "Sign In", which only opens a menu).
   const switches = new WeakMap();
 
+  // A site's own chrome around its forms: a language list in its header, a search box in its menu.
+  const PAGE_CHROME =
+    'header, nav, footer, [role="banner"], [role="navigation"], [role="contentinfo"], [role="search"]';
+
+  /**
+   * A step of an application whose address says so (`opts.applicationHosts`, from the frames' addresses: iCIMS's
+   * …/questions) but none of whose questions the rules know: "Please select your level of experience or exposure to
+   * the following: FPGA". Never a sign-in or sign-up step there (iCIMS's email-first sign-in; a sign-up form's
+   * "Answer to your security question" is no question for the AI), nor one whose only unknown boxes sit in the site's
+   * header or menus, or say too little to be a question ("Keywords").
+   */
+  function byAddress(fields, types, opts) {
+    const hosts = (opts && opts.applicationHosts) || [];
+    if (!hosts.includes(location.hostname) || types.some((t) => t && /^(account\.|email$|otp$)/.test(t))) return false;
+    return fields.some(
+      (f, i) =>
+        !types[i] &&
+        /^(select|radio|checkboxes|combo|combobox|text|textarea)$/.test(f.kind) &&
+        !f.el.closest(PAGE_CHROME) &&
+        U.normalize(JTF.matcher.questionText(f.desc)).split(' ').length >= 4,
+    );
+  }
+
   /**
    * What kind of page this frame is, from a scan ({ fields, results } as main.js makes them):
    *   kind     'login' | 'signup' | 'verify' | 'chooser' | 'application' | 'none'
@@ -203,7 +226,7 @@
    *   pure     no job-application questions or uploads (the only pages anything is ever clicked on)
    * plus what it would take to submit it: blockers, errors, the submit and switch links it offers.
    * `opts.ignore`: messages still showing from an earlier try (an old "wrong password" once the password has been
-   * replaced), left out of errors and of what the page says.
+   * replaced), left out of errors and of what the page says. `opts.applicationHosts`: see byAddress().
    */
   function analyze(scan, opts) {
     const { fields, results } = scan;
@@ -259,7 +282,10 @@
     else if (passwords.length === 1)
       out.kind = /\bnew-password\b/.test(fields[passwords[0]].desc.autocomplete) ? 'signup' : 'login';
     else if (codes.length) out.kind = 'verify';
-    else {
+    else if (byAddress(fields, types, opts)) {
+      out.kind = 'application';
+      out.byAddress = true;
+    } else {
       // No boxes yet, only ways in: "Sign in with Google", "Sign in with Apple", "Sign in with email" (Workday). The
       // wording is read first: only a page with such a button is looked at closer.
       const candidates = Array.from(document.querySelectorAll(CLICKABLE));
@@ -500,9 +526,57 @@
       if (!shown(el) || el.closest('[data-jtf-ui]')) continue;
       const text = [el.getAttribute('aria-valuetext'), dom().textOf(el)].filter(Boolean).join(' ').slice(0, 300);
       const m = text.match(STEP_OF);
-      if (m && +m[1] >= 1 && +m[1] <= +m[2]) return { step: +m[1], total: +m[2], label: U.cleanLabel(m[0], 80) };
+      if (!m || +m[1] < 1 || +m[1] > +m[2]) continue;
+      // A bar that gives each step's marker its own "Step n of m" (iCIMS): the first is not the one you're on.
+      const bar = barOf(el);
+      return (bar && markedStep(bar)) || { step: +m[1], total: +m[2], label: U.cleanLabel(m[0], 80) };
     }
     return null;
+  }
+
+  const STEPS_OF = new RegExp(STEP_OF.source, 'gi');
+
+  /**
+   * The progress bar `el` is part of: itself, or the nearest of its parents (below the page's body, whose every word
+   * a look would read) with more than one "Step n of m".
+   */
+  function barOf(el) {
+    for (let x = el, up = 0; x && x !== x.ownerDocument.body && up < 4; x = x.parentElement, up++)
+      if ((dom().textOf(x).match(STEPS_OF) || []).length > 1) return x;
+    return null;
+  }
+
+  const STEP_ITEM = 'li, [role="listitem"], [role="tab"], [class*="step" i]';
+  // A step marker's own word for the one you're on ("…, current step", iCIMS_Step_Current, "is-active"), and for one
+  // behind you ("Step 1 of 4: Login, completed", iCIMS_Step_Complete; never "not completed").
+  const CURRENT_MARK = /\b(current|active|selected|in ?progress)\b|_(current|active|selected)\b/i;
+  const DONE_MARK = /\b(?<!not )(complete|completed|done|finished|visited)\b|_(complete|completed|done|visited)\b/i;
+
+  /**
+   * A progress bar that gives every step's marker its own "Step n of m" (iCIMS's "Step 1 of 4: Login, completed" for
+   * screen readers, before step 3's): the step you're on is the marker that says so, by aria-current, then its
+   * classes, then its words; else the first one not marked done. Null for a bar with one "Step n of m" or none.
+   */
+  function markedStep(bar) {
+    const total = (dom().textOf(bar).match(STEP_OF) || [])[2];
+    if (!total) return null;
+    const one = (x) => {
+      const all = dom().textOf(x).match(STEPS_OF) || [];
+      return all.length === 1 && all[0].match(STEP_OF)[2] === total;
+    };
+    const found = Array.from(bar.querySelectorAll(STEP_ITEM)).filter(one);
+    // A marker's own parts can say "step" too (span.step-label in li.step): the outermost is the marker.
+    const items = found.filter((x) => !found.some((y) => y !== x && y.contains(x)));
+    if (items.length < 2) return null;
+    const parts = (x) => [x, ...x.querySelectorAll('*')];
+    const classes = (x) => Array.from(parts(x), (n) => n.getAttribute('class') || '').join(' ');
+    const item =
+      items.find((x) => parts(x).some((n) => (n.getAttribute('aria-current') || 'false') !== 'false')) ||
+      items.find((x) => CURRENT_MARK.test(classes(x))) ||
+      items.find((x) => CURRENT_MARK.test(dom().textOf(x))) ||
+      items.find((x) => !DONE_MARK.test(`${classes(x)} ${dom().textOf(x)}`));
+    const m = item && dom().textOf(item).match(STEP_OF);
+    return m ? { step: +m[1], total: +m[2], label: U.cleanLabel(m[0], 80) } : null;
   }
 
   /** The step's own way on: a "Next" or "Save and Continue" at the foot of its form (a bare "Continue" on a page of steps). */
@@ -520,12 +594,13 @@
    * What stands between an application's step and its next, from a scan: { application, fields (how many), progress,
    * next (the words of its "Next"), final (the page offers its submit, or is the last step: the person's), blockers
    * (required fields still empty, the terms, a CAPTCHA), errors, ready, signature (tells the next step from this one) }.
+   * `opts.applicationHosts`: the hosts whose pages are an application by their address (see byAddress).
    */
-  function stepState(scan) {
+  function stepState(scan, opts) {
     const { fields, results } = scan;
     const st = progress(document);
     const out = {
-      application: analyze(scan).kind === 'application',
+      application: analyze(scan, opts).kind === 'application',
       fields: fields.length,
       progress: st,
       next: '',
@@ -561,8 +636,8 @@
    * Click the step's own "Next" (`label`, as stepState() read it), when the step is still ready: everything on it
    * filled, no error showing, and not the step that submits. { clicked } or { refused }.
    */
-  function advance(scan, label) {
-    const st = stepState(scan);
+  function advance(scan, label, opts) {
+    const st = stepState(scan, opts);
     if (!st.application) return { refused: 'not an application', state: st };
     if (!st.ready || st.next !== label) return { refused: 'not ready', state: st };
     const target = nextControl(scan.fields, !!st.progress);

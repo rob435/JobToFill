@@ -672,17 +672,25 @@
     ),
 
     // Education
+    // iCIMS's "Highest Degree (Completed or Not Completed)" in each of its Education entries: that entry's degree,
+    // finished or not (never "Some College" for a degree under way).
+    R(
+      'edu.degree',
+      /\bhighest (degree|qualification)\b.*\b(completed or not|or not (yet )?completed|(completed|finished) or (in progress|ongoing|pursuing|expected))\b/,
+      { test: (desc) => !hasYesNoOptions(desc) },
+    ),
     R(
       'edu.level',
       /highest (level of )?(completed |finished |attained )?(education|degree|qualification|academic)|education(al)? (level|attainment|background|qualification)|level of (education|study|degree)/,
       {
-        not: /fields? of study|\bsubjects?\b|\bmajors?\b|\bdisciplines?\b|\bparents?\b|guardian|mother|father|\bqualifications\b.*\b(including|with)\b.*\b(grades?|results?|dates?)\b/,
+        not: /fields? of study|\bsubjects?\b|\bmajors?\b|\bdisciplines?\b|\bparents?\b|guardian|mother|father|\bqualifications\b.*\b(including|with)\b.*\b(grades?|results?|dates?)\b|\bcompleted or not\b|\bor not (yet )?completed\b/,
       },
     ),
     R(
       'edu.end',
-      /\bgraduat(ion|ed|e|ing)\b|expected graduation|completion (date|year)|year of (graduation|completion|passing)|class of|passing year|(?<!\b(school|academic|study|class) )year (graduated|completed)|\b(course|degree|studies|programme|program) (finish|end|complete)s?\b|\b(finish|finishing|complete|completing|end|ending) (your |my |the |this )?(most recent |latest |current )?(university |college |undergraduate |current |academic )?(course|degree|studies|programme|program|qualification)\b|\bend (date |year )?of (your |the )?(course|degree|studies)\b|\bleav(e|ing) (academia|university|full time education)\b|\b(finish|finished|complete|completed|leave|left) (high school|secondary school|secondary education|sixth form|(your )?a levels?)\b/,
+      /\bgraduat(ion|ed|e|ing)\b|expected graduation|completion (date|year)|year of (graduation|completion|passing)|class of|passing year|(?<!\b(school|academic|study|class) )year (graduated|completed)|\b(course|degree|studies|programme|program) (finish|end|complete)s?\b|\b(finish|finishing|complete|completing|end|ending) (your |my |the |this )?(most recent |latest |current )?(university |college |undergraduate |current |academic )?(course|degree|studies|programme|program|qualification)\b|\bend (date |year )?of (your |the )?(course|degree|studies)\b|\bleav(e|ing) (academia|university|full time education)\b|\b(finish|finished|complete|completed|leave|left) (high school|secondary school|secondary education|sixth form|(your )?a levels?)\b|^date (received|awarded|conferred|obtained|earned)\b|\bdate expected to (receive|be awarded|graduate)\b/,
       {
+        // iCIMS's "Date Received / Date Expected to Receive (Month / Day / Year)": the degree's.
         // "undergraduate" no longer matches (\b), so "graduation year (undergraduate degrees…)" is still a date.
         // "Graduate Engineer / Summer Internship" is a job for graduates, not a date. "What year did you graduate from
         // high school?" is your school's date (eduLevelOf), "Do you expect to graduate with honours?" about the class.
@@ -744,7 +752,7 @@
     ),
     R(
       'edu.completed',
-      /^have you (already |now )?graduated\b|\b(have|has) you (already |now )?(completed|finished|graduated from) (your |all your )(\w+ )?(studies|degree|course|university|education|programme|program)\b|\bconfirm (that )?you have (already )?(completed|finished|graduated)\b|\b(degree|qualification|studies|course)\b.{0,20}\b(completed|complete|achieved|awarded|finished) or (still )?(predicted|expected|ongoing|in progress|pending)\b/,
+      /^(have|did) you (already |now )?graduated?\b|\b(have|has) you (already |now )?(completed|finished|graduated from) (your |all your )(\w+ )?(studies|degree|course|university|education|programme|program)\b|\bconfirm (that )?you have (already )?(completed|finished|graduated)\b|\b(degree|qualification|studies|course)\b.{0,20}\b(completed|complete|achieved|awarded|finished) or (still )?(predicted|expected|ongoing|in progress|pending)\b/,
       { kinds: CHOICE },
     ),
     R(
@@ -974,6 +982,8 @@
     ),
 
     // Address
+    // iCIMS's "Type" [Mailing | Work | Home | Other] in "Addresses (1)" (its id …AddressType), "Address type".
+    R('address.type', /\baddress ?type\b|\btype of (your )?address\b/, { kinds: CHOICE }),
     R(
       'address.line2',
       /address ?(line)? ?(2|two|ii)\b|\baddr(ess)? ?2\b|street ?(address)? ?2|\bapt\b|apartment|\bsuite\b|\bunit\b|\bbuilding\b|\bfloor\b|\bflat\b|address ?(complement|additional|cont)|complemento|adresszusatz/,
@@ -1005,7 +1015,8 @@
       'location',
       /\blocation\b|city ?(and|&)? ?(state|country)|where are you (currently )?(based|located|living)|current (city|location|residence)|based in|place of residence|city of residence|where do you live|^residence$|\bwhere (will|would) you (live|be living|reside|be based) (during|while|for)\b/,
       {
-        not: /preferred|desired|willing|relocat|office|prefer|which location|work location|job location|interested|position location|hope|want|open to|employer|company|organi[sz]ation/,
+        // iCIMS's "Country/Region/Location" is a country.
+        not: /preferred|desired|willing|relocat|office|prefer|which location|work location|job location|interested|position location|hope|want|open to|employer|company|organi[sz]ation|^countr(y|ies)\b/,
       },
     ),
     R(

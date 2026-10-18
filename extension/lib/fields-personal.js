@@ -7,7 +7,19 @@
   const JTF = (root.JTF = root.JTF || {});
   const U = JTF.util;
   const P = (JTF.fieldParts = JTF.fieldParts || {});
-  const { LONG_TEXT, countryVal, dateVal, linkVal, listVal, optionTexts, regionVal, simple, val, withSpellings } = P;
+  const {
+    CHOICE,
+    LONG_TEXT,
+    countryVal,
+    dateVal,
+    linkVal,
+    listVal,
+    optionTexts,
+    regionVal,
+    simple,
+    val,
+    withSpellings,
+  } = P;
 
   // A university's or school's address: name@ucl.ac.uk, name@mit.edu, name@student.unimelb.edu.au.
   const ACADEMIC_EMAIL =
@@ -262,6 +274,15 @@
       },
     },
     'address.line2': simple('Address line 2', 'address.line2'),
+    // The address in your profile is your home's: "Home" (or "Permanent", "Residential") over "Mailing" or "Work".
+    'address.type': {
+      label: 'Address type',
+      derived: true,
+      get: (p) =>
+        [p.address.line1, p.address.city, p.address.postalCode].some((s) => !U.isBlank(s))
+          ? val('Home', { canonical: null, candidates: ['Home', 'Permanent', 'Residential', 'Primary', 'Current'] })
+          : null,
+    },
     'address.street': {
       label: 'Street address',
       // An address search (Teamtailor's) lists every "12 Gower Street": the one in your city, postcode or country.
@@ -282,8 +303,13 @@
       path: 'address.state',
       get(p, ctx) {
         const a = p.address;
-        const v = regionVal(a.state, a.country || JTF.geo.regionCountry(a.state, a.city));
+        let v = regionVal(a.state, a.country || JTF.geo.regionCountry(a.state, a.city));
         const home = JTF.geo.findCountry(a.country);
+        // A UK address's nation (from its town or postcode: "PA34" is in Scotland), for a list of England, Scotland,
+        // Wales and Northern Ireland: after your county ("Highland"), which a list of counties takes.
+        const nation = home && home[0] === 'GB' ? JTF.geo.whereIs(a).region : '';
+        if (nation && v) v.candidates = [...new Set([...(v.candidates || [v.text]), nation])];
+        else if (nation && CHOICE.includes(ctx.kind)) v = val(nation);
         // DV Trading's "If applicable, which US state do you reside in?" for someone in London: nothing to say.
         if (
           home &&

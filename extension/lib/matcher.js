@@ -584,7 +584,15 @@
   const PLACE_TYPES = ['location', 'address.city'];
   // Controls that offer a list (a react-select search box too).
   const LIST_KINDS = ['select', 'radio', 'combo', 'combobox', 'checkboxes'];
-  const ABOUT_YOU_TYPES = ['location', 'address.city', 'address.state', 'address.country', 'address.postalCode'];
+  // prettier-ignore
+  const ABOUT_YOU_TYPES = [
+    'location', 'address.city', 'address.state', 'address.country', 'address.postalCode', 'address.line1',
+    'address.line2',
+  ];
+  // A box for the answer a list lacks: iCIMS's "If your school is not listed, enter it here", "If your year of
+  // graduation is not listed, please specify".
+  const UNLISTED =
+    /^if (your |the |my )?(\w+ ){0,5}(is|are|was|were) not (listed|shown|found|available|in (the|this) list)\b/;
   const ABOUT_YOU = /\b(you|your|yourself|reside|resident|residence|live|living|home|currently|current)\b/;
   const SECTION_ONLY = ['address.state', 'address.country', 'address.postalCode'];
 
@@ -739,6 +747,28 @@
       };
     });
 
+    // iCIMS's "If your school is not listed, enter it here" right after its School list: the box for an answer the
+    // list lacks, the same entry's (decide.field fills it only when the list took nothing).
+    results.forEach((r, i) => {
+      if (
+        (r && r.type) ||
+        !['text', 'textarea'].includes(descs[i].kind) ||
+        !UNLISTED.test(norm(questionText(descs[i])))
+      )
+        return;
+      const at = [i - 1, i - 2].find(
+        (j) => j >= 0 && results[j] && results[j].type && LIST_KINDS.includes(descs[j].kind),
+      );
+      const list = at != null ? results[at] : null;
+      if (
+        !list ||
+        list.follows != null ||
+        /^(eeo\.|account\.|cc\.|consent$|optIn$|referee$|page$|custom$|na$)/.test(list.type)
+      )
+        return;
+      results[i] = { type: list.type, part: list.part, unlisted: true, score: 1, source: 'follow-up', follows: at };
+    });
+
     // Maven's "If you selected 'Other' for the above question, please specify here or write N/A if you selected another
     // answer" after a list: "N/A" unless that list is on "Other" (content/main.js checks), when it is left for you.
     results.forEach((r, i) => {
@@ -804,9 +834,10 @@
       const r = results[i];
       if (!r || !r.type) continue;
       // A list's "please specify" box answers for the list: the same entry, never the next one.
-      if (r.part === 'specify' && r.follows != null) {
+      if ((r.part === 'specify' || r.unlisted) && r.follows != null) {
         const list = results[r.follows];
-        if (list && list.type === r.type) r.index = list.index || 0;
+        if (list && list.type === r.type && list.index != null)
+          Object.assign(r, { index: list.index, entry: list.entry });
         continue;
       }
       if (r.type === 'custom') {
@@ -879,6 +910,16 @@
         r.dropped = r.type;
         r.type = null;
         continue;
+      } else if (
+        prev &&
+        ['address.line1', 'address.line2'].includes(r.type) &&
+        SECTION_HEADINGS[prev].test(norm((descs[i].signals || {}).section))
+      ) {
+        // iCIMS's "Address" in "Professional Experience (1)", under "Work Experience": the employer's street, not
+        // yours (an address after the section, under a heading of its own, is still yours).
+        r.dropped = r.type;
+        r.type = null;
+        continue;
       }
       // Capgemini's "Is your postgraduate degree completed or still predicted?", then "If you selected Predicted Status,
       // which month will you complete this qualification?": that degree's month, nothing without one.
@@ -919,7 +960,13 @@
         ['text', 'textarea'].includes(descs[i].kind)
       ) {
         if (/\b(exact|full|complete|official)\b/.test(norm(questionText(descs[i])))) {
-          r.index = before.index || 0;
+          Object.assign(r, { index: before.index || 0, entry: before.entry });
+          prev = g;
+          continue;
+        }
+        // "If your year of graduation is not listed, please specify.": your answer when the list hasn't got it.
+        if (UNLISTED.test(norm(questionText(descs[i])))) {
+          Object.assign(r, { index: before.index || 0, entry: before.entry, unlisted: true, follows: i - 1 });
           prev = g;
           continue;
         }
@@ -967,6 +1014,9 @@
       }
       st.seen.add(key);
       r.index = st.index;
+      // One of an entry's boxes (iCIMS's "Did You Graduate?" after its School, Degree and Major), not a question of its
+      // own about the section.
+      r.entry = st.seen.size > 1 || runLength(results, i, g) > 1;
       prev = g;
     }
 
@@ -1008,12 +1058,12 @@
 
   /* ---------------------------------------------------------- option matching */
 
-  // "No Selection" is SuccessFactors' empty choice (never the answer "No").
+  // "No Selection" is SuccessFactors' empty choice (never the answer "No"), "— Make a Selection —" iCIMS's.
   function isPlaceholder(n) {
     // Isio's "Please select if you are not applying for a role based in Northern Ireland" is an answer.
     return (
       !n ||
-      /^(select|choose|please (select|choose|specify)|pick (one|an option)|none selected|no selection|nothing selected|click to select)\b(?! (if|this|when|only)\b)/.test(
+      /^(select|choose|please (select|choose|specify|make (a|your) (selection|choice))|make (a|your) (selection|choice)|pick (one|an option)|none selected|no selection|nothing selected|click to select)\b(?! (if|this|when|only)\b)/.test(
         n,
       )
     );
