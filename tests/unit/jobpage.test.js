@@ -2614,6 +2614,15 @@ test('Google Careers: /jobs/results/{id} is one job, not search results, and its
     ['Strategy and Operations MBA Intern, 2027', 'Google', ['99770582270124742']],
   );
   assert.match(p.description, /Minimum qualifications/);
+  // Apply goes through a Google sign-in: the job page this tab showed is no search engine's page.
+  const now = Date.parse('2026-10-23T10:00:00Z');
+  const signin = `https://accounts.google.com/v3/signin/identifier?continue=${encodeURIComponent(apply)}`;
+  const ctx = { url: signin, ats: jp.ats(signin), title: '', company: '', jobIds: [], links: [] };
+  const trail = [{ url: JOB, title: 'Strategy and Operations MBA Intern, 2027 — Google Careers', at: now - 6e4 }];
+  assert.deepEqual(
+    jp.candidates({ ...ctx, trail }, now).map((c) => c.url),
+    [JOB],
+  );
 });
 
 test('one job shown from a search is a job page (TikTok, Brassring); a sign-in’s redirect_path names the job', () => {
@@ -2752,5 +2761,59 @@ test('an application page’s own “Back to job description” link wins over t
   assert.deepEqual(
     [found.verdict, found.source, found.posting.title],
     ['likely', JOB, '2027 Corient UK Wealth Management Summer Intern Programme'],
+  );
+});
+
+test('Atlassian: the job’s h1 under twenty-two menu headings; on iCIMS the job is in the frame, not the pitch around it', async () => {
+  const details = jp.fromHtml(
+    html('atlassian-details.html'),
+    'https://www.atlassian.com/company/careers/details/26266',
+  );
+  assert.equal(details.title, 'Software Engineer Intern, 2027 Summer U.S.');
+  const B = 'https://careers-americas.icims.com/jobs/26266/software-engineer-intern%2c-2027-summer-u.s.';
+  const ctx = jp.applicationContext(doc('icims-atlassian-login.html'), `${B}/login`);
+  assert.deepEqual(
+    [ctx.title, ctx.company, ctx.posting],
+    ['Software Engineer Intern, 2027 Summer U.s.', 'Atlassian', null],
+  );
+  assert.equal(jp.fromHtml(html('icims-atlassian-job.html'), `${B}/job`), null);
+  const routes = {
+    [`${B}/job`]: html('icims-atlassian-job.html'),
+    [`${B}/job?in_iframe=1`]: html('icims-atlassian-frame.html'),
+  };
+  const found = await jp.find(ctx, { fetch: mockFetch(routes) });
+  assert.deepEqual(
+    [found.verdict, found.source, found.posting.title],
+    ['same', `${B}/job?in_iframe=1`, 'Software Engineer Intern, 2027 Summer U.S.'],
+  );
+});
+
+test('TikTok’s pre-wrapped sections; no bot check, closed job or stray "|" read as a job (Gradcracker, Yello, Bending Spoons)', () => {
+  const tiktok = jp.fromHtml(
+    html('tiktok-search-job.html'),
+    'https://lifeattiktok.com/search/7674944387893791029?spread=Trackr',
+  );
+  assert.equal(tiktok.title, 'Data Analyst Intern (TikTok-LIVE) - 2027 Start');
+  assert.match(tiktok.description, /Key Responsibilities/);
+  const page = (title, body) => `<html><head><title>${title}</title></head><body><main>${body}</main></body></html>`;
+  const blocked = page(
+    'Attention Required! | Cloudflare',
+    `<h1>Sorry, you have been blocked</h1><h2>You are unable to access gradcracker.com</h2><p>${'This website is using a security service to protect itself from online attacks. The action you just performed triggered the security solution. '.repeat(4)}</p>`,
+  );
+  const job = 'https://www.gradcracker.com/hub/1210/rendel/graduate-job/86284/graduate-civil-engineer';
+  assert.equal(jp.fromHtml(blocked, job), null);
+  assert.equal(jp.applicationContext(parseHTML(blocked).document, job).company, '');
+  const yello = 'https://smbc.recsolu.com/jobs/OA7gYDTR5Q2cIoCF-4A2Wg';
+  assert.equal(
+    jp.applicationContext(
+      parseHTML(page('Job Unavailable Yello Enterprise', '<h1>Job Unavailable</h1>')).document,
+      yello,
+    ).gone,
+    true,
+  );
+  const bs = 'https://jobs.bendingspoons.com/positions/6a7c11c253e80da9f6c76ffc/apply';
+  assert.equal(
+    jp.applicationContext(parseHTML(page('| Graduate product manager', '<p>Apply</p>')).document, bs).title,
+    'Graduate product manager',
   );
 });

@@ -50,8 +50,12 @@
   // Brassring's PageType=JobDetails&jobid=.)
   const LIST_PAGE =
     /^(?![^#]*([?&]pagetype=jobdetails\b|\/(search|results)\/\d{6,}([-/?#]|$)))[\s\S]*?(([?&](q|query|keywords?|search|k)=)|\/(search|jobs\/?$|careers\/?$|job-search|search-results|results|saved-?jobs|jobs\/search|joblist|(job-|current-|open-)?openings\/?$|(open-)?positions\/?$|open-roles\/?$|(current-)?vacancies\/?$|all-jobs\/?$|find-a-(job|role)\/?$|job-offers\/?$|stellenangebote\/?$|offres(-d-emploi)?\/?$|go\/[^/]+\/\d+\/?$))/i;
+  const BOT_WALL =
+    /^(attention required|just a moment|access denied|access forbidden|forbidden|request blocked|you have been blocked|are you a robot|security check|checking your browser|performing security verification|403\b)/i;
   const SEARCH_HOST =
     /(^|\.)(google|bing|duckduckgo|yahoo|ecosia|baidu|yandex|startpage|search\.brave)\.[a-z.]+$|^(t\.co|lnkd\.in)$/i;
+  /** A search engine's page: not Google's own careers site (google.com/about/careers/…). */
+  const searchEngine = (u) => SEARCH_HOST.test(u.hostname) && !/^\/about\/careers\//i.test(u.pathname);
   const LOGIN_PAGE = /\/(login|log-in|signin|sign-in|sso|auth|oauth|register|signup|sign-up|account)(\/|$|\?)/i;
   const ACTION_LINK =
     /logout|log-out|signout|sign-out|unsubscribe|delete|remove|withdraw|cancel|confirm|verify|activate|reset|token=|password/i;
@@ -365,7 +369,9 @@
     if (/\.icims\.com$/.test(host)) {
       const company = host
         .split('.')[0]
-        .replace(/^(careers|jobs|uscareers|externalcareers|external|career|global|apply|hr)-/, '');
+        .replace(/^(careers|jobs|uscareers|externalcareers|external|career|global|apply|hr)-/, '')
+        // A region is no firm: Atlassian's careers-americas.icims.com.
+        .replace(/^(americas|emea|apac|asia|europe|eu|us|usa|uk|global|international|na|latam|anz)$/, '');
       const i = lower.indexOf('jobs');
       const id = i >= 0 && /^\d+$/.test(parts[i + 1] || '') ? parts[i + 1] : null;
       const last = lower[lower.length - 1] || '';
@@ -796,8 +802,9 @@
         if (a.jobId) {
           const slug = u.pathname.split('/')[3];
           const page = `${u.origin}/jobs/${a.jobId}/${slug && !/^(login|candidate|apply|job)$/i.test(slug) ? slug + '/' : ''}job`;
-          if (a.stage === 'application') add(page, 'the iCIMS job page');
+          // The frame first: the page around it can be the employer's pitch (Atlassian's talent community).
           add(page + '?in_iframe=1', 'the iCIMS job page (frame)');
+          if (a.stage === 'application') add(page, 'the iCIMS job page');
         }
         break;
       case 'oracle':
@@ -1714,7 +1721,11 @@
         continue;
       }
       if (own.length < 25) continue;
-      const v = 1 + (own.match(/,/g) || []).length * 0.5 + Math.min(own.length / 100, 3);
+      // Each line its own paragraph: TikTok writes a section as one pre-wrapped text ("About the Team\nThe…\n- …").
+      let v = 0;
+      for (const line of own.split(/\n+/))
+        if (line.trim().length >= 25 || v === 0)
+          v += 1 + (line.match(/,/g) || []).length * 0.5 + Math.min(line.trim().length / 100, 3);
       // Text wrapped in inline tags counts for the block it is in: GTI's Word-pasted paragraphs are
       // <p><span><span><span><span>…</span></span></span></span></p>.
       let block = el;
@@ -1788,7 +1799,7 @@
   /* --------------------------------------------------------- page headings */
 
   const GENERIC_TITLE =
-    /^(apply|application|apply now|apply for this (job|position|role)|job application|start your application|my information|personal (information|details)|sign in|log in|login|create (an )?account|already (have an account|registered)|new users? register|choose your sign ?in option|log ?in(to)? (to )?your account|returning (users?|candidates?)|careers?|jobs?|job search|search jobs|welcome|home|current vacancies|open positions|join us|thank you|are you still with us\??|work summary|job application form|candidate (home|experience)|review|submit|resume|cv|error\s*\d*\b|\d{3}\b|internal server error|access denied|forbidden|too many requests|just a moment|attention required|page not found|listings|search results|current openings|(\w+ )?candidate portal|(join )?(our )?talent (community|network|pool)|sign up|your personal space|who we are|my (profile|account|applications?)|dashboard|create (a |your )?profile|register|your privacy|privacy (policy|notice|statement|settings|preferences|cent(er|re))|(your )?cookies?( (policy|settings|preferences|notice|consent|declaration|choices))?|(vacancy|job|role|position|opportunity) details|details|manage (cookies|consent|preferences)|we (use|value) (cookies|your privacy)|terms (of use|and conditions)|legal (notice|information)|disclaimer|imprint|impressum|datenschutz\w*|mentions légales|politique de confidentialité|view this (site|page) in|(choose|select|change) (your )?(language|country|region|location)|.{0,60}\bequal (employment )?opportunit(y|ies)\b.*|.{0,40}\bis an? (equal|e-verify)\b.*)\b/i;
+    /^(apply|application|apply now|apply for this (job|position|role)|job application|start your application|my information|personal (information|details)|sign in|log in|login|create (an )?account|already (have an account|registered)|new users? register|choose your sign ?in option|log ?in(to)? (to )?your account|returning (users?|candidates?)|careers?|jobs?|job search|search jobs|welcome|home|current vacancies|open positions|join us|thank you|are you still with us\??|work summary|job application form|candidate (home|experience)|review|submit|resume|cv|error\s*\d*\b|\d{3}\b|internal server error|access denied|forbidden|too many requests|just a moment|attention required|page not found|listings|search results|current openings|(\w+ )?candidate portal|(join )?(our |the [\w&'’ .-]{1,40} )?talent (community|network|pool)|sign up|your personal space|who we are|my (profile|account|applications?)|dashboard|create (a |your )?profile|register|your privacy|privacy (policy|notice|statement|settings|preferences|cent(er|re))|(your )?cookies?( (policy|settings|preferences|notice|consent|declaration|choices))?|(vacancy|job|role|position|opportunity) details|details|manage (cookies|consent|preferences)|we (use|value) (cookies|your privacy)|terms (of use|and conditions)|legal (notice|information)|disclaimer|imprint|impressum|datenschutz\w*|mentions légales|politique de confidentialité|view this (site|page) in|(choose|select|change) (your )?(language|country|region|location)|.{0,60}\bequal (employment )?opportunit(y|ies)\b.*|.{0,40}\bis an? (equal|e-verify)\b.*)\b/i;
   const notGeneric = (t) => !GENERIC_TITLE.test(t);
   const SITE_PIECE =
     /^(workday|careers?|jobs?|job board|lever|greenhouse|ashby|smartrecruiters|workable|icims|taleo|avature|eightfold|oracle|apply|application|home|(job|vacancy|role|position) details?|job description|careers? (site|page|portal)|kernel ats|d[ée]tails? (du poste|de l['’]offre)|candidate experience( page)?)$/i;
@@ -1801,7 +1812,7 @@
 
   function cleanCompany(s) {
     if (
-      /^\s*(false|true|null|undefined|none|n\/a|company( name| logo)?|your company|logo|brand|site name|home|careers?|jobs?|log ?in|sign ?in|apply|greenhouse|lever|workday|ashby|smartrecruiters|workable|icims|taleo|successfactors|oracle|avature|eightfold|phenom|jobvite|recruitee|personio|teamtailor|bamboohr|pinpoint|breezy|allhires|candidats|ambertrack|vacancy filler|apply4law|oleeo|cezanne|eploy|tribepad|hireful|jobtrain|networx|webitrent|hibob|zoho recruit|50skills|kernel( ats)?)\s*$/i.test(
+      /^\s*(false|true|null|undefined|none|n\/a|company( name| logo)?|your company|logo|brand|site name|home|careers?|jobs?|log ?in|sign ?in|apply|greenhouse|lever|workday|ashby|smartrecruiters|workable|icims|taleo|successfactors|oracle|avature|eightfold|phenom|jobvite|recruitee|personio|teamtailor|bamboohr|pinpoint|breezy|allhires|candidats|ambertrack|vacancy filler|apply4law|oleeo|cezanne|eploy|tribepad|hireful|jobtrain|networx|webitrent|hibob|zoho recruit|50skills|kernel( ats)?|general data protection regulation( \(gdpr\))?|gdpr|cloudflare|privacy( policy| notice)?|cookies?( policy)?)\s*$/i.test(
         String(s || ''),
       )
     )
@@ -1879,6 +1890,8 @@
         /^(job application for|application for|apply for|apply to|applying for|apply|application|career opportunities|job opportunity|job details|job|vacancy|stellenangebot|stellenanzeige|offre d['’]emploi|offre)\s*[:\-–—]?\s+/i,
         '',
       )
+      // (Bending Spoons' tab: "| Graduate product manager".)
+      .replace(/^[\s|–—·•:-]+|[\s|–—·•:-]+$/g, '')
       .trim();
     let m = t.match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
     if (m && !/[|–—]/.test(m[2]) && !/\s[|–—]\s/.test(m[1])) return { title: m[1].trim(), company: cleanCompany(m[2]) };
@@ -1928,7 +1941,9 @@
     // (Not one hidden in a closed menu: Talentsoft's "Suivez nous" in a display:none social-links box; nor a
     // section's heading, "What we look for".)
     const shown = (h) => !inJunk(h) && !h.closest('[hidden], [style*="display:none" i], [style*="display: none" i]');
-    return qa(doc, 'h1, h2')
+    // The page's own h1 before the menus' h2s (Atlassian's mega-menu has twenty-two, "Featured apps" first).
+    return qa(doc, 'h1')
+      .concat(qa(doc, 'h2'))
       .slice(0, 30)
       .filter(shown)
       .slice(0, 8)
@@ -1980,7 +1995,7 @@
   // "The requested job could not be found", "This position is no longer available", "This job cannot be viewed at
   // the moment. It has either been deleted or is no longer available for application" (SuccessFactors)…
   const GONE =
-    /\b(job|position|posting|vacancy|role|opportunity|page|requisition|advert)\b.{0,60}\b(could ?n[o']t be found|can ?n[o']t be found|not (be )?found|no longer (available|accepting|exists|active|open|online)|has (now )?(either )?(been )?(closed|expired|filled|removed|deleted)|is (closed|expired|not currently active|not available)|does not exist)|^\s*(404|page not found|job not found|not found)\b/i;
+    /\b(job|position|posting|vacancy|role|opportunity|page|requisition|advert)\b.{0,60}\b(could ?n[o']t be found|can ?n[o']t be found|not (be )?found|no longer (available|accepting|exists|active|open|online)|unavailable|has (now )?(either )?(been )?(closed|expired|filled|removed|deleted)|is (closed|expired|not currently active|not available)|does not exist)|^\s*(404|page not found|job not found|not found)\b/i;
 
   /**
    * Does the page say the job is closed? The tab title always counts; headings and alerts only when they are
@@ -2024,6 +2039,8 @@
       }
     }
     if (!posting || saysGone(doc, /json-ld|microdata/.test(posting.source))) return null;
+    // A bot check's page is no job: Cloudflare's "Attention Required!" ("Sorry, you have been blocked").
+    if (!/json-ld|microdata/.test(posting.source) && BOT_WALL.test(clean(doc.title || '', 120))) return null;
     // A search page's text is a list of jobs, not one; a home page's text is not a job either.
     if (posting.source === 'page-text' && (parseUrl(pageUrl) || { pathname: '/' }).pathname.replace(/\/+$/, '') === '')
       return null;
@@ -2032,6 +2049,9 @@
       (LIST_PAGE.test(pageUrl.replace(/^\w+:\/\/[^/]+/, '')) || (a.stage === 'unknown' && a.name))
     )
       return null;
+    // An iCIMS job is in its frame (in_iframe=1); the page around it is the employer's, its text a pitch ("The Future
+    // of Atlassian starts with you… Join the Atlassian Talent Community").
+    if (posting.source === 'page-text' && a.name === 'icims' && !/[?&]in_iframe=1\b/.test(pageUrl)) return null;
     // Fill what the chosen source left out from the page itself.
     const heads = headingTexts(doc);
     const parts = titleParts(doc.title || '', heads);
@@ -2501,7 +2521,11 @@
         attr(doc, 'img[class*="logo"][alt]', 'alt'),
     );
     const ogTitle = metaContent(doc, ['og:title', 'twitter:title']);
-    const titleOk = (t) => t && !GENERIC_TITLE.test(t) && !siteTitle(t) && words(t) <= 20;
+    // (Nor the site's own name: Atlassian's tab says "Job Details | Atlassian", its h1 the job.)
+    const firstLabel = context.host.replace(/^www\./, '').split('.')[0];
+    const firmOnly = (t) =>
+      !JOBBY_TITLE.test(t) && [firstLabel, siteLabel(pageUrl)].some((n) => n && companyMatch(t, n) === true);
+    const titleOk = (t) => t && !GENERIC_TITLE.test(t) && !siteTitle(t) && words(t) <= 20 && !firmOnly(t);
     // An identity provider's sign-in page ("IBMid", "Amazon Passport") says nothing about the job, nor does a site's
     // home, search or sign-in page that a sign-in wall lands on ("SEARCH FOR JOBS…", "Our Strategy").
     const landing =
@@ -2513,11 +2537,19 @@
     // A SuccessFactors step's heading is the step's ("Let's begin! Sign in to apply at Moody's"), not the job's,
     // unless it ends with the requisition ("… Summer Intern (14588)").
     const unnamed = !!sf && (!!sf.jobId || sf.form) && !sf.named;
+    // Around iCIMS's frame the page is the employer's: the job is named in the address
+    // (/jobs/26266/software-engineer-intern,-2027-summer-u.s./login).
+    const icimsSlug =
+      a.name === 'icims' && !/[?&]in_iframe=1\b/.test(pageUrl) && u
+        ? (u.pathname.split('/').map(safeDecode)[3] || '').replace(/^(login|candidate|apply|job)$/i, '')
+        : '';
+    const slugJob = clean(icimsSlug.replace(/-+/g, ' ')).replace(/(^|\s)\p{Ll}/gu, (c) => c.toUpperCase());
     const req = sf && sf.jobId ? new RegExp(`\\s*\\(${sf.jobId}\\)$`) : null;
     context.title =
       (landing
         ? []
         : [
+            slugJob,
             atsTitle,
             // (On an application step only what says it is a job posting: Bending Spoons' form carries "The selection
             // process (all roles)" in its data.)
@@ -2552,7 +2584,6 @@
     );
     plainFields(context);
     // A portal that shows only the firm's name ("Trowers & Hamlins", "Freshfields") names no job.
-    const firstLabel = context.host.replace(/^www\./, '').split('.')[0];
     if (
       context.title &&
       !JOBBY_TITLE.test(context.title) &&
@@ -2598,7 +2629,7 @@
   function isJobReferrer(context, ref) {
     const u = parseUrl(ref);
     if (!u || !/^https?:$/.test(u.protocol)) return false;
-    if (SEARCH_HOST.test(u.hostname)) return false;
+    if (searchEngine(u)) return false;
     if (urlKey(ref) === urlKey(context.url)) return false;
     if (
       /(^|\.)(linkedin\.com|indeed\.[a-z.]+|glassdoor\.[a-z.]+|the-trackr\.com|gradcracker\.com|brightnetwork\.co\.uk|efinancialcareers\.[a-z.]+)$/i.test(
@@ -2646,8 +2677,9 @@
       const base = page === ctx.pasted ? 0.98 : 0;
       for (const r of apiRequests(page))
         add(r.url, 'the job board’s data for this job', base || 0.95, { request: r, structural: true });
-      for (const t of descriptionUrls(page)) {
-        add(t.url, t.reason, base || 0.9, { structural: true });
+      // (The first a site's rule names is its best: iCIMS's frame before the page around it.)
+      for (const [i, t] of descriptionUrls(page).entries()) {
+        add(t.url, t.reason, (base || 0.9) - 0.001 * i, { structural: true });
         for (const r of apiRequests(t.url))
           add(r.url, 'the job board’s data for this job', base || 0.93, { request: r, structural: true });
       }
@@ -2833,7 +2865,7 @@
       const u = e && parseUrl(e.url);
       if (!u || !/^https?:$/.test(u.protocol) || urlKey(u.href) === urlKey(ctx.url)) continue;
       if (
-        SEARCH_HOST.test(u.hostname) ||
+        searchEngine(u) ||
         isTrackr(u.href) ||
         u.pathname.replace(/\/+$/, '') === '' ||
         LIST_PAGE.test(u.pathname + u.search) ||
@@ -2878,7 +2910,7 @@
       if (seen.has(key) || key === urlKey(ctx.url)) continue;
       seen.add(key);
       if (
-        SEARCH_HOST.test(u.hostname) ||
+        searchEngine(u) ||
         isTrackr(it.url) ||
         LIST_PAGE.test(u.pathname + u.search) ||
         LOGIN_PAGE.test(u.pathname) ||

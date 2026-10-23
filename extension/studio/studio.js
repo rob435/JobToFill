@@ -300,8 +300,10 @@ async function findJob() {
     }
   }
 
-  // The application page itself may be all there is (many put the description above the form).
-  if (!found.posting && context.posting && L.words(context.posting.description) > 120) {
+  // The application page itself may be all there is (many put the description above the form); not on an application
+  // step, whose text the finder has weighed already (Greencore's "Question Summary").
+  const step = !!(context.ats && context.ats.stage === 'application');
+  if (!found.posting && !step && context.posting && L.words(context.posting.description) > 120) {
     Object.assign(found, {
       posting: context.posting,
       verdict: 'same',
