@@ -46,8 +46,10 @@
   const SECTION_HEADING =
     /^(your (mission|tasks|team|day|future)|why (us|join|work)|about (us|the company|[\w&.' -]{2,40})$|who we are|our (offer|team|culture)|we offer|perks|tasks|ihre aufgaben|ihr profil|wir bieten|missions?|profil)/i;
   // Pages that are not a single job: searches, lists, sign-in.
+  // (Not one job shown from a search: TikTok's and ByteDance's /search/{id}, Google's /jobs/results/{id}-{slug},
+  // Brassring's PageType=JobDetails&jobid=.)
   const LIST_PAGE =
-    /([?&](q|query|keywords?|search|k)=)|\/(search|jobs\/?$|careers\/?$|job-search|search-results|results|saved-?jobs|jobs\/search|joblist|(job-|current-|open-)?openings\/?$|(open-)?positions\/?$|open-roles\/?$|(current-)?vacancies\/?$|all-jobs\/?$|find-a-(job|role)\/?$|job-offers\/?$|stellenangebote\/?$|offres(-d-emploi)?\/?$|go\/[^/]+\/\d+\/?$)/i;
+    /^(?![^#]*([?&]pagetype=jobdetails\b|\/(search|results)\/\d{6,}([-/?#]|$)))[\s\S]*?(([?&](q|query|keywords?|search|k)=)|\/(search|jobs\/?$|careers\/?$|job-search|search-results|results|saved-?jobs|jobs\/search|joblist|(job-|current-|open-)?openings\/?$|(open-)?positions\/?$|open-roles\/?$|(current-)?vacancies\/?$|all-jobs\/?$|find-a-(job|role)\/?$|job-offers\/?$|stellenangebote\/?$|offres(-d-emploi)?\/?$|go\/[^/]+\/\d+\/?$))/i;
   const SEARCH_HOST =
     /(^|\.)(google|bing|duckduckgo|yahoo|ecosia|baidu|yandex|startpage|search\.brave)\.[a-z.]+$|^(t\.co|lnkd\.in)$/i;
   const LOGIN_PAGE = /\/(login|log-in|signin|sign-in|sso|auth|oauth|register|signup|sign-up|account)(\/|$|\?)/i;
@@ -592,6 +594,33 @@
       return set('meta', 'meta', id || (lower[0] === 'resume' ? qp.get('req') : null), stage);
     }
 
+    // Cornerstone OnDemand: {tenant}.csod.com/ux/ats/careersite/{site}/home/requisition/{id}?c={tenant}; apply:
+    // …/careersite/{site}/requisition/{id}/application.
+    if (/\.csod\.com$/.test(host)) {
+      const r = lower.indexOf('requisition');
+      const id = r >= 0 && /^\d+$/.test(parts[r + 1] || '') ? parts[r + 1] : null;
+      const stage = !id ? 'unknown' : has('application', 'apply') ? 'application' : 'description';
+      return set('cornerstone', qp.get('c') || host.split('.')[0], id, stage);
+    }
+
+    // Kernel ATS: apptrkr.io/{firm}/{programme}[/{role}], every tab titled "Kernel ATS".
+    if (host === 'apptrkr.io')
+      return set(
+        'kernel',
+        parts.length > 1 ? parts[0] : null,
+        null,
+        !parts.length ? 'unknown' : has('apply') ? 'application' : 'description',
+      );
+
+    // Google Careers: google.com/about/careers/applications/jobs/results/{id}-{slug}; apply: …/jobs/results/apply?jobId=
+    // (a token, not the ID) and /about/careers/applications/apply/…, behind a Google sign-in.
+    if (host === 'google.com' && lower[0] === 'about' && lower[1] === 'careers') {
+      const r = lower.indexOf('results');
+      const mm = r >= 0 && (parts[r + 1] || '').match(/^(\d{6,})(?:-|$)/);
+      const stage = has('apply') ? 'application' : mm ? 'description' : 'unknown';
+      return set('google', 'google', mm ? mm[1] : null, stage);
+    }
+
     // Anything else: guess from the path. On a recruiting platform's subdomain the first label is the employer.
     const path = u.pathname.toLowerCase();
     out.jobId = urlJobIds(url)[0] || null;
@@ -599,8 +628,9 @@
       /^([a-z0-9-]+)\.(?:grad\.allhires\.com|(?:app|hr)\.candidats\.io|ambertrack\.co\.uk|vacancy-filler\.co\.uk|apply4law\.com|current-vacancies\.com|careers\.hibob\.com|zohorecruit\.(?:com|eu)|bc\.direct|talentview\.io|jobs\.50skills\.com|easyapply\.co)$/,
     );
     if (tenant && !/^(app|www|jobs|careers|apply)$/.test(tenant[1])) out.company = tenant[1].replace(/^app-/, '');
+    // (Greencore's "/early-careers/early-careers-apply/" too.)
     if (
-      /\/(apply|application|applications|apply-now|candidate|new_candidate|new-candidate|register|login|signin|signup|sign-up|easyapply)(\/|$)/.test(
+      /\/(apply|application|applications|apply-now|candidate|new_candidate|new-candidate|register|login|signin|signup|sign-up|easyapply|[\w-]+-apply)(\/|$)/.test(
         path,
       )
     )
@@ -666,7 +696,8 @@
       if (/^\d{5,}$/.test(seg)) ids.push(seg);
       const lead = seg.match(/^(\d{6,})-/);
       if (lead) ids.push(lead[1]);
-      const trail = seg.match(/[A-Za-z]{3}.*[-_](\d{4,})$/);
+      // (Before a page's file extension too: Talentsoft's "job-2027-summer-internship-coverage_116693.aspx".)
+      const trail = seg.replace(/\.(aspx?|html?|php|jsp|cfm)$/i, '').match(/[A-Za-z]{3}.*[-_](\d{4,})$/);
       // Not a session's or a portal's own number ("user-415213", "brand-4", "site-12345" in Oleeo addresses).
       if (
         trail &&
@@ -829,6 +860,14 @@
         break;
       case 'teamtailor':
         if (a.stage === 'application') add(cut(/\/applications?(\/new)?\/?$/i), 'the Teamtailor job page');
+        break;
+      case 'cornerstone':
+        if (a.stage === 'application') {
+          const v = new URL(u.href.replace(/\/requisition\/(\d+)\/.*$/, '/home/requisition/$1').replace(/#.*$/, ''));
+          v.search = '';
+          v.searchParams.set('c', a.company);
+          add(v.href, 'the Cornerstone job page');
+        }
         break;
       case 'meta':
         if (a.stage === 'application' && /^\d+$/.test(a.jobId || ''))
@@ -1070,7 +1109,10 @@
       if (typeof ad === 'string') out.push(ad);
       else {
         const country = asText(ad.addressCountry);
-        const bits = [asText(ad.addressLocality), asText(ad.addressRegion), country].filter(Boolean);
+        // (Not a placeholder: Jibe's "Penicuik, UNAVAILABLE, United Kingdom" for AMD.)
+        const bits = [asText(ad.addressLocality), asText(ad.addressRegion), country].filter(
+          (b) => b && !/^(unavailable|n\/?a|none|null|undefined|not (specified|available)|-+)$/i.test(b.trim()),
+        );
         if (bits.length) out.push(uniq(bits).join(', '));
         else if (l.name) out.push(asText(l.name));
       }
@@ -1102,7 +1144,7 @@
     return makePosting({
       url: (typeof o.url === 'string' && parseUrl(o.url, url) ? parseUrl(o.url, url).href : '') || url,
       title: htmlToText(asText(o.title || o.name)),
-      company: htmlToText(asText(org)),
+      company: firmName(htmlToText(asText(org))),
       location: htmlToText(location),
       jobIds: ldIds(o.identifier),
       description,
@@ -1305,9 +1347,18 @@
   function pickTitle(doc, selectors) {
     const all = [];
     for (const s of selectors || []) for (const el of qa(doc, s)) all.push(shortText(el, 200));
-    const list = all.filter((t) => t && notGeneric(t));
+    // (Not a section's heading: Bloomberg's Avature page heads its details "Description & Requirements".)
+    const list = all.filter(
+      (t) => t && notGeneric(t) && !(words(t) < 6 && (isJobHeading(t) || SECTION_HEADING.test(t))),
+    );
     const dt = norm(String(doc.title || '').replace(/<!--[\s\S]*?-->/g, ''));
-    return list.find((t) => norm(t).length > 3 && dt.includes(norm(t))) || list[0] || '';
+    const named = list.find((t) => norm(t).length > 3 && dt.includes(norm(t)));
+    if (named) return named;
+    // No heading the tab title names: the tab title before its requisition ("Accounting Analyst - International
+    // Controllers Group - 45808 - Bloomberg" over Avature's "Accommodations" and "Equal Opportunity").
+    const m = clean(String(doc.title || ''), 300).match(/^(.+?)\s+[-|–—]\s+[A-Z]{0,4}[-_]?\d{4,}\s+[-|–—]\s+\S/);
+    if (m && JOBBY_TITLE.test(m[1]) && !(list[0] && JOBBY_TITLE.test(list[0]))) return m[1];
+    return list[0] || '';
   }
 
   function firstText(doc, selectors, max = 200, ok) {
@@ -1584,6 +1635,7 @@
   const JUNK_NAME =
     /(^|[\s_-])(cookies?|consent|gdpr|onetrust|ot-sdk|banner|modal|popup|newsletter|subscribe|social|share|sharing|breadcrumbs?|similar|related|recommended|recommendations|more-jobs|other-jobs|job-?alerts?|footer|sidebar|navbar|nav|menu|skip-link|search|filters?|pagination|language-?(selector|switcher|picker)|country-?(selector|picker)|locale-?(selector|switcher))($|[\s_-])/i;
   const GOOD_NAME = /desc|content|detail|posting|job|article|main|body|vacanc|position/i;
+  const INLINE_TAG = /^(SPAN|STRONG|B|EM|I|U|FONT|SMALL|MARK|SUB|SUP)$/i;
   // Cookie and consent banners (OneTrust, Cookiebot, Usercentrics…), privacy and legal pop-ups, by class, id or label.
   const CONSENT_NAME =
     /cookie|consent|onetrust|ot-sdk|optanon|cookiebot|cybot|usercentrics|didomi|truste|gdpr|privacy|disclaimer|legal-?pop|legal-?notice|legal-?modal|terms-?of-?use|terms-?and-?conditions|popup/i;
@@ -1630,10 +1682,12 @@
       h.textContent = t;
       b.replaceWith(h);
     }
-    // (A read-only "form" with no fields is how some boards lay out the advert itself, e.g. Oleeo's form-view, and
-    // collapsed sections — accordions, "Read more" — are hidden until clicked but are the advert's own text.)
+    // (A read-only "form" with no fields is how some boards lay out the advert itself, e.g. Oleeo's form-view, and so
+    // is one around the page's heading: ASP.NET sites put the whole page in one, Talentsoft's form#aspnetForm.
+    // Collapsed sections — accordions, "Read more" — are hidden until clicked but are the advert's own text.)
     for (const el of qa(clone, JUNK_SELECTOR)) {
-      if (el.tagName === 'FORM' && !q(el, 'input:not([type="hidden"]), select, textarea, button')) continue;
+      if (el.tagName === 'FORM' && (!q(el, 'input:not([type="hidden"]), select, textarea, button') || q(el, 'h1')))
+        continue;
       if (
         el.hasAttribute('hidden') &&
         /^(DIV|SECTION|P|UL|OL|SPAN|DD|ARTICLE)$/i.test(el.tagName) &&
@@ -1661,7 +1715,12 @@
       }
       if (own.length < 25) continue;
       const v = 1 + (own.match(/,/g) || []).length * 0.5 + Math.min(own.length / 100, 3);
-      const p = el.parentNode;
+      // Text wrapped in inline tags counts for the block it is in: GTI's Word-pasted paragraphs are
+      // <p><span><span><span><span>…</span></span></span></span></p>.
+      let block = el;
+      while (block.parentNode && block.parentNode.nodeType === 1 && INLINE_TAG.test(block.tagName))
+        block = block.parentNode;
+      const p = block.parentNode;
       bump(p, v);
       bump(p && p.parentNode, v / 2);
       bump(p && p.parentNode && p.parentNode.parentNode, v / 3);
@@ -1716,7 +1775,8 @@
     // A list of jobs (every line a link) is not one job.
     if (linkShare(best) > 0.4) return null;
     const description = elText(best);
-    if (!isRealDescription(description) || /^\s*[[{]/.test(description)) return null;
+    // Raw JSON is no advert; a heading in brackets is (Factorial's "[Brief intro to Fide Partners]").
+    if (!isRealDescription(description) || /^\s*(\{\s*"|\[\s*[{["\d])/.test(description)) return null;
     return makePosting({
       url,
       description,
@@ -1728,20 +1788,26 @@
   /* --------------------------------------------------------- page headings */
 
   const GENERIC_TITLE =
-    /^(apply|application|apply now|apply for this (job|position|role)|job application|start your application|my information|personal (information|details)|sign in|log in|login|create (an )?account|careers?|jobs?|job search|search jobs|welcome|home|current vacancies|open positions|join us|thank you|are you still with us\??|work summary|job application form|candidate (home|experience)|review|submit|resume|cv|error\s*\d*\b|\d{3}\b|internal server error|access denied|forbidden|too many requests|just a moment|attention required|page not found|listings|search results|current openings|(\w+ )?candidate portal|(join )?(our )?talent (community|network|pool)|sign up|your personal space|who we are|my (profile|account|applications?)|dashboard|create (a |your )?profile|register|your privacy|privacy (policy|notice|statement|settings|preferences|cent(er|re))|cookies?( (policy|settings|preferences|notice|consent|declaration))?|manage (cookies|consent|preferences)|we (use|value) (cookies|your privacy)|terms (of use|and conditions)|legal (notice|information)|disclaimer|imprint|impressum|datenschutz\w*|mentions légales|politique de confidentialité|view this (site|page) in|(choose|select|change) (your )?(language|country|region|location)|.{0,60}\bequal (employment )?opportunit(y|ies)\b.*|.{0,40}\bis an? (equal|e-verify)\b.*)\b/i;
+    /^(apply|application|apply now|apply for this (job|position|role)|job application|start your application|my information|personal (information|details)|sign in|log in|login|create (an )?account|already (have an account|registered)|new users? register|choose your sign ?in option|log ?in(to)? (to )?your account|returning (users?|candidates?)|careers?|jobs?|job search|search jobs|welcome|home|current vacancies|open positions|join us|thank you|are you still with us\??|work summary|job application form|candidate (home|experience)|review|submit|resume|cv|error\s*\d*\b|\d{3}\b|internal server error|access denied|forbidden|too many requests|just a moment|attention required|page not found|listings|search results|current openings|(\w+ )?candidate portal|(join )?(our )?talent (community|network|pool)|sign up|your personal space|who we are|my (profile|account|applications?)|dashboard|create (a |your )?profile|register|your privacy|privacy (policy|notice|statement|settings|preferences|cent(er|re))|(your )?cookies?( (policy|settings|preferences|notice|consent|declaration|choices))?|(vacancy|job|role|position|opportunity) details|details|manage (cookies|consent|preferences)|we (use|value) (cookies|your privacy)|terms (of use|and conditions)|legal (notice|information)|disclaimer|imprint|impressum|datenschutz\w*|mentions légales|politique de confidentialité|view this (site|page) in|(choose|select|change) (your )?(language|country|region|location)|.{0,60}\bequal (employment )?opportunit(y|ies)\b.*|.{0,40}\bis an? (equal|e-verify)\b.*)\b/i;
   const notGeneric = (t) => !GENERIC_TITLE.test(t);
   const SITE_PIECE =
-    /^(workday|careers?|jobs?|job board|lever|greenhouse|ashby|smartrecruiters|workable|icims|taleo|avature|eightfold|oracle|apply|application|home|job details?|job description|careers? (site|page|portal)|candidate experience( page)?)$/i;
+    /^(workday|careers?|jobs?|job board|lever|greenhouse|ashby|smartrecruiters|workable|icims|taleo|avature|eightfold|oracle|apply|application|home|(job|vacancy|role|position) details?|job description|careers? (site|page|portal)|kernel ats|d[ée]tails? (du poste|de l['’]offre)|candidate experience( page)?)$/i;
+
+  const NOT_A_FIRM =
+    /^((jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?|spring|summer|autumn|fall|winter)\s+(19|20)\d\d|(19|20)\d\d(\s*[-/]\s*(19|20)?\d\d)?(\s+(start|intake|entry|cohort))?|\d+\s*[- ]?\s*(weeks?|months?|years?)|full[- ]time|part[- ]time|permanent|temporary|internships?|graduates?)$/i;
+
+  /** Without Workday's legal-entity code: "3003 Accenture (UK) Limited Company", "11105 Expedia, Inc.". */
+  const firmName = (s) => String(s || '').replace(/^\s*(?!(19|20)\d\d\b)\d{3,6}\s+(?=\p{L})/u, '');
 
   function cleanCompany(s) {
     if (
-      /^\s*(false|true|null|undefined|none|n\/a|company( name| logo)?|your company|logo|brand|site name|home|careers?|jobs?|log ?in|sign ?in|apply|greenhouse|lever|workday|ashby|smartrecruiters|workable|icims|taleo|successfactors|oracle|avature|eightfold|phenom|jobvite|recruitee|personio|teamtailor|bamboohr|pinpoint|breezy|allhires|candidats|ambertrack|vacancy filler|apply4law|oleeo|cezanne|eploy|tribepad|hireful|jobtrain|networx|webitrent|hibob|zoho recruit|50skills)\s*$/i.test(
+      /^\s*(false|true|null|undefined|none|n\/a|company( name| logo)?|your company|logo|brand|site name|home|careers?|jobs?|log ?in|sign ?in|apply|greenhouse|lever|workday|ashby|smartrecruiters|workable|icims|taleo|successfactors|oracle|avature|eightfold|phenom|jobvite|recruitee|personio|teamtailor|bamboohr|pinpoint|breezy|allhires|candidats|ambertrack|vacancy filler|apply4law|oleeo|cezanne|eploy|tribepad|hireful|jobtrain|networx|webitrent|hibob|zoho recruit|50skills|kernel( ats)?)\s*$/i.test(
         String(s || ''),
       )
     )
       return '';
-    return clean(
-      field(s, 300)
+    const out = clean(
+      firmName(field(s, 300))
         .replace(
           /\b(candidate experience page|candidate experience|careers? (site|page|portal)|careers?|jobs?|job board|recruiting|recruitment|talent community)\b/gi,
           ' ',
@@ -1755,7 +1821,12 @@
         .replace(/\s*\(\s*[A-Z]{0,4}[-_]?\d{3,}[\w-]*\s*\)\s*$/i, '')
         .replace(/_/g, ' '),
       120,
-    ).replace(/[\s|–—:,-]+$/, '');
+    )
+      .replace(/[\s|–—:,-]+$/, '')
+      // "Amazon." (not "Expedia, Inc." or "Acme Co.").
+      .replace(/(?<!\b(inc|ltd|co|corp|plc|llc|llp|sa|ag|bv|nv|lp))\.$/i, '');
+    // A piece of the tab's title that is no firm: "JANUARY 2027", "2027 Start", "6-months", "Summer 2027".
+    return NOT_A_FIRM.test(out) ? '' : out;
   }
 
   /** "jumptrading" → "Jump Trading" when the page writes it that way, else "Jumptrading". */
@@ -1816,6 +1887,17 @@
       .map((p) => p.trim())
       .filter((p) => p && !SITE_PIECE.test(p));
     if (!pieces.length) return { title: '', company: '' };
+    const companyOf = (p) => cleanCompany(p.replace(/^(careers?|jobs?|work|life)\s+(at|with)\b\s*/i, ''));
+    // A heading the tab title holds whole, its dashes too ("Crédit Agricole CIB - 2027 Summer Internship - Distribution
+    // & Asset Rotation" over the h1 "2027 Summer Internship - Distribution & Asset Rotation"): the title, and the rest
+    // of the tab title names the company.
+    const whole = headings.find(
+      (h) => /\s[|–—·•-]\s|::/.test(h) && norm(t).includes(norm(h)) && norm(h) !== norm(t) && words(h) >= 3,
+    );
+    if (whole) {
+      const rest = pieces.filter((p) => !norm(whole).includes(norm(p)));
+      return { title: whole, company: companyOf(rest.find((p) => /careers?|jobs/i.test(p)) || rest.pop() || '') };
+    }
     const hs = headings.map(norm).filter(Boolean);
     let ti = pieces.findIndex((p) => hs.includes(norm(p)));
     if (ti < 0)
@@ -1833,7 +1915,7 @@
         : null;
     const others = pieces.filter((_, i) => i !== titleIdx);
     const companyPiece = others.find((p) => /careers?|jobs/i.test(p)) || others[others.length - 1] || '';
-    const company = cleanCompany(companyPiece.replace(/^(careers?|jobs?|work|life)\s+(at|with)\b\s*/i, ''));
+    const company = companyOf(companyPiece);
     // "2027 | EMEA | London | Sales & Trading | Apprentice Programme | Goldman Sachs": the title has pipes in it.
     if (ti < 0 && pieces.length >= 3 && words(pieces[titleIdx].replace(/\d+/g, '')) < 1)
       return { title: pieces.filter((p) => p !== companyPiece).join(' | '), company };
@@ -1843,13 +1925,16 @@
   }
 
   function headingTexts(doc) {
+    // (Not one hidden in a closed menu: Talentsoft's "Suivez nous" in a display:none social-links box; nor a
+    // section's heading, "What we look for".)
+    const shown = (h) => !inJunk(h) && !h.closest('[hidden], [style*="display:none" i], [style*="display: none" i]');
     return qa(doc, 'h1, h2')
       .slice(0, 30)
-      .filter((h) => !inJunk(h))
+      .filter(shown)
       .slice(0, 8)
       .map((h) => shortText(h, 200))
       .filter((t) => t && !GENERIC_TITLE.test(t))
-      .filter((t) => !(words(t) < 6 && (isJobHeading(t) || SECTION_HEADING.test(t)))); // "What we look for"
+      .filter((t) => !(words(t) < 6 && (isJobHeading(t) || SECTION_HEADING.test(t))));
   }
 
   function metaContent(doc, names) {
@@ -1932,7 +2017,8 @@
       } catch (err) {
         p = null;
       }
-      if (p && words(p.description) >= 40) {
+      // (Never a privacy notice from the page's data: Dayforce's "Job Applicant Privacy Notice".)
+      if (p && words(p.description) >= 40 && (/json-ld|microdata/.test(p.source) || !isLegalText(p.description))) {
         posting = p;
         break;
       }
@@ -1949,7 +2035,9 @@
     // Fill what the chosen source left out from the page itself.
     const heads = headingTexts(doc);
     const parts = titleParts(doc.title || '', heads);
-    if (!posting.title) posting.title = heads[0] || parts.title || metaContent(doc, ['og:title']);
+    // The heading the tab title names first: Talentsoft's first h2 is its sign-in box's "Connexion Espace candidat".
+    const named = heads.find((h) => words(h) >= 2 && norm(doc.title || '').includes(norm(h)));
+    if (!posting.title) posting.title = named || heads[0] || parts.title || metaContent(doc, ['og:title']);
     // Page text whose headings are boilerplate ("WWT is an Equal Opportunity Employer"): its first line that reads
     // like a job title ("Technology & Analytics Intern- 2027").
     if (posting.source === 'page-text' && (!posting.title || !JOBBY_TITLE.test(posting.title))) {
@@ -2363,10 +2451,14 @@
     } catch (err) {
       posting = null;
     }
-    // Only a real description counts; a generic block of text on an application form doesn't.
+    // Only a real description counts; a generic block of text on an application form doesn't, nor a privacy notice
+    // in the page's data (Dayforce's "Job Applicant Privacy Notice").
     if (
       posting &&
-      (posting.source === 'page-text' ? isRealDescription(posting.description, true) : words(posting.description) >= 60)
+      (posting.source === 'page-text'
+        ? isRealDescription(posting.description, true)
+        : words(posting.description) >= 60 &&
+          (/json-ld|microdata/.test(posting.source) || !isLegalText(posting.description)))
     )
       context.posting = posting;
     // Closed jobs: boards redirect to an error page ("?error=true", "notFound=1") or say so.
@@ -2427,7 +2519,12 @@
         ? []
         : [
             atsTitle,
-            posting && posting.source !== 'page-text' ? posting.title : '',
+            // (On an application step only what says it is a job posting: Bending Spoons' form carries "The selection
+            // process (all roles)" in its data.)
+            posting &&
+            (/json-ld|microdata/.test(posting.source) || (posting.source !== 'page-text' && a.stage !== 'application'))
+              ? posting.title
+              : '',
             ...(idp || unnamed ? [] : [parts.title, heads[0], ogTitle]),
           ]
       )
@@ -2568,7 +2665,7 @@
       if (!u) continue;
       for (const [k, v] of u.searchParams) {
         if (
-          !/^(next|return(_?url|_?to)?|redirect(_?ur[il]|_?to)?|target(url)?|goto|dest(ination)?|continue|relaystate|ru|back(_?url)?|forward(url)?)$/i.test(
+          !/^(next|return(_?(url|to|path))?|redirect(_?(ur[il]|to|path))?|target(url)?|goto|dest(ination)?|continue|relaystate|ru|back(_?url)?|forward(url)?)$/i.test(
             k,
           )
         )
@@ -2619,6 +2716,7 @@
         l.url,
         `the page’s link “${clean(text, 60)}”`,
         strong && sameJob ? 0.88 : strong ? 0.75 : sameJob ? 0.7 : 0.5,
+        strong && urlKey(l.url) !== urlKey(ctx.url) ? { described: true } : undefined,
       );
       for (const r of apiRequests(l.url)) add(r.url, 'the job board’s data for the linked job', 0.8, { request: r });
       if (la.stage === 'application') for (const t of descriptionUrls(l.url)) add(t.url, t.reason, 0.6);
@@ -3299,11 +3397,17 @@
     // the board's own data is asked first: 'same' then rests on the job ID.
     const marked = here && /json-ld|microdata/.test(here.source);
     const advert = onPage && (marked || (jobStructure(here.description) >= 2 && !isLegalText(here.description)));
+    const pu = parseUrl(ctx.url || '');
+    // An application step's own text is often something else: Dayforce's "Job Applicant Privacy Notice", Bending
+    // Spoons' "The selection process (all roles)", iCIMS's talent community. The job's page is asked first there too.
+    const appStep = ctxAts0.stage === 'application' || LOGIN_PAGE.test((pu && pu.pathname) || '');
     const askBoard =
-      onPage && here.source === 'page-text' && (apiRequests(ctx.url || '').length > 0 || (ctx.embeds || []).length > 0);
+      onPage &&
+      !marked &&
+      (appStep ||
+        (here.source === 'page-text' && (apiRequests(ctx.url || '').length > 0 || (ctx.embeds || []).length > 0)));
     // A programme page (a law firm's training contract, a company's own advert) with no job ID or board to ask:
     // its own text, as 'likely' — when nothing better turns up and it isn't a home, list or sign-in page.
-    const pu = parseUrl(ctx.url || '');
     const plainPage =
       !ctx.pasted &&
       !onPage &&
@@ -3590,6 +3694,10 @@
           (r.cmp.hinted && r.cmp.score >= 0.85))
       )
         r.verdict = 'likely';
+      // The application page's own link to its job ("Back to job description" on Bending Spoons' form): likely,
+      // unless its job ID or company says otherwise.
+      else if (r.c.described && r.cmp.verdict !== 'same' && !clash && !r.cmp.reasons.includes('company differs'))
+        r.verdict = 'likely';
       else r.verdict = r.cmp.verdict;
     }
     const rank = { same: 3, likely: 2, unsure: 1, different: 0 };
@@ -3606,7 +3714,11 @@
         verdict: 'likely',
         reasons: [
           'the description is on this page',
-          plainPage ? 'no job ID or job board to confirm it' : 'the job board didn’t confirm it',
+          plainPage
+            ? 'no job ID or job board to confirm it'
+            : appStep && !apiRequests(ctx.url || '').length
+              ? 'the job’s own page didn’t confirm it'
+              : 'the job board didn’t confirm it',
         ],
         source: ctx.url,
         tried,

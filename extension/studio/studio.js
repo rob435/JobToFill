@@ -272,8 +272,10 @@ async function findJob() {
 
   // Pages built entirely by scripts come back empty when fetched, and some sites block or throttle
   // plain fetches (403, 429, 503; Meta Careers answers 400 to a fetch it doesn't take for a browser's): read those
-  // pages in a background tab, as the user would see them.
-  if (!found.posting || found.verdict === 'different') {
+  // pages in a background tab, as the user would see them. So too when all there was is the text on an application
+  // step ("the job’s own page didn’t confirm it"): the job's page may only show itself to a browser.
+  const onlyThisPage = found.verdict === 'likely' && found.source === context.url;
+  if (!found.posting || found.verdict === 'different' || onlyThisPage) {
     const blocked = /HTTP (400|401|403|429|5\d\d)|timed out|failed:/i;
     const shells = (found.tried || [])
       .filter((t) => /empty|no posting|shell|script/i.test(t.outcome || '') || blocked.test(t.outcome || ''))
@@ -285,7 +287,7 @@ async function findJob() {
       if (page && page.posting && page.posting.description) {
         const verdict = jobpage.compare(context, page.posting);
         (found.tried || []).push({ url: t.url, outcome: `read in a background tab: ${verdict.verdict}` });
-        if (verdict.verdict !== 'different') {
+        if (onlyThisPage ? verdict.verdict === 'same' : verdict.verdict !== 'different') {
           Object.assign(found, {
             posting: page.posting,
             verdict: verdict.verdict,

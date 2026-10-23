@@ -414,6 +414,17 @@ test('real forms: working there now or before, a primary language, a degree stat
 
 test('real forms: the site’s own search and language picker, and a list’s box for its "Other"', () => {
   assert.deepEqual(decided([desc('Search jobs, skills or qualifications')]), ['leave']); // BCG
+  assert.deepEqual(decided([desc('Search in city or region'), desc('Search in country or region')]), [
+    'leave',
+    'leave',
+  ]); // WSP
+  // Goldman Sachs: no label, named "name", in its search bar; a school typeahead's search box still asks the school.
+  const searchBox = (placeholder) =>
+    desc({ placeholder, name: 'name', ancestors: 'rs-search-input', attrs: 'gs-uitk-input__input' });
+  assert.deepEqual(decided([searchBox('e.g., Asset Management, Transaction Banking, Software Engineering, etc.')]), [
+    'leave',
+  ]);
+  assert.notDeepEqual(decided([searchBox('Search for your university')]), ['leave']);
   assert.deepEqual(
     decided([
       desc({ label: 'Select language, current: English' }, { kind: 'combo', options: opts('English', 'Deutsch') }),

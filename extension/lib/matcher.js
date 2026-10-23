@@ -183,8 +183,9 @@
     return opts.length > 0 && opts.length <= 3 && opts.every((o) => canonicalOf(o.text));
   }
 
+  // (WSP's job search filters: "Search in city or region", "Search in country or region".)
   const SITE_SEARCH =
-    /^search\b.*\b(jobs?|job titles?|roles?|vacancies|openings|positions|keywords?|careers?|skills)\b/;
+    /^search\b.*\b(jobs?|job titles?|roles?|vacancies|openings|positions|keywords?|careers?|skills)\b|^search (in|by|within|across) (the )?(city|country|region|location|area|keywords?|jobs?|job titles?|titles?|departments?|category|categories|teams?|functions?|business)\b/;
   const LANGUAGE_NAME =
     '(?:english|french|german|deutsch|spanish|espanol|italian|italiano|portuguese|dutch|nederlands|polish|swedish|norwegian|danish|finnish|chinese|japanese|korean|arabic|russian)';
   const LANGUAGE_PICKER = new RegExp(
@@ -194,6 +195,18 @@
   // Teamtailor's "Already working at Isio? Let’s recruit together and find your next colleague." under the form: the
   // colleagues' own sign-in ("Email address without domain").
   const EMPLOYEE_CORNER = /^already (working|work) (at|for|with)\b/;
+  // A box in the site's search bar that asks nothing itself: Goldman Sachs' "e.g., Asset Management, Transaction
+  // Banking, Software Engineering, etc." (named "name", in div#rs-search-input) is its job search, not your name.
+  const SEARCH_BAR = /(^|[^a-z])search(box|bar|input|field|form)?([^a-z]|$)/i;
+  const ASKS_ABOUT_YOU =
+    /\b(your|school|universit\w*|college|institution|employer|company|degree|major|subject|city|address)\b/;
+  const searchBar = (desc, s) =>
+    TEXT_KINDS.has(desc.kind) &&
+    !s.label &&
+    !s.aria &&
+    !s.question &&
+    SEARCH_BAR.test([s.ancestors, s.id, s.attrs].join(' ')) &&
+    !ASKS_ABOUT_YOU.test(norm(s.placeholder || ''));
 
   /** Classify one control. Returns { type, part, score, source } or null. */
   function classify(desc) {
@@ -214,7 +227,12 @@
     // ("English UK (English UK)" on Capgemini, "Select language, current: English") or corner for its own staff: never
     // a question about you.
     const said = norm(asked || s.placeholder || '');
-    if (SITE_SEARCH.test(said) || LANGUAGE_PICKER.test(said) || EMPLOYEE_CORNER.test(norm(s.section || '')))
+    if (
+      SITE_SEARCH.test(said) ||
+      LANGUAGE_PICKER.test(said) ||
+      EMPLOYEE_CORNER.test(norm(s.section || '')) ||
+      searchBar(desc, s)
+    )
       return { type: 'page', part: null, score: 1, source: 'page' };
     // The question's first sentence: Isio's "…confirm which university you are currently studying… If your university
     // if not listed, select other." asks for the university; the instruction after it is no follow-up.
