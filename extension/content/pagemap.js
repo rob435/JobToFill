@@ -306,7 +306,9 @@
     if (NEVER.has(tag) || el.hasAttribute('data-jtf-ui')) return;
     const fi = w.controls.get(el);
     if (fi != null) return place(w, fi);
-    if (ctx.hidden || el.getAttribute('aria-hidden') === 'true' || w.errors.has(el)) return hidden(w, el, ctx);
+    // (Not an aria-hidden wrapper around the whole form with nothing open over it: Meta Careers' div#scrollview.)
+    if (ctx.hidden || (el.getAttribute('aria-hidden') === 'true' && !dom().idleWrapper(el)) || w.errors.has(el))
+      return hidden(w, el, ctx);
     const style = shown(w, el);
     if (!style) return hidden(w, el, ctx);
     if (CONTROLS.has(tag)) {
@@ -576,7 +578,7 @@
   function collapsed(w, el, role) {
     const links = Array.from(el.querySelectorAll('a[href]')).filter(
       (a) =>
-        !a.closest('[aria-hidden="true"]') &&
+        !dom().ariaHidden(a) &&
         (typeof a.checkVisibility !== 'function' ||
           a.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })),
     );

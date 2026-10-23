@@ -579,6 +579,19 @@
       return set('ukg', parts[0], id, stage);
     }
 
+    // Meta Careers: metacareers.com/jobs/{id}/ (which redirects to /profile/job_details/{id}/); apply:
+    // /profile/create_application/{id}/, before that /resume/?req={requisition}; facebook.com/careers/v2/jobs/{id}/.
+    if (host === 'metacareers.com' || (host === 'facebook.com' && lower[0] === 'careers')) {
+      const id = parts.find((p) => /^\d{6,}$/.test(p)) || null;
+      const stage =
+        has('create_application') || lower[0] === 'resume'
+          ? 'application'
+          : id && has('jobs', 'job_details')
+            ? 'description'
+            : 'unknown';
+      return set('meta', 'meta', id || (lower[0] === 'resume' ? qp.get('req') : null), stage);
+    }
+
     // Anything else: guess from the path. On a recruiting platform's subdomain the first label is the employer.
     const path = u.pathname.toLowerCase();
     out.jobId = urlJobIds(url)[0] || null;
@@ -817,6 +830,10 @@
       case 'teamtailor':
         if (a.stage === 'application') add(cut(/\/applications?(\/new)?\/?$/i), 'the Teamtailor job page');
         break;
+      case 'meta':
+        if (a.stage === 'application' && /^\d+$/.test(a.jobId || ''))
+          add(`https://www.metacareers.com/profile/job_details/${a.jobId}/`, 'the Meta Careers job page');
+        break;
       default:
         break;
     }
@@ -970,6 +987,11 @@
   // Cookie notices, privacy policies and terms of use: legal small print, not a job.
   const LEGAL_WORDS =
     /\b(cookies?|privacy|personal (data|information)|terms (and|&) conditions|terms of (use|service)|consent|gdpr|data protection|tracking technologies|this (web)?site|browsing|browser|disclaimer|liability|copyright|trademarks?|datenschutz|données personnelles)\b/gi;
+  // A diversity-monitoring notice on the form, not the job: "We invite you to self-identify your gender… affirmative
+  // outreach obligations… government record-keeping and reporting requirements" (Meta Careers). A job advert's own
+  // equal-opportunity paragraph stays well under its job words.
+  const NOTICE_WORDS =
+    /\b(self[- ]identif\w*|voluntar(y|ily)|equal (employment )?opportunit\w*|affirmative (action|outreach)|record[- ]keeping|government reporting|reporting (purposes|requirements)|diversity|demographic|gender|ethnicit\w*|race|disabilit\w*|veterans?|survey|aggregated|confidential|optional)\b/gi;
   const JOB_WORDS =
     /\b(responsibilit\w*|requirements?|qualifications?|experience|skills|candidates?|internships?|interns?|graduates?|applicants?|position|vacancy|degree|team|role)\b/gi;
   // The parts a job advert has: what you'll do, what you need, what you get, and how and when to apply.
@@ -987,13 +1009,16 @@
     return JOB_SECTIONS.filter((re) => re.test(s)).length;
   }
 
-  /** Mostly cookie, privacy or terms-of-use wording? */
+  /** Mostly cookie, privacy or terms-of-use wording, or a diversity-monitoring notice? */
   function isLegalText(text) {
     const s = String(text || '').slice(0, 30000);
     const legal = (s.match(LEGAL_WORDS) || []).length;
     const job = (s.match(JOB_WORDS) || []).length;
+    const notice = (s.match(NOTICE_WORDS) || []).length;
     return (
-      (legal >= 6 && legal > job) || (legal >= 3 && /^\W*(this (web)?site|we use cookies|by (using|browsing))/i.test(s))
+      (legal >= 6 && legal > job) ||
+      (legal >= 3 && /^\W*(this (web)?site|we use cookies|by (using|browsing))/i.test(s)) ||
+      (notice >= 6 && notice > 2 * job)
     );
   }
 
@@ -1167,6 +1192,8 @@
 
   const JOBBY_TITLE =
     /\b(analyst|analyste|analista|engineer|ingénieur|ingenieur|developer|intern|internship|manager|associate|graduate|trader|researcher|scientist|designer|consultant|specialist|officer|assistant|director|apprentice|trainee|programme|program|scheme|placement|praktikum|praktikant|stage|stagiaire|alternant|alternance|werkstudent|becario|tirocinio)\b/i;
+  // "Susquehanna International Group, LLP Careers", "Meta Careers" (every page of that site) name the site, not a job.
+  const siteTitle = (t) => /\b(careers?|jobs|karriere|carrières?|emplois)\b/i.test(t) && !JOBBY_TITLE.test(t);
 
   /**
    * One JobPosting block on another job's page (a "featured job", the last job viewed): its ID or address is a
@@ -2382,8 +2409,6 @@
         attr(doc, 'img[class*="logo"][alt]', 'alt'),
     );
     const ogTitle = metaContent(doc, ['og:title', 'twitter:title']);
-    // "Susquehanna International Group, LLP Careers" names the site, not a job.
-    const siteTitle = (t) => /\b(careers?|jobs|karriere|carrières?|emplois)\b/i.test(t) && !JOBBY_TITLE.test(t);
     const titleOk = (t) => t && !GENERIC_TITLE.test(t) && !siteTitle(t) && words(t) <= 20;
     // An identity provider's sign-in page ("IBMid", "Amazon Passport") says nothing about the job, nor does a site's
     // home, search or sign-in page that a sign-in wall lands on ("SEARCH FOR JOBS…", "Our Strategy").
@@ -2688,7 +2713,8 @@
       (!!ctxAts.company || (!!ctx.company && companyMatch(ctx.company, a.company) === false));
     return {
       idHit: (ctx.jobIds || []).some((id) => idKey(id).length >= 4 && idKey(hay).includes(idKey(id))),
-      ts: titleSimilarity(ctx.title, title || '', ctx),
+      // A tab title that only names the site says nothing about which job it showed.
+      ts: siteTitle(title || '') ? null : titleSimilarity(ctx.title, title || '', ctx),
       sameAts,
       sameSite: sameAts || (!otherTenant && !!label && label.length >= 3 && siteLabel(url) === label),
       companyHit: !!ctx.company && compact(ctx.company).length >= 3 && compact(hay).includes(compact(ctx.company)),

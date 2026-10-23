@@ -2533,3 +2533,53 @@ test('SuccessFactors classic: Trackr’s tags and the session token don’t hide
   const onJob = jp.applicationContext(doc('successfactors-portalcareer-job.html'), SF_JOB);
   assert.equal(jp.compare(onJob, page).verdict, 'same');
 });
+
+test('Meta Careers: the application names its job only in its address, and its self-ID notice is not the advert', async () => {
+  const APPLY = 'https://www.metacareers.com/profile/create_application/2288012098648243/';
+  const JOB = 'https://www.metacareers.com/profile/job_details/2288012098648243/';
+  const TITLE = 'Research Scientist Intern, Audio, Machine Learning and Computer Vision (PhD)';
+  assert.deepEqual(jp.ats(APPLY), { name: 'meta', company: 'meta', jobId: '2288012098648243', stage: 'application' });
+  for (const url of [
+    JOB,
+    'https://www.metacareers.com/jobs/2288012098648243/',
+    'https://www.metacareers.com/v2/jobs/2288012098648243/',
+    'https://www.facebook.com/careers/v2/jobs/2288012098648243/',
+  ])
+    assert.deepEqual([jp.ats(url).stage, jp.ats(url).jobId], ['description', '2288012098648243'], url);
+  const resume = jp.ats('https://www.metacareers.com/resume/?req=a1KiE0000003dxhUAA');
+  assert.deepEqual([resume.stage, resume.jobId], ['application', 'a1KiE0000003dxhUAA']);
+  assert.deepEqual([jp.ats('https://www.metacareers.com/jobsearch/?q=intern').stage], ['unknown']);
+  assert.deepEqual(
+    jp.descriptionUrls(APPLY).map((t) => t.url),
+    [JOB],
+  );
+
+  // "View job details" is a button, and the longest text on the form is the gender self-identification notice.
+  const form = parseHTML(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'metacareers.html'), 'utf8')).document;
+  const ctx = jp.applicationContext(form, APPLY);
+  assert.deepEqual([ctx.title, ctx.company, ctx.jobIds, ctx.posting], [TITLE, 'Meta', ['2288012098648243'], null]);
+  assert.deepEqual(
+    jp.candidates(ctx).map((c) => c.url),
+    [JOB],
+  );
+  const found = await jp.find(ctx, { fetch: mockFetch({ [JOB]: html('metacareers-job.html') }) });
+  assert.deepEqual(
+    [found.verdict, found.source, found.posting.title, found.posting.company, found.posting.location],
+    ['same', JOB, TITLE, 'Meta', 'Cambridge, GB'],
+  );
+  assert.match(found.reasons[0], /same job ID 2288012098648243/);
+  assert.ok(found.posting.description.startsWith('The Meta Reality Labs Research Team'), found.posting.description);
+});
+
+test('trail: a tab title that only names the site ("Acme Careers") costs a job page nothing', () => {
+  const now = Date.parse('2026-10-23T10:00:00Z');
+  const url = 'https://careers.acme.com/application';
+  const ctx = { url, ats: jp.ats(url), title: 'Quantitative Research Intern', company: '', jobIds: [], links: [] };
+  const JOB = 'https://careers.acme.com/job/12345678';
+  const weight = (title) => jp.candidates({ ...ctx, trail: [{ url: JOB, title, at: now - 2 * 6e4 }] }, now)[0].weight;
+  assert.equal(weight('Acme Careers'), weight(''));
+  assert.ok(
+    weight('Acme Careers') > weight('Facilities Coordinator'),
+    'a title naming another job still counts against it',
+  );
+});

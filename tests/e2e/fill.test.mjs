@@ -1056,6 +1056,25 @@ test('Gem-style form: span labels, "Click to upload" drop zones, radios and chec
   await page.close();
 });
 
+test('Meta Careers: a page kept aria-hidden with nothing open over it, searchable menus, a dial code labelled “Code”', async () => {
+  const page = await h.open('metacareers.html');
+  const r = await h.fill(page);
+  assert.equal(r.error, undefined);
+  assert.equal(await value(page, '#first'), 'Ada');
+  assert.equal(await value(page, '#last'), 'Lovelace');
+  assert.equal(await value(page, '#email'), 'ada@example.com');
+  assert.equal(await value(page, '#phone'), '415 555 0100');
+  assert.equal(await page.$eval('#code__button', (b) => b.dataset.picked), '+1 United States');
+  assert.equal(await page.$eval('#loc__button', (b) => b.dataset.picked), 'San Francisco, CA');
+  assert.equal(await value(page, '#website'), 'https://www.linkedin.com/in/ada');
+  assert.equal(await fileName(page, '#resume'), 'Ada_Lovelace_CV.pdf');
+  assert.equal(await checked(page, 'input[value="female"]'), true);
+  assert.equal(await page.$eval('#acct-password', (el) => el.getAttribute('aria-checked')), 'true');
+  assert.equal(await page.$('.popover'), null, 'menus closed again');
+  assert.equal(await page.evaluate(() => window.submitted || !!window.viewedJob), false);
+  await page.close();
+});
+
 test('Pinpoint-style react-select: own input ids, read-only dropdowns, options without roles', async () => {
   const page = await h.open('pinpoint.html');
   await page.waitForSelector('#application_form_equality_monitoring_gender');

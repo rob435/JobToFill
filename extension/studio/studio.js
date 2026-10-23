@@ -271,9 +271,10 @@ async function findJob() {
   });
 
   // Pages built entirely by scripts come back empty when fetched, and some sites block or throttle
-  // plain fetches (403, 429, 503): read those pages in a background tab, as the user would see them.
+  // plain fetches (403, 429, 503; Meta Careers answers 400 to a fetch it doesn't take for a browser's): read those
+  // pages in a background tab, as the user would see them.
   if (!found.posting || found.verdict === 'different') {
-    const blocked = /HTTP (401|403|429|5\d\d)|timed out|failed:/i;
+    const blocked = /HTTP (400|401|403|429|5\d\d)|timed out|failed:/i;
     const shells = (found.tried || [])
       .filter((t) => /empty|no posting|shell|script/i.test(t.outcome || '') || blocked.test(t.outcome || ''))
       .filter((t) => /^https?:/.test(t.url || '') && !DATA_URL.test(t.url))

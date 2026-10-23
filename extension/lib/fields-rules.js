@@ -975,6 +975,11 @@
       // "Mobile number (inc. country code)" is the whole number (WHOLE_NUMBER).
       { not: WHOLE_NUMBER },
     ),
+    // Meta Careers: a dropdown labelled only "Code" beside the number, under "Phone number".
+    R('phone.countryCode', /^(code|prefix)$/, {
+      kinds: CHOICE,
+      test: (desc) => /\b(phone|mobile|telephone)\b/.test(U.normalize((desc.signals && desc.signals.group) || '')),
+    }),
     R(
       'phone',
       /phone|mobile|\bmobil(nummer|telefon)?\b|\bcell\b|cellular|telephone|\btel\b|contact (number|no)|telefon|telefono|\bportable\b|\bhandy\b|whats ?app|\bmob\b/,
