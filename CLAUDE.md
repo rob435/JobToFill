@@ -45,7 +45,10 @@ detail. Keep the README short: only what everyone needs.
   (`lib/fields-*.js`, by topic), which load just before it, in the same order wherever it loads (check.mjs again);
   a part shares what the others use on `JTF.fieldParts`.
 - `content/` — injected on demand into every frame (`CONTENT_FILES` in `background.js`); `main.js` exposes
-  `globalThis.__jtf`, which the background calls per frame through `callFrames(tabId, method, args)`.
+  `globalThis.__jtf`, which the background calls per frame through `callFrames(tabId, method, args)`. In Firefox a
+  content script sees the page's objects through Xrays: a URL's `searchParams` can't be iterated there (get and has
+  work), so `lib/jobpage.js`, which runs in pages too, reads a query with `queryPairs()`
+  (`tests/unit/jobpage-xray.test.js` checks).
 - **Fill:** `fillTab` → `callFrames('fill')` → `main.js scan()` = `dom.collect()` (controls, labels, groups,
   shadow DOM) → `matcher.plan()` (classification) → `decide.field()` (fill, leave for you or missing, with the value
   from `fields.resolve()`) → `fill.apply()` (sets values the way frameworks notice, drives custom dropdowns) →

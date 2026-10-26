@@ -66,6 +66,8 @@ export function serve(port = 0) {
     // ?in_iframe=1 the step that page frames.
     const icims = file.match(/^jobs\/\d+\/[\w-]+\/(login|candidate|questions)$/);
     if (icims) file = url.searchParams.get('in_iframe') === '1' ? `icims-${icims[1]}.html` : 'icims.html';
+    // A SuccessFactors classic site's application after Apply (/portalcareer?_s.crb=…, a session token alone).
+    if (file === 'portalcareer') file = 'successfactors-apply.html';
     if (file.includes('..')) {
       res.writeHead(400).end();
       return;

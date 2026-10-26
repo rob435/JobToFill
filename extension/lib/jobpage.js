@@ -79,6 +79,23 @@
     }
   }
 
+  /**
+   * An address's query as [name, value] pairs, read from its text. In a Firefox content script a URL is the page's,
+   * seen through an Xray: its searchParams answer get(), has(), set() and delete(), but what keys(), values() and
+   * entries() return can't be iterated ("qp.keys() is not iterable" on SuccessFactors' /portalcareer?_s.crb=…).
+   */
+  function queryPairs(u) {
+    return String(u.search)
+      .slice(1)
+      .split('&')
+      .filter(Boolean)
+      .map((pair) => {
+        const i = pair.indexOf('=');
+        const [k, v] = i < 0 ? [pair, ''] : [pair.slice(0, i), pair.slice(i + 1)];
+        return [safeDecode(k.replace(/\+/g, ' ')), safeDecode(v.replace(/\+/g, ' '))];
+      });
+  }
+
   function clean(s, max = 300) {
     if (s == null) return '';
     const out = String(s).replace(/\s+/g, ' ').trim();
@@ -409,7 +426,7 @@
         qp.has('_s.crb') &&
         parts.length === 1 &&
         /^(career|careers|portalcareer)$/.test(lower[0]) &&
-        [...qp.keys()].every((k) => /^(_s\.crb|utm_\w+|lang|locale|site|company|career_company)$/i.test(k));
+        queryPairs(u).every(([k]) => /^(_s\.crb|utm_\w+|lang|locale|site|company|career_company)$/i.test(k));
       const stage =
         /application|apply|job_save/.test(ns) || (id && qp.get('login_ns')) || session
           ? 'application'
@@ -680,7 +697,7 @@
       if (v && /\d/.test(v) && v.length <= 40 && !/^(19|20)\d\d$/.test(v)) ids.push(v);
     }
     // The same names in another case ("ReqId=751069" on SAP's easy-apply pages).
-    for (const [k, v] of u.searchParams)
+    for (const [k, v] of queryPairs(u))
       if (
         /^(job_?id|req_?id|requisition_?id|posting_?id|vacancy_?id|position_?id|opportunity_?id)$/i.test(k) &&
         v &&
@@ -2695,7 +2712,7 @@
     for (const page of uniq([ctx.url, ctx.canonical])) {
       const u = parseUrl(page);
       if (!u) continue;
-      for (const [k, v] of u.searchParams) {
+      for (const [k, v] of queryPairs(u)) {
         if (
           !/^(next|return(_?(url|to|path))?|redirect(_?(ur[il]|to|path))?|target(url)?|goto|dest(ination)?|continue|relaystate|ru|back(_?url)?|forward(url)?)$/i.test(
             k,
@@ -2990,7 +3007,7 @@
         ? make(m, type, { page: u.href })
         : { region: null, industry: null, season: null, type: null, page: u.href };
     }
-    if (![...u.searchParams.values()].some((v) => /^trackr$/i.test(v))) return null;
+    if (!queryPairs(u).some(([, v]) => /^trackr$/i.test(v))) return null;
     const m = String(u.searchParams.get('utm_campaign') || '').match(TRACKR_KEY);
     return m
       ? make(m, null, { link: u.href })
@@ -3020,7 +3037,7 @@
   function untagged(url) {
     const u = parseUrl(url);
     if (!u) return String(url || '');
-    for (const k of [...u.searchParams.keys()]) if (TRACKR_TAGS.test(k)) u.searchParams.delete(k);
+    for (const [k] of queryPairs(u)) if (TRACKR_TAGS.test(k)) u.searchParams.delete(k);
     return urlKey(u.href);
   }
 

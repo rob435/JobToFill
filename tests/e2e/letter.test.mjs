@@ -5,7 +5,7 @@ import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
-import { PROFILE, launch, until } from './harness.mjs';
+import { PROFILE, SF_HOST, launch, until } from './harness.mjs';
 
 const CV_LINES = [
   'Ada Lovelace',
@@ -431,6 +431,21 @@ test('job context: the job page a tab showed before is remembered, also in tabs 
     15000,
   );
   await h.bg((id) => globalThis.JTF.api.tabs.remove(id), child);
+  await page.close();
+});
+
+// The address is read in the page, where Firefox's URL is the page's and its parameters can't be iterated: Quick apply
+// stopped at "qp.keys() is not iterable" on career2.successfactors.eu/portalcareer?_s.crb=….
+test('job context: a SuccessFactors application at its session-only address names its job', async () => {
+  const page = await h.open('portalcareer?_s.crb=7j2Y4LTYZ7WKSuG1ThSmI5W%252fuaXRnR0yOePlnyxnRQ4%253d', SF_HOST);
+  const context = await h.handler('jtf:job-context', page);
+  assert.equal(context.error, undefined);
+  assert.deepEqual(context.ats, {
+    name: 'successfactors',
+    company: 'MoodysProd',
+    jobId: '15437',
+    stage: 'application',
+  });
   await page.close();
 });
 

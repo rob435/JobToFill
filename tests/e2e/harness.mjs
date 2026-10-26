@@ -95,6 +95,9 @@ export const PROFILE = {
 // pages are an application by their address as globalcampus-amd.icims.com's are (jobpage.ats).
 export const ICIMS_HOST = 'globalcampus-acme.icims.com';
 export const ICIMS_JOB = 'jobs/93127/summer-2027-software-engineer-intern';
+// A SuccessFactors classic site's, the same way: after Apply its steps stay at /portalcareer?_s.crb=….
+export const SF_HOST = 'career2.successfactors.eu';
+const LOCAL_HOSTS = [ICIMS_HOST, SF_HOST];
 
 // A tiny but valid PDF.
 export const RESUME_PDF =
@@ -114,7 +117,7 @@ async function chromiumDriver() {
     args: [
       `--disable-extensions-except=${EXTENSION}`,
       `--load-extension=${EXTENSION}`,
-      `--host-resolver-rules=MAP ${ICIMS_HOST} 127.0.0.1`,
+      `--host-resolver-rules=${LOCAL_HOSTS.map((host) => `MAP ${host} 127.0.0.1`).join(', ')}`,
     ],
   });
   const worker = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
@@ -174,8 +177,8 @@ async function firefoxDriver() {
       // As in a Firefox without data-collection consent: the cover letter writer then doesn't stop
       // to ask (tests can't click a browser permission prompt).
       'extensions.dataCollectionPermissions.enabled': false,
-      // The iCIMS portal's address is this machine's, over plain HTTP (icims.com is on Firefox's HSTS preload list).
-      'network.dns.localDomains': ICIMS_HOST,
+      // The portals' addresses are this machine's, over plain HTTP (icims.com is on Firefox's HSTS preload list).
+      'network.dns.localDomains': LOCAL_HOSTS.join(','),
       'network.stricttransportsecurity.preloadlist': false,
     },
   });
