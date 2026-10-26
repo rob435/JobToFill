@@ -2533,3 +2533,287 @@ test('SuccessFactors classic: Trackr’s tags and the session token don’t hide
   const onJob = jp.applicationContext(doc('successfactors-portalcareer-job.html'), SF_JOB);
   assert.equal(jp.compare(onJob, page).verdict, 'same');
 });
+
+test('Meta Careers: the application names its job only in its address, and its self-ID notice is not the advert', async () => {
+  const APPLY = 'https://www.metacareers.com/profile/create_application/2288012098648243/';
+  const JOB = 'https://www.metacareers.com/profile/job_details/2288012098648243/';
+  const TITLE = 'Research Scientist Intern, Audio, Machine Learning and Computer Vision (PhD)';
+  assert.deepEqual(jp.ats(APPLY), { name: 'meta', company: 'meta', jobId: '2288012098648243', stage: 'application' });
+  for (const url of [
+    JOB,
+    'https://www.metacareers.com/jobs/2288012098648243/',
+    'https://www.metacareers.com/v2/jobs/2288012098648243/',
+    'https://www.facebook.com/careers/v2/jobs/2288012098648243/',
+  ])
+    assert.deepEqual([jp.ats(url).stage, jp.ats(url).jobId], ['description', '2288012098648243'], url);
+  const resume = jp.ats('https://www.metacareers.com/resume/?req=a1KiE0000003dxhUAA');
+  assert.deepEqual([resume.stage, resume.jobId], ['application', 'a1KiE0000003dxhUAA']);
+  assert.deepEqual([jp.ats('https://www.metacareers.com/jobsearch/?q=intern').stage], ['unknown']);
+  assert.deepEqual(
+    jp.descriptionUrls(APPLY).map((t) => t.url),
+    [JOB],
+  );
+
+  // "View job details" is a button, and the longest text on the form is the gender self-identification notice.
+  const form = parseHTML(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'metacareers.html'), 'utf8')).document;
+  const ctx = jp.applicationContext(form, APPLY);
+  assert.deepEqual([ctx.title, ctx.company, ctx.jobIds, ctx.posting], [TITLE, 'Meta', ['2288012098648243'], null]);
+  assert.deepEqual(
+    jp.candidates(ctx).map((c) => c.url),
+    [JOB],
+  );
+  const found = await jp.find(ctx, { fetch: mockFetch({ [JOB]: html('metacareers-job.html') }) });
+  assert.deepEqual(
+    [found.verdict, found.source, found.posting.title, found.posting.company, found.posting.location],
+    ['same', JOB, TITLE, 'Meta', 'Cambridge, GB'],
+  );
+  assert.match(found.reasons[0], /same job ID 2288012098648243/);
+  assert.ok(found.posting.description.startsWith('The Meta Reality Labs Research Team'), found.posting.description);
+});
+
+test('trail: a tab title that only names the site ("Acme Careers") costs a job page nothing', () => {
+  const now = Date.parse('2026-10-23T10:00:00Z');
+  const url = 'https://careers.acme.com/application';
+  const ctx = { url, ats: jp.ats(url), title: 'Quantitative Research Intern', company: '', jobIds: [], links: [] };
+  const JOB = 'https://careers.acme.com/job/12345678';
+  const weight = (title) => jp.candidates({ ...ctx, trail: [{ url: JOB, title, at: now - 2 * 6e4 }] }, now)[0].weight;
+  assert.equal(weight('Acme Careers'), weight(''));
+  assert.ok(
+    weight('Acme Careers') > weight('Facilities Coordinator'),
+    'a title naming another job still counts against it',
+  );
+});
+
+/* ---------------------------- company-run career sites (the live survey of Trackr's programmes, October 2026) */
+
+test('Talentsoft (Crédit Agricole CIB): a page inside ASP.NET’s form, a title with dashes, its ID before .aspx', () => {
+  const URL0 = 'https://jobs.ca-cib.com/job/job-2027-summer-internship-distribution-asset-rotation-_116695.aspx';
+  const TITLE = '2027 Summer Internship - Distribution & Asset Rotation';
+  const ctx = jp.applicationContext(doc('talentsoft-offer.html'), URL0);
+  assert.deepEqual([ctx.title, ctx.company, ctx.jobIds], [TITLE, 'Crédit Agricole CIB', ['116695']]);
+  const p = jp.fromHtml(html('talentsoft-offer.html'), URL0);
+  assert.deepEqual([p.title, p.company, p.jobIds], [TITLE, 'Crédit Agricole CIB', ['116695']]);
+  assert.match(p.description, /Our Summer 2027 Internship offers a unique opportunity/);
+});
+
+test('Google Careers: /jobs/results/{id} is one job, not search results, and its apply step is an application', () => {
+  const JOB =
+    'https://www.google.com/about/careers/applications/jobs/results/99770582270124742-strategy-and-operations-mba-intern-2027';
+  assert.deepEqual(jp.ats(JOB), {
+    name: 'google',
+    company: 'google',
+    jobId: '99770582270124742',
+    stage: 'description',
+  });
+  const apply =
+    'https://www.google.com/about/careers/applications/jobs/results/apply?jobId=CiUAL2Fck&loc=GB&title=Strategy';
+  assert.equal(jp.ats(apply).stage, 'application');
+  const p = jp.fromHtml(html('google-careers.html'), JOB);
+  assert.deepEqual(
+    [p.title, p.company, p.jobIds],
+    ['Strategy and Operations MBA Intern, 2027', 'Google', ['99770582270124742']],
+  );
+  assert.match(p.description, /Minimum qualifications/);
+  // Apply goes through a Google sign-in: the job page this tab showed is no search engine's page.
+  const now = Date.parse('2026-10-23T10:00:00Z');
+  const signin = `https://accounts.google.com/v3/signin/identifier?continue=${encodeURIComponent(apply)}`;
+  const ctx = { url: signin, ats: jp.ats(signin), title: '', company: '', jobIds: [], links: [] };
+  const trail = [{ url: JOB, title: 'Strategy and Operations MBA Intern, 2027 — Google Careers', at: now - 6e4 }];
+  assert.deepEqual(
+    jp.candidates({ ...ctx, trail }, now).map((c) => c.url),
+    [JOB],
+  );
+});
+
+test('one job shown from a search is a job page (TikTok, Brassring); a sign-in’s redirect_path names the job', () => {
+  const now = Date.parse('2026-10-23T10:00:00Z');
+  const tiktok = 'https://lifeattiktok.com/search/7674944387893791029?spread=Trackr';
+  const ubs =
+    'https://jobs.ubs.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=25008&siteid=5131&PageType=JobDetails&jobid=349384';
+  const list = 'https://jobs.ubs.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=25008&siteid=5131';
+  const url = 'https://careers.example.com/apply';
+  const trail = [tiktok, ubs, list].map((u, i) => ({ url: u, title: '', at: now - (i + 1) * 6e4 }));
+  const ctx = { url, ats: jp.ats(url), title: '', company: '', jobIds: [], links: [], trail };
+  assert.deepEqual(
+    jp.candidates(ctx, now).map((c) => c.url),
+    [tiktok, ubs],
+  );
+  const signin = 'https://jobs.bytedance.com/en/login?redirect_path=%2Fposition%2F7686394581777631541%2Fdetail';
+  assert.deepEqual(
+    jp.candidates({ url: signin, ats: jp.ats(signin), jobIds: [], links: [] }).map((c) => c.url),
+    ['https://jobs.bytedance.com/position/7686394581777631541/detail'],
+  );
+});
+
+test('adverts read whole: Word-pasted paragraphs (GTI), bracketed headings (Factorial), the tab’s title (Avature)', () => {
+  const gti = jp.fromHtml(
+    html('gti-vacancy.html'),
+    'https://rbccmgraduates.gtisolutions.co.uk/2027-summer-analyst---quantitative-analyst/407/viewdetails',
+  );
+  assert.equal(gti.title, '2027 Summer Analyst - Quantitative Analyst');
+  assert.ok(words(gti.description) > 500, String(words(gti.description)));
+  const fide = jp.fromHtml(
+    html('factorial-posting.html'),
+    'https://fidepartners.factorial.com/job_posting/associate-consultant-intern-london-office-off-cycle-internship-full-time-6-months-25734',
+  );
+  assert.equal(fide.title, 'Associate Consultant Intern (London Office) Off-cycle internship (Full-time 6 months)');
+  assert.match(fide.description, /^\[Brief intro to Fide Partners\]/);
+  assert.ok(words(fide.description) > 600, String(words(fide.description)));
+  const bbg = jp.fromHtml(
+    html('avature-bloomberg.html'),
+    'https://bloomberg.avature.net/careers/JobDetail/Accounting-Analyst-International-Controllers-Group/45808',
+  );
+  assert.deepEqual([bbg.title, bbg.company], ['Accounting Analyst - International Controllers Group', 'Bloomberg']);
+  // Jibe's placeholder region (AMD) and Workday's legal-entity code (Accenture) are no part of a place or a firm.
+  const ld = (o) =>
+    `<html><head><title>x</title><script type="application/ld+json">${JSON.stringify({ '@type': 'JobPosting', description: 'Build compilers and tools for our GPUs, with a team of engineers. '.repeat(8), ...o })}</script></head><body></body></html>`;
+  const amd = jp.fromHtml(
+    ld({
+      title: 'Summer 2027 Software Engineer Intern',
+      jobLocation: {
+        address: { addressLocality: 'Penicuik', addressRegion: 'UNAVAILABLE', addressCountry: 'United Kingdom' },
+      },
+    }),
+    'https://careers.amd.com/careers-home/jobs/93127',
+  );
+  assert.equal(amd.location, 'Penicuik, United Kingdom');
+  const acn = jp.fromHtml(
+    ld({ title: 'AI Engineer', hiringOrganization: { name: '3003 Accenture (UK) Limited Company' } }),
+    'https://accenture.wd103.myworkdayjobs.com/AccentureCareers/job/London/AI-Engineer_R00317213',
+  );
+  assert.equal(acn.company, 'Accenture (UK) Limited Company');
+});
+
+test('a tab title’s date or duration is no firm: "INTERNSHIP – CAPITAL – LONDON – JANUARY 2027", "… – 2027 Start"', () => {
+  const page = (title) =>
+    parseHTML(`<html><head><title>${title}</title></head><body><h1>${title}</h1></body></html>`).document;
+  for (const title of [
+    'INTERNSHIP – CAPITAL – LONDON – JANUARY 2027',
+    'Data Analyst Intern (TikTok-LIVE) - 2027 Start',
+  ])
+    assert.equal(jp.applicationContext(page(title), 'https://careers.example.com/jobs/1234567').company, '', title);
+});
+
+test('an application step’s own text is no job: Dayforce’s privacy notice; the job page before it is asked first', async () => {
+  const APPLY = 'https://jobs.dayforcehcm.com/en-US/stonefleming/CANDIDATEPORTAL/jobs/911/apply?flowSelection=true';
+  const JOB = 'https://jobs.dayforcehcm.com/en-US/stonefleming/CANDIDATEPORTAL/jobs/911';
+  const TITLE = '2027 Corient UK Wealth Management Summer Intern Programme';
+  const ctx = jp.applicationContext(doc('dayforce-apply.html'), APPLY);
+  assert.equal(ctx.posting, null);
+  assert.equal(jp.fromHtml(html('dayforce-apply.html'), APPLY), null);
+  const now = Date.now();
+  const routes = { [JOB]: html('dayforce-job.html'), [`${JOB}?flowSelection=true`]: html('dayforce-job.html') };
+  const found = await jp.find(
+    { ...ctx, trail: [{ url: JOB, title: TITLE, at: now - 6e4 }] },
+    { fetch: mockFetch(routes), now },
+  );
+  assert.equal(found.posting.title, TITLE);
+  assert.ok(['same', 'likely'].includes(found.verdict), found.verdict);
+  // Advert-like text on a step ("The selection process (all roles)" at Bending Spoons) waits for the job's own
+  // page, and is only 'likely' when that page doesn't answer.
+  const advert = jp.fromHtml(html('talentsoft-offer.html'), 'https://jobs.ca-cib.com/job/x_116695.aspx').description;
+  const step = {
+    ...ctx,
+    posting: { source: 'page-data', title: 'The selection process', description: advert, confidence: 0.7, jobIds: [] },
+  };
+  const log = [];
+  const r = await jp.find(step, { fetch: mockFetch({}, log), now });
+  assert.ok(log.length > 0, 'the job’s page was asked first');
+  assert.deepEqual([r.verdict, r.reasons[1]], ['likely', 'the job’s own page didn’t confirm it']);
+});
+
+test('Cornerstone OnDemand (Eurazeo): the tenant names the firm, the requisition the job, and its application step', () => {
+  const JOB = 'https://eurazeo.csod.com/ux/ats/careersite/1/home/requisition/202?c=eurazeo';
+  const APPLY =
+    'https://eurazeo.csod.com/ux/ats/careersite/1/requisition/202/application?c=eurazeo&source=Trackr&jobboardid=0#1';
+  assert.deepEqual(jp.ats(APPLY), { name: 'cornerstone', company: 'eurazeo', jobId: '202', stage: 'application' });
+  assert.deepEqual(
+    jp.descriptionUrls(APPLY).map((t) => t.url),
+    [JOB],
+  );
+  const ctx = jp.applicationContext(doc('cornerstone-requisition.html'), JOB);
+  assert.deepEqual(
+    [ctx.title, ctx.company, ctx.jobIds],
+    ['INTERNSHIP – CAPITAL – LONDON – JANUARY 2027', 'Eurazeo', ['202']],
+  );
+});
+
+test('an application page’s own “Back to job description” link wins over the text on the page (Bending Spoons)', async () => {
+  const JOB = 'https://jobs.bendingspoons.com/positions/6a7c11c253e80da9f6c76ffc';
+  const APPLY = `${JOB}/apply?source=Trackr`;
+  const advert = jp.fromHtml(html('talentsoft-offer.html'), 'https://jobs.ca-cib.com/job/x_116695.aspx').description;
+  const ctx = {
+    url: APPLY,
+    ats: jp.ats(APPLY),
+    title: 'The selection process (all roles)',
+    company: '',
+    jobIds: [],
+    links: [{ url: JOB, text: 'Back to job description' }],
+    posting: {
+      source: 'page-data',
+      title: 'The selection process (all roles)',
+      description: advert,
+      confidence: 0.7,
+      jobIds: [],
+    },
+  };
+  const found = await jp.find(ctx, { fetch: mockFetch({ [JOB]: html('dayforce-job.html') }) });
+  assert.deepEqual(
+    [found.verdict, found.source, found.posting.title],
+    ['likely', JOB, '2027 Corient UK Wealth Management Summer Intern Programme'],
+  );
+});
+
+test('Atlassian: the job’s h1 under twenty-two menu headings; on iCIMS the job is in the frame, not the pitch around it', async () => {
+  const details = jp.fromHtml(
+    html('atlassian-details.html'),
+    'https://www.atlassian.com/company/careers/details/26266',
+  );
+  assert.equal(details.title, 'Software Engineer Intern, 2027 Summer U.S.');
+  const B = 'https://careers-americas.icims.com/jobs/26266/software-engineer-intern%2c-2027-summer-u.s.';
+  const ctx = jp.applicationContext(doc('icims-atlassian-login.html'), `${B}/login`);
+  assert.deepEqual(
+    [ctx.title, ctx.company, ctx.posting],
+    ['Software Engineer Intern, 2027 Summer U.s.', 'Atlassian', null],
+  );
+  assert.equal(jp.fromHtml(html('icims-atlassian-job.html'), `${B}/job`), null);
+  const routes = {
+    [`${B}/job`]: html('icims-atlassian-job.html'),
+    [`${B}/job?in_iframe=1`]: html('icims-atlassian-frame.html'),
+  };
+  const found = await jp.find(ctx, { fetch: mockFetch(routes) });
+  assert.deepEqual(
+    [found.verdict, found.source, found.posting.title],
+    ['same', `${B}/job?in_iframe=1`, 'Software Engineer Intern, 2027 Summer U.S.'],
+  );
+});
+
+test('TikTok’s pre-wrapped sections; no bot check, closed job or stray "|" read as a job (Gradcracker, Yello, Bending Spoons)', () => {
+  const tiktok = jp.fromHtml(
+    html('tiktok-search-job.html'),
+    'https://lifeattiktok.com/search/7674944387893791029?spread=Trackr',
+  );
+  assert.equal(tiktok.title, 'Data Analyst Intern (TikTok-LIVE) - 2027 Start');
+  assert.match(tiktok.description, /Key Responsibilities/);
+  const page = (title, body) => `<html><head><title>${title}</title></head><body><main>${body}</main></body></html>`;
+  const blocked = page(
+    'Attention Required! | Cloudflare',
+    `<h1>Sorry, you have been blocked</h1><h2>You are unable to access gradcracker.com</h2><p>${'This website is using a security service to protect itself from online attacks. The action you just performed triggered the security solution. '.repeat(4)}</p>`,
+  );
+  const job = 'https://www.gradcracker.com/hub/1210/rendel/graduate-job/86284/graduate-civil-engineer';
+  assert.equal(jp.fromHtml(blocked, job), null);
+  assert.equal(jp.applicationContext(parseHTML(blocked).document, job).company, '');
+  const yello = 'https://smbc.recsolu.com/jobs/OA7gYDTR5Q2cIoCF-4A2Wg';
+  assert.equal(
+    jp.applicationContext(
+      parseHTML(page('Job Unavailable Yello Enterprise', '<h1>Job Unavailable</h1>')).document,
+      yello,
+    ).gone,
+    true,
+  );
+  const bs = 'https://jobs.bendingspoons.com/positions/6a7c11c253e80da9f6c76ffc/apply';
+  assert.equal(
+    jp.applicationContext(parseHTML(page('| Graduate product manager', '<p>Apply</p>')).document, bs).title,
+    'Graduate product manager',
+  );
+});

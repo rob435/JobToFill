@@ -1698,8 +1698,13 @@ async function jobFor(tabId) {
       found &&
       found.posting &&
       (['same', 'likely'].includes(found.verdict) || (found.verdict === 'unsure' && sameCompany(found.posting)));
+    // (Not an application step's text, which the finder has weighed already: Greencore's "Question Summary".)
     const onPage =
-      context.posting && String(context.posting.description || '').split(/\s+/).length > 120 ? context.posting : null;
+      context.posting &&
+      !(context.ats && context.ats.stage === 'application') &&
+      String(context.posting.description || '').split(/\s+/).length > 120
+        ? context.posting
+        : null;
     const posting = (ok && found.posting) || onPage;
     const hint = (found && found.hint) || null;
     job = {

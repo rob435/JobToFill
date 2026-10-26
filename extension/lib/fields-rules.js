@@ -301,7 +301,7 @@
     ),
     R(
       'job.locations',
-      /\b(first|second|top|1st|2nd) (choice|preference) (of )?(office|location|city)|\b(first|top) choice (office )?locations?\b|\blocations?\b.*\b(interested|prefer|willing|open to|relocat|consider|like to work|want to work)|\b(preferred|desired|target|ideal) (work |office |job |internship |role )?(locations?|offices?|cities)|\bwhich (other )?(offices?|locations?|cities)\b|\b(office|location|city) preferences?\b|where would you (like|prefer|want) to (work|be based)|\brelocat\w* (where|which (cities|locations|offices))\b|^where\b.*\brelocat/,
+      /\b(first|second|top|1st|2nd) (choice|preference) (of )?(office|location|city)|\b(first|top) choice (office )?locations?\b|\blocations?\b.*\b(interested|prefer|willing|open to|relocat|consider|like to (work|apply)|want to (work|apply)|wish to (work|apply))|\b(preferred|desired|target|ideal) (work |office |job |internship |role )?(locations?|offices?|cities)|\bwhich (other )?(offices?|locations?|cities)\b|\b(office|location|city) preferences?\b|where would you (like|prefer|want) to (work|be based)|\brelocat\w* (where|which (cities|locations|offices))\b|^where\b.*\brelocat/,
       // "…willing to relocate to one of the following locations New York… Please confirm" [Yes / No] is about relocating;
       // Netcraft's "Please confirm the length of role you're looking for and your preferred location" asks more.
       {
@@ -975,6 +975,11 @@
       // "Mobile number (inc. country code)" is the whole number (WHOLE_NUMBER).
       { not: WHOLE_NUMBER },
     ),
+    // Meta Careers: a dropdown labelled only "Code" beside the number, under "Phone number".
+    R('phone.countryCode', /^(code|prefix)$/, {
+      kinds: CHOICE,
+      test: (desc) => /\b(phone|mobile|telephone)\b/.test(U.normalize((desc.signals && desc.signals.group) || '')),
+    }),
     R(
       'phone',
       /phone|mobile|\bmobil(nummer|telefon)?\b|\bcell\b|cellular|telephone|\btel\b|contact (number|no)|telefon|telefono|\bportable\b|\bhandy\b|whats ?app|\bmob\b/,

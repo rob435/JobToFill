@@ -111,7 +111,11 @@ node tests/live/survey-api.mjs --from report.json          # re-run the rules on
 OPENROUTER_API_KEY=sk-or-… node tests/live/survey-api.mjs --from report.json --ai --forms 10
                                                            # also answer what's left with the AI, and print it
 node tests/live/survey.mjs --limit 20                      # the real extension in Chromium on live forms (HEADED=1 to watch)
+node tests/live/survey-sites.mjs --limit 60 --shard 0/3    # the sites with no rules: see below
+node tests/live/survey-sites.mjs --from report.json        # its summary again
 ```
+
+The surveys above only reach job boards JobToFill already knows. `survey-sites.mjs` goes after the rest: the programmes on Trackr whose job page is on a site `jobpage.ats()` doesn't recognise (an employer's own careers site), up to two per site. For each it reads the job page as the letter studio does, clicks _Apply_ (only "Apply"-like links and buttons, never one in a form), and reports the controls on that page the scanner missed (Meta Careers' form, whole-page `aria-hidden`, was the first), the fields no rule recognises, and whether the job is found again from there (the wrong text taken for the job, a sign-in step that loses it). Nothing is filled or submitted. About a fifth of these sites put a bot check in front of a headless browser (Cloudflare's "Just a moment…"); those are listed, and need a person's browser.
 
 The first survey (117 live forms, 2,408 questions on Trackr's UK and US finance and tech trackers) is what the country-by-country right to work, job-site mapping, on-site and adjustments answers, and AI answers were built from. The rules now fill 1,546 of those questions (64%, up from 60%; about a third of the gain is the new profile answers, the rest is new and corrected rules), and about 30 right-to-work answers that were wrong for a British applicant on US forms are now right. Most of the 461 questions they still don't recognise are firm-specific, and those go to the AI.
 

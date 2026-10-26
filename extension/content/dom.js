@@ -116,6 +116,36 @@
     return true;
   }
 
+  // What an open dialog or menu shows over the page, which Radix and MUI leave aria-hidden behind it.
+  const OVERLAY =
+    'dialog[open], [aria-modal="true"], [role="dialog"], [role="alertdialog"], [role="listbox"], [role="menu"]';
+  // During collect(): each aria-hidden wrapper's verdict, worked out once per scan.
+  let idleMemo = null;
+
+  /**
+   * aria-hidden="true" around a form while nothing is open over it says nothing about the fields: Meta Careers keeps
+   * its whole site, div#scrollview, aria-hidden as its form shows (and opens its menus inside it). One that holds a
+   * field or two (a honeypot's wrapper, a widget's shim), or the page behind a dialog or menu open outside it, hides.
+   */
+  function idleWrapper(a) {
+    if (idleMemo && idleMemo.has(a)) return idleMemo.get(a);
+    const idle =
+      a.querySelectorAll(COUNTED_SELECTOR).length >= 3 &&
+      !Array.from(a.ownerDocument.querySelectorAll(OVERLAY)).some(
+        (o) => !a.contains(o) && !o.contains(a) && isVisible(o),
+      );
+    if (idleMemo) idleMemo.set(a, idle);
+    return idle;
+  }
+
+  /** Hidden from assistive technology by aria-hidden="true" on it or around it, other than by an idle wrapper. */
+  function ariaHidden(el) {
+    const HIDDEN = '[aria-hidden="true"]';
+    for (let a = el.closest(HIDDEN); a; a = a.parentElement && a.parentElement.closest(HIDDEN))
+      if (!idleWrapper(a)) return true;
+    return false;
+  }
+
   // The least a box handed a password or card must show: a chat widget's 2×2 px password box at 2% opacity is
   // "visible" to isVisible, but no person could see what goes into it.
   const SECRET_MIN_PX = 8;
@@ -672,10 +702,16 @@
   const isPicker = (c) =>
     c.localName === 'select' || c.getAttribute('role') === 'combobox' || c.hasAttribute('aria-haspopup');
 
+  // A picker's label that names no answer on its own: Meta Careers' "Code" beside its "Phone number" box.
+  const BARE_LABEL = /^(code|prefix)$/;
+  const bareLabel = (c) =>
+    isPicker(c) && BARE_LABEL.test(U.normalize(explicitLabel(c) || c.getAttribute('aria-label') || ''));
+
   /**
-   * The label over a picker and a box side by side, neither of them labelled, that together make one answer: a
-   * dial code and the number under "Phone number" (Ant Design's Space.Compact, whose label points at neither), a
-   * currency and an amount. The text just before the pair, looking out until other fields start.
+   * The label over a picker and a box side by side, neither of them labelled (or the picker only "Code"), that
+   * together make one answer: a dial code and the number under "Phone number" (Ant Design's Space.Compact, whose label
+   * points at neither; Meta Careers'), a currency and an amount. The text just before the pair, looking out until
+   * other fields start.
    */
   function clusterLabel(el) {
     let cluster = el.parentElement;
@@ -683,7 +719,7 @@
     if (!cluster || cluster === el.ownerDocument.body) return '';
     const members = countedIn(cluster);
     if (members.length !== 2 || members.filter(isPicker).length !== 1) return '';
-    if (members.some((c) => explicitLabel(c) || c.getAttribute('aria-label'))) return '';
+    if (!bareLabel(el) && members.some((c) => explicitLabel(c) || c.getAttribute('aria-label'))) return '';
     let node = cluster;
     for (let i = 0; i < 5; i++) {
       const t = previousText(node);
@@ -995,9 +1031,9 @@
     }
     if (kind === 'combobox') return isVisible(el, { ignoreOpacity: true }) || isVisible(el.parentElement);
     // An empty MUI X date keeps its "MM/DD/YYYY" see-through under the label until the field has focus.
-    if (el.matches(SEGMENT)) return !el.closest('[aria-hidden="true"]') && isVisible(el, { ignoreOpacity: true });
+    if (el.matches(SEGMENT)) return !ariaHidden(el) && isVisible(el, { ignoreOpacity: true });
     if (el.readOnly) return false;
-    if (el.closest('[aria-hidden="true"]')) return false;
+    if (ariaHidden(el)) return false;
     // A <select> made transparent and laid over what shows its choice (react-phone-number-input's country, over the
     // flag) is what a person clicks.
     // The one a widget stands in for (choices.js, select2…) is filled through the widget.
@@ -1217,7 +1253,7 @@
       const group =
         groupLabel(el) ||
         (kind === 'file' ? jobviteUploadLabel(el) : '') ||
-        (!s.label && !s.aria && kind !== 'checkbox' ? clusterLabel(el) : '');
+        (((!s.label && !s.aria) || bareLabel(el)) && kind !== 'checkbox' ? clusterLabel(el) : '');
       if (group && U.normalize(group) !== U.normalize(s.label || s.aria)) {
         // For an upload or a lone checkbox the group's legend is the question; elsewhere it is context.
         if (kind === 'file' || kind === 'checkbox') s.question = group;
@@ -1260,6 +1296,15 @@
 
   /** Scan a document: [{ el, kind, members, desc }] in document order. */
   function collect(doc) {
+    idleMemo = new Map();
+    try {
+      return collectFields(doc);
+    } finally {
+      idleMemo = null;
+    }
+  }
+
+  function collectFields(doc) {
     const fields = [];
     const seen = new Set();
     for (const el of collectControls(doc || document, [])) {
@@ -1317,6 +1362,8 @@
     describe,
     kindOf,
     isVisible,
+    ariaHidden,
+    idleWrapper,
     showsSecret,
     textOf,
     visibleText,

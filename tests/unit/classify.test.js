@@ -248,6 +248,16 @@ test('application questions whose wording used to slip through', () => {
   assert.equal(sel('Which is your preferred internship location?'), 'job.locations');
   assert.equal(sel('Preferred office location'), 'job.locations');
   assert.equal(sel('Where would you like to work?'), 'job.locations');
+  // Meta Careers, on a job in several cities.
+  assert.equal(
+    typeOf(
+      desc(
+        { question: "Please select one or more locations where you'd like to apply." },
+        { kind: 'checkboxes', options: opts('Menlo Park, CA', 'London, UK') },
+      ),
+    ),
+    'job.locations',
+  );
   assert.equal(sel('Are you willing to relocate?'), 'job.relocate');
   assert.equal(sel('Location (City)'), 'location');
   assert.equal(
