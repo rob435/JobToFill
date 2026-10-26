@@ -454,16 +454,16 @@
   }
 
   /**
-   * The form's education and job entries past those your profile lists that hold something already (iCIMS's reading of
-   * a CV of one degree and a school made three education entries): said, as yours to check or remove.
+   * The form's education, job and language entries past those your profile lists that hold something already (iCIMS's
+   * reading of a CV of one degree and a school made three education entries): said, as yours to check or remove.
    */
   function extraEntries(fields, results, profile) {
     const out = [];
-    for (const [g, list, one, many] of [
-      ['edu.', 'education', 'Education entry', 'Education entries'],
-      ['exp.', 'experience', 'Job entry', 'Job entries'],
+    for (const [g, mine, one, many] of [
+      ['edu.', (profile.education || []).length, 'Education entry', 'Education entries'],
+      ['exp.', (profile.experience || []).length, 'Job entry', 'Job entries'],
+      ['lang.', JTF.fields.languageEntries(profile).length, 'Language entry', 'Language entries'],
     ]) {
-      const mine = (profile[list] || []).length;
       const held = new Set();
       results.forEach((r, i) => {
         if (r && r.entry && r.type && r.type.startsWith(g) && (r.index || 0) >= mine && JTF.fill.hasValue(fields[i]))

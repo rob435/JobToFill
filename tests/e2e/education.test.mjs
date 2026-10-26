@@ -166,8 +166,8 @@ test('Workday (Shell): "Resume/CV/Transcripts" takes CV, letter and transcript; 
     assert.equal(await text(page, '#btn-degree'), "Bachelor's Degree");
     assert.equal(await value(page, '#ed1-field'), 'Computer Science');
     assert.equal(await value(page, '#ed1-gpa'), '2:1', '"…Otherwise, provide your overall result…": the class, no GPA');
-    assert.equal(await value(page, '#ed1-from'), '2023', 'the "YYYY" box under "From"');
-    assert.equal(await value(page, '#ed1-to'), '2027', 'and under "To (Actual or Expected)"');
+    assert.equal(await value(page, '#ed1-from-dateSectionYear-input'), '2023', 'the "YYYY" box under "From"');
+    assert.equal(await value(page, '#ed1-to-dateSectionYear-input'), '2027', 'and under "To (Actual or Expected)"');
     assert.deepEqual(
       await uploads(page),
       [CV, 'Ada_Lovelace_letter.pdf', TRANSCRIPT],

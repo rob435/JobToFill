@@ -1,6 +1,7 @@
-// End-to-end: Workday's and Oracle's own widgets as live applications have them. Workday (workday-prompts.html): a country
-// preselected from the visitor's IP address, an address section rebuilt per country, search prompts with chips,
-// year spin buttons that only take keys, and an upload that takes several files.
+// End-to-end: Workday's and Oracle's own widgets as live applications have them. Workday (workday-prompts.html, with
+// workday-widgets.js): a country preselected from the visitor's IP address, an address section rebuilt per country,
+// Canvas Kit Selects that fade out, search prompts whose rows only take a click inside them, year spin buttons drawn by
+// an aria-hidden "…-display", Skills that takes several, and an upload that takes several files.
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PROFILE, RESUME_PDF, launch, text, value } from './harness.mjs';
@@ -21,6 +22,8 @@ const STUDENT = {
     country: 'United Kingdom',
     organization: '',
   },
+  skills: 'Python, SQL, Stata',
+  languages: 'English (native), Spanish (professional)',
   education: [
     {
       school: 'University of Glasgow',
@@ -81,9 +84,36 @@ test('Workday: a country picked from the IP address is put right, then the addre
   assert.equal(await value(page, '#education-1--firstYearAttended-dateSectionYear-input'), '2023');
   assert.equal(await value(page, '#education-1--lastYearAttended-dateSectionYear-input'), '2027');
   assert.equal(await value(page, '#education-1--gradeAverage'), '2:1', 'the class, never a GPA made up from it');
+  // Skills takes them one by one, each ticked in the list that stays open.
+  assert.deepEqual(await chips(page, 'formField-skills'), ['Python', 'SQL', 'Stata']);
+  // Languages: its "Add" once per language, then each entry's language, fluency and level (Fluent is the most the list
+  // says for a native speaker; professional is Advanced).
+  assert.deepEqual(
+    await page.$$eval('[data-automation-id^="language-"]', (entries) =>
+      entries.map((e) => [
+        ...[...e.querySelectorAll('button[aria-haspopup]')].map((b) => b.textContent),
+        e.querySelector('input[type="checkbox"]').checked,
+      ]),
+    ),
+    [
+      ['English', 'Fluent', 'Fluent', 'Fluent', true],
+      ['Spanish', 'Advanced', 'Advanced', 'Advanced', false],
+    ],
+  );
   // "Resume/CV/Transcripts" takes several files: the CV goes in (no transcript or letter saved here).
   assert.deepEqual(await page.$$eval('#uploaded li', (list) => list.map((li) => li.textContent)), ['Robin_Li_CV.pdf']);
-  assert.equal(await page.$$eval('[data-automation-id="activeListContainer"], ul.menu', (l) => l.length), 0);
+  // Each Select opened once and closed again: one clicked while its menu fades out would open again, over the next field.
+  assert.deepEqual(
+    await page.$$eval('button[aria-haspopup="listbox"]', (list) => list.map((b) => [b.id, b.dataset.opened])),
+    [
+      ['country--country', '1'],
+      ['phoneNumber--phoneType', '1'],
+      ['education-1--degree', '1'],
+      ...[1, 2].flatMap((n) => ['language', 'reading', 'speaking', 'writing'].map((k) => [`language-${n}--${k}`, '1'])),
+    ],
+  );
+  assert.equal(await page.$$eval('[data-automation-id="activeListContainer"], .wd-menu', (l) => l.length), 0);
+  assert.equal(await page.$$eval('button[aria-haspopup][aria-expanded="true"]', (l) => l.length), 0);
   assert.ok(took < 20000, `the fill took ${took} ms`);
   await page.close();
 });

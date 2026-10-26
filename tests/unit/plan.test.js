@@ -340,6 +340,100 @@ test('degree, location, skills and languages adapt to the question', () => {
   assert.equal(ask(p, 'languages', 'Which languages are you fluent in other than English?'), null);
 });
 
+test('Workday language entries: one per language you list, its fluency, and never more than you say for each skill', () => {
+  const p = sample();
+  p.languages = 'English (native), Spanish (professional working proficiency), basic German';
+  // Workday's "Languages 1" and "Languages 2": a Language list, "I am fluent in this language.", Reading, Speaking,
+  // Writing.
+  const entry = (n) => [
+    desc({ label: 'Language', section: `Languages ${n}` }, { kind: 'combo' }),
+    desc(
+      { label: 'I am fluent in this language.', section: `Languages ${n}` },
+      { kind: 'checkbox', inputType: 'checkbox' },
+    ),
+    desc({ label: 'Reading', section: `Languages ${n}` }, { kind: 'combo' }),
+    desc({ label: 'Speaking', section: `Languages ${n}` }, { kind: 'combo' }),
+    desc({ label: 'Writing', section: `Languages ${n}` }, { kind: 'combo' }),
+  ];
+  const plan = matcher.plan(
+    [...entry(1), ...entry(2), desc({ label: 'From', section: 'Education 1' }), desc('School')],
+    p,
+  );
+  assert.deepEqual(types(plan).slice(0, 10), [
+    'lang.name#0',
+    'lang.native#0',
+    'lang.level#0:reading',
+    'lang.level#0:speaking',
+    'lang.level#0:writing',
+    'lang.name#1',
+    'lang.native#1',
+    'lang.level#1:reading',
+    'lang.level#1:speaking',
+    'lang.level#1:writing',
+  ]);
+  assert.notEqual(types(plan)[10], 'lang.start#1', 'a language holds no dates');
+
+  // A lone "Languages" question, and a "Reading" box anywhere else, are not an entry's.
+  assert.equal(types(matcher.plan([desc('Languages')], p))[0], 'languages');
+  assert.equal(types(matcher.plan([desc({ label: 'Language', section: 'About you' })], p))[0], 'languages');
+  assert.notEqual(types(matcher.plan([desc({ label: 'Reading' }, { kind: 'select' })], p))[0], 'lang.level#0:reading');
+
+  const at = (type, index) => fields.resolve(type, p, { jobContext: true, index });
+  assert.deepEqual(
+    fields.languageEntries(p).map((e) => [e.name, e.level]),
+    [
+      ['English', 5],
+      ['Spanish', 3],
+      ['German', 1],
+    ],
+  );
+  assert.equal(at('lang.name', 1).text, 'Spanish');
+  assert.equal(at('lang.native', 0).canonical, 'yes', 'native: fluent in it');
+  assert.equal(at('lang.native', 1).canonical, 'no');
+  assert.equal(at('lang.name', 3), null, 'no fourth language');
+
+  // Each skill's level against the list: the one that says it, else the nearest below, never more.
+  const pick = (index, ...texts) => {
+    const i = matcher.matchOption(opts(...texts), at('lang.level', index));
+    return i < 0 ? null : texts[i];
+  };
+  const PLAIN = ['Select One', 'Beginner', 'Intermediate', 'Advanced', 'Fluent'];
+  assert.equal(pick(0, ...PLAIN), 'Fluent', 'native, on a list that tops out at Fluent');
+  assert.equal(pick(1, ...PLAIN), 'Advanced');
+  assert.equal(pick(2, ...PLAIN), 'Beginner');
+  const NUMBERED = [
+    '1 - Elementary proficiency',
+    '2 - Limited working proficiency',
+    '3 - Professional working proficiency',
+    '4 - Full professional proficiency',
+    '5 - Native or bilingual proficiency',
+  ];
+  assert.equal(pick(0, ...NUMBERED), NUMBERED[4]);
+  assert.equal(pick(1, ...NUMBERED), NUMBERED[2]);
+  assert.equal(pick(2, 'Intermediate', 'Advanced', 'Fluent'), null, 'basic: nothing on the list says as little');
+
+  // Nothing said about how well: the language, but no level and no fluency.
+  p.languages = 'English, French (C1), Italiano';
+  assert.deepEqual(
+    fields.languageEntries(p).map((e) => [e.name, e.level]),
+    [
+      ['English', 0],
+      ['French', 3],
+      ['Italiano', 0],
+    ],
+  );
+  assert.equal(at('lang.level', 0), null);
+  assert.equal(at('lang.native', 0), null);
+  p.languages = 'English (native, written and spoken); Spanish – B1';
+  assert.deepEqual(
+    fields.languageEntries(p).map((e) => [e.name, e.level]),
+    [
+      ['English', 5],
+      ['Spanish', 2],
+    ],
+  );
+});
+
 test('a question asked again among the screening questions is about your first entry', () => {
   const p = student();
   const term = desc(

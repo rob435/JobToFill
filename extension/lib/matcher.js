@@ -86,6 +86,7 @@
     'job.locations',
     'skills',
     'languages',
+    'lang.native', // Workday's "I am fluent in this language." in a language entry
     'human', // a plain "I'm not a robot" box
     'compliance.sanctions', // one statement of a sanctions list, or its "None of the above"
     'job.availability', // one interview slot
@@ -501,6 +502,8 @@
   function refine(r, desc) {
     if (!r) return null;
     if (F().DATE_TYPES.has(r.type) && !r.part) r.part = detectPart(desc);
+    // Each of a language entry's Reading, Speaking, Writing… is a box of its own: another one is no next entry.
+    if (r.type === 'lang.level' && !r.part) r.part = norm(questionText(desc));
     // A "prefix" picker beside the number under "Phone number" (Ant Design's docs name it "prefix") is the dial code,
     // not a title like "Mr".
     // A picker of dial codes beside the number box, under "Phone": the code, not the number.
@@ -592,6 +595,7 @@
     if (!type) return null;
     if (type.startsWith('edu.') && !['edu.level', 'edu.year', 'edu.classAtLeast'].includes(type)) return 'edu';
     if (type.startsWith('exp.')) return 'exp';
+    if (type.startsWith('lang.')) return 'lang';
     return null;
   }
 
@@ -629,6 +633,7 @@
   const SECTION_HEADINGS = {
     edu: /\b(education|academic|school|universit\w*|college|qualifications?|degrees?|studies)\b/,
     exp: /\b(work|employment|experience|career|jobs?|professional|employers?)\b/,
+    lang: /\blanguages?\b/,
   };
   // A section about the job applied for, not a history.
   const ROLE_SECTION =
@@ -648,7 +653,8 @@
     for (let j = i + 1; j < Math.min(results.length, i + 4); j++) {
       const t = results[j] && results[j].type;
       if (!t || t.startsWith('gen.') || PLACE_TYPES.includes(t) || SECTION_ONLY.includes(t)) continue;
-      next = groupOf(t);
+      // Languages hold no dates.
+      next = groupOf(t) === 'lang' ? null : groupOf(t);
       at = j;
       break;
     }
@@ -845,6 +851,7 @@
     const state = {
       edu: { index: -1, seen: new Set(), run: new Set() },
       exp: { index: -1, seen: new Set(), run: new Set() },
+      lang: { index: -1, seen: new Set(), run: new Set() },
     };
     let prev = null;
     let detached = null; // the section of a run of one-off questions, all about the first entry
@@ -875,9 +882,12 @@
           continue;
         }
       }
+      // The entry a box of no section of its own ("From", "Location", "Country") belongs to: the one just before, but
+      // never a language's, which holds no dates, places or descriptions.
+      const host = prev === 'lang' ? null : prev;
       // "Summary" between a job's dates and title describes that job (Breezy's work history).
-      if (prev && r.type === 'summary' && /^(summary|description)$/.test(norm(questionText(descs[i])))) {
-        if (prev === 'exp') r.type = 'exp.description';
+      if (host && r.type === 'summary' && /^(summary|description)$/.test(norm(questionText(descs[i])))) {
+        if (host === 'exp') r.type = 'exp.description';
         else {
           r.dropped = r.type;
           r.type = null;
@@ -885,8 +895,8 @@
         }
       }
       if (r.type.startsWith('gen.')) {
-        const lead = leadsInto(results, descs, i, prev, state);
-        const into = lead || prev;
+        const lead = leadsInto(results, descs, i, host, state);
+        const into = lead || host;
         let target = into && (r.type !== 'gen.description' || into === 'exp') ? into + r.type.slice(3) : null;
         // "Start Date" right after an entry's graduation date ("Year of Graduation, Degree Classification, Start Date"
         // on Teamtailor) is not that entry's start: entries give their start first.
@@ -916,22 +926,22 @@
         prev = null;
         detached = null;
         continue;
-      } else if (prev && (r.type === 'location' || r.type === 'address.city')) {
+      } else if (host && (r.type === 'location' || r.type === 'address.city')) {
         // A "City" box of its own takes the entry's city alone: its "Country" is asked apart.
         if (r.type === 'address.city') r.part = 'city';
-        r.type = prev + '.location';
-      } else if (prev && r.type === 'address.country') {
+        r.type = host + '.location';
+      } else if (host && r.type === 'address.country') {
         // "Country" in an education or job entry: the school's or employer's, from that entry's location.
-        r.type = prev + '.country';
-      } else if (prev && ['address.state', 'address.postalCode'].includes(r.type)) {
+        r.type = host + '.country';
+      } else if (host && ['address.state', 'address.postalCode'].includes(r.type)) {
         // The school's or employer's state, not yours.
         r.dropped = r.type;
         r.type = null;
         continue;
       } else if (
-        prev &&
+        host &&
         ['address.line1', 'address.line2'].includes(r.type) &&
-        SECTION_HEADINGS[prev].test(norm((descs[i].signals || {}).section))
+        SECTION_HEADINGS[host].test(norm((descs[i].signals || {}).section))
       ) {
         // iCIMS's "Address" in "Professional Experience (1)", under "Work Experience": the employer's street, not
         // yours (an address after the section, under a heading of its own, is still yours).
@@ -1903,6 +1913,17 @@
       const want = v.text.toUpperCase();
       const hit = opts.find((o) => (o.text.toUpperCase().match(/^([A-GU]\*{0,2}|[1-9])(?![\w*])/) || [])[1] === want);
       return hit ? hit.i : -1;
+    }
+
+    // How well a language goes, against "Beginner / Intermediate / Advanced / Fluent" or "1 - Basic … 5 - Native or
+    // bilingual": the option at that level, else the nearest below it, never one that says more than your profile.
+    if (v.kind === 'level' && v.level) {
+      let best = null;
+      for (const o of opts) {
+        const level = F().languageLevel(o.text);
+        if (level && level <= v.level && (!best || level > best.level)) best = { i: o.i, level };
+      }
+      return best ? best.i : -1;
     }
 
     // Notice periods against "< 1 Month" / "1-2 Months" / "4 weeks": compared in weeks (before spellings:

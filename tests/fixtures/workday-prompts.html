@@ -4,27 +4,22 @@
   <meta charset="utf-8">
   <title>Shell Assessed Internship Programme 2027 – United Kingdom</title>
   <!--
-    Workday's own widgets, as they behave on a live application (Shell, en-GB):
+    A live application (Shell, en-GB), with Workday's own widgets as its pages run them (workday-widgets.js:
+    Canvas Kit's Select, search prompts whose result rows only take a click inside them, year spin buttons drawn by
+    their "…-display"):
     - Country / Territory comes preselected from the visitor's IP address (Italy here), and the address section
       is rebuilt for the country chosen (Italy: City (Comune) search prompt + Province; United Kingdom: City +
       County), after a round trip.
-    - Search prompts ("selectinput") are plain inputs: suggestions appear after a few letters (School) or only on
-      Enter (the others); a pick becomes a chip in a horizontal listbox of selected items, with a delete charm;
-      text left in the box without a pick is wiped when the box loses focus.
-    - Year boxes are spin buttons that only take digits typed as keys: a value set from script is put back.
+    - Search prompts: suggestions appear after a few letters (School) or only on Enter (the others); a pick becomes
+      a chip in a horizontal listbox of selected items, with a delete charm; text left in the box without a pick is
+      wiped when the box loses focus. Skills takes several, its list staying open with a tick on each pick.
     - The upload takes several files.
   -->
   <style>
     body { font: 14px system-ui; max-width: 760px; margin: 24px auto; }
     [data-automation-id^="formField"] { margin: 10px 0; display: grid; gap: 4px; position: relative; }
     button[aria-haspopup] { text-align: left; padding: 6px; }
-    ul[role="listbox"], [data-automation-id="activeListContainer"] { list-style: none; margin: 0; padding: 4px; background: #fff; border: 1px solid #888; }
-    [data-automation-id="activeListContainer"], ul.menu { position: absolute; z-index: 10; }
-    ul[data-automation-id="selectedItemList"] { display: flex; gap: 6px; border: 0; padding: 0; }
-    [role="option"] { padding: 4px 8px; cursor: pointer; }
-    [data-automation-id="selectedItem"] { display: inline-flex; gap: 4px; background: #eef; }
     [data-automation-id="dateInputWrapper"] { display: flex; gap: 6px; }
-    [data-automation-id="dateInputWrapper"] input { width: 70px; }
     [data-automation-id="file-upload-drop-zone"] { border: 2px dashed #99f; padding: 16px; text-align: center; }
     [data-automation-id="file-upload-input-ref"] { position: absolute; width: 1px; height: 1px; opacity: 0; }
   </style>
@@ -92,20 +87,28 @@
       </div>
       <div data-automation-id="formField-firstYearAttended">
         <label id="lbl-from">From<abbr>*</abbr></label>
-        <div data-automation-id="dateInputWrapper" role="group" aria-labelledby="lbl-from">
-          <input type="text" id="education-1--firstYearAttended-dateSectionYear-input" class="year" role="spinbutton"
-            aria-label="Year" aria-valuemin="1900" aria-valuemax="2100" aria-valuetext="YYYY" placeholder="YYYY"
-            inputmode="numeric" maxlength="4" data-automation-id="dateSectionYear-input">
-        </div>
+        <div data-automation-id="dateInputWrapper" role="group" aria-labelledby="lbl-from" data-id="education-1--firstYearAttended"></div>
       </div>
       <div data-automation-id="formField-lastYearAttended">
         <label id="lbl-to">To (Actual or Expected)<abbr>*</abbr></label>
-        <div data-automation-id="dateInputWrapper" role="group" aria-labelledby="lbl-to">
-          <input type="text" id="education-1--lastYearAttended-dateSectionYear-input" class="year" role="spinbutton"
-            aria-label="Year" aria-valuemin="1900" aria-valuemax="2100" aria-valuetext="YYYY" placeholder="YYYY"
-            inputmode="numeric" maxlength="4" data-automation-id="dateSectionYear-input">
-        </div>
+        <div data-automation-id="dateInputWrapper" role="group" aria-labelledby="lbl-to" data-id="education-1--lastYearAttended"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- Languages: none until "Add" (then "Add Another") makes an entry, as Workday's instance sets do: a Language list,
+       "I am fluent in this language.", and a level for each of Reading, Speaking and Writing. -->
+  <div data-automation-id="languageSection" role="group" aria-labelledby="languages-section">
+    <h3 id="languages-section">Languages</h3>
+    <div id="languages"></div>
+    <button type="button" data-automation-id="add-button" id="languages-add">Add</button>
+  </div>
+
+  <div data-automation-id="skillsSection" role="group" aria-labelledby="skills-section">
+    <h3 id="skills-section">Skills</h3>
+    <div data-automation-id="formField-skills" class="prompt" data-search="enter" data-multi
+      data-options="Excel|Microsoft Excel|Python|Python (Programming Language)|SQL|SQL Server|Structured Query Language (SQL)|Stata|R|Machine Learning">
+      <label id="lbl-skills" for="skills--skills">Type to Add Skills</label>
     </div>
   </div>
 
@@ -123,158 +126,17 @@
     </div>
   </div>
 
+  <script src="workday-widgets.js"></script>
   <script>
-    const later = (ms) => new Promise((r) => setTimeout(r, ms));
-    let open = null;
-    function close() {
-      if (open) {
-        open.list.remove();
-        if (open.btn) open.btn.setAttribute('aria-expanded', 'false');
-        open = null;
-      }
-    }
-    document.addEventListener('click', (e) => { if (open && !open.list.contains(e.target) && e.target !== open.owner) close(); });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
-    function place(list, anchor) {
-      const r = anchor.getBoundingClientRect();
-      list.style.left = r.left + scrollX + 'px';
-      list.style.top = r.bottom + scrollY + 'px';
-      document.body.appendChild(list);
-    }
-
-    /* Listbox buttons ("Select One"). */
-    function wireButton(btn, onPick) {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (open && open.btn === btn) return close();
-        close();
-        const list = document.createElement('ul');
-        list.setAttribute('role', 'listbox');
-        list.className = 'menu';
-        list.id = btn.id + '-listbox';
-        for (const text of btn.dataset.options.split('|')) {
-          const li = document.createElement('li');
-          li.setAttribute('role', 'option');
-          li.setAttribute('aria-selected', String(btn.textContent === text));
-          li.innerHTML = '<div>' + text + '</div>';
-          li.addEventListener('click', (ev) => {
-            ev.stopPropagation();
-            btn.textContent = text;
-            btn.value = text;
-            close();
-            if (onPick) onPick(text);
-          });
-          list.appendChild(li);
-        }
-        place(list, btn);
-        btn.setAttribute('aria-expanded', 'true');
-        btn.setAttribute('aria-controls', list.id);
-        open = { btn, list, owner: btn };
+    const later = WD.later;
+    const wirePrompt = (field) =>
+      WD.prompt(field, {
+        options: field.dataset.options.split('|'),
+        search: field.dataset.search,
+        min: +field.dataset.min || 1,
+        chips: field.dataset.chip ? [field.dataset.chip] : [],
+        multi: 'multi' in field.dataset,
       });
-    }
-
-    /* Search prompts: an input, a horizontal listbox of chips, results in a listbox appended to <body>. */
-    let promptIds = 0;
-    function wirePrompt(field) {
-      const label = field.querySelector('label');
-      const id = label.getAttribute('for');
-      const options = field.dataset.options.split('|');
-      const min = +field.dataset.min || 1;
-      const container = document.createElement('div');
-      container.dataset.automationId = 'multiSelectContainer';
-      container.innerHTML =
-        '<input type="text" data-uxi-widget-type="selectinput" data-automation-id="searchBox" placeholder="Search" autocomplete="off" aria-required="true">' +
-        '<span data-automation-id="promptIcon" aria-hidden="true">≡</span>' +
-        '<ul role="listbox" data-automation-id="selectedItemList" aria-orientation="horizontal"></ul>';
-      field.appendChild(container);
-      const input = container.querySelector('input');
-      input.id = id;
-      input.setAttribute('aria-labelledby', label.id);
-      const chips = container.querySelector('ul');
-      chips.setAttribute('aria-labelledby', label.id);
-      const setChip = (text) => {
-        chips.replaceChildren();
-        if (!text) return;
-        const li = document.createElement('li');
-        li.setAttribute('role', 'presentation');
-        li.innerHTML =
-          '<div role="option" aria-selected="true" tabindex="0" data-automation-id="selectedItem"><div data-automation-id="DELETE_charm" aria-hidden="true">×</div><p data-automation-id="promptOption"></p></div>';
-        li.querySelector('p').textContent = text;
-        li.querySelector('p').dataset.automationLabel = text;
-        li.querySelector('[data-automation-id="selectedItem"]').title = text;
-        li.querySelector('[data-automation-id="DELETE_charm"]').addEventListener('click', () => {
-          setChip('');
-          field.dataset.value = '';
-        });
-        chips.appendChild(li);
-        field.dataset.value = text;
-      };
-      setChip(field.dataset.chip || '');
-      const results = async (query) => {
-        await later(200); // the search goes to the server
-        const q = query.trim().toLowerCase();
-        if (q.length < min || input.value.trim().toLowerCase() !== q) return;
-        const hits = options.filter((o) => q.split(/\s+/).every((w) => o.toLowerCase().includes(w)));
-        close();
-        const list = document.createElement('div');
-        list.setAttribute('role', 'listbox');
-        list.dataset.automationId = 'activeListContainer';
-        list.id = 'prompt-results-' + ++promptIds;
-        if (!hits.length) list.innerHTML = '<div data-automation-id="promptOption">No Items.</div>';
-        for (const text of hits) {
-          const row = document.createElement('div');
-          row.setAttribute('role', 'option');
-          row.setAttribute('aria-selected', 'false');
-          row.dataset.automationId = 'menuItem';
-          row.innerHTML = '<div data-automation-id="promptOption"></div>';
-          row.firstChild.textContent = text;
-          row.firstChild.dataset.automationLabel = text;
-          row.addEventListener('click', (ev) => {
-            ev.stopPropagation();
-            setChip(text);
-            input.value = '';
-            close();
-          });
-          list.appendChild(row);
-        }
-        place(list, input);
-        open = { list, owner: input };
-      };
-      if (field.dataset.search === 'type') input.addEventListener('input', () => results(input.value));
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          results(input.value);
-        }
-      });
-      // Text that wasn't picked doesn't stay.
-      input.addEventListener('blur', () => setTimeout(() => {
-        if (!open || open.owner !== input) input.value = '';
-      }, 150));
-    }
-
-    /* Year spin buttons: digits typed as keys go in; anything else is put back. */
-    function wireYear(input) {
-      let year = '';
-      const show = () => {
-        input.value = year;
-        input.setAttribute('aria-valuetext', year || 'YYYY');
-        if (year.length === 4) input.setAttribute('aria-valuenow', year);
-        else input.removeAttribute('aria-valuenow');
-      };
-      input.addEventListener('keydown', (e) => {
-        if (/^\d$/.test(e.key)) year = (year + e.key).slice(-4);
-        else if (e.key === 'Backspace') year = year.slice(0, -1);
-        else return;
-        e.preventDefault();
-        show();
-      });
-      input.addEventListener('input', () => show());
-      input.addEventListener('blur', () => {
-        if (year.length !== 4) year = '';
-        show();
-      });
-    }
 
     /* The address section follows the country, once the server has answered. */
     const ADDRESS = {
@@ -300,19 +162,42 @@
     const address = document.getElementById('address');
     function renderAddress(country) {
       address.innerHTML = ADDRESS[country];
-      address.querySelectorAll('button[aria-haspopup]').forEach((b) => wireButton(b));
+      address.querySelectorAll('button[aria-haspopup]').forEach((b) => WD.select(b));
       address.querySelectorAll('.prompt').forEach(wirePrompt);
       address.dataset.country = country;
     }
     renderAddress('Italy');
-    wireButton(document.getElementById('country--country'), async (country) => {
+    WD.select(document.getElementById('country--country'), async (country) => {
       address.innerHTML = '<p>Loading…</p>';
       await later(300);
       renderAddress(country);
     });
-    document.querySelectorAll('[data-automation-id="applyFlowMyInfoPage"] > [data-automation-id^="formField"] > button[aria-haspopup]:not(#country--country), [data-automation-id="educationSection"] button[aria-haspopup]').forEach((b) => wireButton(b));
+    document.querySelectorAll('[data-automation-id="applyFlowMyInfoPage"] > [data-automation-id^="formField"] > button[aria-haspopup]:not(#country--country), [data-automation-id="educationSection"] button[aria-haspopup]').forEach((b) => WD.select(b));
     document.querySelectorAll('body > div .prompt').forEach((f) => { if (!f.closest('#address')) wirePrompt(f); });
-    document.querySelectorAll('input.year').forEach(wireYear);
+    document.querySelectorAll('[data-automation-id="dateInputWrapper"][data-id]').forEach(WD.year);
+
+    const LANGUAGES = 'Arabic|Chinese (Mandarin)|English|French|German|Italian|Japanese|Portuguese|Spanish';
+    const LEVELS = 'Beginner|Intermediate|Advanced|Fluent';
+    let languageCount = 0;
+    document.getElementById('languages-add').addEventListener('click', async (e) => {
+      await later(150); // the new entry comes back from the server
+      const n = ++languageCount;
+      const entry = document.createElement('div');
+      entry.setAttribute('role', 'group');
+      entry.setAttribute('aria-labelledby', `Languages-${n}-panel`);
+      entry.dataset.automationId = `language-${n}`;
+      const select = (key, label, options) =>
+        `<div data-automation-id="formField-${key}"><label id="lbl-${key}-${n}" for="language-${n}--${key}">${label}<abbr title="required">*</abbr></label>` +
+        `<button type="button" id="language-${n}--${key}" aria-haspopup="listbox" aria-labelledby="lbl-${key}-${n} language-${n}--${key}" data-options="${options}">Select One</button></div>`;
+      entry.innerHTML =
+        `<h4 id="Languages-${n}-panel">Languages ${n}</h4>` +
+        select('language', 'Language', LANGUAGES) +
+        `<div data-automation-id="formField-native"><input type="checkbox" id="language-${n}--native"><label for="language-${n}--native">I am fluent in this language.</label></div>` +
+        ['Reading', 'Speaking', 'Writing'].map((a) => select(a.toLowerCase(), a, LEVELS)).join('');
+      document.getElementById('languages').appendChild(entry);
+      entry.querySelectorAll('button[aria-haspopup]').forEach((b) => WD.select(b));
+      e.target.textContent = 'Add Another';
+    });
 
     document.getElementById('resume-upload').addEventListener('change', (e) => {
       for (const f of e.target.files) {
