@@ -703,9 +703,11 @@
 
   /**
    * The row of chips a Workday prompt shows for what was picked ("Italy (+39)"), or any list of nothing but picked
-   * rows (Choices shows its value as a listbox holding one selected option): a listbox, but nobody's menu.
+   * rows (Choices shows its value as a listbox holding one selected option): a listbox, but nobody's menu. Not
+   * Workday's search results, whose rows say aria-selected while highlighted (one result, just clicked: "Stata").
    */
   function isChipList(lb) {
+    if (lb.matches('[data-automation-id="activeListContainer"]')) return false;
     if (
       lb.matches('[data-automation-id="selectedItemList"]') ||
       lb.querySelector('[data-automation-id="selectedItem"]')
@@ -1064,6 +1066,10 @@
   function isTicked(option, el) {
     if (!option.isConnected) return false;
     if (option.getAttribute('aria-checked') === 'true') return true;
+    // A row with a tick box of its own is ticked when that is: Workday's Skills, where aria-selected only marks the row
+    // under the keyboard and a click on a ticked row unticks it.
+    const tick = option.querySelector('input[type="checkbox"]');
+    if (tick) return tick.checked;
     // A value list that takes several marks what it took ("selected").
     const vl = el && dom().valueList(el);
     if (vl) return vl.multiple && /\bselected\b/.test(String(option.className || ''));
@@ -1119,20 +1125,37 @@
   // Dropdowns seen keeping their menu open after a pick registered: they take several.
   const takesSeveral = new WeakSet();
 
+  /**
+   * Where a mouse pressing `el` lands: what is on top at its middle, when that is inside it. A click only travels up
+   * from there: Workday's search results (role="option", menuItem) only hear the mouse go over them, and take the
+   * click in the promptLeafNode inside, which a click on the row itself never reaches.
+   */
+  function underPointer(el) {
+    const r = el.getBoundingClientRect();
+    const root = el.getRootNode();
+    const hit =
+      typeof root.elementFromPoint === 'function'
+        ? root.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+        : null;
+    return hit && el.contains(hit) ? hit : el;
+  }
+
   async function choose(el, option) {
     const text = dom().textOf(option);
     const want = JTF.util.normalize(text);
     const typed = el.localName === 'input' ? el.value : '';
     if (option.scrollIntoView) option.scrollIntoView({ block: 'nearest' });
+    const spot = underPointer(option);
     for (const type of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove']) {
       const Ctor = type.startsWith('pointer') ? PointerEvent : MouseEvent;
-      option.dispatchEvent(new Ctor(type, { bubbles: true, composed: true }));
+      // Over and move start where the mouse is and bubble up through the option; enter is the option's own.
+      (type.endsWith('enter') ? option : spot).dispatchEvent(new Ctor(type, { bubbles: true, composed: true }));
     }
     const before = currentOptions(el);
     const box = boxText(el);
     const native = dom().standsFor(el);
     const held = native ? nativePicks(native).map((t) => JTF.util.normalize(t)) : [];
-    pointerClick(option);
+    pointerClick(spot);
     // Registered once the value shows, or the menu closes behind the click (slow re-renders included). A category
     // that opens its own options instead (Workday's "Social Media" > "LinkedIn") says so.
     for (let waited = 0; waited < 300; waited += 30) {
@@ -1140,6 +1163,12 @@
       // The <select> a widget stands in for has the option: registered, whatever the widget shows (chosen's menu
       // stays in place, clipped, once closed).
       if (native && nativeTook(native, text, held)) return text;
+      // A row that ticks its own box while the menu stays open for the next pick: a list that takes several, though
+      // its chip shows at once (Workday's Skills; its single-choice prompts have radios and close).
+      if (listboxFor(el) && option.querySelector('input[type="checkbox"]') && isTicked(option, el)) {
+        takesSeveral.add(el);
+        return text;
+      }
       // A menu that stays open ticks the item itself (Teamtailor shows "a, b, c, +2" once there are more than three).
       if (selectionShows(el, text, typed) || !listboxFor(el) || isTicked(option, el)) return text;
       // A chip beside the box while the menu stays open for the next pick, the row gone from it: a multi-select
@@ -1203,9 +1232,10 @@
   async function closeMenu(el) {
     if (await menuGone(el)) return;
     key(el.localName === 'input' ? el : el.ownerDocument.activeElement || el, 'Escape');
-    // The menu goes on the widget's next render (Radix Select) or fades out (MUI): clicking its button before that
-    // would open it again, and an open Radix Select leaves the rest of the page aria-hidden and unclickable.
-    for (let waited = 0; waited < 150 && listboxFor(el); waited += 30) await sleep(30);
+    // The menu goes on the widget's next render (Radix Select) or fades out (MUI; Workday's Canvas Kit Select for 200 ms
+    // after a pick, aria-expanded="true" all the while): clicking its button before that would open it again, over the
+    // next field, and an open Radix Select leaves the rest of the page aria-hidden and unclickable.
+    for (let waited = 0; waited < 400 && listboxFor(el); waited += 30) await sleep(30);
     // A value list hides its box while open and closes on a click anywhere else.
     if (dom().valueList(el) && listboxFor(el)) pointerClick(el.ownerDocument.body);
     if (!(await menuGone(el)) && el.localName !== 'input') pointerClick(el);
@@ -1311,7 +1341,9 @@
         // A single word is a last resort: when the full spelling already listed options, they were all
         // judged above, and a vaguer query would only invite the wrong pick.
         if (query === narrow && sawAny) break;
-        const before = optionsKey(opts);
+        // Not yet this search's answer: the results an earlier one left open (Workday's Skills keeps its list open
+        // after each pick, until the next search replaces it).
+        const before = optionsKey(opts.length ? opts : currentOptions(el));
         const shown = searchesOnEnter(el) ? listboxFor(el) : undefined;
         typeQuery(box, query);
         if (searchesOnEnter(el)) key(el, 'Enter');

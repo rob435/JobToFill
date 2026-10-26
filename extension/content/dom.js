@@ -116,6 +116,17 @@
     return true;
   }
 
+  /**
+   * What a person sees of an input a widget keeps out of sight: Workday's "YYYY" year box is a 1px spin button scaled
+   * to nothing behind the aria-hidden "…-display" beside it, which shows the year and passes clicks on ("…-input").
+   */
+  function faceOf(el) {
+    const id = el.id || '';
+    if (!id.endsWith('-input') || !el.parentElement) return null;
+    const face = el.parentElement.querySelector(`[id="${CSS.escape(id.slice(0, -'input'.length) + 'display')}"]`);
+    return face && face.getAttribute('aria-hidden') === 'true' ? face : null;
+  }
+
   // What an open dialog or menu shows over the page, which Radix and MUI leave aria-hidden behind it.
   const OVERLAY =
     'dialog[open], [aria-modal="true"], [role="dialog"], [role="alertdialog"], [role="listbox"], [role="menu"]';
@@ -1039,7 +1050,7 @@
     // The one a widget stands in for (choices.js, select2…) is filled through the widget.
     if (kind === 'select')
       return !isStandIn(el) && isVisible(el, { ignoreOpacity: true }) && isVisible(el.parentElement);
-    return isVisible(el);
+    return isVisible(el) || isVisible(faceOf(el));
   }
 
   /**
