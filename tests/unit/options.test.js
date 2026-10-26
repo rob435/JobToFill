@@ -211,8 +211,14 @@ test('canonicalOf', () => {
   assert.equal(c('Decline To Self Identify'), 'decline');
   assert.equal(c('Female'), 'female');
   assert.equal(c('Male'), 'male');
+  assert.equal(c('Trans Woman'), null);
+  assert.equal(c('Woman (including trans women)'), 'female');
   assert.equal(c('Norway'), null);
   assert.equal(c('LinkedIn'), null);
+  // Redgate's diversity survey, in alphabetical order.
+  const survey = opts('Gender Fluid', 'Man', 'Non- binary', 'Prefer not to say', 'Trans Man', 'Trans Woman', 'Woman');
+  assert.equal(pick(survey, fields.val('Female')), 'Woman');
+  assert.equal(pick(survey, fields.val('Male')), 'Man');
 });
 
 test('short degree lists with curly apostrophes', () => {
