@@ -369,6 +369,44 @@ test('Ashby-style form: Yes/No toggle buttons, ARIA radios and checkboxes, label
   await page.close();
 });
 
+test('Ashby: boxes named after their option under two questions, a long Yes beside a No, one box per declaration', async () => {
+  const original = await h.profile();
+  await h.setProfile({ eeo: { race: 'Mixed – White and Asian' } });
+  /** The options ticked in one question: its boxes' ids start with the question's. */
+  const ticked = (page, prefix) =>
+    page.$$eval(`input[id^="${prefix}-"]:checked`, (els) => els.map((e) => e.labels[0].textContent.trim()));
+  try {
+    const page = await h.open('ashby-diversity.html');
+    const r = await h.fill(page);
+    assert.equal(r.error, undefined);
+    assert.deepEqual(
+      await ticked(page, 'app_b4446ee4'),
+      ['No'],
+      'the long “Yes (If yes, please specify…)” is an answer',
+    );
+    const mixed = ['Mixed or multiple ethnic groups - White and Asian'];
+    assert.deepEqual(await ticked(page, 'app_ethnicity'), mixed, 'one option, not every one named alike elsewhere');
+    assert.deepEqual(await ticked(page, 'survey_ethnicity'), mixed, 'the survey asks again, and gets its answer');
+    assert.deepEqual(await ticked(page, 'app_gender'), ['Woman']);
+    assert.deepEqual(await ticked(page, 'survey_identity'), ['Woman'], 'not “Trans Woman”, listed before it');
+    assert.deepEqual(await ticked(page, 'app_orientation'), [], 'no answer in the profile');
+    assert.equal(r.consents, 2, 'each declaration is its own, left for you');
+    assert.equal(await checked(page, '#talent'), false);
+    await page.close();
+
+    await h.setSettings({ consents: true });
+    const again = await h.open('ashby-diversity.html');
+    await h.fill(again);
+    assert.deepEqual(await ticked(again, 'app_decl-true'), ['I confirm']);
+    assert.deepEqual(await ticked(again, 'app_decl-privacy'), ['I confirm'], 'both declarations, not one of a pair');
+    assert.equal(await checked(again, '#talent'), false, '“contact you about job opportunities” is a talent pool');
+    await again.close();
+  } finally {
+    await h.setSettings({ consents: false });
+    await h.setProfile({ eeo: original.eeo });
+  }
+});
+
 test('acknowledgement groups: every statement you agree to, never an opt-in or an SMS sign-up', async () => {
   const page = await h.open('consent-groups.html');
   const r = await h.fill(page);

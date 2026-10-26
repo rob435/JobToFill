@@ -226,6 +226,14 @@ test('single checkboxes: yes/no questions, acknowledgements, one option of a che
   assert.equal(box({ label: 'Email me job alerts' }), null);
   assert.equal(box({ label: 'I agree to receive marketing emails' }), 'optIn');
   assert.equal(box({ label: 'I consent to being contacted about future opportunities' }), 'optIn');
+  assert.equal(
+    box({
+      label: 'I agree',
+      question: 'Do you agree to allow Redgate to contact you about job opportunities for up to 2 years?',
+    }),
+    'optIn',
+    'Redgate’s talent pool on Ashby',
+  );
   assert.equal(box({ label: 'Join our talent community' }), null);
   assert.equal(
     box({ label: 'London', question: 'Which other locations are you interested in relocating to?' }),

@@ -1122,17 +1122,28 @@
   }
 
   /**
+   * Checkboxes whose labels read as separate statements ("I agree…") rather than one question's options: one over
+   * 120 characters, or half of them over 60. One longish option ("Job Board (e.g., Indeed, Built In, AngelList, …)")
+   * doesn't make a list statements, nor does a Yes beside a No however long it runs (Redgate's "Yes (If yes, please
+   * specify the type of visa or work authorisation you would require in the box below)" and "No").
+   */
+  function statements(controls) {
+    const labels = controls.map((c) => optionLabel(c).trim());
+    if (labels.some((t) => /^yes\b/i.test(t)) && labels.some((t) => /^no\b/i.test(t))) return false;
+    const lengths = labels.map((t) => t.length);
+    return lengths.some((n) => n > 120) || lengths.filter((n) => n > 60).length * 2 >= lengths.length;
+  }
+
+  /**
    * Checkboxes each named after their option (Ashby: name="LinkedIn", name="Glassdoor") inside one titled
-   * <fieldset> are one checklist. Long labels are separate statements ("I agree…"), so those stay single;
-   * one longish option ("Job Board (e.g., Indeed, Built In, AngelList, …)") doesn't make a list statements.
+   * <fieldset> are one checklist, unless their options read as statements (those stay single).
    */
   function fieldsetCheckboxes(el) {
     const fs = el.closest('fieldset');
     if (!fs || !fieldsetTitle(fs)) return null;
     const controls = Array.from(fs.querySelectorAll(COUNTED_SELECTOR)).filter((c) => !isShim(c));
     if (controls.length < 2 || !controls.every((c) => c.localName === 'input' && c.type === 'checkbox')) return null;
-    const lengths = controls.map((c) => optionLabel(c).length);
-    if (lengths.some((n) => n > 120) || lengths.filter((n) => n > 60).length * 2 >= lengths.length) return null;
+    if (statements(controls)) return null;
     return controls.filter((m) => isUsable(m, 'checkbox'));
   }
 
@@ -1174,9 +1185,7 @@
       const controls = countedIn(a);
       if (!controls.every((c) => c.localName === 'input' && c.type === 'checkbox')) return null;
       if (a.getAttribute('role') !== 'group' && !containerLabel(a) && !questionFirst(a)) continue;
-      if (controls.length < 2) return null;
-      const lengths = controls.map((c) => optionLabel(c).length);
-      if (lengths.some((n) => n > 120) || lengths.filter((n) => n > 60).length * 2 >= lengths.length) return null;
+      if (controls.length < 2 || statements(controls)) return null;
       return controls.filter((m) => isUsable(m, 'checkbox'));
     }
     return null;
@@ -1192,7 +1201,14 @@
     const named = Array.from(scope.querySelectorAll(selector)).filter(
       (m) => (m.form || null) === (el.form || null) && isUsable(m, type),
     );
-    if (type === 'checkbox' && named.length <= 1) return fieldsetCheckboxes(el) || named;
+    if (type === 'checkbox') {
+      // Ashby names each box after its option, so the same option under two questions shares a name (Redgate's
+      // "Ethnicity" in its equality form and again in its diversity survey, "Prefer not to say" under every question):
+      // a name held by one box in its fieldset names an option, and the other boxes are other questions'.
+      const fs = named.length > 1 && el.closest('fieldset');
+      const own = fs ? named.filter((m) => fs.contains(m)) : named;
+      if (own.length <= 1) return fieldsetCheckboxes(el) || own;
+    }
     return named;
   }
 

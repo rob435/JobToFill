@@ -1109,6 +1109,8 @@
     if (DECLINE.test(t)) return 'decline';
     if (/\bnon ?binary\b|genderqueer|gender ?(non|queer|fluid|nonconforming)|\bnon conforming\b/.test(t))
       return 'nonbinary';
+    // "Trans Woman" is its own option, not the Female answer: Redgate's survey lists it, alphabetically, before "Woman".
+    if (/^trans(gender)? (wom[ae]n|female|m[ae]n|male)$/.test(t)) return null;
     if (/^(f|female|woman|women)$|\bfemale\b|\bwoman\b/.test(t)) return 'female';
     if (/^(m|male|man|men)$|\bmale\b|^man\b|\bcis ?man\b/.test(t)) return 'male';
     if (
