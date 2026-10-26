@@ -74,6 +74,54 @@
     return [...new Set(String(question || '').match(LANGUAGE_RE) || [])];
   }
 
+  // How well a language is spoken, by the words used for it: 1 beginner … 5 native. Longer phrases first: "limited
+  // working proficiency" is less than "professional working", "upper intermediate" more than "intermediate".
+  const LANGUAGE_LEVELS = [
+    [5, /\b(native|mother tongue|first language|bilingual)\b/],
+    [4, /\bfull professional\b|\b(fluent|fluency|c2|expert|mastery)\b/],
+    [2, /\blimited working\b|\b(conversational|b1)\b/],
+    [3, /\bupper intermediate\b|\b(professional|working|advanced|proficient|business|c1|b2)\b/],
+    [2, /\b(intermediate|good)\b/],
+    [1, /\b(basic|elementary|beginner|novice|a1|a2)\b/],
+  ];
+  const LEVEL_WORDS =
+    /\b(native|mother tongue|first language|bilingual|full|fluent|fluency|limited|working|professional|proficiency|proficient|advanced|upper|intermediate|conversational|business|basic|elementary|beginner|novice|expert|mastery|good|level|speaker|[abc][12])\b/gi;
+
+  /**
+   * How well a language is spoken, from what your profile says beside it ("English (native)", "Spanish – B2") or a
+   * form's option ("4 - Fluent", "Native or bilingual proficiency"): 1 beginner … 5 native; 0 when nothing says.
+   */
+  function languageLevel(text) {
+    const t = U.normalize(text);
+    const hit = LANGUAGE_LEVELS.find(([, re]) => re.test(t));
+    return hit ? hit[0] : 0;
+  }
+
+  /**
+   * Your languages one by one, for a form's language entries: "English (native), Spanish – B2, basic German" ->
+   * [{ name: 'English', level: 5 }, { name: 'Spanish', level: 3 }, { name: 'German', level: 1 }]. A comma inside
+   * brackets stays with its language ("English (native, written and spoken)").
+   */
+  function languageEntries(p) {
+    if (!p || U.isBlank(p.languages)) return [];
+    return String(p.languages)
+      .split(/[,;\n](?![^(]*\))/)
+      .map((item) => {
+        const name = item
+          .replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')
+          .split(/\s[-–—]\s|:/)[0]
+          .replace(LEVEL_WORDS, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        return { name, level: languageLevel(item) };
+      })
+      .filter((e) => e.name);
+  }
+
+  /** Your language at a form's language entry `ctx.index` (Workday's "Languages 2" is the second you list). */
+  const languageAt = (p, ctx) => languageEntries(p)[(ctx && ctx.index) || 0] || null;
+  const LEVEL_NAMES = ['', 'Beginner', 'Intermediate', 'Advanced', 'Fluent', 'Native'];
+
   // Programming languages, for "Which programming languages…?" when the skills list mixes them with other tools.
   const PROGRAMMING =
     /^(python|java|javascript|js|typescript|ts|c|c\+\+|cpp|c#|c sharp|go|golang|rust|scala|kotlin|swift|objective c|ruby|php|perl|r|matlab|julia|haskell|ocaml|f#|sql|t sql|pl sql|bash|shell|powershell|vba|sas|stata|lua|dart|elixir|erlang|clojure|fortran|cobol|assembly|solidity|q|kdb\+?|q kdb|verilog|vhdl|html|css|lisp|scheme|prolog|groovy|zig|nim|crystal)$/;
@@ -455,6 +503,34 @@
         return v;
       },
     },
+    // A form's language entries (Workday's "Languages 1": Language, "I am fluent in this language.", then Reading,
+    // Speaking, Writing…), one per language you list, in order.
+    'lang.name': {
+      label: 'Language',
+      group: 'lang',
+      get: (p, ctx) => {
+        const e = languageAt(p, ctx);
+        return e ? val(e.name) : null;
+      },
+    },
+    'lang.native': {
+      label: 'Fluent in this language',
+      group: 'lang',
+      // Ticked for a language you speak fluently or as a native; left as it is when your profile doesn't say how well.
+      get: (p, ctx) => {
+        const e = languageAt(p, ctx);
+        return e && e.level ? val(e.level >= 4 ? 'Yes' : 'No') : null;
+      },
+    },
+    'lang.level': {
+      label: 'Language proficiency',
+      group: 'lang',
+      // How well, for each of Reading, Speaking, Writing…: never more than your profile says (matcher's "level").
+      get: (p, ctx) => {
+        const e = languageAt(p, ctx);
+        return e && e.level ? val(LEVEL_NAMES[e.level], { kind: 'level', level: e.level }) : null;
+      },
+    },
     summary: simple('Summary', 'summary'),
 
     'account.username': {
@@ -524,5 +600,5 @@
     },
   });
 
-  Object.assign(P, { cardBrand, hasHonorificOptions, languagesNamed });
+  Object.assign(P, { cardBrand, hasHonorificOptions, languageEntries, languageLevel, languagesNamed });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

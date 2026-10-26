@@ -670,6 +670,9 @@
     const entries =
       ctx && ctx.entry ? (/^edu\./.test(type) ? 'education' : /^exp\./.test(type) ? 'experience' : '') : '';
     if (entries && (p[entries] || []).length && (ctx.index || 0) >= p[entries].length) return true;
+    // So is a language entry past the languages you list (one Workday read from your CV).
+    const languages = ctx && ctx.entry && /^lang\./.test(type) ? P.languageEntries(p).length : 0;
+    if (languages && (ctx.index || 0) >= languages) return true;
     // Capgemini's "What is your postgraduate degree?" when you have none: nothing to give, nothing missing.
     if (/^edu\./.test(type) && LEVEL_ENTRY_TYPES.has(type)) {
       const { e, level } = entryAt(p, 'education', ctx || {});

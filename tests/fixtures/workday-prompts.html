@@ -96,6 +96,14 @@
     </div>
   </div>
 
+  <!-- Languages: none until "Add" (then "Add Another") makes an entry, as Workday's instance sets do: a Language list,
+       "I am fluent in this language.", and a level for each of Reading, Speaking and Writing. -->
+  <div data-automation-id="languageSection" role="group" aria-labelledby="languages-section">
+    <h3 id="languages-section">Languages</h3>
+    <div id="languages"></div>
+    <button type="button" data-automation-id="add-button" id="languages-add">Add</button>
+  </div>
+
   <div data-automation-id="skillsSection" role="group" aria-labelledby="skills-section">
     <h3 id="skills-section">Skills</h3>
     <div data-automation-id="formField-skills" class="prompt" data-search="enter" data-multi
@@ -167,6 +175,29 @@
     document.querySelectorAll('[data-automation-id="applyFlowMyInfoPage"] > [data-automation-id^="formField"] > button[aria-haspopup]:not(#country--country), [data-automation-id="educationSection"] button[aria-haspopup]').forEach((b) => WD.select(b));
     document.querySelectorAll('body > div .prompt').forEach((f) => { if (!f.closest('#address')) wirePrompt(f); });
     document.querySelectorAll('[data-automation-id="dateInputWrapper"][data-id]').forEach(WD.year);
+
+    const LANGUAGES = 'Arabic|Chinese (Mandarin)|English|French|German|Italian|Japanese|Portuguese|Spanish';
+    const LEVELS = 'Beginner|Intermediate|Advanced|Fluent';
+    let languageCount = 0;
+    document.getElementById('languages-add').addEventListener('click', async (e) => {
+      await later(150); // the new entry comes back from the server
+      const n = ++languageCount;
+      const entry = document.createElement('div');
+      entry.setAttribute('role', 'group');
+      entry.setAttribute('aria-labelledby', `Languages-${n}-panel`);
+      entry.dataset.automationId = `language-${n}`;
+      const select = (key, label, options) =>
+        `<div data-automation-id="formField-${key}"><label id="lbl-${key}-${n}" for="language-${n}--${key}">${label}<abbr title="required">*</abbr></label>` +
+        `<button type="button" id="language-${n}--${key}" aria-haspopup="listbox" aria-labelledby="lbl-${key}-${n} language-${n}--${key}" data-options="${options}">Select One</button></div>`;
+      entry.innerHTML =
+        `<h4 id="Languages-${n}-panel">Languages ${n}</h4>` +
+        select('language', 'Language', LANGUAGES) +
+        `<div data-automation-id="formField-native"><input type="checkbox" id="language-${n}--native"><label for="language-${n}--native">I am fluent in this language.</label></div>` +
+        ['Reading', 'Speaking', 'Writing'].map((a) => select(a.toLowerCase(), a, LEVELS)).join('');
+      document.getElementById('languages').appendChild(entry);
+      entry.querySelectorAll('button[aria-haspopup]').forEach((b) => WD.select(b));
+      e.target.textContent = 'Add Another';
+    });
 
     document.getElementById('resume-upload').addEventListener('change', (e) => {
       for (const f of e.target.files) {

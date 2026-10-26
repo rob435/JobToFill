@@ -649,10 +649,11 @@
     return res.ok ? { clicked: target.text, state: st } : { refused: res.reason, state: st };
   }
 
-  // The sections that hold your education and your jobs, one entry after another, by their headings.
+  // The sections that hold your education, your jobs and your languages, one entry after another, by their headings.
   const ENTRY_SECTIONS = {
     edu: /^(?:education|education history|academic history|academic background|education and qualifications|qualifications)$/,
     exp: /^(?:work experience|experience|employment|employment history|work history|professional experience|previous employment|career history)$/,
+    lang: /^(?:languages?|language skills?|language proficienc(?:y|ies))$/,
   };
   const SECTION_HEADING = 'h1, h2, h3, h4, h5, h6, [role="heading"], legend';
   const DIALOGS = '[role="dialog"], [role="alertdialog"], dialog[open], [aria-modal="true"]';
@@ -660,15 +661,20 @@
   const shownDialogs = () => Array.from(document.querySelectorAll(DIALOGS)).filter(shown);
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  /** The section headed "Education" or "Work Experience" (`kind` edu / exp) that has its own "Add": { el } or null. */
+  /**
+   * The section headed "Education", "Work Experience" or "Languages" (`kind` edu / exp / lang) that has its own "Add":
+   * { el } or null.
+   */
   function entrySection(kind) {
-    const other = kind === 'edu' ? ENTRY_SECTIONS.exp : ENTRY_SECTIONS.edu;
+    const others = Object.keys(ENTRY_SECTIONS)
+      .filter((k) => k !== kind)
+      .map((k) => ENTRY_SECTIONS[k]);
     for (const h of document.querySelectorAll(SECTION_HEADING)) {
       if (!shown(h) || !ENTRY_SECTIONS[kind].test(U.normalize(dom().textOf(h)))) continue;
       for (let a = h.parentElement, i = 0; a && a !== document.body && i < 4; a = a.parentElement, i++) {
-        // Never as far as the page around both sections.
+        // Never as far as the page around this section and another.
         const heads = Array.from(a.querySelectorAll(SECTION_HEADING)).filter(shown);
-        if (heads.some((x) => other.test(U.normalize(dom().textOf(x))))) break;
+        if (heads.some((x) => others.some((re) => re.test(U.normalize(dom().textOf(x)))))) break;
         if (controls(a).some((c) => A().stepIntent(c.text) === 'add')) return { el: a };
       }
     }
@@ -686,18 +692,20 @@
   }
 
   /**
-   * Make room for each of your education and job entries: in a section headed "Education" or "Work Experience" that
-   * holds fewer entries than your profile has (Workday's My Experience starts with none), click its own "Add" ("Add
-   * Another") once per missing entry, while each click adds one. A button that opens a dialog instead is closed again
-   * and left alone. `scanner()` reads the page afresh. Returns how many entries were added.
+   * Make room for each of your education and job entries and each language you list: in a section headed "Education",
+   * "Work Experience" or "Languages" that holds fewer entries than your profile has (Workday's My Experience starts
+   * with none), click its own "Add" ("Add Another") once per missing entry, while each click adds one. A button that
+   * opens a dialog instead is closed again and left alone. `scanner()` reads the page afresh. Returns how many entries
+   * were added.
    */
   async function addEntries(profile, scanner) {
     const want = {
       edu: (profile.education || []).filter((e) => e && (e.school || e.degree)).length,
       exp: (profile.experience || []).filter((e) => e && (e.company || e.title)).length,
+      lang: JTF.fields.languageEntries(profile).length,
     };
     let added = 0;
-    for (const kind of ['edu', 'exp']) {
+    for (const kind of ['edu', 'exp', 'lang']) {
       for (let i = 0; i < 6; i++) {
         const section = entrySection(kind);
         if (!section) break;

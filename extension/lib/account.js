@@ -78,9 +78,9 @@
   // Never on the way to the next step: anything that sends, finishes, agrees or pays.
   const SENDS = /\b(?:submit|send|finish|complete|confirm|review|done|agree|accept|sign|pay|withdraw)\b/;
   // A section's own "Add" for another entry: Workday's "Add" and "Add Another", Greenhouse's "+ Add another education",
-  // iCIMS's "Add More (Education)" and "Add More (Professional Experience)".
+  // iCIMS's "Add More (Education)" and "Add More (Professional Experience)", "Add another language".
   const ADD_ENTRY =
-    /^add(?: another| more| new| an?)?(?: (?:professional experience|work experience|work history|employment history|experience|job|position|employment|role|education|school|degree|qualification|entry))?$/;
+    /^add(?: another| more| new| an?)?(?: (?:professional experience|work experience|work history|employment history|experience|job|position|employment|role|education|school|degree|qualification|language|entry))?$/;
   // What sends an application ("Submit", "Submit Application", "Send application", "Finish"): its last step. Not
   // iCIMS's "Finish Later", which keeps the application to carry on with.
   const SUBMITS =

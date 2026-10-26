@@ -58,6 +58,12 @@
   /** A marketing, talent-pool, job-alert, SMS or WhatsApp opt-in ("Keep me updated about future opportunities"). */
   const isOptIn = (text) => OPT_IN.test(U.normalize(text));
 
+  /** Under one entry of a section of languages: Workday's "Languages 1" (its section's name, then the entry's number). */
+  const inLanguageEntry = (desc) =>
+    /^(languages?|language skills?|language proficienc(y|ies))( \d+)?$/.test(
+      U.normalize((desc.signals && desc.signals.section) || ''),
+    );
+
   /** "US Dollar ($) / Euro (€)" or "Hourly / Monthly / Yearly": the units next to a salary, not the amount. */
   function looksLikeMoneyUnits(options) {
     const opts = (options || []).filter((o) => !JTF.matcher.isPlaceholder(U.normalize(o.text)));
@@ -1168,6 +1174,17 @@
     R('skills', /\bskills?\b|technologies|tech(nical)? stack|competenc|expertise|\btools\b|proficienc(y|ies)/, {
       not: /\bwhy\b|\bgood fit\b|\bhope to (develop|gain|learn|build)\b|\bwords? (minimum|maximum|limit|max)\b|language|\bdo you\b|have you|rate your|years|\blevel\b|how (proficient|experienced|comfortable|much|long)|\bwhether\b|\bdisclose\b|\bai tools\b|\banything else\b|\bfeel free\b|\bbest fit\b|^(describe|tell (us|me)|explain|share|walk us through|give (us )?an example)\b|\bwould you bring\b|\bunique\b|\byou (built|developed|created|designed|made)\b|\b(ai|ml|machine learning|cloud|web|mobile|front ?end|back ?end|devops|security)( specific)? (technologies|tools|skills)\b/,
     }),
+    // One entry of a form's languages (Workday's "Languages 1", one per "Add"): its "Language", its "I am fluent in this
+    // language." and how well each of Reading, Speaking, Writing… goes. A lone "Languages" question is the next rule's.
+    R('lang.native', /\b(fluent|native|first|mother)\b.* this language\b|\bthis language is my\b/, {
+      kinds: ['checkbox'],
+    }),
+    R('lang.name', /^language( name)?$/, { test: inLanguageEntry }),
+    R(
+      'lang.level',
+      /^(reading|writing|speaking|listening|comprehension|understanding|overall|oral|written|spoken|verbal)( (skills?|proficiency|ability|level))?$|^(language )?(proficiency|fluency)( level)?$|^level( of proficiency)?$/,
+      { kinds: CHOICE, test: inLanguageEntry },
+    ),
     R(
       'languages',
       /languages? (spoken|you speak|proficienc|known|fluency)|which languages?\b|spoken languages|^languages?$|language skill|languages do you speak|\blanguages?\b.*\b(fluent|fluency|speak|proficient)\b|\bfluent in\b|\b(additional|other|foreign) languages?\b|\b(do|can) you speak\b|\bspeak (\w+ )?(at a |to a )?(fluent|native|business|professional)\b|\b(able to|can you) (fluently )?speak\b|\bfluently speak\b|\b(first|primary|native|main|mother) (language|tongue)\b/,

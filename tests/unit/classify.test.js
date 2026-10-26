@@ -487,6 +487,16 @@ test('skills and spoken languages', () => {
     ask('Do you have programming experience with any of the following?', 'checkboxes', ['Python', 'C++']),
     'skills',
   );
+  // One of Workday's language entries ("Languages 1"): the language, "I am fluent in this language." and each skill's
+  // level. A lone "Language" question is the list of your languages.
+  const inEntry = (label, kind, extra) => typeOf(desc({ label, section: 'Languages 1' }, { kind, ...extra }));
+  assert.equal(inEntry('Language', 'combo'), 'lang.name');
+  assert.equal(inEntry('I am fluent in this language.', 'checkbox', { inputType: 'checkbox' }), 'lang.native');
+  assert.equal(inEntry('Speaking', 'combo'), 'lang.level:speaking');
+  assert.equal(inEntry('Overall', 'select'), 'lang.level:overall');
+  assert.equal(inEntry('Proficiency Level', 'combo'), 'lang.level:proficiency level');
+  assert.equal(typeOf(desc({ label: 'Language' })), 'languages');
+  assert.equal(typeOf(desc({ label: 'Speaking' }, { kind: 'select' })), null, 'no language entry around it');
 });
 
 test('acknowledgements can be dropdowns too', () => {

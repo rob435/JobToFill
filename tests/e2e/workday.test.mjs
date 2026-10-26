@@ -23,6 +23,7 @@ const STUDENT = {
     organization: '',
   },
   skills: 'Python, SQL, Stata',
+  languages: 'English (native), Spanish (professional)',
   education: [
     {
       school: 'University of Glasgow',
@@ -85,6 +86,20 @@ test('Workday: a country picked from the IP address is put right, then the addre
   assert.equal(await value(page, '#education-1--gradeAverage'), '2:1', 'the class, never a GPA made up from it');
   // Skills takes them one by one, each ticked in the list that stays open.
   assert.deepEqual(await chips(page, 'formField-skills'), ['Python', 'SQL', 'Stata']);
+  // Languages: its "Add" once per language, then each entry's language, fluency and level (Fluent is the most the list
+  // says for a native speaker; professional is Advanced).
+  assert.deepEqual(
+    await page.$$eval('[data-automation-id^="language-"]', (entries) =>
+      entries.map((e) => [
+        ...[...e.querySelectorAll('button[aria-haspopup]')].map((b) => b.textContent),
+        e.querySelector('input[type="checkbox"]').checked,
+      ]),
+    ),
+    [
+      ['English', 'Fluent', 'Fluent', 'Fluent', true],
+      ['Spanish', 'Advanced', 'Advanced', 'Advanced', false],
+    ],
+  );
   // "Resume/CV/Transcripts" takes several files: the CV goes in (no transcript or letter saved here).
   assert.deepEqual(await page.$$eval('#uploaded li', (list) => list.map((li) => li.textContent)), ['Robin_Li_CV.pdf']);
   // Each Select opened once and closed again: one clicked while its menu fades out would open again, over the next field.
@@ -94,6 +109,7 @@ test('Workday: a country picked from the IP address is put right, then the addre
       ['country--country', '1'],
       ['phoneNumber--phoneType', '1'],
       ['education-1--degree', '1'],
+      ...[1, 2].flatMap((n) => ['language', 'reading', 'speaking', 'writing'].map((k) => [`language-${n}--${k}`, '1'])),
     ],
   );
   assert.equal(await page.$$eval('[data-automation-id="activeListContainer"], .wd-menu', (l) => l.length), 0);
