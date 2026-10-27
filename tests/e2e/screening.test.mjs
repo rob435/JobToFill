@@ -63,6 +63,80 @@ test('Pinpoint’s Singleselect and Multiselect: "How did you hear…?" and inte
   await page.close();
 });
 
+test('Accenture on Pinpoint: degree results from an average mark, "Other" for a GPA, the age question', async () => {
+  const original = await h.profile();
+  // A British second-year at UCL who needs no sponsor, wrote "68%" as their grade and no class, and (to tell the two
+  // apart) has no right to work but is over 18.
+  const ucl = {
+    school: 'University College London',
+    degree: 'BSc',
+    field: 'Economics',
+    gpa: '68%',
+    classification: '',
+    location: 'London, UK',
+    startDate: '2025-09',
+    endDate: '2028-06',
+  };
+  await h.setProfile({
+    address: { ...original.address, city: 'London', state: '', postalCode: 'WC1E 6BT', country: 'United Kingdom' },
+    job: { ...original.job, authorized: 'No', over18: 'Yes' },
+    eeo: { ...original.eeo, carer: 'Yes', careLeaver: 'No', refugee: 'No' },
+    education: [ucl],
+  });
+  const open = async () => {
+    const page = await h.open('pinpoint-accenture.html');
+    await page.waitForSelector('#application_form_application_answers_attributes_12_text_answer');
+    return page;
+  };
+  try {
+    let page = await open();
+    const r = await h.fill(page);
+    assert.equal(r.error, undefined);
+    let s = await state(page);
+    assert.equal(s[0], 'Yes', 'a penultimate-year student graduating in 2028');
+    assert.equal(s[2], 'Degree');
+    assert.equal(s[4], 'Bachelor of Science (BSc)');
+    assert.equal(s[6], 'University College London (UCL)');
+    assert.equal(s[8], 'Economics');
+    assert.equal(s[10], '1 September 2025');
+    assert.equal(s[11], '1 June 2028');
+    assert.equal(s[12], 'Upper Second-Class Honours (2:1)', '68% at a UK university is a 2:1');
+    assert.equal(s[13], undefined, 'no "If you selected other…" box for a class the list has');
+    assert.equal(s[14], 'No', 'no postgraduate qualification');
+    assert.equal(s[42], 'Yes', '"…legally entitled to work. Are you at least 18 years of age?" asks your age');
+    assert.equal(s[40], 'Primary carer for a close relative ', 'special circumstances from your caring answer');
+    assert.equal(s[1], undefined, 'the office-days requirement is an acknowledgement, left for you');
+    assert.equal(s[43], undefined, 'so is the declaration');
+    assert.equal(r.consents, 2);
+    await page.close();
+
+    // A GPA no UK class names: "Other", and the grade in the box that appears for it.
+    await h.setProfile({
+      education: [{ ...ucl, gpa: '3.9/4.0', location: 'Boston, MA', school: 'Boston University' }],
+    });
+    await h.setSettings({ consents: true });
+    page = await open();
+    await h.fill(page);
+    s = await state(page);
+    assert.equal(s[12], 'Other');
+    assert.equal(s[13], 'GPA 3.9/4.0');
+    assert.equal(s[1], 'Yes, I understand ', 'acknowledged once "Tick acknowledgement boxes" is on');
+    assert.equal(s[43], 'Yes I confirm with this statement');
+    // "Other" is no classification to learn for someone whose grade is a GPA.
+    const { suggestions } = await h.handler('jtf:learn', page);
+    assert.ok(!suggestions.some((x) => /classification|gpa/.test(x.path || '')), JSON.stringify(suggestions));
+    await page.close();
+  } finally {
+    await h.setSettings({ consents: false });
+    await h.setProfile({
+      address: original.address,
+      job: original.job,
+      eeo: original.eeo,
+      education: original.education,
+    });
+  }
+});
+
 test('Teamtailor (Alloyed): "How did you hear about Alloyed?" and interview slots in menus of ticks', async () => {
   const original = await h.profile();
   // Free from noon: the afternoon slots fit, the mornings don't.

@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { load, desc, opts } = require('./helpers');
 
-const { matcher, fields, util } = load();
+const { matcher, fields, util, decide } = load();
 const typeOf = (d) => {
   const r = matcher.classify(d);
   return r ? r.type + (r.part ? ':' + r.part : '') : null;
@@ -1374,6 +1374,115 @@ test('degree classification is its own question; A-levels, UCAS points and a rol
   );
   assert.equal(ask('Year of study', 'select', ['1st year', '2nd year', 'Final year']), 'edu.year');
   assert.equal(ask('Year of graduation'), 'edu.end:year');
+});
+
+test('an average mark is a grade; a percentage of anything else is not', () => {
+  const ask = (label, kind) => typeOf(desc({ label }, { kind: kind || 'text' }));
+  for (const label of [
+    'What is your average percentage?',
+    'Average mark (%)',
+    'Overall percentage to date',
+    'Percentage obtained in your degree',
+    'Current average mark',
+    'Degree percentage',
+    'Marks obtained',
+  ])
+    assert.equal(ask(label), 'edu.gpa', label);
+  for (const label of [
+    'What percentage of your time are you willing to travel?',
+    'Travel percentage',
+    'Commission percentage',
+    'Remote work percentage',
+  ])
+    assert.notEqual(ask(label), 'edu.gpa', label);
+});
+
+test('Accenture on Pinpoint: degree results, Degree or equivalent, a postgraduate qualification, the age question', () => {
+  const ask = (signals, kind, options) => typeOf(desc(signals, { kind, options: options ? opts(...options) : null }));
+  const results = [
+    'First-Class Honours (1st)',
+    'Upper Second-Class Honours (2:1)',
+    'Lower Second-Class Honours (2:2)',
+    'Third-Class Honours (3rd)',
+    'Pass (Ordinary Degree/Non-Honours)',
+    'Other',
+  ];
+  assert.equal(
+    ask({ label: "Please select your bachelor's degree results/expected results from the options below." }, 'combobox'),
+    'edu.classification',
+  );
+  assert.equal(
+    ask(
+      { label: "Please select your bachelor's degree results/expected results from the options below." },
+      'select',
+      results,
+    ),
+    'edu.classification',
+  );
+  assert.equal(
+    ask({ label: 'Are you currently studying for an undergraduate degree or equivalent?' }, 'combobox', [
+      'Degree',
+      'Degree Equivalent ',
+    ]),
+    'edu.enrolled',
+  );
+  assert.equal(
+    ask({ label: 'Do you currently have or are you working towards a postgraduate qualification?' }, 'radio', [
+      'Yes',
+      'No',
+    ]),
+    'edu.attended',
+  );
+  assert.notEqual(
+    ask({ label: 'Do you currently have or are you working towards a driving licence?' }, 'radio', ['Yes', 'No']),
+    'edu.attended',
+  );
+  // Pinpoint cuts the question short; what it asks is kept, and a radio group's question has a focus too.
+  const age =
+    'Accenture is committed to not hiring employees who are not of the minimum legal age to work. For individuals under the age of 18, we have to confirm that they are legally entitled to work. Are you at least 18 years of age?';
+  const cut = util.cleanLabel(age, 200);
+  assert.ok(cut.endsWith('… Are you at least 18 years of age?'), cut);
+  assert.ok(cut.length <= 200);
+  for (const key of ['label', 'question', 'group'])
+    assert.equal(ask({ [key]: cut }, 'radio', ['Yes', 'No']), 'job.over18', key);
+  // A requirement whose one answer acknowledges it, and a paragraph that asks you to confirm you understand it.
+  const office =
+    'Accenture is a people first business that thrives on collaboration and knowledge sharing. You must live within commutable distance of your assigned office and come in to the office regularly. Due to the nature of our work, you may deliver projects at client sites across the UK and occasionally outside the UK. You are expected to work on client site or in your assigned office for a minimum of 3 days a week, potentially up to 5 days depending on business needs. Please confirm if you understand this requirement.  If you do not agree with this requirement, we will be unable to progress your application.';
+  assert.equal(ask({ label: util.cleanLabel(office) }, 'combobox'), 'consent');
+  assert.equal(
+    ask({ label: 'Are you able to commute to our London office?' }, 'select', ['Yes, I understand ']),
+    'consent',
+  );
+  assert.equal(
+    ask({ label: 'Are you able to commute to our London office?' }, 'select', ['Yes', 'No']),
+    'location.commute',
+  );
+  // Special circumstances: what your caring, care and refugee answers say yes to, never the AI's guess.
+  const circumstances = 'Do you have any special circumstances you would like us to consider in your application?';
+  const options = opts(
+    'Primary carer for a close relative ',
+    'Parent or legal guardian for a child or children for whom you have significant caring responsibilities ',
+    'Refugee status',
+    'Care Leaver',
+    'Not applicable',
+    'Other',
+  );
+  const special = desc({ label: circumstances }, { kind: 'select', options });
+  assert.equal(typeOf(special), 'eeo.circumstances');
+  const p = fields.createProfile('Student');
+  const pick = () => {
+    const v = fields.resolve('eeo.circumstances', p, { question: util.normalize(circumstances), kind: 'select' });
+    return v ? options[matcher.matchOption(options, v)].text : null;
+  };
+  Object.assign(p.eeo, { carer: 'No', careLeaver: 'No', refugee: 'No' });
+  assert.equal(pick(), null, 'a child you care for is not in your profile: left for you');
+  assert.equal(decide.forAi(special, { type: 'eeo.circumstances' }, p, {}), null);
+  p.eeo.careLeaver = 'Yes';
+  assert.equal(pick(), 'Care Leaver');
+  p.eeo.carer = 'Yes';
+  assert.equal(pick(), 'Primary carer for a close relative ');
+  // A label without a question is cut as before.
+  assert.equal(util.cleanLabel('word '.repeat(80), 50), 'word '.repeat(10).trim() + '…');
 });
 
 test('UK degree classes however a list spells them', () => {

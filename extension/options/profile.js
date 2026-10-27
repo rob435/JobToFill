@@ -414,7 +414,10 @@ const LISTS = {
       f('school', 'School / university', { wide: true }),
       f('degree', 'Degree', { list: 'degrees' }),
       f('field', 'Field of study / major'),
-      f('gpa', 'GPA / grade', { placeholder: 'e.g. 3.8 or 3.8/4.0' }),
+      f('gpa', 'GPA / grade', {
+        placeholder: 'e.g. 3.8/4.0, or 68% for an average mark',
+        hint: 'A GPA (“3.8/4.0”), or your average mark as a percentage (“68%”). With the classification box empty, a UK or Irish degree’s mark answers class questions: 70% or more is a First, 60–69% a 2:1, 50–59% a 2:2 and 40–49% a Third (a UK master’s: Distinction, Merit, Pass). A GPA never becomes a class, nor a mark a GPA.',
+      }),
       f('classification', 'Degree classification', {
         list: 'classifications',
         placeholder: 'e.g. 2:1',

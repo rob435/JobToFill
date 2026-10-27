@@ -1294,6 +1294,9 @@
         if (!path && def.list && (profile[def.list] || [])[r.index || 0] && def.key !== 'current' && !def.derived)
           path = `${def.list}.${r.index || 0}.${def.key}`;
         if (!path || !U.isBlank(U.getPath(profile, path))) return;
+        // A grade the profile holds another way is not one to learn: Accenture's "Other" for your GPA, or the 2:1 a
+        // fill gave your "68%", never becomes your classification.
+        if (JTF.fields.gradeHeld(r.type, profile, { question: U.normalize(question), index: r.index || 0 })) return;
         if (seen.has(path)) return;
         seen.add(path);
         out.push({ kind: 'profile', path, label: def.label, value, question });

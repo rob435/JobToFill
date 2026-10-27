@@ -1,7 +1,7 @@
 /*
  * JobToFill — field rules, education and experience: your entries (school, degree, subject, dates, grades: classes,
- * GPAs and A-levels, never converted) and the jobs you held. One of the parts lib/fields.js puts together (loaded
- * before it, in the order background.js lists them).
+ * GPAs, average marks and A-levels, never converted, but for a UK or Irish mark's class) and the jobs you held. One of
+ * the parts lib/fields.js puts together (loaded before it, in the order background.js lists them).
  */
 (function (root) {
   'use strict';
@@ -90,6 +90,17 @@
   // "Upper Second (2:1) – predicted", "2:1 (expected)": a class you are on course for, not one you have.
   const EXPECTED_CLASS = /\b(predicted|expected|anticipated|projected|forecast|on track|working towards)\b/;
 
+  // The average marks each class stands for at UK and Irish universities, which award them by that mark (a master's
+  // Distinction, Merit and Pass in the UK): against lists of marks ("60-69%") as much as for a mark you give.
+  const CLASS_MARKS = {
+    first: [70, 100],
+    upper: [60, 69],
+    lower: [50, 59],
+    third: [40, 49],
+    distinction: [70, 100],
+    merit: [60, 69],
+  };
+
   /** A degree class: "2:1" also picks "Upper Second Class Honours (2:1)", "2(i)" or "Second class honours: Grade 1". */
   function classVal(text, expected) {
     const v = val(text);
@@ -100,13 +111,66 @@
       cls,
       expected: !!expected,
       candidates: [...new Set([v.text, ...DEGREE_CLASSES[cls]])],
+      marks: CLASS_MARKS[cls] || null,
     });
   }
 
-  /** "3.9" or "3.9/4.0" also matches ranges like "3.80 - 4.00"; "2:1" or "First" matches its spellings. */
+  /**
+   * An average mark written as your grade: "68%", "68.5 %", "68,5%", "68/100", "68 out of 100", "Average: 68%", "68%
+   * (predicted)", "68% average so far"; a bare number from 21 to 100 too, for a degree (`bare`: never for a school
+   * entry, where "38" is IB points and "95.5" an ATAR). Null for a GPA ("3.8", "3.8/4.0"), a French "14/20", a class
+   * or letters.
+   */
+  function markOf(text, bare) {
+    const m = String(text || '')
+      .trim()
+      .match(
+        /^(?:(?:average|avg|overall|mean|aggregate|current)(?: mark)?\s*:?\s*)?(\d{1,3}(?:[.,]\d+)?)\s*(%|per ?cent\b|\/\s*100\b|out of 100\b)?\s*(?:(?:average|avg|overall|mean|aggregate)(?: mark)?)?\s*\(?(?:predicted|expected|anticipated|so far|to date|currently|current)?(?: so far| to date)?\)?$/i,
+      );
+    if (!m) return null;
+    const n = parseFloat(m[1].replace(',', '.'));
+    return n > 100 || (!m[2] && (!bare || n <= 20)) ? null : n;
+  }
+
+  /** The mark an education entry's "GPA / grade" holds, when it is one (a degree's bare "68" included). */
+  const entryMark = (e) => markOf(e.gpa, !!e && JTF.matcher.degreeGroup(U.normalize(e.degree || '')) !== 'highschool');
+
+  /** A mark as a value: "68%", the number for a box that takes one, and a list's band ("60-69%"). */
+  function markVal(n) {
+    const text = `${n}%`;
+    return val(text, { kind: 'mark', number: n, candidates: [text, String(n)] });
+  }
+
+  /**
+   * The class a UK or Irish university gives for your average mark, where those universities award classes by the
+   * mark: 70% or more a First, 60–69% a 2:1, 50–59% a 2:2, 40–49% a Third; a UK master's 70% a Distinction, 60% a
+   * Merit, 50% a Pass. The entry's country comes from its location, else (with none written) from where you live.
+   * Null anywhere else (an Indian 65% is a First Division, an Australian 75% an H2A), below a pass, for a doctorate or
+   * a school, and without a mark.
+   */
+  function markClass(e, p) {
+    const n = e && entryMark(e);
+    if (n == null || !p) return null;
+    // With no location written, where you live (a university's name is no guide: "Durham University" reads as North
+    // Carolina's Durham).
+    const home = U.isBlank(e.location) ? JTF.geo.findCountry(p.address && p.address.country) : null;
+    const iso2 = home ? home[0] : (entryCountry(e, p) || {}).iso2;
+    if (iso2 !== 'GB' && iso2 !== 'IE') return null;
+    const levels = entryLevels(e);
+    if (levels.includes('doctorate') || levels.includes('highschool')) return null;
+    // A taught master's (never an integrated one, which is a bachelor's too).
+    if (levels.length === 1 && levels[0] === 'master')
+      return iso2 === 'GB' ? (n >= 70 ? 'Distinction' : n >= 60 ? 'Merit' : n >= 50 ? 'Pass' : null) : null;
+    return n >= 70 ? 'First' : n >= 60 ? '2:1' : n >= 50 ? '2:2' : n >= 40 ? 'Third' : null;
+  }
+
+  /**
+   * "3.9" or "3.9/4.0" also matches ranges like "3.80 - 4.00" (never a band of marks: "Below 50%"); "2:1" or "First"
+   * matches its spellings.
+   */
   function gpaVal(text) {
     const m = String(text || '').match(/^\s*(\d(?:\.\d+)?)\s*(?:\/\s*\d(?:\.\d+)?)?\s*$/);
-    if (m && !/:/.test(text)) return val(text, { kind: 'number', number: parseFloat(m[1]) });
+    if (m && !/:/.test(text)) return val(text, { kind: 'number', number: parseFloat(m[1]), gpa: true });
     return classVal(text);
   }
 
@@ -118,46 +182,112 @@
   const OWN_SYSTEM =
     /\bor (the |its |an? )?equi?v[ei]?\w*\b|\botherwise\b.{0,80}\b(results?|grades?|marks?|class(es|ification)?)\b|\b(own|local|national|home|equivalent|(school|university|college|institution|country)( s)?) (grading|marking|grade|assessment) (system|scale)\b|\b(does not|doesn t|do not|don t) use (a |the )?(gpa|grade point)\b|\bscale (used|of|at) (by |at |in )?(your )?(own |local |home )?(school|university|college|institution|country)\b/;
 
+  // "Average percentage", "Overall mark (%)", "Percentage obtained in your degree": a mark, never a GPA or a class.
+  const MARK_ASKED =
+    /\b(percent(age)?|per cent)\b|\b(average|overall|aggregate|total|final|degree|module|cumulative) marks?\b|\bmarks? (obtained|achieved|scored|secured)\b/;
+
   /**
    * A GPA question: your GPA (a class written there too, unless the question wants a number). With no GPA, a "Grade"
    * or "GPA / grade" box takes your degree classification; one that only asks for a GPA, or for one on a scale, doesn't
    * (a class is never turned into a number). A box whose page also takes a result in your own grading system
    * ("Overall Result (GPA)" on Workday: "…Otherwise, provide your overall result in your school/university's grading
-   * system") takes the class as written ("2:1"). `ctx.help`: what the page says about the box, normalised.
+   * system") takes the class as written ("2:1"). An average mark ("68%") goes where a mark, a grade or your own
+   * system's result is asked for, never where a GPA is; a box asking for a mark takes nothing else. `ctx.help`: what
+   * the page says about the box, normalised.
    */
-  function gpaFor(e, ctx) {
+  function gpaFor(e, ctx, p) {
+    const v = gpaAnswer(e, ctx, p);
+    // A GPA list for a grade that is no GPA (a 2:1, a 68%): its "My university does not use GPA" or "N/A", never a
+    // band; a list that names your grade ("…or degree class") still gets it.
+    const graded = !U.isBlank(e.gpa) || !U.isBlank(e.classification);
+    if (!graded || !CHOICE.includes(ctx.kind) || !(ctx.options || []).length) return v;
+    if (!/\b(gpa|grade point|cgpa)\b/.test(ctx.question || '') || (v && v.kind === 'number')) return v;
+    if (v && JTF.matcher.matchOption(ctx.options, v) >= 0) return v;
+    const none = ctx.options.map((o) => o.text).find((t) => NO_GPA.test(U.normalize(t)));
+    return (none ? val(none, { canonical: null, candidates: [none] }) : notApplicable(ctx)) || v;
+  }
+
+  // "My university does not use a GPA system", "No GPA", "Not on a GPA scale".
+  const NO_GPA =
+    /\b(does not|doesn t|do not|don t|did not|didn t) (use|have|give|offer|calculate|issue|report) (a |an |the )?(gpa|grade point)\b|\bno gpa\b|\bnot (on |use )?(a |the )?gpa\b|\bgpa (is )?(not (used|applicable|available)|unavailable)\b/;
+
+  /** gpaFor's answer before a list's way out. */
+  function gpaAnswer(e, ctx, p) {
     const q = ctx.question || '';
     const help = ctx.help || '';
     const ownSystem = OWN_SYSTEM.test(q) || OWN_SYSTEM.test(help);
     const scaled = NUMERIC_GPA.test(q) || (/\b(gpa|grade point)\b/.test(help) && NUMERIC_GPA.test(help));
     const numeric = ctx.kind === 'number' || (scaled && !ownSystem);
+    const gpaOnly = /\bgpa\b/.test(q) && !/\b(grades?|class|classification|results?)\b/.test(q) && !ownSystem;
+    const markAsked = MARK_ASKED.test(q) || MARK_ASKED.test(help) || /%/.test(ctx.asked || '');
+    const mark = U.isBlank(e.gpa) ? null : entryMark(e);
+    if (mark != null) return markAsked || (!numeric && !gpaOnly) ? markVal(mark) : null;
+    // "Average percentage" for a 3.8 or a 2:1: neither says what your mark was.
+    if (markAsked && !ownSystem && !/\b(gpa|grade point|cgpa|grades?|class\w*|results?)\b/.test(q)) return null;
     if (!U.isBlank(e.gpa)) {
       const v = gpaVal(e.gpa);
       return numeric && v && v.kind === 'class' ? null : v;
     }
-    const gpaOnly = /\bgpa\b/.test(q) && !/\b(grades?|class|classification|results?)\b/.test(q) && !ownSystem;
-    return numeric || gpaOnly ? null : classFor(e, ctx);
+    return numeric || gpaOnly ? null : classFor(e, ctx, p);
   }
 
   /**
    * "Expected/Achieved Degree Classification", "Predicted grade", "Degree result": your classification, else a class
-   * written as your GPA ("2:1"), else the GPA as it is (a free-text box on a UK form takes a US student's "3.8").
-   * Predicted while the course is still running, or when you wrote so ("2:1 (predicted)").
+   * written as your GPA ("2:1"), else the class a UK or Irish university gives your average mark ("68%" is a 2:1),
+   * else the grade as it is (a free-text box on a UK form takes a US student's "3.8"). Predicted while the course is
+   * still running, or when you wrote so ("2:1 (predicted)").
    */
-  function classFor(e, ctx) {
-    const own = !U.isBlank(e.classification) ? e.classification : degreeClassOf(e.gpa) ? e.gpa : '';
-    if (U.isBlank(own)) return U.isBlank(e.gpa) ? null : gpaVal(e.gpa);
+  function classFor(e, ctx, p) {
+    const own = !U.isBlank(e.classification) ? e.classification : degreeClassOf(e.gpa) ? e.gpa : markClass(e, p) || '';
+    if (U.isBlank(own)) {
+      if (U.isBlank(e.gpa)) return null;
+      const mark = entryMark(e);
+      return mark != null ? markVal(mark) : gpaVal(e.gpa);
+    }
     const end = U.parseDate(e.endDate);
     const now = ctx.today || new Date();
     const studying = !!end && end.year * 12 + (end.month || 6) - 1 >= now.getFullYear() * 12 + now.getMonth();
-    return classVal(own, studying || EXPECTED_CLASS.test(U.normalize(own)));
+    // "68% (predicted)" predicts the class it makes.
+    return classVal(own, studying || EXPECTED_CLASS.test(U.normalize(own === e.classification ? own : e.gpa)));
+  }
+
+  // A list of classes' way out for a grade it hasn't got: "Other", "Non-UK degree", "Not applicable".
+  const CLASS_ELSE = [
+    'Other',
+    'Other (please specify)',
+    'Non-UK',
+    'Non UK',
+    'International',
+    'Overseas',
+    'Not applicable',
+    'N/A',
+  ];
+
+  /**
+   * Your grade in words, for the box after a list of classes that hadn't got it ("If you selected other, please provide
+   * further details of your degree results"): "GPA 3.9/4.0", "68% average", "Distinction".
+   */
+  function gradeInWords(e, ctx, p) {
+    const v = classFor(e, Object.assign({}, ctx, { kind: 'text' }), p);
+    if (!v) return null;
+    if (v.kind === 'number') return val(`GPA ${v.text}`, { canonical: null });
+    if (v.kind === 'mark') return val(`${v.text} average`, { canonical: null });
+    return val(v.text, { canonical: null });
   }
 
   /**
    * "GPA Scale", "Please specify the grading scale used by your current school" [4.0 Scale / 5.0 Scale / UK Grading
    * System]: what your GPA is out of ("3.8/4.0"), or for a UK degree class the UK option of a list; never "2:1" itself.
    */
-  function gpaScale(e, ctx) {
+  function gpaScale(e, ctx, p) {
+    // A mark: out of 100, as a percentage ("Percentage" before a UK university's "UK degree classification").
+    if (entryMark(e) != null)
+      return val('Percentage', {
+        number: 100,
+        candidates: ['Percentage', 'Percentage (%)', 'Percent', '%', 'Out of 100', '100'].concat(
+          markClass(e, p) ? ['UK degree classification', 'UK grading system', 'UK'] : [],
+        ),
+      });
     const out = String(e.gpa || '').match(/\/\s*(\d+(?:\.\d+)?)\s*$/);
     if (out)
       return val(out[1], { kind: 'number', number: parseFloat(out[1]), candidates: [out[1], `${out[1]} scale`] });
@@ -196,9 +326,9 @@
     if (qualsOf(q).length) return schoolGradesAtLeast(p, ctx);
     const level = eduLevelOf(q);
     const list = p.education || [];
-    const e = level ? list.find((x) => JTF.matcher.degreeGroup(U.normalize(x.degree)) === level) : list[0];
+    const e = level ? entryOfLevel(list, level) : list[0];
     if (!e) return null;
-    const own = classFor(e, ctx);
+    const own = classFor(e, ctx, p);
     const cls = own && own.cls;
     const named = CLASS_NAMED.filter(([, re]) => re.test(q)).map(([c]) => c);
     if (named.length) {
@@ -386,15 +516,20 @@
     // "Are you currently an undergraduate student?": yes at that level only (an MEng counts as both).
     const asked = question && /^(are|were|is) you\b/.test(question) ? levelsOf(question) : [];
     const held = asked.length && JTF.matcher ? entryLevels(current) : [];
-    if (held.length) return val(asked.some((l) => held.includes(l)) ? 'Yes' : 'No');
-    const level = JTF.matcher ? JTF.matcher.degreeGroup(U.normalize(current.degree)) : null;
-    const words =
-      {
-        bachelor: ['Enrolled in a bachelor', 'Bachelor', 'Undergraduate'],
+    const wordsOf = (level) =>
+      ({
+        // Accenture's "Are you currently studying for an undergraduate degree or equivalent?" [Degree / Degree
+        // Equivalent].
+        bachelor: ['Enrolled in a bachelor', 'Bachelor', 'Undergraduate', 'Degree'],
         master: ['Enrolled in a graduate', 'Graduate', 'Master', 'Postgraduate'],
         doctorate: ['Enrolled in a graduate', 'Doctorate', 'PhD', 'Graduate'],
         highschool: ['High school'],
-      }[level] || [];
+      })[level] || [];
+    if (held.length) {
+      const at = asked.find((l) => held.includes(l));
+      return at ? val('Yes', { candidates: ['Yes', ...wordsOf(at)] }) : val('No');
+    }
+    const words = wordsOf(JTF.matcher ? JTF.matcher.degreeGroup(U.normalize(current.degree)) : null);
     // The level first: it decides between "enrolled in a bachelor's…" and "enrolled in a graduate…".
     return val('Yes', { candidates: [...words, 'Yes', 'Currently enrolled', 'Enrolled'] });
   }
@@ -603,7 +738,12 @@
     // "…other than a masters degree": a doctorate or another postgraduate qualification.
     if (/\bother than (a |an )?(masters?|msc|ma)\b/.test(q)) asked = ['doctorate'];
     if (!asked.length) asked = ['bachelor', 'master', 'doctorate'];
-    return val(list.some((e) => entryLevels(e).some((l) => asked.includes(l))) ? 'Yes' : 'No');
+    // Accenture's "Do you currently have or are you working towards a postgraduate qualification?": an integrated
+    // master's (MEng, MSci) is an undergraduate degree, though a master's when asked about one.
+    const postgrad = /\bpost ?grad/.test(q);
+    const levels = (e) =>
+      postgrad && JTF.matcher.isIntegratedMasters(U.normalize(e.degree)) ? ['bachelor'] : entryLevels(e);
+    return val(list.some((e) => levels(e).some((l) => asked.includes(l))) ? 'Yes' : 'No');
   }
 
   /**
@@ -618,12 +758,19 @@
     return val(here.iso2 === named[0] ? 'Yes' : 'No');
   }
 
+  /**
+   * Your education entry at a level of study: a degree of that level, else for a bachelor's an integrated master's
+   * (Accenture's "Please select your bachelor's degree results…" for an MEng, an undergraduate degree in the UK).
+   */
+  function entryOfLevel(list, level) {
+    const same = list.find((x) => JTF.matcher.degreeGroup(U.normalize(x.degree)) === level);
+    return same || (level === 'bachelor' ? list.find((x) => entryLevels(x).includes(level)) : null) || null;
+  }
+
   /** The entry a question is about: the one at the level of study it names ("Undergraduate GPA"), else entry `index`. */
   function entryAt(p, list, ctx) {
     const level = list === 'education' ? eduLevelOf(ctx.question) : null;
-    const e = level
-      ? (p.education || []).find((x) => JTF.matcher.degreeGroup(U.normalize(x.degree)) === level)
-      : (p[list] || [])[ctx.index || 0];
+    const e = level ? entryOfLevel(p.education || [], level) : (p[list] || [])[ctx.index || 0];
     return { e: e || null, level };
   }
 
@@ -729,8 +876,19 @@
         const field = U.isBlank(e.field) ? '' : /,/.test(e.field) ? `(${e.field})` : e.field;
         const title = [e.degree, field].filter((t) => !U.isBlank(t)).join(' ');
         const dates = [when(e.startDate), when(e.endDate)].filter(Boolean).join(' – ');
-        const grade = !U.isBlank(e.classification) ? e.classification : e.gpa;
-        const graded = U.isBlank(grade) ? '' : ongoing && !/predict|expect/i.test(grade) ? `predicted ${grade}` : grade;
+        // An average mark with the class it makes, if any: "predicted 2:1 (68% average)", "68% average" (an average
+        // so far predicts no mark).
+        const mark = U.isBlank(e.classification) ? entryMark(e) : null;
+        const made = mark != null ? markClass(e, p) : null;
+        const grade = !U.isBlank(e.classification)
+          ? e.classification
+          : mark == null
+            ? e.gpa
+            : made
+              ? `${made} (${mark}% average)`
+              : `${mark}% average`;
+        const predicts = ongoing && !/predict|expect/i.test(grade) && (mark == null || made);
+        const graded = U.isBlank(grade) ? '' : predicts ? `predicted ${grade}` : grade;
         return [title, e.school, dates && (ongoing ? `${dates} (expected)` : dates), graded].filter(Boolean).join(', ');
       });
     return lines.length ? val(lines.join('\n')) : null;
@@ -839,11 +997,17 @@
             return val(subjects.map((t, k) => `${t} ${grades[k]}`).join(', ') + when, { canonical: null });
           }
         }
-        if (kind === 'gpa') return gpaFor(e, ctx);
-        if (kind === 'class') return classFor(e, ctx);
+        if (kind === 'gpa') return gpaFor(e, ctx, p);
+        if (kind === 'class') {
+          if (ctx.part === 'specify') return gradeInWords(e, ctx, p);
+          const v = classFor(e, ctx, p);
+          // A list of classes without yours: its way out (Accenture's "Other" for a GPA).
+          if (v && CHOICE.includes(ctx.kind)) v.fallback = CLASS_ELSE;
+          return v;
+        }
         if (kind === 'school') return val(e[key], { kind: 'school' });
         if (kind === 'subject') return subjectVal(e[key]);
-        if (kind === 'scale') return gpaScale(e, ctx);
+        if (kind === 'scale') return gpaScale(e, ctx, p);
         if (kind === 'country') return entryCountry(e, p);
         // Corient's "City" in an education entry, beside its own "Country": "London", not "London, UK".
         if (key === 'location' && ctx.part === 'city' && !U.isBlank(e.location))
