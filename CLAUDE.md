@@ -27,7 +27,10 @@ detail. Keep the README short: only what everyone needs.
   with nothing to declare; an ID is used only as the material writes it (`inMaterial()`). With nothing switched on
   the prompts are byte for byte the ones the eval measured (`tests/unit/answers.test.js` hashes them). A withheld
   question's answer never rides along as the question before another (`decide.hidesAnswer`, `questionJson`). Facts
-  the material doesn't give are skipped, never guessed. Grades are never converted (a 2:1 never becomes a GPA).
+  the material doesn't give are skipped, never guessed. Grades are never converted between systems (a 2:1 never
+  becomes a GPA, nor a GPA a class); the one thing worked out is a UK or Irish university's class from the average
+  mark the person gives ("68%" is a 2:1), as those universities award classes by it (`markClass()` in
+  `lib/fields-education.js`).
 - **Snapshots and page maps in redacted mode carry no personal data.** `tests/e2e/snapshot.test.mjs` asserts it;
   keep it passing and extend it when you add a field to what they carry. A page map that leaves the browser (to
   the AI, in a file) is made with `values: 'redacted'`: the default `'state'` hides typed values but not the

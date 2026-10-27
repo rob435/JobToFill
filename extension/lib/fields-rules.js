@@ -43,7 +43,7 @@
   const R = (type, re, opts) => Object.assign({ type, re }, opts || {});
 
   const CONSENT =
-    /acknowledg|\b(answer|applicant|candidate|application) certification\b|\b(allow|permit|authori[sz]e) (us|[a-z]+) to (process|store|hold|use|retain) (your|my) (personal )?(data|information|details)\b|\bcertification of (answers|application|accuracy)\b|\bi (have )?(read|reviewed|understood)\b|\bi (hereby )?(confirm|agree|accept|consent|certify|attest|declare|understand)\b|\bconsent\b|privacy (notice|policy|statement)|notice at collection|data (protection|privacy|processing) (notice|policy|statement)|terms (and |& )?conditions|terms of (use|service)|\bgdpr\b|candidate (privacy|data) (notice|policy)|confidentiality (agreement|undertaking|notice|statement)|non ?disclosure (agreement|undertaking)|maintain (the )?(strict )?confidentiality|\b(the )?information (that )?i (have )?(provided|given|supplied|submitted|entered) (is|are|was) (true|accurate|correct|complete)\b/;
+    /acknowledg|\b(answer|applicant|candidate|application) certification\b|\b(allow|permit|authori[sz]e) (us|[a-z]+) to (process|store|hold|use|retain) (your|my) (personal )?(data|information|details)\b|\bcertification of (answers|application|accuracy)\b|\bi (have )?(read|reviewed|understood)\b|\bi (hereby )?(confirm|agree|accept|consent|certify|attest|declare|understand)\b|\bconfirm (if |that |whether )?you (have )?(understand|understood|accept|agree)\b|\bconsent\b|privacy (notice|policy|statement)|notice at collection|data (protection|privacy|processing) (notice|policy|statement)|terms (and |& )?conditions|terms of (use|service)|\bgdpr\b|candidate (privacy|data) (notice|policy)|confidentiality (agreement|undertaking|notice|statement)|non ?disclosure (agreement|undertaking)|maintain (the )?(strict )?confidentiality|\b(the )?information (that )?i (have )?(provided|given|supplied|submitted|entered) (is|are|was) (true|accurate|correct|complete)\b/;
   const OPT_IN =
     /marketing|newsletter|promotion|(applicant|candidate|talent) (database|pool)|\bsms\b|text messages?|whats ?app|job alerts?|talent (community|network|pool)|future (opportunit|roles?|jobs?|vacanc|positions?|openings?)|other (roles|positions|opportunities|openings)|keep (me|my)|contact me|contact (me|you) (about|regarding|for|with) (other |new |future |relevant |suitable )?(job |career |employment )?(opportunit|roles?|jobs?|vacanc|positions?|openings?)|subscribe|\bupdates\b|share my (data|information|details) with|\bnews (and |& )?(events|updates)\b|\b(job|vacancy|posting) (posting )?notifications?\b/;
 
@@ -613,6 +613,9 @@
       /\b(young |unpaid |primary |family )?carer\b|\bcaring responsibilit|\bcare for (a|an|someone) (family member|relative|friend|disabled|ill|elderly)|\blook after (a|an|someone) (family member|relative|disabled|ill|elderly)/,
       { kinds: CHOICE },
     ),
+    // Accenture's "Do you have any special circumstances you would like us to consider in your application?": your
+    // caring, care and refugee answers (before each of them, whose words its options use).
+    R('eeo.circumstances', /\b(special|mitigating|extenuating|personal) circumstances\b/, { kinds: CHOICE }),
     // A refugee diversity question, never the refugee / asylee lines of a work-authorisation list.
     R(
       'eeo.refugee',
@@ -738,6 +741,16 @@
       /\b(currently|ever) (or have you (ever )?)?attended (a )?(university|college|higher education)\b|\b(studying|studied) for,? or (have you )?(completed|obtained|achieved)\b/,
       { kinds: CHOICE },
     ),
+    // Accenture's "Do you currently have or are you working towards a postgraduate qualification?".
+    R(
+      'edu.attended',
+      /^(do|did) you (currently |already )?(have|hold|possess),? or (are|were) you (currently )?(working|studying) (towards|for)\b|^(have|do) you (completed|obtained|got|have|hold),? or (are|were) you (currently )?(pursuing|studying|completing|undertaking|working towards)\b/,
+      {
+        kinds: CHOICE,
+        test: (desc, text) =>
+          /\b(post ?grad\w*|master\w*|msc|mba|ph ?d|doctora\w*|bachelor\w*|undergrad\w*|degree)\b/.test(text),
+      },
+    ),
     R(
       'edu.inCountry',
       /^(are|were|did|have) you\b.*\b(studying|studied|study|completed|complete|obtained|obtaining)\b.{0,50}\b(degree|studies|course|qualification)\b.{0,15}\bin (the )?[a-z]/,
@@ -834,12 +847,12 @@
       'edu.degree',
       /\b(what|which) (type of |kind of )?degree\b|\b(what|which) (\w+ ){1,5}degree (qualification|type|have you|did you|will you|are you)\b|\b(type|kind|name) of (the |your )?degree\b|\bdegree (type|name|title|program(me)?)\b|\bdegree (are you|you are|you re|will you be) (currently )?(pursuing|studying|completing|enrolled|working|seeking|undertaking|earning|obtaining)/,
       {
-        not: /major|field|subject|discipline|categor|\bstatus\b|\byear\b|\bmonth\b|\bdate\b|minimum|equivalent|\bclass\b|classification|\bgrades?\b|\bresults?\b/,
+        not: /major|field|subject|discipline|categor|\bstatus\b|\byear\b|\bmonth\b|\bdate\b|minimum|equivalent|\bclass\b|classification|\bgrades?\b|\bresults?\b|\bpercentage\b|\bmarks?\b/,
         test: (desc) => !hasYesNoOptions(desc),
       },
     ),
     R('edu.degree', /\bdegree\b|qualification|diploma|\baward\b/, {
-      not: /major|field|subject|discipline|categor|\byear\b|\bdate\b|level of|highest|degree of|\bdid you|have you|do you|are you|minimum|equivalent|\bclass\b|classification|\bgpa\b|\bgrades?\b|\bscore\b|\bresults?\b|\boutcome\b/,
+      not: /major|field|subject|discipline|categor|\byear\b|\bdate\b|level of|highest|degree of|\bdid you|have you|do you|are you|minimum|equivalent|\bclass\b|classification|\bgpa\b|\bgrades?\b|\bscore\b|\bresults?\b|\boutcome\b|\bpercentage\b|\bmarks?\b/,
       test: (desc) => !hasYesNoOptions(desc),
     }),
     R(
@@ -885,6 +898,15 @@
       // "Number of GCSEs at grade 9-7" is a count, not your grade.
       {
         not: /test score|credit score|maximum|max possible|highest possible|grading scale|(?<!\bon (the|a|your) )scale used|\bgpa scale\b|\bnumber of\b|\bhow many\b/,
+      },
+    ),
+    // "What is your average percentage?", "Average mark (%)", "Percentage obtained in your degree": your average mark.
+    // Never a share of something else ("What percentage of your time…", "Travel percentage").
+    R(
+      'edu.gpa',
+      /\b(average|overall|aggregate|cumulative|final|current|degree|graduation|university|academic|module) (percentage|marks?)\b|\bpercentage (marks?|scored?|grade|average|obtained|achieved|secured)\b|\bpercentage (in|at|for|of) (your )?(degree|graduation|bachelor\w*|undergrad\w*|university|college|master\w*|post ?grad\w*)\b|\bmarks? (obtained|achieved|scored|secured)\b/,
+      {
+        not: /\bpercentage of (your |the )?(time|travel|work|week|role|job|salary|base|equity|ownership|shares?|revenue|sales|commission|bonus)\b|\b(travel|commission|equity|ownership|bonus|remote|discount|tax|time)\b|\bhow many\b|\bnumber of\b/,
       },
     ),
     // "A-level results", "Highers / Advanced Highers results": a school entry's grades.

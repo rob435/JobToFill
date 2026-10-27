@@ -425,6 +425,24 @@
     'eeo.careLeaver': simple('Been in care', 'eeo.careLeaver'),
     'eeo.carer': simple('Carer', 'eeo.carer'),
     'eeo.refugee': simple('Refugee or asylum seeker', 'eeo.refugee'),
+    // Accenture's "Do you have any special circumstances you would like us to consider in your application?" [Primary
+    // carer for a close relative / Parent or legal guardian… / Refugee status / Care Leaver / Not applicable / Other]:
+    // the ones your answers say yes to; nothing when they say none, since a child you care for isn't in your profile.
+    'eeo.circumstances': {
+      label: 'Special circumstances',
+      derived: true,
+      get(p) {
+        const yes = (t) => !!JTF.matcher && JTF.matcher.canonicalOf(t) === 'yes';
+        const items = [
+          [p.eeo.carer, 'Carer'],
+          [p.eeo.careLeaver, 'Care leaver'],
+          [p.eeo.refugee, 'Refugee'],
+        ]
+          .filter(([said]) => yes(said))
+          .map(([, item]) => item);
+        return items.length ? val(items.join(', '), { kind: 'list', items, candidates: items, canonical: null }) : null;
+      },
+    },
     'eeo.bursary': simple('Means-tested bursary or grant at university', 'eeo.bursary'),
 
     'eeo.schoolType': {

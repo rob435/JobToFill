@@ -97,8 +97,11 @@
   const EXAMPLES = /\b(for example|for instance|e g|such as)\b.*$/;
 
   // A paragraph's sentences: "…of any individual. We recognise that… If you are invited for an interview, are…".
-  const SENTENCE_END = /(?<=[.?!])\s+(?=["'“(]?[A-Z0-9])/;
-  const FOCUS_KEYS = new Set(['label', 'question', 'aria', 'nearby']);
+  // A long label cut short ("…confirm that they are… Are you at least 18 years of age?") ends a sentence where it was cut.
+  const SENTENCE_END = /(?<=[.?!…])\s+(?=["'“(]?[A-Z0-9])/;
+  // A radio group's question too: Accenture's "…we have to confirm that they are legally entitled to work. Are you at
+  // least 18 years of age?" over its Yes and No asks your age.
+  const FOCUS_KEYS = new Set(['label', 'question', 'aria', 'nearby', 'group']);
 
   /**
    * The sentence a long, several-sentence question asks (its last question, else its last sentence), or ''. The rest
@@ -115,9 +118,11 @@
     return norm(asks.length ? asks[asks.length - 1] : sentences[sentences.length - 1]);
   }
 
-  // What to do with a list, not what it asks: "If yours is not listed, select other", "Select all that apply".
+  // What to do with a list, not what it asks: "If yours is not listed, select other", "Select all that apply". Nor
+  // what follows from a No (Accenture's "If you do not agree with this requirement, we will be unable to progress your
+  // application.").
   const INSTRUCTION =
-    /^(if|where)\b.*\b(not listed|not shown|not (in|on) (the|this) list|other|n ?a|not applicable)\b|^(please )?(select|choose|tick|pick|check) (all|one|any|only one|as many)\b|^(this|the) (field|question) is (optional|required)\b/;
+    /^(if|where)\b.*\b(not listed|not shown|not (in|on) (the|this) list|other|n ?a|not applicable)\b|^(please )?(select|choose|tick|pick|check) (all|one|any|only one|as many)\b|^(this|the) (field|question) is (optional|required)\b|^if you (do not|don t|cannot|can t|are unable to|choose not to) (agree|accept|confirm|meet|consent)\b.*\b(unable|not be able|cannot|can t|will not)\b/;
 
   function signalTexts(desc) {
     const out = [];
@@ -499,6 +504,9 @@
     return opts.filter((o) => /\+\s?\d{1,4}\b/.test(o.text)).length / opts.length >= 0.6;
   }
 
+  // Lists that can hold one acknowledgement to pick (a lone checkbox is the acknowledgement rule's own).
+  const CHOICE_ACK_KINDS = new Set(['select', 'radio', 'combo', 'combobox']);
+
   function refine(r, desc) {
     if (!r) return null;
     if (F().DATE_TYPES.has(r.type) && !r.part) r.part = detectPart(desc);
@@ -527,6 +535,18 @@
       )
     )
       r.type = 'job.sponsorship';
+    // A requirement whose one answer acknowledges it (Accenture's "…You must live within commutable distance of your
+    // assigned office…" [Yes, I understand]) is an acknowledgement; "I confirm that I will graduate in 2027" is still
+    // your date, and a legal or diversity question still yours to answer from your profile.
+    const offered = said.filter((t) => t && !isPlaceholder(t));
+    if (
+      CHOICE_ACK_KINDS.has(desc.kind) &&
+      offered.length === 1 &&
+      F().isAcknowledgement(offered[0]) &&
+      !['edu.end', 'job.startDate'].includes(r.type) &&
+      !/^(compliance\.|eeo\.)/.test(r.type)
+    )
+      Object.assign(r, { type: 'consent', part: null });
     if (desc.kind === 'email' && !EMAIL_TYPES.has(r.type)) r.type = 'email';
     // A "Passcode" box is often type="password" (SuccessFactors): the emailed code, not your password.
     if (desc.kind === 'password' && !r.type.startsWith('account.pass') && r.type !== 'otp') r.type = 'account.password';
@@ -1536,11 +1556,31 @@
    */
   function bestClass(opts, v, cands) {
     const same = opts.filter((o) => F().degreeClassOf(o.text) === v.cls);
-    if (!same.length) return -1;
+    if (!same.length) return v.marks ? classBand(opts, v.marks) : -1;
     const expected = (o) => /\b(predicted|expected|anticipated|projected|forecast|on track)\b/.test(o.n);
     const achieved = (o) => /\b(achieved|awarded|obtained|actual|final|graduated)\b/.test(o.n);
     const kept = same.filter((o) => (v.expected ? !achieved(o) : !expected(o)));
     return bestText(kept.length ? kept : same, cands, v).i;
+  }
+
+  /** The options of marks ("60-69%", "70% and above"): bands of percentages, never of GPAs, read without the "%". */
+  const marksOf = (opts) =>
+    opts
+      .filter((o) => /%|\bper ?cent\b|\bpercentage\b|\bmarks?\b/i.test(o.text))
+      .map((o) => Object.assign({}, o, { text: o.text.replace(/%/g, '') }));
+
+  /**
+   * A list of marks for a class (`marks`, the marks it stands for: [60, 69] for a 2:1): the narrowest band of marks
+   * that holds them all ("60-69%", "60% or more"). -1 for none.
+   */
+  function classBand(opts, marks) {
+    let best = null;
+    for (const o of marksOf(opts)) {
+      const r = parseRange(o.text);
+      if (!r || r[0] > marks[0] || r[1] < marks[1]) continue;
+      if (!best || r[1] - r[0] < best.width) best = { i: o.i, width: r[1] - r[0] };
+    }
+    return best ? best.i : -1;
   }
 
   // Words most institution names share: they tell no two apart.
@@ -1973,6 +2013,11 @@
 
     // A degree class against its spellings; a school never against a similarly named one.
     if (v.kind === 'class' && v.cls) return bestClass(opts, v, cands);
+    // An average mark against bands of marks ("60-69%", "70% and above"), never a GPA's ("3.5 and above"), or as it is.
+    if (v.kind === 'mark') {
+      const r = bestRange(marksOf(opts), Math.floor(v.number));
+      return r >= 0 ? r : (opts.find((o) => cands.includes(o.n)) || { i: -1 }).i;
+    }
     if (v.kind === 'school') {
       const r = bestSchool(opts, v, cands);
       if (r !== null) return r;
@@ -1995,7 +2040,8 @@
     }
 
     if (v.kind === 'number' && v.number != null) {
-      const r = bestRange(opts, v.number);
+      // A GPA is never in a band of marks ("Below 50%").
+      const r = bestRange(v.gpa ? opts.filter((o) => !marksOf([o]).length) : opts, v.number);
       if (r >= 0) return r;
     }
 

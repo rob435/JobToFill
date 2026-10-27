@@ -36,7 +36,13 @@
       .trim();
   }
 
-  /** Human-readable label: collapsed whitespace, no required markers. */
+  /**
+   * Human-readable label: collapsed whitespace, no required markers. One longer than `max` is cut short, keeping what
+   * it asks when the cut would lose it (its last question, else its last "Please …"): Accenture's "Accenture is
+   * committed to not hiring employees who are not of the minimum legal age to work… Are you at least 18 years of age?"
+   * still asks your age, and its paragraph on office days still ends "… Please confirm if you understand this
+   * requirement."
+   */
   function cleanLabel(input, max = 300) {
     if (!input) return '';
     let s = String(input).replace(/\s+/g, ' ').trim();
@@ -45,7 +51,14 @@
       // A trailing "*" marks a required field, except in a grade: "A*", "D**".
       .replace(/(^|[\s,(/])([AD]\*{1,2})[\s:]*$|[\s*:]+$/, (m, pre, grade) => (grade ? pre + grade : ''))
       .replace(/^\*+\s*/, '');
-    return s.length > max ? s.slice(0, max).trim() + '…' : s;
+    if (s.length <= max) return s;
+    const sentences = s.split(/(?<=[.!?…])\s+(?=["“'(]?[A-Z])/);
+    // "Please note…" asks nothing.
+    const please = (t) => /^please\b(?! (note|be aware|bear in mind|remember)\b)/i.test(t);
+    const ask = sentences.filter((t) => /\?$/.test(t)).pop() || sentences.filter(please).pop();
+    if (ask && ask !== sentences[0] && ask.length <= max / 2 && s.lastIndexOf(ask) + ask.length > max)
+      return s.slice(0, max - ask.length - 2).trim() + '… ' + ask;
+    return s.slice(0, max).trim() + '…';
   }
 
   function tokens(input) {

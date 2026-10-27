@@ -71,6 +71,8 @@ tests/
                        Quill, TipTap, Lexical), bundled on request by serve.mjs, each printing the
                        library's own state into #state for the tests; replicas of real forms
                        (bamboohr.html: BambooHR's menu-button dropdowns and A-level questions;
+                       pinpoint-accenture.html: Accenture's Pinpoint questions, react-select with
+                       follow-up boxes drawn only once "Other" is chosen;
                        msforms.html: Microsoft Forms' question notes and date picker; eploy.html:
                        an upload in a dialog of its own; workday-steps.html: an application in four steps, its
                        sections' own "Add" and the Review step's "Submit"; dayforce-upload.html: two uploads

@@ -1117,8 +1117,13 @@ test('UK law-firm forms: boxes under a school heading ask about school; "Title" 
     'edu.school#0',
     'edu.field#0',
     null,
-    null,
+    'edu.gpa#0',
   ]);
+  // "Overall percentage to date" asks for your average mark: a 3.9 GPA gives none (never converted), "68%" does.
+  const pct = { jobContext: true, index: 0, question: util.normalize(matcher.questionText(page[11])) };
+  assert.equal(fields.resolve('edu.gpa', p, pct), null);
+  assert.equal(fields.leftEmpty('edu.gpa', p, pct), true);
+  assert.equal(fields.resolve('edu.gpa', { ...p, education: [{ ...p.education[0], gpa: '68%' }] }, pct).text, '68%');
   assert.equal(matcher.questionText(page[6]), 'A-levels (or equivalent): Subject');
   assert.equal(matcher.questionText(page[9]), 'Subject', 'a university heading changes nothing');
   assert.equal(matcher.questionText(desc({ label: 'Subject', section: 'Select a level' })), 'Subject');
@@ -3170,6 +3175,133 @@ test('GPA lists and scales for a UK class: never "2:1" where a number or a scale
   p.education[0].gpa = '3.8/4.0';
   assert.equal(scale('GPA Scale', '4.0', '5.0', '10'), '4.0');
   assert.equal(scale(fiveRings, '4.0 Scale', '5.0 Scale'), '4.0 Scale');
+});
+
+test('an average mark: the class a UK or Irish university gives it, the mark where one is asked, never a GPA', () => {
+  const p = glasgow();
+  Object.assign(p.education[0], { classification: '', gpa: '68%', location: 'Glasgow, UK' });
+  const q = (type, question, extra) => ask(p, type, question, Object.assign({ today: TODAY }, extra));
+  const accenture = [
+    'First-Class Honours (1st)',
+    'Upper Second-Class Honours (2:1)',
+    'Lower Second-Class Honours (2:2)',
+    'Third-Class Honours (3rd)',
+    'Pass (Ordinary Degree/Non-Honours)',
+    'Other',
+  ];
+  const results = "Please select your bachelor's degree results/expected results from the options below.";
+  const pick = (question, ...list) => choose(p, 'edu.classification', question, list, { today: TODAY });
+  const cls = q('edu.classification', 'Predicted degree classification');
+  assert.equal(cls.text, '2:1');
+  assert.equal(cls.expected, true);
+  assert.equal(pick(results, ...accenture), 'Upper Second-Class Honours (2:1)');
+  assert.equal(pick('Expected degree result', '70% and above', '60-69%', '50-59%', 'Below 50%'), '60-69%');
+  assert.equal(choose(p, 'edu.classAtLeast', 'Do you have a 2:1 or above?', ['Yes', 'No'], { today: TODAY }), 'Yes');
+  // The bands: 70% a First, 60% a 2:1, 50% a 2:2, 40% a Third; below that, and 69.5%, as written.
+  for (const [mark, want] of [
+    ['72.5%', 'First'],
+    ['70%', 'First'],
+    ['69.5%', '2:1'],
+    ['55/100', '2:2'],
+    ['44 %', 'Third'],
+    ['Average: 61%', '2:1'],
+    ['68', '2:1'],
+    ['68,5%', '2:1'],
+    ['68% (predicted)', '2:1'],
+    ['71% average so far', 'First'],
+  ]) {
+    p.education[0].gpa = mark;
+    assert.equal(q('edu.classification', 'Degree classification').text, want, mark);
+  }
+  p.education[0].gpa = '38%';
+  assert.equal(pick(results, ...accenture), 'Other', 'a fail is no class: its "Other"');
+  assert.equal(pick(results, 'First', '2:1', '2:2', 'Third', 'Non-UK degree'), 'Non-UK degree');
+  assert.equal(pick(results, 'First', '2:1', '2:2', 'Third', 'Not applicable'), 'Not applicable');
+  // Boxes asking for the mark get it; GPA boxes never do, nor do mark boxes get a GPA or a class.
+  p.education[0].gpa = '68%';
+  assert.equal(q('edu.gpa', 'Current grade').text, '68%');
+  assert.equal(q('edu.gpa', 'What is your average percentage?').text, '68%');
+  assert.equal(q('edu.gpa', 'Average mark (%)', { kind: 'number' }).number, 68);
+  assert.equal(q('edu.gpa', 'GPA (out of 4.0)'), null);
+  assert.equal(q('edu.gpa', 'GPA', { kind: 'number' }), null);
+  assert.equal(q('edu.gpa', 'GPA'), null);
+  assert.equal(choose(p, 'edu.gpa', 'Cumulative GPA', ['3.5 and above', '3.0 - 3.49', 'Below 3.0']), null);
+  assert.equal(choose(p, 'edu.gpaScale', 'GPA Scale', ['4.0 Scale', 'Percentage', 'UK Grading System']), 'Percentage');
+  assert.equal(fields.gradeHeld('edu.gpa', p, { question: 'gpa out of 4 0' }), true, 'never the AI’s to convert');
+  const summary = q(
+    'edu.summary',
+    'Please state your higher educational qualifications, including (current) grade and starting and (expected) graduating date',
+    { kind: 'textarea' },
+  );
+  assert.match(summary.text, /, predicted 2:1 \(68% average\)$/);
+  p.education[0].gpa = '3.8/4.0';
+  assert.equal(q('edu.gpa', 'What is your average percentage?'), null);
+  assert.equal(
+    choose(p, 'edu.classification', 'Expected degree result', ['70% and above', '60-69%', 'Below 50%']),
+    null,
+  );
+  p.education[0].gpa = '';
+  p.education[0].classification = '2:1';
+  assert.equal(q('edu.gpa', 'What is your average percentage?'), null, 'a 2:1 says no mark');
+  // A mark from anywhere else is no UK class: an Indian 65% is a First Division. Nor is a mark without a place, for
+  // someone living outside the UK and Ireland.
+  Object.assign(p.education[0], { classification: '', gpa: '65%', location: 'Delhi, India' });
+  assert.equal(pick(results, ...accenture), 'Other');
+  assert.equal(q('edu.classification', 'Degree classification').text, '65%');
+  p.education[0].location = '';
+  assert.equal(q('edu.classification', 'Degree classification').text, '2:1', 'living in the UK');
+  p.address.country = 'India';
+  assert.equal(q('edu.classification', 'Degree classification').text, '65%');
+  // Ireland's universities give the same classes; a UK master's gives Distinction, Merit and Pass, and an integrated
+  // master's (an undergraduate degree) the classes, as the bachelor's that results lists ask for.
+  Object.assign(p.education[0], { location: 'Dublin, Ireland', gpa: '61%' });
+  assert.equal(q('edu.classification', 'Degree classification').text, '2:1');
+  Object.assign(p.education[0], { location: 'London, UK', degree: 'MSc', gpa: '65%' });
+  assert.equal(q('edu.classification', 'Degree classification').text, 'Merit');
+  p.education[0].degree = 'MEng';
+  assert.equal(pick(results, ...accenture), 'Upper Second-Class Honours (2:1)');
+  // A school's numbers are never marks: "38" is IB points.
+  Object.assign(p.education[0], { degree: 'IB Diploma', gpa: '38', location: 'London, UK' });
+  assert.equal(q('edu.gpa', 'What is your average percentage?'), null);
+  // A GPA is never in a band of marks.
+  p.education[0] = Object.assign(fields.blankEducation(), { degree: 'BSc', gpa: '3.9', location: 'Boston, MA' });
+  assert.equal(choose(p, 'edu.classification', 'Degree result', ['70% and above', '60-69%', 'Below 50%']), null);
+  assert.equal(pick(results, ...accenture), 'Other');
+});
+
+test('a GPA list for a 2:1 or a mark: its "N/A" or "does not use a GPA", never a band', () => {
+  const p = glasgow();
+  const gpa = (question, ...list) => choose(p, 'edu.gpa', question, list, { today: TODAY });
+  const bands = ['3.5 - 4.0', '3.0 - 3.49', 'Below 3.0'];
+  for (const grade of [{ classification: '2:1' }, { classification: '', gpa: '68%' }]) {
+    Object.assign(p.education[0], grade);
+    assert.equal(gpa('What is your cumulative GPA?', ...bands, 'N/A'), 'N/A');
+    assert.equal(
+      gpa('GPA', ...bands, 'My university does not use a GPA system'),
+      'My university does not use a GPA system',
+    );
+    assert.equal(gpa('GPA (out of 4.0)', ...bands), null, 'no way out: left for you');
+    assert.equal(gpa('Current grade', 'A', 'B', 'N/A'), null, 'only a GPA question');
+  }
+  p.education[0].classification = '2:1';
+  p.education[0].gpa = '';
+  assert.equal(gpa('What is your GPA or degree class?', ...bands, '2:1', 'N/A'), '2:1', 'a list naming your class');
+  p.education[0].gpa = '3.6';
+  assert.equal(gpa('What is your cumulative GPA?', ...bands, 'N/A'), '3.5 - 4.0', 'a GPA keeps its band');
+});
+
+test('the box after a list of classes without yours: your grade in words', () => {
+  const p = glasgow();
+  const after = (gpa, classification) => {
+    Object.assign(p.education[0], { gpa, classification });
+    const q = 'If you selected other, please provide further details of your degree results/expected degree results.';
+    return ask(p, 'edu.classification', q, { today: TODAY, part: 'specify', kind: 'text' });
+  };
+  assert.equal(after('3.9/4.0', '').text, 'GPA 3.9/4.0');
+  assert.equal(after('3.9', '').text, 'GPA 3.9');
+  assert.equal(after('38%', '').text, '38% average');
+  assert.equal(after('', 'Distinction').text, 'Distinction');
+  assert.equal(after('', ''), null);
 });
 
 test('"Do you have a 2:1 or above?" and "Do you expect to graduate with honours?" are answered from your class', () => {
