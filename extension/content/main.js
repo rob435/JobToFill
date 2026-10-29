@@ -481,6 +481,20 @@
     return out;
   }
 
+  /**
+   * A link for a box, unless another box on the page holds it already: Revolut's "Links to your Github, portfolio,
+   * etc." adds a box each time the last one is filled, each asking again. A box asking for links in general gets your
+   * next link not on the page yet; any other, nothing (null).
+   */
+  function linkOnce(field, v, question) {
+    const taken = new Set(
+      Array.from(document.querySelectorAll('input:not([type="hidden"]), textarea'))
+        .filter((b) => b !== field.el && b.value && JTF.dom.isVisible(b))
+        .map((b) => JTF.fields.linkKey(b.value)),
+    );
+    return taken.has(JTF.fields.linkKey(v.text)) ? JTF.fields.nextLink(state.profile, taken, question) : v;
+  }
+
   /** Fill the page; what it changed joins what Undo takes back, even when it stops part-way with an error. */
   async function fill(payload) {
     const history = [];
@@ -763,6 +777,11 @@
         v = segmentValue(v, r.segment);
         if (!v || !v.text) return null;
       }
+      // A link in another box already: your next one, or nothing (see linkOnce).
+      if (v && /^links\./.test(r.type)) {
+        v = linkOnce(field, v, question);
+        if (!v) return null;
+      }
       if (!v) {
         // A document you haven't added is missing too; what the profile leaves empty on purpose isn't.
         if (count && d.action !== 'leave') {
@@ -855,7 +874,9 @@
         if (!filledKeys.has(key) && !keptKeys.has(key)) continue;
         const def = JTF.fields.DEFS[r.type];
         if (def && def.consent && !settings.consents) continue;
-        const v = await valueFor(field, r, JTF.fields.DEFS[r.type]);
+        let v = await valueFor(field, r, JTF.fields.DEFS[r.type]);
+        // A list of link boxes that grew a box: the new one is no box the parse cleared.
+        if (v && /^links\./.test(r.type)) v = linkOnce(field, v, question);
         if (!v) continue;
         const res = await JTF.fill.apply(field, v, {
           overwrite: false,

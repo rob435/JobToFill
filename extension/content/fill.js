@@ -755,7 +755,13 @@
     if (!lb.id) return false;
     const id = lb.id.replace(/["\\]/g, '\\$&');
     const owners = lb.ownerDocument.querySelectorAll(`[aria-controls~="${id}"], [aria-owns~="${id}"]`);
-    return owners.length > 0 && !Array.from(owners).some((o) => sameWidget(o, el));
+    // The search box of the menu the list is in names it too (Revolut's): no other field's.
+    const inMenu = (o) => {
+      for (let a = lb.parentElement, i = 0; a && i < 3 && !a.contains(el); a = a.parentElement, i++)
+        if (a.contains(o)) return true;
+      return false;
+    };
+    return owners.length > 0 && !Array.from(owners).some((o) => sameWidget(o, el) || inMenu(o));
   }
 
   /**
@@ -957,10 +963,24 @@
     el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'deleteContentBackward' }));
   }
 
+  /** An <input> that is a button (Revolut's "Select one"): clicked to open, never typed into. */
+  const buttonInput = (el) => el.localName === 'input' && el.type === 'button';
+
+  /**
+   * Can a dropdown's own box be typed into? Not react-select's isSearchable={false}, whose dummy input ignores typing,
+   * nor a button.
+   */
+  const typeable = (el) =>
+    el.localName === 'input' &&
+    !buttonInput(el) &&
+    !el.readOnly &&
+    el.getAttribute('aria-readonly') !== 'true' &&
+    el.getAttribute('inputmode') !== 'none';
+
   async function openMenu(el, searchable) {
     let opts = currentOptions(el);
     if (opts.length) return opts;
-    if (el.localName === 'input') {
+    if (el.localName === 'input' && !buttonInput(el)) {
       el.focus({ preventScroll: true });
       key(el, 'ArrowDown');
       opts = await waitForOptions(el, OPEN_WAIT);
@@ -1231,23 +1251,38 @@
 
   async function closeMenu(el) {
     if (await menuGone(el)) return;
-    key(el.localName === 'input' ? el : el.ownerDocument.activeElement || el, 'Escape');
+    const typed = el.localName === 'input' && !buttonInput(el);
+    key(typed ? el : el.ownerDocument.activeElement || el, 'Escape');
     // The menu goes on the widget's next render (Radix Select) or fades out (MUI; Workday's Canvas Kit Select for 200 ms
     // after a pick, aria-expanded="true" all the while): clicking its button before that would open it again, over the
     // next field, and an open Radix Select leaves the rest of the page aria-hidden and unclickable.
     for (let waited = 0; waited < 400 && listboxFor(el); waited += 30) await sleep(30);
     // A value list hides its box while open and closes on a click anywhere else.
     if (dom().valueList(el) && listboxFor(el)) pointerClick(el.ownerDocument.body);
-    if (!(await menuGone(el)) && el.localName !== 'input') pointerClick(el);
+    // A button toggles its menu: clicked again, it closes.
+    if (!(await menuGone(el)) && !typed) pointerClick(el);
   }
 
   /**
    * A list that only has the rows in view in the page (Ant Design's virtual lists show ~10 of 60 countries): the
    * element that scrolls it, when the rows it holds span much less than it scrolls through.
    */
-  function virtualScroller(lb, opts) {
+  function virtualScroller(lb, opts, el) {
     if (!lb || opts.length < 2) return null;
-    for (let n = opts[0].parentElement; n && n !== lb.parentElement; n = n.parentElement) {
+    const doc = lb.ownerDocument;
+    const own = [];
+    for (let n = opts[0].parentElement; n && n !== lb.parentElement; n = n.parentElement) own.push(n);
+    // Or the menu around the list scrolls it, search box and all (Revolut's): never the page, nor a dialog that holds
+    // the dropdown too.
+    const menu = [lb.parentElement, lb.parentElement && lb.parentElement.parentElement].filter(
+      (n) =>
+        n &&
+        n !== doc.body &&
+        n !== doc.documentElement &&
+        !n.contains(el) &&
+        /^(auto|scroll|overlay)$/.test(doc.defaultView.getComputedStyle(n).overflowY),
+    );
+    for (const n of [...own, ...menu]) {
       if (n.scrollHeight <= n.clientHeight + 4) continue;
       const span = opts[opts.length - 1].getBoundingClientRect().bottom - opts[0].getBoundingClientRect().top;
       return span < n.scrollHeight * 0.7 ? n : null;
@@ -1316,23 +1351,27 @@
     const multi = isMulti(el);
     // A dropdown button whose menu has a search box of its own (select2, Choices): typing goes there.
     const box = searchable ? el : menuSearchBox(el);
-    const pick = () => {
+    const pick = (value = v) => {
       const listed = describeOptions(opts);
       // A multi-select takes every slot or statement that fits, one per call, judged with the ones it took already
       // (react-select hides those): "None of these dates work" is never added to them. One ticked already stays.
       const list =
-        v.many && multi
-          ? M().matchAll([...listed, ...already.map((t) => ({ text: t, value: '' }))], v)
-          : [M().matchOption(listed, v)];
+        value.many && multi
+          ? M().matchAll([...listed, ...already.map((t) => ({ text: t, value: '' }))], value)
+          : [M().matchOption(listed, value)];
       const idx = list.find(
         (i) =>
           i >= 0 && i < opts.length && !already.includes(dom().textOf(opts[i])) && !(multi && isTicked(opts[i], el)),
       );
       return idx == null ? -1 : idx;
     };
-    let idx = pick();
-    const virtual = idx < 0 && !searchable && !v.many ? virtualScroller(listboxFor(el), opts) : null;
-    if (virtual) ({ opts, idx } = await findInVirtualList(el, virtual, v, already));
+    // A virtual list (only the rows in view are in the page) with a search box is searched rather than read through
+    // (Revolut's universities), and the option it offers for anything it lacks ("Other – not listed") waits until no
+    // search found yours.
+    const virtual = !searchable && !v.many ? virtualScroller(listboxFor(el), opts, el) : null;
+    const yours = virtual && box && v.fallback ? Object.assign({}, v, { fallback: null }) : v;
+    let idx = pick(yours);
+    if (idx < 0 && virtual && !box) ({ opts, idx } = await findInVirtualList(el, virtual, v, already));
     // Statements and slots are judged against the whole list as it opened: typing would only hide some.
     if (idx < 0 && box && !v.many) {
       const { full, narrow } = searchQueries(v);
@@ -1349,10 +1388,18 @@
         if (searchesOnEnter(el)) key(el, 'Enter');
         opts = await waitForOptions(el, SEARCH_WAIT, before, shown);
         if (opts.length) sawAny = true;
-        idx = pick();
+        idx = pick(yours);
         if (idx >= 0) break;
         if (!opts.length && !listboxFor(el)) break; // no suggestions at all: not a dropdown
       }
+    }
+    // Yours isn't in it: the option for that, searched for by its name ("Other").
+    for (const query of idx < 0 && yours !== v && box.isConnected ? v.fallback.slice(0, 2) : []) {
+      const before = optionsKey(opts.length ? opts : currentOptions(el));
+      typeQuery(box, query);
+      opts = await waitForOptions(el, SEARCH_WAIT, before);
+      idx = pick();
+      if (idx >= 0) break;
     }
     if (idx < 0) return { chosen: null, opts, multi, offered };
     let chosen = await choose(el, opts[idx]);
@@ -1371,9 +1418,7 @@
   async function fillCombo(field, v) {
     const el = field.el;
     const isInput = el.localName === 'input';
-    // react-select's isSearchable={false} renders a read-only dummy input that ignores typing.
-    const searchable =
-      isInput && !el.readOnly && el.getAttribute('aria-readonly') !== 'true' && el.getAttribute('inputmode') !== 'none';
+    const searchable = typeable(el);
     const items = v.kind === 'list' ? v.items.map((item) => JTF.fields.val(item)) : null;
     const chosen = [];
     let sawOptions = false;
@@ -1385,7 +1430,7 @@
       const r = await pickOne(el, value, searchable, chosen);
       if (r.opts.length || r.offered || listboxFor(el)) sawOptions = true;
       if (r.chosen) chosen.push(r.chosen);
-      else if (isInput) {
+      else if (isInput && !buttonInput(el)) {
         clearQuery(el);
         // Emptied, a filtering menu lists every option again on its next render, the first one highlighted (Downshift
         // picks that one when the box loses focus): let it render, so it is closed below rather than blurred.
@@ -1427,13 +1472,12 @@
     const el = field.el;
     if (field.kind !== 'combo' && field.kind !== 'combobox') return null;
     const isInput = el.localName === 'input';
-    const searchable =
-      isInput && !el.readOnly && el.getAttribute('aria-readonly') !== 'true' && el.getAttribute('inputmode') !== 'none';
+    const searchable = typeable(el);
     try {
       const opts = await openMenu(el, searchable);
       const multi = isMulti(el);
       // A virtual list has only the rows in view in the page: scroll through it for the rest.
-      const box = virtualScroller(listboxFor(el), opts);
+      const box = virtualScroller(listboxFor(el), opts, el);
       const options = (box ? await readVirtualList(el, box) : describeOptions(opts))
         .map((o) => JTF.util.cleanLabel(o.text, 200))
         .filter((t) => t && !M().isPlaceholder(JTF.util.normalize(t)) && !/^no (options|results)/i.test(t));

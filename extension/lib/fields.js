@@ -48,6 +48,8 @@
     languageLevel,
     languagesNamed,
     leftEmpty,
+    linkKey,
+    nextLink,
     otherwiseVal,
     parseEthnicity,
     parseSlots,
@@ -91,6 +93,11 @@
     return !!v && (!!v.otherwise || v.canonical === 'yes' || (v.canonical === 'no' && CHOICE.includes(kind)));
   }
 
+  // A list that says what to pick when yours isn't in it: Revolut's universities, "If not listed, select “Other – not
+  // listed”".
+  const OTHER_IF_UNLISTED =
+    /\bnot (listed|in (the|this) list|shown|found)\b.*\b(select|choose|pick|tick)\b.*\bother\b|\b(select|choose|pick|tick)\b.*\bother\b.*\bif\b.*\bnot (listed|in (the|this) list|shown|found)\b/;
+
   /** Resolve a field type to a value object (or null when the profile has nothing for it). */
   function resolve(type, profile, ctx) {
     ctx = ctx || {};
@@ -98,7 +105,14 @@
     const def = DEFS[type];
     if (!def || !profile) return null;
     try {
-      const v = def.get(profile, ctx) || null;
+      let v = def.get(profile, ctx) || null;
+      if (
+        v &&
+        !v.fallback &&
+        CHOICE.includes(ctx.kind) &&
+        OTHER_IF_UNLISTED.test(`${ctx.question || ''} ${ctx.help || ''}`)
+      )
+        v = Object.assign({}, v, { fallback: ['Other', 'Other (please specify)'] });
       // "If yes, give their name. Otherwise, enter N/A" in a text box, after a No: "N/A".
       const instead = v && v.canonical === 'no' && !v.otherwise ? otherwiseVal(ctx) : null;
       if (instead) return instead;
@@ -140,6 +154,8 @@
     languageEntries,
     languageLevel,
     languagesNamed,
+    linkKey,
+    nextLink,
     isAcknowledgement,
     isOptIn,
     parseEthnicity,

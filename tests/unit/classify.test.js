@@ -1739,6 +1739,42 @@ test('boxes that are not yours to fill from the profile: a name "if different", 
   assert.equal(ask('University email').text, 'am123@st-andrews.ac.uk');
 });
 
+test('Revolut: the questions over its "Select one" dropdowns, an "Other – not listed" university, links once', () => {
+  const ask = (question, describedby) =>
+    typeOf(desc({ question, describedby: describedby || '', placeholder: 'Select one' }, { kind: 'combo' }));
+  const note = 'If not listed, select “Other – not listed”';
+  assert.equal(ask('Select the university you’ve graduated (or are about to graduate) from', note), 'edu.school');
+  assert.equal(ask('Select the school you attended'), 'edu.school');
+  assert.equal(ask('Select your graduation year'), 'edu.end');
+  assert.equal(ask('In which year did you graduate from university?'), 'edu.end', 'the year, not the university');
+  assert.equal(ask('Select your faculty'), 'edu.field');
+  assert.equal(typeOf(desc('Which faculty member referred you?')), null, 'a person, not what you study');
+  assert.equal(ask('How did you hear about our job posting?'), 'job.referralSource');
+  assert.equal(ask('Have you previously been employed by Revolut?'), 'compliance.previouslyEmployed');
+  // What the list offers when yours isn't in it, as its note says: never without the note.
+  const p = fields.createProfile('Student');
+  p.education = [{ ...fields.blankEducation(), school: 'University of Sussex', endDate: '2027-06' }];
+  const school = (help) =>
+    fields.resolve('edu.school', p, {
+      jobContext: true,
+      index: 0,
+      kind: 'combo',
+      question: util.normalize('Select the university you’ve graduated (or are about to graduate) from'),
+      help: util.normalize(help),
+    });
+  const listed = opts('Imperial College London', 'University of Warwick', 'Other – not listed');
+  assert.equal(matcher.matchOption(listed, school(note)), 2);
+  assert.equal(matcher.matchOption(listed, school('')), -1);
+  assert.equal(school(note).text, 'University of Sussex', 'yours, when the list has it');
+  // A box asking for links in general takes your next link when its own is in another box already.
+  p.links = { linkedin: 'linkedin.com/in/alex', github: 'https://github.com/alex', portfolio: 'alex.dev', website: '' };
+  const taken = new Set(['https://www.linkedin.com/in/alex/', 'github.com/alex'].map(fields.linkKey));
+  const general = util.normalize('Links to your Github, portfolio, etc. (optional)');
+  assert.equal(fields.nextLink(p, taken, general).text, 'https://alex.dev');
+  assert.equal(fields.nextLink(p, new Set([...taken, fields.linkKey('https://alex.dev')]), general), null);
+  assert.equal(fields.nextLink(p, taken, util.normalize('GitHub profile')), null, 'a box asking for one thing');
+});
+
 test('every rule and autocomplete token names a type some part defines', () => {
   // "gen.start", "gen.end" and "gen.description" become an education or job entry's once the planner knows the section.
   const types = [...fields.RULES.map((r) => r.type), ...Object.values(fields.AUTOCOMPLETE).map(([type]) => type)];

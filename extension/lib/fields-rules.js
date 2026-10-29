@@ -703,7 +703,7 @@
         // "undergraduate" no longer matches (\b), so "graduation year (undergraduate degrees…)" is still a date.
         // "Graduate Engineer / Summer Internship" is a job for graduates, not a date. "What year did you graduate from
         // high school?" is your school's date (eduLevelOf), "Do you expect to graduate with honours?" about the class.
-        not: /^(did|have) you|^are you (a |an )?(recent |new |high school |college |university )?(graduate|grad|undergrad)s?\b|\b(after|before|once) (completing|finishing)\b|\binterested in\b|\bopportunit|post ?grad|\bgraduate (degree|school|program|student)|\bgraduate (engineer|analyst|scheme|role|position|job|programme|trainee|consultant|developer|intake|associate|internship)s?\b|\bgpa\b|\bgrades?\b|\bwith (first class )?(honou?rs|distinction|merit|a (first|2 ?1|2 ?2))\b/,
+        not: /^(did|have) you|^are you (a |an )?(recent |new |high school |college |university )?(graduate|grad|undergrad)s?\b|\b(university|school|college|institution) (that |which |where )?you( ve| have| will| are)? (\w+ ){0,2}graduat|\b(after|before|once) (completing|finishing)\b|\binterested in\b|\bopportunit|post ?grad|\bgraduate (degree|school|program|student)|\bgraduate (engineer|analyst|scheme|role|position|job|programme|trainee|consultant|developer|intake|associate|internship)s?\b|\bgpa\b|\bgrades?\b|\bwith (first class )?(honou?rs|distinction|merit|a (first|2 ?1|2 ?2))\b/,
       },
     ),
     // "What year did you begin your undergraduate (e.g. Bachelor's) degree?", "When did you start your studies?".
@@ -792,10 +792,11 @@
         not: /graduat|\bstart(?!s? of (summer|spring|autumn|fall|winter))|\bbegan|\bbegin(?!ning of (summer|spring|autumn|fall|winter))|\b(?<!year )complet|\b(?<!year )finish|\bentry|\bentered|high school|secondary|a levels?\b|gcse|\bresults?\b|\bgrades?\b|\bmarks\b/,
       },
     ),
-    // "Which university are you enrolled in, or from which institution did you receive your most recent degree?"
+    // "Which university are you enrolled in, or from which institution did you receive your most recent degree?",
+    // Revolut's "Select the university you've graduated (or are about to graduate) from".
     R(
       'edu.school',
-      /^(which|what) (university|school|college|institution)\b|\b(confirm|tell us|select|choose|state|indicate) (which|what) (university|school|college|institution)\b|^name of (the |your )?(university|college)\b|^educator$|^educational (establishment|institution|provider)$/,
+      /^(which|what) (university|school|college|institution)\b|\b(confirm|tell us|select|choose|state|indicate) (which|what) (university|school|college|institution)\b|^(select|choose|pick|enter|name) (the|your) (university|school|college|institution) (that |which |where )?you\b|^name of (the |your )?(university|college)\b|^educator$|^educational (establishment|institution|provider)$/,
       {
         not: /\b(university|college) degree\b|\b(university|college|school) (course|programme|program|subject)s?\b|\bschool (type|diploma|grades?|did you attend)\b|type of school|\bgraduat\w* (year|date)|\byear\b|\bgpa\b|\bcity\b|\bcountry\b|\blocation\b/,
       },
@@ -855,9 +856,10 @@
       not: /major|field|subject|discipline|categor|\byear\b|\bdate\b|level of|highest|degree of|\bdid you|have you|do you|are you|minimum|equivalent|\bclass\b|classification|\bgpa\b|\bgrades?\b|\bscore\b|\bresults?\b|\boutcome\b|\bpercentage\b|\bmarks?\b/,
       test: (desc) => !hasYesNoOptions(desc),
     }),
+    // Revolut's "Select your faculty" [Business / Computer Science / Engineering…]: what you study, not a faculty member.
     R(
       'edu.field',
-      /\bcategor(y|ies)\b.*\b(degree|course|studies|subject)\b|fields? of study|\bmajors?\b|\bdisciplines?\b|concentration|area of study|speciali[sz]ation|course of study|program(me)? of study|\bsubjects?\b|study (field|area)|^(your |main |academic )?field$|\bfield (studied|of expertise)\b|course name/,
+      /\bcategor(y|ies)\b.*\b(degree|course|studies|subject)\b|fields? of study|\bmajors?\b|\bdisciplines?\b|concentration|area of study|speciali[sz]ation|course of study|program(me)? of study|\bsubjects?\b|study (field|area)|^(your |main |academic )?field$|\bfield (studied|of expertise)\b|course name|\b(your|which|what) (academic )?faculty\b(?! (members?|staff|advis\w*|supervisors?|sponsors?|contacts?|referees?))|^faculty$/,
       {
         not: /minor|\b(secondary|second|additional|double|joint|other) (major|field|subject|discipline)|\bdid\b|field (sales|service|work|engineer|marketing|operations)|form ?field|field ?(set|label|wrapper|group|container|row|section|input)|\bsubjects? to\b|export control/,
       },
