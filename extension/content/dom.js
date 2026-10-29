@@ -742,6 +742,38 @@
     return '';
   }
 
+  // What a dropdown says before a choice that names no question: "Select one", "Please select", "Choose an option".
+  const BARE_CHOICE =
+    /^(please )?(select|choose|pick)( (one|an? (option|item|answer|value|response)|options?|from (the )?(list|options)))?$/;
+
+  /**
+   * The question over a dropdown labelled only "Select one" (Revolut's): the heading just before it, looking out from
+   * it until another field comes first ("1. Select your graduation year"), without its number; the note under that
+   * heading ("If not listed, select “Other – not listed”") is its help. { question, help, block } with `block` what
+   * holds the heading, or null when no heading comes before it.
+   */
+  function headingBefore(el) {
+    const me = new Set([el]);
+    for (let node = el, i = 0; node && node !== el.ownerDocument.body && i < 8; node = node.parentElement, i++) {
+      const notes = [];
+      for (let block = node.previousElementSibling, k = 0; block && k < 3; block = block.previousElementSibling, k++) {
+        if (block.matches(CONTROL_SELECTOR) || block.querySelector(CONTROL_SELECTOR)) return null;
+        const heading = block.matches(HEADING) ? block : block.querySelector(HEADING);
+        if (!heading) {
+          notes.unshift(textOf(block));
+          continue;
+        }
+        const head = textOf(heading);
+        const all = textOf(block);
+        const question = U.cleanLabel(head.replace(/^\d{1,3}\s*[.)]\s+/, ''), 300);
+        const help = U.cleanLabel([all.slice(all.indexOf(head) + head.length), ...notes].join(' '), 300);
+        return question ? { question, help, block } : null;
+      }
+      if (node.parentElement && foreignControls(node.parentElement, me) > 0) return null;
+    }
+    return null;
+  }
+
   /**
    * Jobvite only: each upload's "Select" button opens a popup (#attachmentDropdown) that is appended to
    * <body> in button order, and the file input inside is labelled just "File". The button says what the
@@ -813,6 +845,10 @@
     return '';
   }
 
+  /** How high a heading ranks: h2 is 2; a legend or a role="heading" without aria-level ranks below every <hN>. */
+  const headingLevel = (h) =>
+    /^h[1-6]$/.test(h.localName) ? Number(h.localName[1]) : Number(h.getAttribute('aria-level')) || 7;
+
   // A tab's panel or a dialog holds its own sections: what is outside is another part of the page (Ashby's job
   // details "Location", "Employment Type", "Department" beside the Application tab).
   const SECTION_END = '[role="tabpanel"], [role="dialog"], [role="alertdialog"], dialog';
@@ -831,17 +867,26 @@
       const parent = node.parentElement;
       if (!parent || parent === el.ownerDocument.body) break;
       let parts = null; // the text after the last heading before `node`
+      let level = 0; // that heading's level
       let open = false; // until a field or a field's label comes
       for (const c of parent.children) {
         if (c === node) break;
         const field = c.matches(CONTROL_SELECTOR) || !!c.querySelector(CONTROL_SELECTOR);
         const heading = c.matches(HEADING) ? c : field ? null : Array.from(c.querySelectorAll(HEADING)).pop();
+        // Fields under a heading as high as that one are a section of their own: the instructions before them were
+        // another section's (Revolut's Education note, "Please enter the name of the universities you are affiliated
+        // with…", is not for its questions after the diversity survey). An entry's own heading under them is lower.
+        const own = field && !heading ? c.querySelector(HEADING) : null;
         if (heading) {
           // A header block can hold the instructions after its heading.
           const all = textOf(c);
           const head = textOf(heading);
           parts = [head && all.includes(head) ? all.slice(all.lastIndexOf(head) + head.length) : ''];
+          level = headingLevel(heading);
           open = true;
+        } else if (own && parts && headingLevel(own) <= level) {
+          parts = null;
+          open = false;
         } else if (field || c.matches('label') || c.querySelector('label')) open = false;
         // What a person reads: never a script's source (Trakstar's reCAPTCHA set-up) or a hidden error template
         // (Eploy's "Sorry, the email address you have supplied is already registered…").
@@ -1009,6 +1054,9 @@
       if (type === 'search' && el.parentElement && el.parentElement.closest('[role="combobox"]')) return 'combobox';
       if (type === 'search' && el.getAttribute('role') === 'combobox' && popupOf(el) === 'listbox')
         return el.closest('header, nav, [role="banner"], [role="navigation"], [role="search"]') ? null : 'combobox';
+      // A button that opens a list is a dropdown that shows its choice as its value: Revolut's "Select one", whose
+      // <input type="button" aria-haspopup="listbox"> opens a list of options on a click.
+      if (type === 'button' && popupOf(el) === 'listbox') return 'combo';
       if (SKIP_INPUT_TYPES.has(type)) return null;
       if (PASS_THROUGH_TYPES.has(type)) return type;
       // A text box that is a spin button takes a number (Ant Design's InputNumber, Dayforce's "G.P.A."): typing "2:1"
@@ -1215,6 +1263,8 @@
   function describe(el, kind, members) {
     const s = {};
     const editor = isEditor(el);
+    // The question and note over a dropdown that only says "Select one" (see headingBefore).
+    let asked = null;
     const desc = {
       kind,
       inputType:
@@ -1260,6 +1310,14 @@
       s.name = el.getAttribute('name') || '';
       s.id = el.id || '';
       s.title = el.getAttribute('title') || '';
+      // A dropdown labelled only "Select one" (Revolut's) is asked by the heading over it: that is its question.
+      asked = combo && BARE_CHOICE.test(U.normalize(s.label || s.aria)) ? headingBefore(el) : null;
+      if (asked) {
+        s.placeholder = s.label || s.aria;
+        s.label = '';
+        s.aria = '';
+        s.question = asked.question;
+      }
       if (kind === 'checkbox' && !s.label) s.label = nextText(el);
       const vl = combo ? valueList(el) : null;
       // A box inside a value list ("Please specify *" after "Other..."): what the list asks, for an answer it lacked.
@@ -1271,7 +1329,7 @@
       // A widget standing in for a <select> (chosen) is read from outside: never its menu's options.
       let around = vl ? vl.root : el;
       if (native) while (around.parentElement && !around.parentElement.contains(native)) around = around.parentElement;
-      if (!s.label && !s.aria) s.nearby = contextLabel(around, new Set([around]));
+      if (!s.label && !s.aria && !asked) s.nearby = contextLabel(around, new Set([around]));
       const unit = U.normalize(s.label || s.nearby || '');
       if (/^(day|month|year)\b/.test(unit) && unit.split(' ').length <= 4) {
         const q = datePartsQuestion(el);
@@ -1309,15 +1367,17 @@
           group: o.parentElement && o.parentElement.localName === 'optgroup' ? o.parentElement.label : '',
         }));
     }
-    s.section = sectionHeading(el);
-    s.sectionHelp = sectionHelp(el);
+    // The heading over a "Select one" is its question, not its section: that is the one over the list of questions.
+    const inSection = asked ? asked.block.parentElement : el;
+    s.section = sectionHeading(inSection);
+    s.sectionHelp = sectionHelp(inSection);
     // An upload that takes several files ("Resume/CV/Transcripts" on Workday) can take the letter and transcript too.
     if (kind === 'file') desc.multiple = !!el.multiple;
     s.attrs = ATTR_HINTS.map((a) => el.getAttribute(a))
       .filter(Boolean)
       .join(' ');
     s.ancestors = ancestorHints(el);
-    s.describedby = describedBy(el);
+    s.describedby = describedBy(el) || (asked ? asked.help : '');
     return desc;
   }
 

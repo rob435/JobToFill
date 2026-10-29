@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <title>Apply for Graduate Programme | Revolut</title>
+  <style>
+    body { font: 15px/1.4 system-ui, sans-serif; margin: 24px auto; max-width: 656px; }
+    h3 { margin: 32px 0 16px; }
+    h4 { margin: 0; font-size: 16px; }
+    .vstack { display: flex; flex-direction: column; gap: 8px; }
+    .group { display: flex; flex-direction: column; gap: 16px; }
+    .hint { color: #717173; font-size: 13px; margin: 0; }
+    /* The RUI Input: a grey box whose label floats over the empty control (order: -1) and shrinks once it has a value. */
+    .rui-input .grey-box { background: #eee; border-radius: 12px; padding: 8px 16px; position: relative; }
+    .rui-input .hstack { display: flex; align-items: center; min-height: 24px; }
+    .rui-input .vstack { flex: 1; min-width: 0; gap: 0; }
+    .rui-input input { box-sizing: border-box; display: block; width: 100%; border: none; background: none; font: inherit; padding: 0; text-align: start; }
+    .rui-input input[type='button'] { cursor: pointer; min-height: 22px; }
+    .rui-input .rui-label { order: -1; color: #717173; pointer-events: none; white-space: nowrap; overflow: hidden; }
+    .rui-input .chevron { width: 24px; height: 24px; }
+    .rui-popover { position: absolute; z-index: 10; background: #fff; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2); border-radius: 12px; max-height: 256px; overflow-y: auto; }
+    .rui-popover .search { position: sticky; top: 0; z-index: 1; background: #fff; padding: 8px; }
+    .rui-popover .search input { width: 100%; box-sizing: border-box; }
+    .rui-popover [role='option'] { display: block; width: 100%; min-height: 56px; border: none; background: #fff; text-align: start; font: inherit; padding: 0 16px; cursor: pointer; }
+    .rui-checkbox { display: flex; gap: 8px; align-items: center; }
+    .bottom-sheet { position: fixed; inset: 20% 25%; background: #fff; border: 1px solid #888; padding: 16px; }
+    #state { background: #f4f4f4; padding: 8px; font-size: 12px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <!--
+    Revolut's careers application (www.revolut.com/careers/apply/<id>), built from its own components (its UI kit,
+    "RUI"):
+    - Every dropdown is an <input type="button" aria-haspopup="listbox"> labelled (aria-labelledby) by a <div> that
+      only says "Select one"; the question is the <h4> before it ("1. Select your graduation year"), with a note under
+      it. The menu opens on a click (no keys), appended to <body>: a search box (role="combobox") when there are more
+      than 14 options, then a role="listbox" of <button role="option">s that only has the rows in view and three either
+      side in the page (a virtual list).
+    - "Show us your work": a LinkedIn box, then "Links to your Github, portfolio, etc." boxes, a new one added each
+      time the last one is filled.
+    - Experience and Education: an "Add" that opens a bottom sheet (dialog) with its own dropdowns.
+    - The phone's country code is a dropdown button too ("+44"), beside the number box.
+    What the form would send is printed into #state.
+  -->
+  <h1>Apply for Graduate Programme</h1>
+  <form id="application">
+    <div class="group" id="general">
+      <h3>General information</h3>
+      <div>
+        <input type="file" name="file" style="display: none" accept=".pdf,.doc,.docx" aria-label="Attach CV" id="cv">
+        <span class="hint">Your CV (pdf, doc, docx)</span>
+        <div id="cv-name"></div>
+        <button type="button" id="cv-button">Attach CV</button>
+      </div>
+    </div>
+    <div class="group" id="work">
+      <h3>Show us your work</h3>
+      <div class="group" id="links"></div>
+    </div>
+    <div class="group" data-testid="work_experience" data-name="work_experiences">
+      <h3>Experience (optional)</h3>
+      <p class="hint">Please highlight your work experience to help us to process your application faster</p>
+      <div><button type="button" class="add" data-sheet="Add experience">Add</button></div>
+    </div>
+    <div class="group" data-testid="education" data-name="educations">
+      <h3>Education (optional)</h3>
+      <p class="hint">Please enter the name of the universities you are affiliated with and select the major you graduated with</p>
+      <div><button type="button" class="add" data-sheet="Add education">Add</button></div>
+    </div>
+    <div class="group" id="diversity">
+      <h3>Equal employment opportunity information (completion is voluntary and will not subject you to adverse treatment)</h3>
+      <p class="hint">Our company values diversity. To ensure that we comply with reporting requirements and to learn more about how we can increase diversity in our candidate pool, we invite you to voluntarily provide demographic information in a confidential survey at the end of this application. Providing this information is optional. It will not be accessible or used in the hiring process, and has no effect on your opportunity for employment.</p>
+      <div class="group" id="eeo"></div>
+    </div>
+    <div id="questions"></div>
+    <p class="hint">By submitting this application you agree to our Privacy Notice.</p>
+    <button type="submit" id="submit">Submit application</button>
+  </form>
+  <pre id="state"></pre>
+  <script>
+    const state = { links: [] };
+    const submitted = { count: 0 };
+    let uid = 0;
+    const show = () => {
+      document.getElementById('state').textContent = JSON.stringify({ ...state, submitted: submitted.count });
+    };
+    document.getElementById('application').addEventListener('submit', (e) => {
+      e.preventDefault();
+      submitted.count++;
+      show();
+    });
+
+    // RUI's Input: div[data-rui-input-type] > grey box > row > column(input, label) + icons. A label is a <div> the
+    // input names in aria-labelledby; without one, only the placeholder says what goes in.
+    function ruiInput({ type = 'text', placeholder, label, ariaLabel, attrs = {}, chevron }) {
+      const id = ++uid;
+      const wrap = document.createElement('div');
+      wrap.className = 'rui-input';
+      wrap.setAttribute('data-rui-input-type', type);
+      wrap.setAttribute('aria-disabled', 'false');
+      wrap.innerHTML =
+        '<div class="grey-box" aria-invalid="false" aria-disabled="false"><div class="hstack"><div class="vstack"></div></div></div>';
+      const input = document.createElement('input');
+      input.type = type;
+      input.setAttribute('placeholder', placeholder || ' ');
+      if (ariaLabel) input.setAttribute('aria-label', ariaLabel);
+      if (label && !ariaLabel) input.setAttribute('aria-labelledby', 'input-label-r' + id);
+      input.setAttribute('aria-invalid', 'false');
+      for (const [k, v] of Object.entries(attrs)) input.setAttribute(k, v);
+      const column = wrap.querySelector('.vstack');
+      column.append(input);
+      if (label) {
+        const l = document.createElement('div');
+        l.className = 'rui-label';
+        l.id = 'input-label-r' + id;
+        l.textContent = label;
+        column.append(l);
+      }
+      if (chevron) {
+        const icons = document.createElement('div');
+        icons.className = 'hstack';
+        icons.innerHTML =
+          '<svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="#191c1f" stroke-width="2"/></svg>';
+        wrap.querySelector('.hstack').append(icons);
+      }
+      return { wrap, input, box: wrap.querySelector('.grey-box') };
+    }
+
+    // RUI's Select: the input-button opens a popover under its box; a search box (role="combobox") when there are more
+    // than 14 options, then a virtual list of 56px rows (only those in view, and three either side, are in the page).
+    const ROW = 56;
+    const OVERSCAN = 3;
+    let openMenu = null;
+    function ruiSelect({ label, options, value, onChange, ariaLabel }) {
+      const { wrap, input, box } = ruiInput({
+        type: 'button',
+        label: ariaLabel ? null : label,
+        ariaLabel,
+        attrs: { 'aria-haspopup': 'listbox', 'aria-expanded': 'false' },
+        chevron: true,
+      });
+      input.value = value || '';
+      const searchable = options.length > 14;
+      const close = () => {
+        if (!openMenu || openMenu.input !== input) return;
+        openMenu.pop.remove();
+        openMenu = null;
+        input.setAttribute('aria-expanded', 'false');
+      };
+      const open = () => {
+        if (openMenu) openMenu.close();
+        const id = 'list-r' + ++uid;
+        const pop = document.createElement('div');
+        pop.className = 'rui-popover';
+        const r = box.getBoundingClientRect();
+        Object.assign(pop.style, {
+          left: r.left + scrollX + 'px',
+          top: r.bottom + scrollY + 4 + 'px',
+          width: r.width + 'px',
+        });
+        let query = '';
+        if (searchable) {
+          const s = document.createElement('div');
+          s.className = 'search';
+          s.innerHTML = `<input type="text" role="combobox" aria-owns="${id}" aria-controls="${id}" aria-autocomplete="list" aria-expanded="true" aria-label="Search" placeholder="Search">`;
+          pop.append(s);
+          s.querySelector('input').addEventListener('input', (e) => {
+            query = e.target.value.toLowerCase();
+            pop.scrollTop = 0;
+            draw();
+          });
+        }
+        const list = document.createElement('div');
+        list.setAttribute('role', 'listbox');
+        list.id = id;
+        list.setAttribute('aria-label', 'Options');
+        list.style.position = 'relative';
+        pop.append(list);
+        const draw = () => {
+          const shown = options.filter((o) => o.toLowerCase().includes(query));
+          list.style.height = shown.length * ROW + 'px';
+          const top = Math.max(0, pop.scrollTop - list.offsetTop);
+          const first = Math.max(0, Math.floor(top / ROW) - OVERSCAN);
+          const last = Math.min(shown.length - 1, Math.ceil((top + pop.clientHeight) / ROW) + OVERSCAN);
+          list.textContent = '';
+          for (let i = first; i <= last; i++) {
+            const row = document.createElement('div');
+            Object.assign(row.style, {
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              minHeight: ROW + 'px',
+              transform: `translateY(${i * ROW}px)`,
+            });
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.setAttribute('role', 'option');
+            b.id = id + '-option-' + i;
+            b.setAttribute('aria-selected', String(shown[i] === input.value));
+            b.innerHTML = '<span></span>';
+            b.firstChild.textContent = shown[i];
+            b.addEventListener('click', () => {
+              input.value = shown[i];
+              close();
+              input.focus();
+              onChange(shown[i]);
+              show();
+            });
+            row.append(b);
+            list.append(row);
+          }
+        };
+        pop.addEventListener('scroll', draw);
+        document.body.append(pop);
+        draw();
+        input.setAttribute('aria-expanded', 'true');
+        openMenu = { input, pop, close };
+        const search = pop.querySelector('input');
+        if (search) search.focus();
+      };
+      // A click toggles it; the keyboard does nothing on the box.
+      input.addEventListener('click', () => (openMenu && openMenu.input === input ? close() : open()));
+      return { wrap, input };
+    }
+    document.addEventListener('mousedown', (e) => {
+      if (openMenu && !openMenu.pop.contains(e.target) && e.target !== openMenu.input) openMenu.close();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && openMenu) openMenu.close();
+    });
+
+    const text = (key, placeholder, ariaLabel) => {
+      const { wrap, input } = ruiInput({ placeholder, ariaLabel });
+      input.addEventListener('input', () => {
+        state[key] = input.value;
+        show();
+      });
+      return wrap;
+    };
+
+    /* General information */
+    const general = document.getElementById('general');
+    const cv = document.getElementById('cv');
+    document.getElementById('cv-button').addEventListener('click', () => cv.click());
+    cv.addEventListener('change', () => {
+      state.cv = cv.files[0] ? cv.files[0].name : '';
+      document.getElementById('cv-name').textContent = state.cv;
+      show();
+    });
+    general.append(text('full_name', 'Full name'), text('email', 'Email'));
+    // The phone: a country-code button ("+44", picked from where you are) beside the number box, sent as one number.
+    const phone = document.createElement('div');
+    phone.style.display = 'flex';
+    phone.style.gap = '8px';
+    const CODES = [
+      '+44 United Kingdom', '+353 Ireland', '+34 Spain', '+33 France', '+93 Afghanistan', '+355 Albania',
+      '+213 Algeria', '+54 Argentina', '+61 Australia', '+43 Austria', '+32 Belgium', '+55 Brazil', '+1 Canada',
+      '+86 China', '+45 Denmark', '+49 Germany', '+30 Greece', '+91 India', '+39 Italy', '+81 Japan',
+      '+31 Netherlands', '+48 Poland', '+351 Portugal', '+46 Sweden', '+41 Switzerland', '+1 United States',
+    ];
+    let code = '+44';
+    let national = '';
+    const sendPhone = () => {
+      state.phone = national ? code + national : '';
+      show();
+    };
+    const codeBox = ruiSelect({
+      ariaLabel: 'Country code',
+      options: CODES,
+      value: '+44',
+      onChange: (label) => {
+        code = label.split(' ')[0];
+        codeBox.input.value = code;
+        sendPhone();
+      },
+    });
+    codeBox.wrap.style.width = '7rem';
+    const number = ruiInput({ type: 'tel', placeholder: 'Mobile phone' });
+    number.wrap.style.flex = '1';
+    number.input.addEventListener('input', () => {
+      // What is typed is read as a number in the chosen country: "+44 7700…" or "07700…" both give 7700…
+      national = number.input.value.replace(/\D/g, '').replace(new RegExp('^' + code.slice(1)), '').replace(/^0/, '');
+      sendPhone();
+    });
+    phone.append(codeBox.wrap, number.wrap);
+    general.append(phone);
+    const country = ruiSelect({
+      label: 'Country',
+      options: ['Afghanistan', 'France', 'Germany', 'Ireland', 'Italy', 'Spain', 'United Kingdom', 'United States'],
+      value: 'United Kingdom',
+      onChange: (v) => (state.country = v),
+    });
+    state.country = 'United Kingdom';
+    general.append(country.wrap, text('current_company', 'Current company (optional)'));
+
+    /* Show us your work: a LinkedIn box, then link boxes that grow by one each time the last is filled. */
+    const linksBox = document.getElementById('links');
+    const linkedin = text('linkedin', 'LinkedIn profile (optional)');
+    linksBox.append(linkedin);
+    let links = [];
+    const sendLinks = () => {
+      state.links = links.map((l) => l.input.value).filter(Boolean);
+      show();
+    };
+    const addLink = () => {
+      const { wrap, input } = ruiInput({ placeholder: 'Links to your Github, portfolio, etc. (optional)' });
+      const entry = { wrap, input };
+      links.push(entry);
+      input.addEventListener('input', () => {
+        if (links[links.length - 1].input.value !== '') addLink();
+        sendLinks();
+      });
+      // Leaving a box: the empty ones before the last go.
+      input.addEventListener('blur', () => {
+        for (const l of links.slice(0, -1)) if (!l.input.value) l.wrap.remove();
+        links = links.filter((l, i) => l.input.value || i === links.length - 1);
+        sendLinks();
+      });
+      linksBox.append(wrap);
+    };
+    addLink();
+
+    /* Experience and Education: "Add" opens a bottom sheet of the entry's own fields. */
+    state.sheets = 0;
+    for (const add of document.querySelectorAll('button.add')) {
+      add.addEventListener('click', () => {
+        state.sheets++;
+        const sheet = document.createElement('div');
+        sheet.className = 'bottom-sheet';
+        sheet.setAttribute('role', 'dialog');
+        sheet.setAttribute('aria-modal', 'true');
+        sheet.setAttribute('aria-labelledby', 'sheet-title');
+        sheet.innerHTML = `<button type="button" aria-label="Close" class="close">×</button><h2 id="sheet-title"></h2><div class="group"></div><button type="button" class="cancel">Cancel</button> <button type="button" disabled>Add</button>`;
+        sheet.querySelector('h2').textContent = add.dataset.sheet;
+        const university = ruiSelect({
+          label: add.dataset.sheet === 'Add education' ? 'University' : 'Company',
+          options: ['Imperial College London', 'University of Cambridge', 'University of Oxford'],
+          onChange: () => {},
+        });
+        sheet.querySelector('.group').append(university.wrap);
+        const shut = () => {
+          sheet.remove();
+          show();
+        };
+        sheet.querySelector('.close').addEventListener('click', shut);
+        sheet.querySelector('.cancel').addEventListener('click', shut);
+        document.body.append(sheet);
+        show();
+      });
+    }
+
+    /* The diversity survey: two dropdowns, each labelled by what it asks. */
+    const eeo = document.getElementById('eeo');
+    eeo.append(
+      ruiSelect({
+        label: 'Select gender you identify with (optional)',
+        options: ['Female', 'Male', 'Non-binary', 'Prefer not to say'],
+        onChange: (v) => (state.gender = v),
+      }).wrap,
+      ruiSelect({
+        label: 'Select ethnicity (optional)',
+        options: ['Asian', 'Black', 'Hispanic or Latino', 'Mixed', 'White', 'Other', 'Prefer not to say'],
+        onChange: (v) => (state.ethnicity = v),
+      }).wrap,
+    );
+
+    /* The job's own questions: sections of numbered questions, each an <h4> (and a note) before its control. */
+    const UNIVERSITIES = [
+      'Aston University', 'Bocconi University', 'Cardiff University', 'Durham University', 'ETH Zurich',
+      'HEC Paris', 'Imperial College London', 'King’s College London', 'Lancaster University',
+      'London School of Economics and Political Science', 'Loughborough University', 'Newcastle University',
+      'Queen Mary University of London', 'Technical University of Munich', 'Trinity College Dublin',
+      'University College London', 'University of Bath', 'University of Birmingham', 'University of Bristol',
+      'University of Cambridge', 'University of Edinburgh', 'University of Exeter', 'University of Glasgow',
+      'University of Leeds', 'University of Manchester', 'University of Nottingham', 'University of Oxford',
+      'University of Southampton', 'University of St Andrews', 'University of Warwick', 'University of York',
+      'Other – not listed',
+    ];
+    const SECTIONS = [
+      {
+        title: 'University studies',
+        questions: [
+          {
+            key: 'university',
+            type: 'dropdown',
+            title: 'Select the university you’ve graduated (or are about to graduate) from',
+            subtitle: 'If not listed, select “Other – not listed”',
+            options: UNIVERSITIES,
+          },
+          {
+            key: 'graduation_year',
+            type: 'dropdown',
+            title: 'Select your graduation year',
+            options: ['2020', '2021', '2022', '2023', '2024', '2025', '2026', '2027', '2028', '2029', '2030'],
+          },
+          {
+            key: 'faculty',
+            type: 'dropdown',
+            title: 'Select your faculty',
+            options: [
+              'Architecture', 'Arts & Humanities', 'Business', 'Chemistry', 'Computer Science', 'Economics',
+              'Engineering', 'Finance', 'Law', 'Mathematics', 'Medicine', 'Natural Sciences', 'Social Sciences', 'Other',
+            ],
+          },
+          {
+            key: 'olympiads',
+            type: 'dropdown',
+            title:
+              'Have you participated in any Academic Olympiads or other internationally recognised competitions (e.g., during high school or university)?',
+            subtitle: 'Select the option that best applies',
+            options: [
+              'Yes – I won a medal at an international olympiad',
+              'Yes – I took part in an international olympiad',
+              'Yes – national level only',
+              'No',
+            ],
+          },
+          { key: 'competition', type: 'text', title: 'Which competition did you participate in?', optional: true },
+          { key: 'availability', type: 'dropdown', title: 'Are you available for the full duration of the programme?', options: ['Yes', 'No'] },
+        ],
+      },
+      {
+        title: 'Employer branding',
+        questions: [
+          {
+            key: 'heard',
+            type: 'dropdown',
+            title: 'How did you hear about our job posting?',
+            optional: true,
+            options: ['Friend or colleague', 'Glassdoor', 'Google', 'Instagram', 'LinkedIn', 'Revolut website', 'University event', 'Other'],
+          },
+          {
+            key: 'met',
+            type: 'dropdown',
+            title: 'Have we met at a conference or event? Tell us which one.',
+            optional: true,
+            options: ['No', 'Bright Network Festival', 'Careers fair', 'Hackathon', 'Other'],
+          },
+        ],
+      },
+      {
+        title: 'Previous employment',
+        questions: [
+          { key: 'previously_employed', type: 'dropdown', title: 'Have you previously been employed by Revolut?', options: ['Yes', 'No'] },
+        ],
+      },
+      {
+        title: 'Personal information',
+        questions: [
+          { key: 'pronouns', type: 'checkbox', title: 'What are your pronouns?', options: ['He/him', 'She/her', 'They/them', 'Prefer not to say', 'Other'] },
+        ],
+      },
+    ];
+    const questions = document.getElementById('questions');
+    for (const section of SECTIONS) {
+      const block = document.createElement('div');
+      block.className = 'group';
+      block.innerHTML = '<h3></h3><div class="group"></div>';
+      block.querySelector('h3').textContent = section.title;
+      const list = block.lastChild;
+      section.questions.forEach((q, n) => {
+        const head = document.createElement('div');
+        head.className = 'vstack';
+        head.innerHTML = '<h4></h4>';
+        head.firstChild.textContent = `${n + 1}. ${q.title}${q.optional ? ' (optional)' : ''}`;
+        if (q.subtitle) {
+          const p = document.createElement('p');
+          p.className = 'hint';
+          p.textContent = q.subtitle;
+          head.append(p);
+        }
+        list.append(head);
+        if (q.type === 'dropdown')
+          list.append(ruiSelect({ label: 'Select one', options: q.options, onChange: (v) => (state[q.key] = v) }).wrap);
+        else if (q.type === 'text') list.append(text(q.key, '', q.title));
+        else {
+          const boxes = document.createElement('div');
+          boxes.className = 'vstack';
+          state[q.key] = [];
+          for (const option of q.options) {
+            const l = document.createElement('label');
+            l.className = 'rui-checkbox';
+            l.innerHTML = '<input type="checkbox"><span></span>';
+            l.lastChild.textContent = option;
+            l.firstChild.addEventListener('change', (e) => {
+              state[q.key] = e.target.checked
+                ? [...state[q.key], option]
+                : state[q.key].filter((o) => o !== option);
+              show();
+            });
+            boxes.append(l);
+          }
+          list.append(boxes);
+        }
+      });
+      questions.append(block);
+    }
+    show();
+  </script>
+</body>
+</html>

@@ -73,6 +73,8 @@ tests/
                        (bamboohr.html: BambooHR's menu-button dropdowns and A-level questions;
                        pinpoint-accenture.html: Accenture's Pinpoint questions, react-select with
                        follow-up boxes drawn only once "Other" is chosen;
+                       revolut.html: Revolut's "Select one" buttons under their questions, opening
+                       virtual lists, and its links that grow a box at a time;
                        msforms.html: Microsoft Forms' question notes and date picker; eploy.html:
                        an upload in a dialog of its own; workday-steps.html: an application in four steps, its
                        sections' own "Add" and the Review step's "Submit"; dayforce-upload.html: two uploads

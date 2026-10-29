@@ -166,6 +166,33 @@
     return (desc.options || []).filter((o) => HONORIFIC.test(U.normalize(o.text))).length >= 2;
   }
 
+  /** A link as a key, however it is written: "https://www.github.com/ada/" and "github.com/ada" are one. */
+  const linkKey = (url) =>
+    String(url || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^[a-z][a-z\d+.-]*:\/\//, '')
+      .replace(/^www\./, '')
+      .replace(/[/?#]+$/, '');
+
+  // A box that asks for links in general, one at a time: Revolut's "Links to your Github, portfolio, etc.", "Other
+  // links", "Additional URLs".
+  const LINKS_ASKED =
+    /\b(links|urls|profiles|websites|etc)\b|\b(other|additional|further|more) (link|url|profile|website)\b/;
+
+  /**
+   * Your next link for a box asking for links in general whose own link is in another box already (`taken`, by
+   * linkKey): the first of yours not on the page yet, else null. A box asking for one thing gets nothing more.
+   */
+  function nextLink(p, taken, question) {
+    if (!LINKS_ASKED.test(question || '')) return null;
+    for (const key of ['github', 'portfolio', 'website', 'linkedin', 'twitter']) {
+      const v = linkVal(p.links[key]);
+      if (v && !taken.has(linkKey(v.text))) return v;
+    }
+    return null;
+  }
+
   // What each type of field is filled with.
   Object.assign((P.DEFS = P.DEFS || {}), {
     'name.full': { label: 'Full name', get: (p) => val(fullName(p)) },
@@ -600,5 +627,13 @@
     },
   });
 
-  Object.assign(P, { cardBrand, hasHonorificOptions, languageEntries, languageLevel, languagesNamed });
+  Object.assign(P, {
+    cardBrand,
+    hasHonorificOptions,
+    languageEntries,
+    languageLevel,
+    languagesNamed,
+    linkKey,
+    nextLink,
+  });
 })(typeof globalThis !== 'undefined' ? globalThis : this);
