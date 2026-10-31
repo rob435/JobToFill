@@ -471,6 +471,19 @@ test('contact and identity questions that only look like personal fields', () =>
   // Leonardo's "Country of Birth" textarea was left blank: no rule took it, so no profile answer.
   assert.equal(ask('Country of Birth', 'textarea'), 'birthCountry');
   assert.equal(ask('Country of birth'), 'birthCountry');
+  // Confirming the name given is the legal one, never the name box itself.
+  assert.equal(
+    ask('Have you added your full legal name and surname (including any middle names)?', 'select', ['Yes', 'No']),
+    'personal.nameIsLegal',
+  );
+  assert.equal(
+    ask('Please confirm that your name is your legal name as per your identification documents', 'select', [
+      'Yes',
+      'No',
+    ]),
+    'personal.nameIsLegal',
+  );
+  assert.equal(ask('Full legal name'), 'name.full');
   assert.equal(ask('Date of birth', 'date'), 'dob');
   // Not your nationality: whether you hold another (No with one in your profile).
   assert.equal(ask('Do you hold any other citizenships?', 'select', ['Yes', 'No']), 'personal.dualNationality');

@@ -957,6 +957,13 @@
         not: /first|company|school|card|preferred|employer|father|mother|spouse|emergency|reference|referr|manager|maiden|previous|former|other|\bvor(name)? (und|&) nachname|\bnombre y apellido|\bprenom (et|&) nom\b|\bnom (et|&) prenom|\bnome (e|&) cognome/,
       },
     ),
+    // "Have you added your full legal name and surname…?", "Please confirm that your name is your legal name as per
+    // your identification documents": Yes, as forms always get the legal name.
+    R(
+      'personal.nameIsLegal',
+      /\b(added|entered|provided|used|given|confirm\w*)\b.*\b(full )?legal (name|surname)\b|\bname is (your|my) legal name\b/,
+      { kinds: CHOICE },
+    ),
     R('name.full', /\b(first|given) (name )?(and|&|\/) (last|sur|family) ?names?\b|\bfull legal name\b/),
     R(
       'name.full',

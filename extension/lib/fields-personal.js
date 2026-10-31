@@ -217,6 +217,8 @@
         return val(first && !full ? p.personal.firstName : fullName(p));
       },
     },
+    // Forms always get the legal name, so the name given is the legal one.
+    'personal.nameIsLegal': { label: 'Name given is your legal name', get: (p) => (fullName(p) ? val('Yes') : null) },
     'name.prefix': simple('Title (Mr/Ms)', 'personal.prefix'),
     pronouns: simple('Pronouns', 'personal.pronouns'),
     dob: { label: 'Date of birth', path: 'personal.dob', get: (p, ctx) => dateVal(p.personal.dob, ctx.part) },
