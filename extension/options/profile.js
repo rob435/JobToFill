@@ -153,6 +153,10 @@ const FORMS = {
         title: 'Other',
         fields: [
           f('personal.dob', 'Date of birth', { type: 'date' }),
+          f('personal.birthCountry', 'Country of birth', {
+            list: 'countries',
+            hint: 'Where you were born, as the country’s name. Forms that ask “Country of birth” get it as written here.',
+          }),
           f('personal.nationality', 'Nationality / citizenship', {
             list: 'countries',
             hint: 'Two? Write both: “British, Irish”. With your country, this answers US sanctions questions (“…a citizen or resident of Cuba, Iran…?”).',

@@ -42,6 +42,7 @@
         preferredName: '',
         pronouns: '',
         dob: '',
+        birthCountry: '',
         nationality: '',
       },
       contact: {

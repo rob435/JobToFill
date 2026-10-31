@@ -231,6 +231,7 @@
       .filter(Boolean);
     const facts = [
       p.nationality && `Nationality: ${p.nationality}`,
+      p.birthCountry && `Country of birth: ${p.birthCountry}`,
       j.authorized &&
         `Has the right to work where they live (${(profile.address && profile.address.country) || 'home country'}): ${j.authorized}`,
       j.sponsorship && `Needs visa sponsorship: ${j.sponsorship}`,

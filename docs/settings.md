@@ -8,7 +8,7 @@ Open the settings from the popup’s _Edit profile & settings_. Everything is sa
 
 | Section                 | What it holds                                                                                                                                                                                                  |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| _Personal & contact_    | Name (your preferred name signs your cover letters; forms get your legal name), email and university email, phone, address, date of birth, nationality                                                         |
+| _Personal & contact_    | Name (your preferred name signs your cover letters; forms get your legal name), email and university email, phone, address, date of birth, country of birth, nationality                                       |
 | _Links_                 | LinkedIn, GitHub, portfolio, personal website, Twitter / X                                                                                                                                                     |
 | _Work eligibility_      | Screening answers (right to work, sponsorship, countries you can work in, office, adjustments, relocation, clearance, offers, non-competes), _Conflicts of interest_, preferences and _Interview availability_ |
 | _Education_             | One entry per school or university, most recent first: degree, subject, GPA or average mark (“3.8/4.0”, “68%”) and UK classification (“2:1”), location, dates                                                  |

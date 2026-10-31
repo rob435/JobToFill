@@ -652,6 +652,12 @@
       { kinds: CHOICE },
     ),
     R('pronouns', /\bpronouns?\b/), // not "how your name is pronounced"
+    // "Country of Birth" (Leonardo's application questions), not the date: a Chinese national born in the UK still
+    // gets the country they were born in from Settings › Profile, the one answer their profile is for.
+    R(
+      'birthCountry',
+      /\bcountry of birth\b|\bbirth country\b|\bcountry (you were|where you were) born\b|\bborn in which country\b/,
+    ),
     R(
       'dob',
       /birth ?(date|day)|date of birth|\bdob\b|\bbday\b|birthday|geburtsdatum|fecha de nacimiento|date de naissance|data di nascita/,

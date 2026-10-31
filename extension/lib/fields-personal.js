@@ -220,6 +220,7 @@
     'name.prefix': simple('Title (Mr/Ms)', 'personal.prefix'),
     pronouns: simple('Pronouns', 'personal.pronouns'),
     dob: { label: 'Date of birth', path: 'personal.dob', get: (p, ctx) => dateVal(p.personal.dob, ctx.part) },
+    birthCountry: simple('Country of birth', 'personal.birthCountry', countryVal),
     // "Age: 18 - 21 / 22 - 30": worked out from the date of birth.
     age: {
       label: 'Age',

@@ -468,6 +468,10 @@ test('contact and identity questions that only look like personal fields', () =>
   assert.equal(ask('Please state your notice period'), 'job.noticePeriod');
   assert.equal(ask('Please state any reasonable adjustments you require', 'textarea'), null);
   assert.equal(ask('Nationality', 'select'), 'nationality');
+  // Leonardo's "Country of Birth" textarea was left blank: no rule took it, so no profile answer.
+  assert.equal(ask('Country of Birth', 'textarea'), 'birthCountry');
+  assert.equal(ask('Country of birth'), 'birthCountry');
+  assert.equal(ask('Date of birth', 'date'), 'dob');
   // Not your nationality: whether you hold another (No with one in your profile).
   assert.equal(ask('Do you hold any other citizenships?', 'select', ['Yes', 'No']), 'personal.dualNationality');
   assert.equal(ask('Dual nationality'), 'personal.dualNationality');
