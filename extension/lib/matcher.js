@@ -1039,11 +1039,17 @@
       // Chicago Trading Co's "What is your expected graduation month?" after Greenhouse's education block (an
       // unrecognised "Alternate Email" between them) asks again what the entry had: still your degree, not a new entry.
       const ownQuestion = st.index >= 0 && key !== st.lead && norm(questionText(descs[i])).split(' ').length >= 6;
+      // Virtu's "Which university are you currently attending? Select "Other" if not listed" straight after Greenhouse's
+      // School, Degree, Discipline and End year: the entry's first question asked again in words of its own is the
+      // same degree, not a second entry (a second entry starts with the same short "School").
+      const askedAgain =
+        key === st.lead && st.seen.has(key) && !sameLabel && norm(questionText(descs[i])).split(' ').length >= 6;
       if (
         !detached &&
         ((prev !== g &&
           ((st.seen.has(key) && (key !== st.lead || runLength(results, i, g) < 2 || !sameLabel)) || ownQuestion)) ||
-          (ownQuestion && st.seen.has(key)))
+          (ownQuestion && st.seen.has(key)) ||
+          askedAgain)
       )
         detached = g;
       if (detached === g) {

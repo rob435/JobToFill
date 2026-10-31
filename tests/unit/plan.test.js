@@ -483,6 +483,26 @@ test('a question asked again among the screening questions is about your first e
     'edu.degree#1',
     'edu.end#1',
   ]);
+  // Virtu: Greenhouse's education block, then its own questions about the same university, straight after it.
+  const virtu = matcher.plan(
+    [
+      desc('School', { kind: 'select', options: opts('University College London', 'Other') }),
+      desc('Degree'),
+      desc('Discipline'),
+      desc('End date year'),
+      desc('Which university are you currently attending? Select "Other" if not listed', {
+        kind: 'select',
+        options: opts('University College London', 'Other'),
+      }),
+      desc('Overall Grade', { kind: 'select', options: opts('First', '2:1') }),
+      desc('What is your expected graduation year?', { kind: 'select', options: opts('2027', '2028') }),
+    ],
+    p,
+  );
+  assert.deepEqual(
+    types(virtu).map((t) => t.replace(/:.*/, '')),
+    ['edu.school#0', 'edu.degree#0', 'edu.field#0', 'edu.end#0', 'edu.school#0', 'edu.classification#0', 'edu.end#0'],
+  );
 });
 
 test('date formats spelled out in the label', () => {
