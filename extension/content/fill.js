@@ -729,6 +729,36 @@
   /** Workday's search prompts look up what was typed when Enter is pressed. */
   const searchesOnEnter = (el) => el.getAttribute('data-uxi-widget-type') === 'selectinput';
 
+  /** A list row with a tick box of its own (Workday's Skills): a click on it ticks or unticks that box. */
+  const tickBox = (option) => !!option.querySelector('input[type="checkbox"]');
+
+  /**
+   * What a Workday prompt picked by itself for a search: it takes a search's only result (loadSearchResults), as a new
+   * chip with the list closed (Field of Study, "Country Phone Code"), or ticked in the list a multi-select keeps open
+   * (Skills). { text, multi } when that is `v`: it is never clicked again, which would take it back. One that isn't is
+   * taken off again (its tick, or its chip's remove button), and null. `held`: the chips' text before the search.
+   */
+  async function promptPicked(el, v, opts, held) {
+    const was = new Set(held.map((t) => JTF.util.normalize(t)));
+    const added = chipsOf(el).filter((c) => !was.has(JTF.util.normalize(dom().textOf(c))));
+    const lone = opts.length === 1 && tickBox(opts[0]) && isTicked(opts[0], el) ? opts[0] : null;
+    if (!added.length && !(lone && !was.has(JTF.util.normalize(dom().textOf(lone))))) return null;
+    const chip = added[added.length - 1];
+    const text = chip ? dom().textOf(chip) : dom().textOf(lone);
+    if (M().matchOption([{ text, value: '' }], v) === 0) {
+      if (lone) takesSeveral.add(el);
+      return { text, multi: !!lone || isMulti(el) };
+    }
+    const remove =
+      !lone &&
+      chip &&
+      chip.querySelector('[data-automation-id="DELETE_charm"], [aria-label^="Remove" i], [title^="Remove" i]');
+    if (lone) pointerClick(underPointer(lone));
+    else if (remove) pointerClick(remove);
+    await sleep(60);
+    return null;
+  }
+
   /**
    * Are `a` and `b` parts of one widget (a box and its toggle button, iCIMS's box and the menu after it): nothing else
    * to fill around them? The <select> a widget keeps hidden for the form is no other field.
@@ -914,8 +944,11 @@
       .map((o) => o.textContent)
       .join('|');
 
-  /** Wait until the options stop changing (async searches return in stages), up to `timeout` ms. */
-  async function waitForOptions(el, timeout, previous, staleList) {
+  /**
+   * Wait until the options stop changing (async searches return in stages), up to `timeout` ms, or until `done()`
+   * says the search is over another way.
+   */
+  async function waitForOptions(el, timeout, previous, staleList, done) {
     const start = Date.now();
     let lastKey = null;
     let stable = 0;
@@ -923,6 +956,7 @@
     let opts = [];
     while (Date.now() - start < timeout) {
       opts = currentOptions(el);
+      if (done && done()) return opts;
       // An empty menu that has stopped loading ("No options") won't fill up later. A Workday prompt's search
       // answers with a list of its own ("No Items."): that one is final at once.
       if (!opts.length && Date.now() - start > 900 && !isLoading(el)) return opts;
@@ -1207,8 +1241,9 @@
       const now = currentOptions(el);
       if (!option.isConnected && now.length && optionsKey(now) !== optionsKey(before)) return { drilled: true };
     }
-    // Some widgets only take the keyboard: highlight the option, then press Enter.
-    if (option.isConnected && el.localName === 'input') {
+    // Some widgets only take the keyboard: highlight the option, then press Enter. Not a Workday prompt, where Enter
+    // searches again and a row's tick is toggled by a click that may only show late.
+    if (option.isConnected && el.localName === 'input' && !searchesOnEnter(el)) {
       await chooseByKeyboard(el, option);
       for (let waited = 0; waited < 150; waited += 30) {
         if ((native && nativeTook(native, text, held)) || selectionShows(el, text, typed) || !listboxFor(el))
@@ -1354,14 +1389,18 @@
     const pick = (value = v) => {
       const listed = describeOptions(opts);
       // A multi-select takes every slot or statement that fits, one per call, judged with the ones it took already
-      // (react-select hides those): "None of these dates work" is never added to them. One ticked already stays.
+      // (react-select hides those): "None of these dates work" is never added to them. One ticked already stays, and
+      // so does a row whose own tick box is ticked, whatever the list says of itself: a click would untick it.
       const list =
         value.many && multi
           ? M().matchAll([...listed, ...already.map((t) => ({ text: t, value: '' }))], value)
           : [M().matchOption(listed, value)];
       const idx = list.find(
         (i) =>
-          i >= 0 && i < opts.length && !already.includes(dom().textOf(opts[i])) && !(multi && isTicked(opts[i], el)),
+          i >= 0 &&
+          i < opts.length &&
+          !already.includes(dom().textOf(opts[i])) &&
+          !((multi || tickBox(opts[i])) && isTicked(opts[i], el)),
       );
       return idx == null ? -1 : idx;
     };
@@ -1383,11 +1422,21 @@
         // Not yet this search's answer: the results an earlier one left open (Workday's Skills keeps its list open
         // after each pick, until the next search replaces it).
         const before = optionsKey(opts.length ? opts : currentOptions(el));
-        const shown = searchesOnEnter(el) ? listboxFor(el) : undefined;
+        const prompt = searchesOnEnter(el);
+        const shown = prompt ? listboxFor(el) : undefined;
+        const held = prompt ? chipsOf(el).map((c) => dom().textOf(c)) : [];
         typeQuery(box, query);
-        if (searchesOnEnter(el)) key(el, 'Enter');
-        opts = await waitForOptions(el, SEARCH_WAIT, before, shown);
+        if (prompt) key(el, 'Enter');
+        // A Workday prompt picks a search's only result itself: a new chip ends the wait at once.
+        const chipText = () =>
+          chipsOf(el)
+            .map((c) => dom().textOf(c))
+            .join('|');
+        const picked = prompt ? () => chipText() !== held.join('|') : null;
+        opts = await waitForOptions(el, SEARCH_WAIT, before, shown, picked);
         if (opts.length) sawAny = true;
+        const own = prompt ? await promptPicked(el, yours, opts, held) : null;
+        if (own) return { chosen: own.text, opts, multi: multi || own.multi, offered };
         idx = pick(yours);
         if (idx >= 0) break;
         if (!opts.length && !listboxFor(el)) break; // no suggestions at all: not a dropdown
@@ -1932,7 +1981,9 @@
     // `correct`: what the site chose for you is replaced when it isn't yours (a country taken from your IP address).
     const had = hasValue(field);
     const correcting = had && !opts.overwrite && !!opts.correct && !agrees(field, v);
-    if (had && !opts.overwrite && !correcting) return { status: 'skipped', reason: 'has value' };
+    // `add`: more picks for a list that takes several (the skills your CV names beside your profile's), beside its own.
+    const adding = had && !!opts.add && !!v && v.kind === 'list' && /^combo(box)?$/.test(kind) && isMulti(el);
+    if (had && !opts.overwrite && !correcting && !adding) return { status: 'skipped', reason: 'has value' };
     try {
       switch (kind) {
         case 'select': {
@@ -2299,12 +2350,25 @@
     while (highlighted.length) clearOne(highlighted[0].target);
   }
 
+  /**
+   * What a dropdown that takes several holds, its picks one by one ("Python (Programming Language)", "SQL"): null for
+   * one that takes a single choice, or isn't known yet to take several.
+   */
+  function listPicks(field) {
+    if (field.kind !== 'combobox' && field.kind !== 'combo') return null;
+    if (!isMulti(field.el)) return null;
+    return chipsOf(field.el)
+      .map((c) => dom().textOf(c))
+      .filter(Boolean);
+  }
+
   JTF.fill = {
     apply,
     repair,
     undo,
     hasValue,
     currentValue,
+    listPicks,
     highlight,
     clearHighlights,
     typeValue,

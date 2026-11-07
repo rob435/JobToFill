@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <title>Summer Intern - 2027</title>
+  <!--
+    A live application's "My Experience" step (Cambridge Associates, en-US), its markup as the page has it, with
+    Workday's own widgets (workday-widgets.js):
+    - Education: "From" and "To (Actual or Expected)" are year spin buttons ("YYYY", aria-label "Year") under a
+      <fieldset> whose <legend> holds the label, in a wrapper of their own below the entry; Field of Study is a search
+      prompt in two more wrappers.
+    - Search prompts pick a search's only result themselves (loadSearchResults): a chip, the list closed, for Field of
+      Study; a tick in the list, which stays open, for Skills. A click on that row again takes it back.
+    - Languages: none until "Add" (then "Add Another"); each entry's "I am fluent in this language." is a checkbox
+      named "native", as in every other entry, and Reading, Speaking and Writing are Selects named by a hash, labelled
+      "Reading" etc. and announced "Reading Select One Required".
+  -->
+  <style>
+    body { font: 14px system-ui; max-width: 760px; margin: 24px auto; }
+    [data-automation-id^="formField"] { margin: 10px 0; display: grid; gap: 4px; position: relative; }
+    button[aria-haspopup] { text-align: left; padding: 6px; }
+    fieldset { border: 0; padding: 0; margin: 0; }
+    [data-automation-id="dateInputWrapper"] { display: flex; gap: 6px; }
+  </style>
+</head>
+<body>
+  <h2>Summer Intern - 2027</h2>
+  <div data-automation-id="applyFlowMyExpPage">
+    <h3>My Experience</h3>
+    <div role="group" aria-labelledby="Education-section">
+      <h4 id="Education-section">Education</h4>
+      <div role="group" aria-labelledby="Education-1-panel">
+        <div><h5 id="Education-1-panel">Education 1</h5></div>
+        <div data-fkit-id="education-1--null">
+          <div data-automation-id="formField-schoolName" data-fkit-id="education-1--schoolName">
+            <label for="education-1--schoolName"><span>School or University<abbr aria-hidden="true">*</abbr></span></label>
+            <div><div><input type="text" id="education-1--schoolName" name="schoolName" aria-required="true"></div><div></div></div>
+          </div>
+          <div data-automation-id="formField-degree" data-fkit-id="education-1--degree">
+            <label for="education-1--degree"><span>Degree<abbr aria-hidden="true">*</abbr></span></label>
+            <div><div><div><button aria-haspopup="listbox" type="button" value="" aria-label="Degree Select One Required" name="degree" id="education-1--degree"
+              data-options="A-Level|Associates|Bachelors|Masters|Doctorate">Select One</button></div></div><div></div></div>
+          </div>
+          <div><div>
+            <div data-automation-id="formField-fieldOfStudy" data-fkit-id="education-1--fieldOfStudy" class="prompt" data-search="enter"
+              data-options="Accounting|Computer and Information Science|Computer Engineering|Economics|Mathematics">
+              <label for="education-1--fieldOfStudy">Field of Study</label>
+            </div>
+          </div></div>
+          <button type="button" aria-label="The field will alphabetically return the first 100 results and can also return specified matches.">?</button>
+          <div data-automation-id="formField-gradeAverage" data-fkit-id="education-1--gradeAverage">
+            <label for="education-1--gradeAverage">Overall Result (GPA)</label>
+            <div><div><input type="text" id="education-1--gradeAverage" name="gradeAverage" aria-required="false"></div><div></div></div>
+          </div>
+          <div>
+            <div data-automation-id="formField-firstYearAttended" data-fkit-id="education-1--firstYearAttended">
+              <fieldset><legend><label id="label111">From</label></legend><div><div>
+                <div aria-hidden="true" id="helpText-education-1--firstYearAttended">current value is YYYY</div>
+                <div id="education-1--firstYearAttended" aria-labelledby="hiddenDateValueId-education-1--firstYearAttended" role="group"
+                  data-automation-id="dateInputWrapper" data-id="education-1--firstYearAttended"></div>
+              </div><div></div></div></fieldset>
+            </div>
+            <div data-automation-id="formField-lastYearAttended" data-fkit-id="education-1--lastYearAttended">
+              <fieldset><legend><label id="label113">To (Actual or Expected)</label></legend><div><div>
+                <div aria-hidden="true" id="helpText-education-1--lastYearAttended">current value is YYYY</div>
+                <div id="education-1--lastYearAttended" aria-labelledby="hiddenDateValueId-education-1--lastYearAttended" role="group"
+                  data-automation-id="dateInputWrapper" data-id="education-1--lastYearAttended"></div>
+              </div><div></div></div></fieldset>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div role="group" aria-labelledby="Certifications-section">
+      <h4 id="Certifications-section">Certifications</h4>
+      <div><button type="button" data-automation-id="add-button" id="certifications-add">Add</button></div>
+    </div>
+
+    <div role="group" aria-labelledby="Languages-section" id="languages">
+      <h4 id="Languages-section">Languages</h4>
+      <div><button type="button" data-automation-id="add-button" id="languages-add">Add</button></div>
+    </div>
+
+    <div role="group" aria-labelledby="Skills-section">
+      <h4 id="Skills-section">Skills</h4>
+      <div data-fkit-id="skills--null">
+        <div data-automation-id="formField-skills" data-fkit-id="skills--skills" class="prompt" data-search="enter" data-multi
+          data-options="Bash|Bash (Unix Shell)|Excel|Git|GitHub|GitHub Actions|Linux|Microsoft Excel|NumPy|Pandas (Software)|Python (Programming Language)|Pytest|SQL|SQLite|Structured Query Language (SQL)|Systemd|WebSockets">
+          <label for="skills--skills">Type to Add Skills</label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="workday-widgets.js"></script>
+  <script>
+    const later = WD.later;
+    document.querySelectorAll('button[aria-haspopup="listbox"]').forEach((b) => WD.select(b));
+    document.querySelectorAll('.prompt').forEach((field) =>
+      WD.prompt(field, {
+        options: field.dataset.options.split('|'),
+        search: field.dataset.search,
+        multi: 'multi' in field.dataset,
+      }),
+    );
+    document.querySelectorAll('[data-automation-id="dateInputWrapper"][data-id]').forEach(WD.year);
+
+    const LANGUAGES = 'Arabic|Chinese|English|French|German|Spanish';
+    const LEVELS = 'Beginner|Intermediate|Advanced|Fluent';
+    // The level questions are named by a hash, the same in every entry.
+    const ASPECTS = [
+      ['373ef67ab1f910eb04033c97374b557b', 'Reading'],
+      ['373ef67ab1f910eb04033ac65b63557a', 'Speaking'],
+      ['373ef67ab1f910eb040335841eab5579', 'Writing'],
+    ];
+    let languageCount = 0;
+    document.getElementById('languages-add').addEventListener('click', async (e) => {
+      await later(150); // the new entry comes back from the server
+      const n = ++languageCount;
+      const id = 44 + n;
+      const entry = document.createElement('div');
+      entry.setAttribute('role', 'group');
+      entry.setAttribute('aria-labelledby', `Languages-${n}-panel`);
+      const select = (key, label, options) =>
+        `<div data-automation-id="formField-${key}" data-fkit-id="language-${id}--${key}"><label for="language-${id}--${key}"><span>${label}<abbr aria-hidden="true">*</abbr></span></label>` +
+        `<div><div><div><button aria-haspopup="listbox" type="button" value="" aria-label="${label} Select One Required" name="${key}" id="language-${id}--${key}" data-options="${options}">Select One</button></div></div><div></div></div></div>`;
+      entry.innerHTML =
+        `<div><h5 id="Languages-${n}-panel">Languages ${n}</h5><button type="button">Delete</button></div>` +
+        `<div data-fkit-id="language-${id}--null">` +
+        select('language', 'Language', LANGUAGES) +
+        `<div data-automation-id="formField-native" data-fkit-id="language-${id}--native"><label for="language-${id}--native">I am fluent in this language.</label>` +
+        `<div><div><div><div><input id="language-${id}--native" type="checkbox" aria-checked="false" name="native" aria-required="false"><span></span></div></div></div><div></div></div></div>` +
+        ASPECTS.map(([key, label]) => select(key, label, LEVELS)).join('') +
+        '</div>';
+      const box = entry.querySelector('input[type="checkbox"]');
+      box.addEventListener('change', () => box.setAttribute('aria-checked', String(box.checked)));
+      e.target.closest('div').before(entry);
+      entry.querySelectorAll('button[aria-haspopup]').forEach((b) => WD.select(b));
+      e.target.textContent = 'Add Another';
+    });
+  </script>
+</body>
+</html>

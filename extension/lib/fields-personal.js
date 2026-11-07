@@ -118,6 +118,16 @@
       .filter((e) => e.name);
   }
 
+  // Mandarin and Cantonese as lists name them: Cambridge Associates' Workday has only "Chinese", Shell's "Chinese
+  // (Mandarin)". A plain "Chinese" says neither, so it stays as written.
+  const CHINESE = {
+    mandarin: ['Chinese (Mandarin)', 'Mandarin Chinese', 'Chinese'],
+    cantonese: ['Chinese (Cantonese)', 'Cantonese Chinese', 'Chinese'],
+  };
+
+  /** A language's spellings for a list's options, the one you wrote first: "Mandarin" is "Chinese" where that's all. */
+  const languageSpellings = (name) => [name, ...(CHINESE[U.normalize(name)] || [])];
+
   /** Your language at a form's language entry `ctx.index` (Workday's "Languages 2" is the second you list). */
   const languageAt = (p, ctx) => languageEntries(p)[(ctx && ctx.index) || 0] || null;
   const LEVEL_NAMES = ['', 'Beginner', 'Intermediate', 'Advanced', 'Fluent', 'Native'];
@@ -537,7 +547,7 @@
       group: 'lang',
       get: (p, ctx) => {
         const e = languageAt(p, ctx);
-        return e ? val(e.name) : null;
+        return e ? val(e.name, { candidates: languageSpellings(e.name) }) : null;
       },
     },
     'lang.native': {

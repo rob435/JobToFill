@@ -133,3 +133,67 @@ test('Oracle’s apply step: its hidden “I agree with the terms and conditions
     await h.setSettings({ consents: false });
   }
 });
+
+// Cambridge Associates' "My Experience" step (workday-cambridge.html): the prompts pick a search's only result
+// themselves, the education years sit under a <legend>, and each language's "I am fluent in this language." shares its
+// name with every other entry's.
+test('Workday (Cambridge Associates): lone results the prompts pick stay picked, the years and every language fill', async () => {
+  await h.setProfile({
+    skills: 'Python, SQL, Bash, pandas, NumPy, Git, Linux',
+    languages: 'English (Native), Mandarin (Proficient), Spanish (Conversational)',
+    education: [
+      {
+        school: 'University of Glasgow',
+        degree: 'BSc',
+        field: 'Computing Science',
+        gpa: '',
+        classification: '',
+        location: 'Glasgow, Scotland',
+        startDate: '2025-09',
+        endDate: '2028-06',
+      },
+    ],
+  });
+  try {
+    const page = await h.open('workday-cambridge.html');
+    const r = await h.fill(page);
+    assert.equal(r.error, undefined);
+    // Nothing the rules had an answer for is left unmatched: Field of Study's lone result counts as picked.
+    assert.deepEqual([r.failed, r.unmatched], [0, []], JSON.stringify(r));
+    assert.equal(await value(page, '#education-1--schoolName'), 'University of Glasgow');
+    assert.equal(await text(page, '#education-1--degree'), 'Bachelors');
+    // "Computer Science" finds one field, which the prompt picks itself: kept, never clicked away.
+    assert.deepEqual(await chips(page, 'formField-fieldOfStudy'), ['Computer and Information Science']);
+    assert.equal(await value(page, '#education-1--firstYearAttended-dateSectionYear-input'), '2025');
+    assert.equal(await value(page, '#education-1--lastYearAttended-dateSectionYear-input'), '2028');
+    // Each language's own "I am fluent in this language." (all named "native"), ticked for the native one only.
+    assert.deepEqual(
+      await page.$$eval('#languages [role="group"]', (entries) =>
+        entries.map((e) => [
+          ...[...e.querySelectorAll('button[aria-haspopup]')].map((b) => b.textContent),
+          e.querySelector('input[type="checkbox"]').checked,
+        ]),
+      ),
+      [
+        ['English', 'Fluent', 'Fluent', 'Fluent', true],
+        ['Chinese', 'Advanced', 'Advanced', 'Advanced', false],
+        ['Spanish', 'Intermediate', 'Intermediate', 'Intermediate', false],
+      ],
+    );
+    // Skills: "Python" (the first search), "pandas", "NumPy" and "Linux" each find one skill, which the list ticks
+    // itself; the others are picked among several. None is clicked off again, and the first doesn't end the list.
+    assert.deepEqual(await chips(page, 'formField-skills'), [
+      'Python (Programming Language)',
+      'SQL',
+      'Bash',
+      'Pandas (Software)',
+      'NumPy',
+      'Git',
+      'Linux',
+    ]);
+    assert.equal(await page.$$eval('[data-automation-id="activeListContainer"], .wd-menu', (l) => l.length), 0);
+    await page.close();
+  } finally {
+    await h.setProfile(STUDENT);
+  }
+});

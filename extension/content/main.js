@@ -1128,7 +1128,11 @@
     for (let i = 0; i < fields.length && items.length < MAX_PENDING; i++) {
       const field = fields[i];
       const r = results[i];
-      if (JTF.fill.hasValue(field)) continue;
+      const skills = r && r.type === 'skills' && (field.kind === 'combobox' || field.kind === 'combo');
+      // A skills list the rules filled (Workday's "Type to Add Skills") still takes the skills your material names
+      // that your profile's list leaves out.
+      const have = skills ? JTF.fill.listPicks(field) : null;
+      if (JTF.fill.hasValue(field) && !(have && have.length)) continue;
       const prev = prevOf(i);
       const prevType = prev && prev.r && prev.r.type;
       const on = JTF.decide.conditionOn(r, i);
@@ -1136,14 +1140,20 @@
       const asked = JTF.decide.forAi(field.desc, r, profile, context, prevType, before, allow);
       if (!asked) continue;
       const item = JTF.decide.aiItem(field.desc, asked.guess);
-      if (!field.desc.options && peek && (field.kind === 'combo' || field.kind === 'combobox')) {
+      if (!field.desc.options && peek && !have && (field.kind === 'combo' || field.kind === 'combobox')) {
         const seen = await JTF.fill.peekOptions(field).catch(() => null);
         // A long list (countries, universities) is searched by typing the answer.
         if (seen && seen.options.length && seen.options.length <= 150) item.options = seen.options;
         if (seen && seen.multi) item.multiple = true;
       }
+      // A skills box that only lists what a search finds: the skills as a list, each searched for and picked.
+      if (skills && !item.options) Object.assign(item, { list: 'skills', have: have || [] });
+      // A language entry's questions ("Reading", "I am fluent in this language.") say which language they're about.
+      const language = r && /^lang\.(level|native)$/.test(r.type) ? entryLanguage(fields, results, r) : '';
+      if (language) Object.assign(item, { section: `${item.section || 'Language'} – ${language}`, about: language });
+      if (r && r.type === 'lang.level') item.level = true;
       const id = `${RUN}-${++state.asked}`;
-      state.pending.set(id, { field, question: U.normalize(item.question) });
+      state.pending.set(id, { field, question: U.normalize(item.question), type: r && r.type });
       items.push({
         id,
         ...item,
@@ -1164,6 +1174,12 @@
     return items;
   }
 
+  /** The language a form's language entry is for, as its "Language" box holds it now ("English"), or ''. */
+  function entryLanguage(fields, results, r) {
+    const at = results.findIndex((x) => x && x.type === 'lang.name' && (x.index || 0) === (r.index || 0));
+    return at >= 0 ? U.cleanLabel(JTF.fill.currentValue(fields[at]), 60) : '';
+  }
+
   /**
    * The field an AI answer is for: the one its id was given to, while it is on the page and still asks that
    * question; else the field on the page now that asks it (a re-render made it anew).
@@ -1178,9 +1194,14 @@
     return fresh().find((f) => askedOf(f) === want) || null;
   }
 
-  /** The value object JTF.fill.apply takes for an AI answer. */
-  function answerValue(a) {
+  /**
+   * The value object JTF.fill.apply takes for an AI answer. `type`: what the rules took the field for. A language
+   * level ("Native") is that level on the list it goes into: "Fluent" where that is the most it offers.
+   */
+  function answerValue(a, type) {
     const F = JTF.fields;
+    const level = type === 'lang.level' && !Array.isArray(a.value) ? F.languageLevel(a.value) : 0;
+    if (level) return F.val(a.value, { kind: 'level', level, candidates: [a.value] });
     if (Array.isArray(a.value))
       return {
         text: a.value.join(', '),
@@ -1226,15 +1247,23 @@
         results.push({ id: a.id, status: 'gone' });
         continue;
       }
-      // Something typed in the meantime is the person's answer.
-      if (JTF.fill.hasValue(field)) {
+      // Something typed in the meantime is the person's answer. A list that takes several only gets more: what it
+      // holds already ("Python (Programming Language)" for "Python", a refill's remembered answer) isn't sought again.
+      const held = a.kind === 'list' && Array.isArray(a.value) ? JTF.fill.listPicks(field) : null;
+      const more = held
+        ? a.value.filter((t) => !held.some((h) => ` ${U.normalize(h)} `.includes(` ${U.normalize(t)} `)))
+        : null;
+      if ((JTF.fill.hasValue(field) && !held) || (more && !more.length)) {
         results.push({ id: a.id, status: 'skipped' });
         continue;
       }
-      const v = answerValue(a);
+      const adds = !!held && held.length > 0;
+      const kept = state.pending.get(String(a.id));
+      const v = answerValue(more ? { ...a, value: more } : a, kept && kept.type);
       const started = Date.now();
       const res = await JTF.fill.apply(field, v, {
         overwrite: false,
+        add: adds,
         comboboxes: settings.comboboxes !== false,
         history,
       });

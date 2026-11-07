@@ -101,6 +101,9 @@
     const out = (kind, more) => Object.assign({ kind, legal: false, health: false, guided: false }, more);
     if (SECRET.test(question)) return out('secret');
     if (IDENTITY.test(question)) return out('identity');
+    // A language entry's own questions (`about` names its language: "I am fluent in this language." in Workday's
+    // "Languages 1") say how well the candidate speaks it: no declaration, whatever their wording.
+    if (item.about) return out(null);
     // The rules took it for a monitoring question, whatever its wording: its answer is the profile's to give.
     if (item.guess && /^eeo\./.test(item.guess.type || '')) return out('eeo');
     if (
@@ -182,8 +185,10 @@
   const ESSAY =
     /^(why|describe|tell (us|me)|explain|share|outline|summari[sz]e|walk us through|give (us )?an example|how (would|did|do|have) you|what (excites|interests|motivates|motivated|appeals|drew|draws|attracts|attracted|made|makes|prompted|inspired|inspires)|what (do|did|would|will) you (hope|want|like|bring|think|enjoy|find|consider|see)|what about|what (is|was) (the|a|one) (most|biggest|hardest|best|proudest)|please (describe|explain|tell|share|outline|summari[sz]e|elaborate|provide (a|an|some) (example|summary|description|explanation|brief)))\b/;
 
-  /** The kind of answer a question wants: choice, multi, tick, text, essay, number or date. */
+  /** The kind of answer a question wants: choice, multi, list, tick, text, essay, number or date. */
   function answerKind(item) {
+    // A box that takes several items, each searched for and picked (Workday's "Type to Add Skills").
+    if (item.list) return 'list';
     const options = item.options || [];
     if (item.kind === 'checkbox') return 'tick';
     if (options.length) return item.multiple || item.kind === 'checkboxes' ? 'multi' : 'choice';
@@ -420,6 +425,13 @@
     ].join('\n');
   }
 
+  // What a list answer holds, said in the question itself (the system prompt stays as the eval measured it).
+  const LIST_ANSWERS = {
+    skills:
+      'a JSON array of every skill the CANDIDATE MATERIAL names that alreadyGiven doesn’t: programming languages, libraries, frameworks, tools, platforms and methods, each a short name as the material writes it ("Python", "pandas", "Git"), at most 30; skip when there are none',
+    any: 'a JSON array of short items, each as the CANDIDATE MATERIAL names it, none of alreadyGiven; skip when there are none',
+  };
+
   /**
    * One question as the model sees it; `allow` (allowed()) as the candidate lets it answer the sensitive kinds, and
    * `guidance` their answer guidance (what lets a legal or health question, and so its answer, through).
@@ -438,6 +450,10 @@
     }
     const limit = ['essay', 'text'].includes(kind) ? limitText(item, kind) : '';
     if (limit) q.limit = limit;
+    if (kind === 'list') {
+      q.answerAs = LIST_ANSWERS[item.list] || LIST_ANSWERS.any;
+      if (item.have && item.have.length) q.alreadyGiven = item.have.slice(0, 40).map((t) => U.cleanLabel(t, 80));
+    }
     if (item.required) q.required = true;
     // The question before, with its answer on the page; one being answered in this same list is named by its
     // id, so the two answers agree ("Do you have other offers?" then "If yes, list them").
@@ -722,6 +738,18 @@
     return { errors, warnings, severe };
   }
 
+  /** The option at the language level `text` says ("Native" is 5), else the nearest below it; -1 for none. */
+  function levelIndex(options, text) {
+    const want = JTF.fields.languageLevel(text);
+    let best = -1;
+    let at = 0;
+    options.forEach((o, i) => {
+      const level = JTF.fields.languageLevel(o);
+      if (want && level && level <= want && level > at) [best, at] = [i, level];
+    });
+    return best;
+  }
+
   /** Is `name` in `text` as a word (case-insensitive, punctuation-insensitive)? */
   function mentionsWord(text, name) {
     const n = norm(name);
@@ -756,7 +784,10 @@
     const unknownOption = (o) => optIn(o) || (/\d/.test(o) && unknownId(o));
     if (kind === 'choice') {
       const answer = Array.isArray(raw.answer) ? raw.answer[0] : raw.answer;
-      const idx = optionIndex(options, say(answer));
+      let idx = optionIndex(options, say(answer));
+      // A language level the list words its own way ("Native" where "Fluent" is the most it offers): the option at
+      // that level, else the nearest below it, never one that says more.
+      if (idx < 0 && item.level) idx = levelIndex(options, say(answer));
       if (idx < 0) return { id: item.id, skip: true, reason: `“${say(answer).slice(0, 60)}” isn’t one of the options` };
       if (optIn(options[idx])) return { id: item.id, skip: true, reason: 'a marketing opt-in' };
       if (unknownOption(options[idx]))
@@ -770,6 +801,23 @@
         .filter((o) => !unknownOption(o));
       if (!picked.length) return { id: item.id, skip: true, reason: 'none of the options' };
       return { id: item.id, kind, value: picked, basis, warnings: [], errors: [], severe: 0 };
+    }
+    if (kind === 'list') {
+      // Only items the material names, and none the box holds already ("Python" beside "Python (Programming
+      // Language)").
+      const given = (item.have || []).map((t) => ` ${norm(t)} `);
+      const seen = new Set();
+      const list = (Array.isArray(raw.answer) ? raw.answer : String(raw.answer).split(/\s*[,;\n]\s*/))
+        .map((t) => say(t).replace(/^[-•*]\s*/, ''))
+        .filter((t) => {
+          const k = norm(t);
+          if (!k || t.length > 60 || seen.has(k) || given.some((g) => g.includes(` ${k} `))) return false;
+          seen.add(k);
+          return mentionsWord(ctx.mine, t);
+        })
+        .slice(0, 30);
+      if (!list.length) return { id: item.id, skip: true, reason: 'nothing more in your material' };
+      return { id: item.id, kind, value: list, basis, warnings: [], errors: [], severe: 0 };
     }
     if (kind === 'tick') {
       const yes = raw.answer === true || M().canonicalOf(say(raw.answer)) === 'yes';
@@ -951,7 +999,7 @@
           { role: 'user', content: userPrompt({ ...input, candidate, guidance, eeo, allow: may }, batch, previous) },
         ];
         const budget = batch.reduce(
-          (n, it) => n + Math.max(60, (limits(it).maxWords || (answerKind(it) === 'essay' ? 170 : 25)) * 2),
+          (n, it) => n + Math.max(60, (limits(it).maxWords || { essay: 170, list: 120 }[answerKind(it)] || 25) * 2),
           300,
         );
         calls++;
@@ -1065,7 +1113,10 @@
 
   /** A question's identity for reuse: its words and, for choices, its options. */
   function questionKey(item) {
-    return [norm(item.question), (item.options || []).map(norm).join('|')].join('#');
+    const key = [norm(item.question), (item.options || []).map(norm).join('|')];
+    // A language entry's "Reading" is that language's, not the next entry's.
+    if (item.about) key.push(norm(item.about));
+    return key.join('#');
   }
 
   /**

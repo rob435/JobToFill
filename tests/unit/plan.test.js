@@ -388,6 +388,15 @@ test('Workday language entries: one per language you list, its fluency, and neve
     ],
   );
   assert.equal(at('lang.name', 1).text, 'Spanish');
+  // Mandarin where the list only has "Chinese" (Cambridge Associates) or "Chinese (Mandarin)" (Shell).
+  const named = (language, ...texts) => {
+    const i = matcher.matchOption(opts(...texts), fields.resolve('lang.name', { ...p, languages: language }, {}));
+    return i < 0 ? null : texts[i];
+  };
+  assert.equal(named('Mandarin (proficient)', 'Arabic', 'Chinese', 'English'), 'Chinese');
+  assert.equal(named('Mandarin', 'Chinese (Cantonese)', 'Chinese (Mandarin)', 'English'), 'Chinese (Mandarin)');
+  assert.equal(named('Cantonese', 'Chinese (Cantonese)', 'Chinese (Mandarin)'), 'Chinese (Cantonese)');
+  assert.equal(named('Mandarin', 'Cantonese', 'Mandarin'), 'Mandarin');
   assert.equal(at('lang.native', 0).canonical, 'yes', 'native: fluent in it');
   assert.equal(at('lang.native', 1).canonical, 'no');
   assert.equal(at('lang.name', 3), null, 'no fourth language');
@@ -2995,6 +3004,26 @@ test('Workday (Shell): year-only "From" / "To (Actual or Expected)" boxes are th
     'a proper label': [
       box({ label: 'From', placeholder: 'YYYY' }),
       box({ label: 'To (Actual or Expected)', placeholder: 'YYYY' }),
+    ],
+    // Cambridge Associates: the label is a fieldset's <legend>, so it reads as the section, and the group names an id
+    // with no element ("hiddenDateValueId-…"); only the ids say which date.
+    'a legend over "Year": the ids': [
+      box({
+        aria: 'Year',
+        section: 'From',
+        attrs: 'dateSectionYear-input',
+        id: 'education-25--firstYearAttended-dateSectionYear-input',
+        ancestors: 'education-25--firstYearAttended-dateSectionYear dateInputWrapper education-25--firstYearAttended',
+        describedby: 'current value is YYYY',
+      }),
+      box({
+        aria: 'Year',
+        section: 'To (Actual or Expected)',
+        attrs: 'dateSectionYear-input',
+        id: 'education-25--lastYearAttended-dateSectionYear-input',
+        ancestors: 'education-25--lastYearAttended-dateSectionYear dateInputWrapper education-25--lastYearAttended',
+        describedby: 'current value is YYYY',
+      }),
     ],
   };
   const entry = (s) => desc({ section: 'Education 1', sectionHelp: SHELL_HELP, ...s });

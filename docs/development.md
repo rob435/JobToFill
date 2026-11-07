@@ -80,7 +80,10 @@ tests/
                        virtual lists, and its links that grow a box at a time;
                        msforms.html: Microsoft Forms' question notes and date picker; eploy.html:
                        an upload in a dialog of its own; workday-steps.html: an application in four steps, its
-                       sections' own "Add" and the Review step's "Submit"; dayforce-upload.html: two uploads
+                       sections' own "Add" and the Review step's "Submit"; workday-cambridge.html:
+                       Workday's "My Experience" as its markup has it, years under a <legend>,
+                       "I am fluent in this language." named alike in every entry, prompts that pick
+                       a lone result themselves; dayforce-upload.html: two uploads
                        sharing an id; discover-home.html, discover-team.html and discover-careers.html: a small
                        firm's site, for Discover's contact and careers checks);
                        docs/ CVs in many PDF/Word flavours (make.mjs rebuilds them), jobs/ trimmed

@@ -30,6 +30,22 @@ function sensitive(q, system) {
 }
 
 /**
+ * Workday's skills and language entries (workday-cambridge.html): a list of skills, Excel among them though the
+ * material never names it; a level for each of English's and Chinese's skills ("Native", which the list words
+ * "Fluent"); English ticked as fluent. Spanish is left.
+ */
+function workdayAnswer(q) {
+  const about = q.section || '';
+  if (q.type === 'list') return { id: q.id, answer: ['Python', 'Bash', 'NumPy', 'Excel'], basis: 'material' };
+  if (/^(reading|speaking|writing)$/i.test(q.question) && /English$/.test(about))
+    return { id: q.id, answer: /reading/i.test(q.question) ? 'Native' : 'Fluent', basis: 'material' };
+  if (/^(reading|speaking|writing)$/i.test(q.question) && /Chinese$/.test(about))
+    return { id: q.id, answer: /reading/i.test(q.question) ? 'Intermediate' : 'Advanced', basis: 'material' };
+  if (/fluent in this language/i.test(q.question) && /English$/.test(about)) return { id: q.id, answer: 'Yes' };
+  return null;
+}
+
+/**
  * An OpenAI-compatible endpoint that answers application questions by their wording, and records every call. `delay`
  * (ms, changeable) holds each reply back, as a slow model would.
  */
@@ -59,6 +75,8 @@ function mockAi() {
               const kept = sensitive(q, system);
               if (kept) return kept;
               if (/^why/i.test(q.question)) return { id: q.id, answer: ESSAY('90,000'), basis: 'material' };
+              const workday = workdayAnswer(q);
+              if (workday) return workday;
               if (/python/i.test(q.question)) return { id: q.id, answer: 'Yes', basis: 'material' };
               if (/product/i.test(q.question)) return { id: q.id, answer: 'Rates and inflation', basis: 'posting' };
               if (/hear about/i.test(q.question)) return { id: q.id, answer: 'Online job board', basis: 'material' };
@@ -461,5 +479,61 @@ test('a tab closed while the AI is writing stops the run: no more calls on the p
     assert.equal(ai.calls.length, before, 'the request in flight was dropped, and nothing was asked after it');
   } finally {
     ai.state.delay = 0;
+  }
+});
+
+test('Workday skills and languages: the AI adds the skills the material names, and knows each entry’s language', async () => {
+  const id = (await h.profile()).id;
+  const saved = await h.profile();
+  await h.setProfile({ skills: 'Python, SQL', languages: 'English, Mandarin, Spanish' });
+  await h.bg(
+    ([profileId, notes]) => globalThis.JTF.store.saveKit(profileId, { notes }),
+    [id, 'Skills: Python, SQL, Bash, NumPy. Languages: English (native), Mandarin (intermediate reading).'],
+  );
+  try {
+    const before = answerCalls().length;
+    const page = await h.open('workday-cambridge.html');
+    const r = await fillAndWait(page);
+    assert.equal(r.ai.status, 'done', JSON.stringify(r.ai));
+    const asked = answerCalls()
+      .slice(before)
+      .flatMap((c) => JSON.parse(c.last.slice(c.last.indexOf('QUESTIONS:') + 'QUESTIONS:'.length)));
+    // The skills box goes as a list beside the ones the rules picked; every level question names its language.
+    const skills = asked.find((q) => q.question === 'Type to Add Skills');
+    assert.deepEqual([skills.type, skills.alreadyGiven], ['list', ['Python (Programming Language)', 'SQL']]);
+    assert.deepEqual(
+      [...new Set(asked.filter((q) => q.question === 'Reading').map((q) => q.section))],
+      ['Languages 1 – English', 'Languages 2 – Chinese', 'Languages 3 – Spanish'],
+    );
+    // Bash and NumPy (a lone result the list ticks itself) join the profile's two; Excel isn't in the material.
+    const chips = await page.$$eval(
+      '[data-automation-id="formField-skills"] [data-automation-id="selectedItem"]',
+      (l) => l.map((el) => el.textContent.replace('×', '').trim()),
+    );
+    assert.deepEqual(chips, ['Python (Programming Language)', 'SQL', 'Bash', 'NumPy']);
+    assert.deepEqual(
+      await page.$$eval('#languages [role="group"]', (entries) =>
+        entries.map((e) => [
+          ...[...e.querySelectorAll('button[aria-haspopup]')].map((b) => b.textContent),
+          e.querySelector('input[type="checkbox"]').checked,
+        ]),
+      ),
+      [
+        ['English', 'Fluent', 'Fluent', 'Fluent', true],
+        ['Chinese', 'Intermediate', 'Advanced', 'Advanced', false],
+        ['Spanish', 'Select One', 'Select One', 'Select One', false],
+      ],
+    );
+    await page.close();
+  } finally {
+    await h.setProfile({ skills: saved.skills, languages: saved.languages });
+    await h.bg(
+      (profileId) =>
+        globalThis.JTF.store.saveKit(profileId, {
+          notes:
+            'Built a reconciliation tool in Python that checks 40,000 trades a night. Explained breaks to traders.',
+        }),
+      id,
+    );
   }
 });

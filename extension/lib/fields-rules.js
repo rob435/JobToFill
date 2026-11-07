@@ -1133,8 +1133,10 @@
     ),
     R(
       'gen.start',
-      /^(start|from|begin|started|since)( date| month| year)?( (or )?(actual|expected|anticipated)( or (actual|expected|anticipated))?)?$|\bstart ?date\b|\bstart (month|year)\b|\bdate (from|started|joined|of joining)\b|\bfrom (date|month|year)\b|\bstarted\b|\bbegin date\b|\bdate from\b/,
+      /^(start|from|begin|started|since)( date| month| year)?( (or )?(actual|expected|anticipated)( or (actual|expected|anticipated))?)?$|\bstart ?date\b|\bstart (month|year)\b|\bdate (from|started|joined|of joining)\b|\bfrom (date|month|year)\b|\bstarted\b|\bbegin date\b|\bdate from\b|\bfirst year attended\b/,
       {
+        // Workday's education years are "firstYearAttended" and "lastYearAttended" in their ids, the "From" and "To
+        // (Actual or Expected)" over them a <legend> (Cambridge Associates), each box only "Year".
         // "From (Actual)" (Workday) is an entry's date; "Expected start date" is when you could start the job. Oracle's
         // "Veteran First Civilian Start Date" is a veteran's own.
         not: /when (can|could|would) you|availab|earliest|desired|preferred|^expected|\bexpected (start|to start|from)\b|can you start|internship|placement|programme|program\b|\bveteran|\bmilitary\b|\bcivilian\b|\barmed forces\b|\bdischarge/,
@@ -1142,7 +1144,7 @@
     ),
     R(
       'gen.end',
-      /^(end|to|until|finish|till)( date| month| year)?( (or )?(actual|expected|anticipated)( or (actual|expected|anticipated))?)?$|\bend ?date\b|\bend (month|year)\b|\bdate (to|left|ended|of leaving)\b|\bto (date|month|year)\b|\bended\b|\bfinish date\b|\bdate to\b|\bleaving date\b/,
+      /^(end|to|until|finish|till)( date| month| year)?( (or )?(actual|expected|anticipated)( or (actual|expected|anticipated))?)?$|\bend ?date\b|\bend (month|year)\b|\bdate (to|left|ended|of leaving)\b|\bto (date|month|year)\b|\bended\b|\bfinish date\b|\bdate to\b|\bleaving date\b|\blast year attended\b/,
       {
         not: /open ended|\b(percentage|average|marks?|grades?|score|results?|gpa|total|overall)\b|\bveteran|\bmilitary\b|\bcivilian\b|\barmed forces\b|\bdischarge/,
       },

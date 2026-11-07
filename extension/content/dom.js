@@ -1256,6 +1256,11 @@
       const fs = named.length > 1 && el.closest('fieldset');
       const own = fs ? named.filter((m) => fs.contains(m)) : named;
       if (own.length <= 1) return fieldsetCheckboxes(el) || own;
+      // One box per entry, every one under the same name and its own label (Workday's "I am fluent in this language."
+      // in each language, all named "native"): boxes that all read the same are one question asked again, never one
+      // question's options.
+      const said = (m) => U.normalize(optionLabel(m));
+      if (said(el) && own.every((m) => said(m) === said(el))) return [el];
     }
     return named;
   }

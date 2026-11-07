@@ -8,7 +8,9 @@
 // - Search prompts ("selectinput"): a search box, a chip for each pick, and a list of results whose rows only take a
 //   click that lands inside them: menuItem (role="option", aria-selected while highlighted, not when picked) >
 //   promptLeafNode (the click handler; data-automation-checked) > the radio or checkbox and the label (promptOption).
-//   A multi-select prompt (Skills) keeps its list open and ticks the row; a click on a ticked row unticks it.
+//   A multi-select prompt (Skills) keeps its list open and ticks the row; a click on a ticked row unticks it. A search
+//   on Enter with one result picks it by itself (loadSearchResults): a single choice closes with its chip, Skills ticks
+//   it in the list it keeps open; either way the box is emptied.
 // - Year spin buttons ("YYYY"): a 1px input scaled to nothing, behind the aria-hidden "…-display" that shows the year.
 //   It takes what is typed from its input events (React's onChange), digits only, between 1 and 9999.
 window.WD = (function () {
@@ -93,9 +95,18 @@ window.WD = (function () {
     const popup = { owns: (t) => !!menu && menu.contains(t), hide: () => toggle(false) };
     let menu = null;
 
+    // A button announced by an aria-label says the choice in it ("Reading Select One Required", then "Reading Fluent
+    // Required"), as the live pages' do.
+    const announce = btn.hasAttribute('aria-label') && field && field.querySelector('label');
+    const title = announce ? announce.textContent.replace('*', '').trim() : '';
     function render() {
       btn.textContent = options[selected].label;
       btn.value = options[selected].value;
+      if (announce)
+        btn.setAttribute(
+          'aria-label',
+          `${title} ${options[selected].label}${field.querySelector('abbr') ? ' Required' : ''}`,
+        );
       if (vis === 'closed') {
         btn.removeAttribute('aria-expanded');
         btn.removeAttribute('aria-controls');
@@ -327,12 +338,21 @@ window.WD = (function () {
       input.value = '';
       hide();
     }
-    async function results(query) {
+    async function results(query, entered) {
       await later(200); // the search goes to the server
       const q = query.trim().toLowerCase();
       if (q.length < min || input.value.trim().toLowerCase() !== q) return;
       const hits = options.filter((o) => q.split(/\s+/).every((w) => o.toLowerCase().includes(w)));
       hide();
+      // A search on Enter whose only result is picked by the prompt itself (loadSearchResults), the box emptied: a
+      // single choice closes with its chip; a list that takes several stays open, the row ticked.
+      if (entered && hits.length === 1) {
+        if (!multi) picked.clear();
+        picked.add(hits[0]);
+        drawChips();
+        input.value = '';
+        if (!multi) return;
+      }
       list = document.createElement('div');
       list.setAttribute('role', 'listbox');
       list.setAttribute('tabindex', '-1');
@@ -382,7 +402,7 @@ window.WD = (function () {
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
-        results(input.value);
+        results(input.value, true);
       }
     });
     // Text that wasn't picked doesn't stay once the box loses focus.
@@ -407,12 +427,16 @@ window.WD = (function () {
     const box = wrapper.lastElementChild;
     const display = box.firstElementChild;
     const input = box.lastElementChild;
+    // The live pages describe the box by the help text over it ("current value is YYYY").
+    const help = wrapper.id && document.getElementById('helpText-' + wrapper.id);
+    if (help) input.setAttribute('aria-describedby', help.id);
     let current = null;
     // React's controlled input: what the state holds is what the box and its display show.
     function render() {
       const shown = current == null ? 'YYYY' : String(current).padStart(4, '0');
       const text = /^\d+$/.test(shown) ? String(parseInt(shown, 10)) : '';
       display.textContent = shown;
+      if (help) help.textContent = 'current value is ' + shown;
       input.value = text;
       input.setAttribute('aria-valuetext', text || 'YYYY');
       if (text) input.setAttribute('aria-valuenow', text);

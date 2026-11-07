@@ -164,9 +164,48 @@ test('validate: a choice is one of the options or nothing', () => {
     options: ['London', 'New York', 'Hong Kong'],
   };
   assert.deepEqual(A.validate({ answer: ['London', 'Paris', 'New York'] }, multi, CTX).value, ['London', 'New York']);
+  // A language entry's level: "Native" is the most the list offers, never more.
+  const level = {
+    id: 'q4',
+    question: 'Reading',
+    kind: 'combo',
+    level: true,
+    options: ['Beginner', 'Intermediate', 'Fluent'],
+  };
+  assert.equal(A.validate({ answer: 'Native' }, level, CTX).value, 'Fluent');
+  assert.equal(A.validate({ answer: 'Advanced' }, level, CTX).value, 'Intermediate');
+  assert.equal(A.validate({ answer: 'Native' }, { ...level, level: false }, CTX).skip, true);
   const tick = { id: 'q3', question: 'I can start in June 2027', kind: 'checkbox' };
   assert.equal(A.validate({ answer: 'Yes' }, tick, CTX).value, 'Yes');
   assert.equal(A.validate({ answer: 'No' }, tick, CTX).skip, true);
+});
+
+test('list answers: a skills box takes the skills the material names, never one it doesn’t or one it holds', () => {
+  // Workday's "Type to Add Skills", after the rules picked the profile's two.
+  const item = {
+    id: 'q1',
+    question: 'Type to Add Skills',
+    kind: 'combobox',
+    list: 'skills',
+    have: ['Python (Programming Language)', 'SQL'],
+  };
+  assert.equal(A.answerKind(item), 'list');
+  const q = A.questionJson(item);
+  assert.equal(q.type, 'list');
+  assert.match(q.answerAs, /JSON array of every skill the CANDIDATE MATERIAL names that alreadyGiven doesn’t/);
+  assert.deepEqual(q.alreadyGiven, ['Python (Programming Language)', 'SQL']);
+  const ctx = { ...CTX, mine: 'Skills: Python, SQL, Bash, pandas, NumPy. Projects: Node.js, GitHub Actions.' };
+  const v = (answer) => A.validate({ answer }, item, ctx);
+  assert.deepEqual(v(['Python', 'Bash', 'pandas', 'Kubernetes', 'bash', 'GitHub Actions', 'Node.js']).value, [
+    'Bash',
+    'pandas',
+    'GitHub Actions',
+    'Node.js',
+  ]);
+  assert.deepEqual(v('Bash, NumPy; pandas').value, ['Bash', 'NumPy', 'pandas'], 'a list written as text');
+  assert.equal(v(['Python', 'SQL', 'Rust']).skip, true, 'nothing new from the material');
+  // A first box with nothing picked yet: no alreadyGiven.
+  assert.equal(A.questionJson({ ...item, have: [] }).alreadyGiven, undefined);
 });
 
 test('validate: written answers use only the material’s numbers, tools and employers', () => {
@@ -394,11 +433,25 @@ test('reuse and the answer bank: same question and options come back; similar es
       at: 2,
     },
   ];
+  // A language entry's "Reading" is that language's: English's answer never goes to Chinese.
+  const reading = { id: '3', question: 'Reading', kind: 'combo', options: ['Beginner', 'Fluent'], about: 'English' };
+  const again = A.reuse(
+    [reading, { ...reading, id: '4', about: 'Chinese' }],
+    [{ key: A.questionKey(reading), value: 'Fluent', kind: 'choice' }],
+  );
+  assert.deepEqual([again.reused.map((r) => r.id), again.rest.map((r) => r.id)], [['3'], ['4']]);
+  assert.equal(A.questionKey(item), A.questionKey({ ...item, about: '' }), 'other questions keep their keys');
   const prev = A.relevantPrevious([{ question: 'Why do you want to work at Acme?', kind: 'textarea' }], bank, 'Acme');
   assert.deepEqual(
     prev.map((p) => p.company),
     ['Goldman Sachs'],
   );
+});
+
+test('withheld: a language entry’s “I am fluent in this language.” is no declaration', () => {
+  const box = { question: 'I am fluent in this language.', kind: 'checkbox', section: 'Languages 1' };
+  assert.equal(A.withheld(box, '', null), 'consent', 'without its language, an “I …” box to tick');
+  assert.equal(A.withheld({ ...box, section: 'Languages 1 – English', about: 'English' }, '', null), null);
 });
 
 test('withheld: security-vetting history needs answer guidance', () => {
