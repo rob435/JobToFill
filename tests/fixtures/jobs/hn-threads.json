@@ -1,0 +1,254 @@
+{
+  "exhaustive": {
+    "nbHits": true,
+    "typo": true
+  },
+  "exhaustiveNbHits": true,
+  "exhaustiveTypo": true,
+  "hits": [
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "whoishiring"
+        },
+        "story_text": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Please state the location and include REMOTE for remote work, REMOTE (US) or similar if the country is restricted, and ONSITE when remote work is <i>not</i> an option.<p>Please only post if you personally are part of the hiring company—no recruiting firms or job boards. One post per company."
+        },
+        "title": {
+          "fullyHighlighted": false,
+          "matchLevel": "full",
+          "matchedWords": [
+            "who",
+            "is",
+            "hiring"
+          ],
+          "value": "Ask HN: <em>Who is hiring</em>? (November 2026)"
+        }
+      },
+      "_tags": [
+        "story",
+        "author_whoishiring",
+        "story_50338728",
+        "ask_hn"
+      ],
+      "author": "whoishiring",
+      "children": [
+        50355871,
+        50352210,
+        50343988,
+        50341502,
+        50340117
+      ],
+      "created_at": "2026-11-02T16:01:37Z",
+      "created_at_i": 1793635297,
+      "num_comments": 295,
+      "objectID": "50338728",
+      "points": 250,
+      "story_id": 50338728,
+      "story_text": "Please state the location and include REMOTE for remote work, REMOTE (US) or similar if the country is restricted, and ONSITE when remote work is <i>not</i> an option.<p>Please only post if you personally are part of the hiring company—no recruiting firms or job boards. One post per company.",
+      "title": "Ask HN: Who is hiring? (November 2026)",
+      "updated_at": "2026-11-06T21:44:44Z"
+    },
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "whoishiring"
+        },
+        "story_text": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Share your information if you are looking for work as a freelancer and want to be included in this thread."
+        },
+        "title": {
+          "fullyHighlighted": false,
+          "matchLevel": "full",
+          "matchedWords": [
+            "who",
+            "is",
+            "hiring"
+          ],
+          "value": "Ask HN: Freelancer? Seeking freelancer? (November 2026)"
+        }
+      },
+      "_tags": [
+        "story",
+        "author_whoishiring",
+        "story_50338727",
+        "ask_hn"
+      ],
+      "author": "whoishiring",
+      "children": [
+        50339911
+      ],
+      "created_at": "2026-11-02T16:01:36Z",
+      "created_at_i": 1793635296,
+      "num_comments": 64,
+      "objectID": "50338727",
+      "points": 250,
+      "story_id": 50338727,
+      "story_text": "Share your information if you are looking for work as a freelancer and want to be included in this thread.",
+      "title": "Ask HN: Freelancer? Seeking freelancer? (November 2026)",
+      "updated_at": "2026-11-06T21:44:44Z"
+    },
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "whoishiring"
+        },
+        "story_text": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Share your information if you are looking for work. Please use this format:"
+        },
+        "title": {
+          "fullyHighlighted": false,
+          "matchLevel": "full",
+          "matchedWords": [
+            "who",
+            "is",
+            "hiring"
+          ],
+          "value": "Ask HN: Who wants to be hired? (November 2026)"
+        }
+      },
+      "_tags": [
+        "story",
+        "author_whoishiring",
+        "story_50338726",
+        "ask_hn"
+      ],
+      "author": "whoishiring",
+      "children": [
+        50339120
+      ],
+      "created_at": "2026-11-02T16:01:35Z",
+      "created_at_i": 1793635295,
+      "num_comments": 288,
+      "objectID": "50338726",
+      "points": 250,
+      "story_id": 50338726,
+      "story_text": "Share your information if you are looking for work. Please use this format:",
+      "title": "Ask HN: Who wants to be hired? (November 2026)",
+      "updated_at": "2026-11-06T21:44:44Z"
+    },
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "whoishiring"
+        },
+        "story_text": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Please state the location and include REMOTE for remote work, REMOTE (US) or similar if the country is restricted, and ONSITE when remote work is <i>not</i> an option.<p>Please only post if you personally are part of the hiring company—no recruiting firms or job boards. One post per company."
+        },
+        "title": {
+          "fullyHighlighted": false,
+          "matchLevel": "full",
+          "matchedWords": [
+            "who",
+            "is",
+            "hiring"
+          ],
+          "value": "Ask HN: <em>Who is hiring</em>? (October 2026)"
+        }
+      },
+      "_tags": [
+        "story",
+        "author_whoishiring",
+        "story_49922569",
+        "ask_hn"
+      ],
+      "author": "whoishiring",
+      "children": [
+        49924410,
+        49923876
+      ],
+      "created_at": "2026-10-01T15:02:07Z",
+      "created_at_i": 1790866927,
+      "num_comments": 384,
+      "objectID": "49922569",
+      "points": 250,
+      "story_id": 49922569,
+      "story_text": "Please state the location and include REMOTE for remote work, REMOTE (US) or similar if the country is restricted, and ONSITE when remote work is <i>not</i> an option.<p>Please only post if you personally are part of the hiring company—no recruiting firms or job boards. One post per company.",
+      "title": "Ask HN: Who is hiring? (October 2026)",
+      "updated_at": "2026-11-06T21:44:44Z"
+    },
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "whoishiring"
+        },
+        "story_text": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Please state the location and include REMOTE for remote work, REMOTE (US) or similar if the country is restricted, and ONSITE when remote work is <i>not</i> an option.<p>Please only post if you personally are part of the hiring company—no recruiting firms or job boards. One post per company."
+        },
+        "title": {
+          "fullyHighlighted": false,
+          "matchLevel": "full",
+          "matchedWords": [
+            "who",
+            "is",
+            "hiring"
+          ],
+          "value": "Ask HN: <em>Who is hiring</em>? (September 2026)"
+        }
+      },
+      "_tags": [
+        "story",
+        "author_whoishiring",
+        "story_49522897",
+        "ask_hn"
+      ],
+      "author": "whoishiring",
+      "children": [
+        49530021
+      ],
+      "created_at": "2026-09-01T15:01:17Z",
+      "created_at_i": 1788274877,
+      "num_comments": 402,
+      "objectID": "49522897",
+      "points": 250,
+      "story_id": 49522897,
+      "story_text": "Please state the location and include REMOTE for remote work, REMOTE (US) or similar if the country is restricted, and ONSITE when remote work is <i>not</i> an option.<p>Please only post if you personally are part of the hiring company—no recruiting firms or job boards. One post per company.",
+      "title": "Ask HN: Who is hiring? (September 2026)",
+      "updated_at": "2026-11-06T21:44:44Z"
+    }
+  ],
+  "hitsPerPage": 6,
+  "nbHits": 188,
+  "nbPages": 32,
+  "page": 0,
+  "params": "query=%22who+is+hiring%22&tags=story%2Cauthor_whoishiring&hitsPerPage=6&advancedSyntax=true&analyticsTags=backend",
+  "processingTimeMS": 2,
+  "processingTimingsMS": {
+    "_request": {
+      "roundTrip": 18
+    },
+    "afterFetch": {
+      "format": {
+        "highlighting": 1,
+        "total": 1
+      },
+      "total": 1
+    },
+    "fetch": {
+      "total": 1
+    },
+    "total": 2
+  },
+  "query": "\"who is hiring\"",
+  "serverTimeMS": 3
+}

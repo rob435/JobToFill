@@ -35,7 +35,7 @@ To change the shortcut, open `chrome://extensions/shortcuts` in Chromium browser
 
 ## Setting up AI (optional)
 
-Without an AI key, JobToFill fills from your profile alone. With one, it also answers the questions the rules leave empty, writes cover letters and tailors your CV, and Discover can ask it for more firms. You pay your provider directly; JobToFill has no account or server of its own.
+Without an AI key, JobToFill fills from your profile alone. With one, it also answers the questions the rules leave empty, writes cover letters and tailors your CV, and Discover can ask it for more firms, read a careers page and draft the email to send. You pay your provider directly; JobToFill has no account or server of its own.
 
 | Provider                                   | Models and what a letter costs                                                                                                                   | Get a key                                                            |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
@@ -49,7 +49,7 @@ Without an AI key, JobToFill fills from your profile alone. With one, it also an
 3. Click **Test connection**. In Firefox, JobToFill asks your permission once before anything goes to the provider.
 4. That’s it. “Answer new questions with AI when I fill a page” is on by default, so your next fill answers what the rules leave empty, and _Write cover letter_ in the popup works.
 
-**What the AI is used for.** Answers to the questions a fill leaves empty, cover letters, tailored CVs, a second look when JobToFill isn’t sure it found the right job, and _Ask the AI for more ideas_ in Discover. What each of these sends is listed under [Privacy and security](privacy.md).
+**What the AI is used for.** Answers to the questions a fill leaves empty, cover letters, tailored CVs, a second look when JobToFill isn’t sure it found the right job, and, in Discover, _Ask the AI for more ideas_, _Ask the AI to read the page_ and _Draft an email_ (Discover can use a model of its own: _AI model for this page_). What each of these sends is listed under [Privacy and security](privacy.md).
 
 **Help it answer.** Settings › _Cover letters & AI_ › _Answer guidance_ holds facts and rules the AI may rely on for questions your CV doesn’t settle (“I have no criminal convictions and no regulatory history.”), and Settings › _Skills & writing_ › _Extra details_ anything else an application might ask. Diversity questions, declarations and ID numbers are held back from the AI, and legal and health questions until you’ve written answer guidance, unless you switch them on under _Questions the AI may also answer_ (see the [settings reference](settings.md)).
 

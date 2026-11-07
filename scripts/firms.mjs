@@ -1,20 +1,26 @@
 /*
  * JobToFill — builds extension/data/firms.json, the bundled registry of reputable but
- * low-profile finance firms behind "Discover internships".
+ * low-profile finance and tech firms behind "Discover internships".
  *
  * Sources (facts only, no article prose):
  *   - SEC Form ADV bulk CSV (monthly zip of every SEC-registered adviser): name, main office,
  *     website, employees (5A), regulatory AUM (5F(2)(c)), private funds (7B(1)) and fund types.
- *   - Wikipedia category members (MediaWiki API) plus Wikidata (website P856, dissolved P576,
- *     headquarters P159, country P17) and the infobox website line.
+ *   - Wikipedia category members (MediaWiki API: finance firms, and software, AI, fintech, deep-tech,
+ *     security and games companies) plus Wikidata (website P856, dissolved P576, headquarters P159,
+ *     country P17, employees P1128, inception P571) and the infobox website line.
+ *   - Y Combinator's company directory (yc-oss.github.io's JSON copy): active or public companies
+ *     with a website and 15 to 5,000 staff, with their batch, one-liner, team size and offices.
  * Affiliated advisers of one group (same website domain, or same normalised name) collapse into a
- * single entry. Downloads are cached under .cache/firms/ (Wikipedia/Wikidata answers for a week);
- * pass --refresh to fetch everything again. The output only changes when the data does.
+ * single entry, as does a company known to more than one source. Downloads are cached under
+ * .cache/firms/ (Wikipedia, Wikidata and YC answers for a week); pass --refresh to fetch everything
+ * again. The output only changes when the data does.
  *
  * SEC asks automated clients for a User-Agent with a contact e-mail: set FIRMS_CONTACT, or the
- * script uses `git config user.email`. Behind an HTTPS proxy on Node 22+, run with
+ * script uses `git config user.email`. With --no-sec (or when the SEC file can't be downloaded)
+ * the Form ADV firms are kept from the previous firms.json as they are, and only the Wikipedia and
+ * YC parts are rebuilt and merged in. Behind an HTTPS proxy on Node 22+, run with
  * NODE_USE_ENV_PROXY=1; if fetch() still fails, the script retries the download with curl.
- * Usage: npm run firms [-- --refresh]
+ * Usage: npm run firms [-- --refresh] [-- --no-sec]
  */
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -28,11 +34,15 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cacheDir = path.join(root, '.cache', 'firms');
 const outFile = path.join(root, 'extension', 'data', 'firms.json');
 const refresh = process.argv.includes('--refresh');
+const noSec = process.argv.includes('--no-sec');
 const WEEK = 7 * 24 * 3600 * 1000;
 
 // Inclusion thresholds for firms known only from Form ADV (Wikipedia firms are always kept).
 const MIN_AUM = 500e6;
 const MIN_EMPLOYEES = 10;
+// Y Combinator companies big enough to run an internship, small enough to be overlooked.
+const YC_MIN_TEAM = 15;
+const YC_MAX_TEAM = 5000;
 
 const SEC_INDEX =
   'https://www.sec.gov/data-research/sec-markets-data/information-about-registered-investment-advisers-exempt-reporting-advisers';
@@ -41,10 +51,11 @@ const SEC_FILES =
 const SEC_FALLBACK = 'ia100226.zip';
 const WIKI_API = 'https://en.wikipedia.org/w/api.php';
 const WIKIDATA_API = 'https://www.wikidata.org/w/api.php';
+const YC_API = 'https://yc-oss.github.io/api/companies/all.json';
 const PROJECT = 'JobToFill firms builder (github.com/rob435/JobToFill)';
 
 // [category, expand one level of subcategories]. Subcategories are kept only if they match SUBCAT_OK.
-const CATEGORIES = [
+const FINANCE_CATEGORIES = [
   ['Hedge fund firms in the United Kingdom', false],
   ['Hedge fund firms in New York City', true],
   ['Hedge fund firms of the United States', true],
@@ -60,8 +71,69 @@ const CATEGORIES = [
   ['Family offices', false],
   ['Financial services companies based in the City of London', false],
 ];
-const SUBCAT_OK = /hedge fund firms|tiger cub|investment banks/i;
-const SUBCAT_BAD = /defunct|former|people|managers|personnel|executives|founders|bankers|lists?\b/i;
+// Tech companies that hire interns. There is no "Financial technology companies of the United Kingdom",
+// "Quantum computing companies", "Companies in the Silicon Fen" or "Technology companies of Scotland":
+// the categories below are the nearest that exist.
+const TECH_CATEGORIES = [
+  ['Software companies of the United Kingdom', true], // of England, of Scotland, of Wales
+  ['Software companies based in London', false],
+  ['Software companies based in Cambridge', false], // the Silicon Fen
+  ['Technology companies based in London', false],
+  ['Technology companies based in Cambridge', false], // Arm
+  ['Technology companies of the United Kingdom', false],
+  ['Information technology companies of the United Kingdom', false],
+  ['Artificial intelligence industry in the United Kingdom', false], // Google DeepMind
+  ['Software companies of Ireland', false],
+  ['Software companies of Germany', false],
+  ['Software companies of France', false],
+  ['Software companies of the Netherlands', false],
+  ['Software companies of Switzerland', false],
+  ['Software companies of Israel', false],
+  ['Software companies of Canada', false],
+  ['Software companies based in the San Francisco Bay Area', true], // Mountain View, Bay Area games
+  ['Software companies based in New York City', false],
+  ['Software companies based in Massachusetts', false],
+  ['Software companies based in Washington (state)', true], // Seattle
+  ['Software companies based in Texas', false],
+  ['Software companies based in Illinois', false],
+  ['Software companies based in Colorado', false],
+  ['Artificial intelligence companies', true], // Generative AI companies
+  ['Artificial intelligence industry in the United States', false], // Hugging Face, Scale AI, Perplexity
+  ['Financial technology companies', true], // payment service providers, financial software, of the United States
+  ['Financial technology companies based in California', false],
+  ['Online banks', false],
+  ['Neobanks', false],
+  ['Online financial services companies of the United Kingdom', false], // Wise, Checkout.com
+  ['Computer security companies', true], // computer security software, DDoS mitigation
+  ['Semiconductor companies', true], // by country, fabless, equipment, foundries
+  ['Robotics companies', true], // industrial robotics, self-driving cars
+  ['Robotics companies of the United States', false],
+  ['Robotics companies of the United Kingdom', false],
+  ['Private spaceflight companies', false],
+  ['Companies involved in quantum computing', false],
+  ['Photonics companies', false],
+  ['Video game companies of the United Kingdom', true], // stubs: the small studios
+  ['Video game development companies', false],
+  ['Y Combinator companies', false],
+];
+const CATEGORIES = [...FINANCE_CATEGORIES, ...TECH_CATEGORIES];
+// Semiconductor companies by country: only where Discover's places are.
+const CHIP_PLACES =
+  'the United Kingdom|the United States|Ireland|Germany|France|the Netherlands|Switzerland|Israel|Canada|' +
+  'Denmark|Sweden|Norway|Austria|Spain|Poland|Singapore';
+const SUBCAT_OK = new RegExp(
+  'hedge fund firms|tiger cub|investment banks|software companies (of|based in)|video game companies|' +
+    'video game company stubs|generative ai companies|payment service providers|financial software companies|' +
+    'financial technology companies (of|based in)|computer security software|ddos mitigation|' +
+    `semiconductor companies of (${CHIP_PLACES})$|^(fabless|equipment|foundry) semiconductor|` +
+    'industrial robotics|self-driving car companies',
+  'i',
+);
+const SUBCAT_BAD = new RegExp(
+  'defunct|former|failed|people|managers|personnel|executives|officers|founders|bankers|lists?\\b|wikipedia|' +
+    'named after',
+  'i',
+);
 
 // ---------------------------------------------------------------------------------------------
 // HTTP with cache and polite retries
@@ -84,10 +156,11 @@ function curl(url, headers) {
   return execFileSync('curl', [...args, url], { maxBuffer: 256 * 1024 * 1024 });
 }
 
-// GET returning a Buffer. Retries 429/5xx with 5, 10, 20, 40, 60s backoff (or Retry-After).
+// GET returning a Buffer. Retries 429/5xx (and a failed curl) with 5, 10, 20, 40, 60s… backoff (or Retry-After):
+// Wikipedia answers a long run's bursts with "You are making too many requests to the API".
 async function get(url, headers = {}) {
   const host = new URL(url).host;
-  const delays = [5, 10, 20, 40, 60];
+  const delays = [5, 10, 20, 40, 60, 60, 60, 60];
   for (let attempt = 0; ; attempt++) {
     const wait = 1000 - (Date.now() - (lastHit.get(host) || 0));
     if (wait > 0) await sleep(wait);
@@ -97,8 +170,15 @@ async function get(url, headers = {}) {
       res = await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
     } catch (err) {
       // fetch() ignores HTTPS_PROXY unless NODE_USE_ENV_PROXY=1; curl honours it.
-      console.warn(`  fetch failed (${err.cause?.code || err.message}), retrying with curl: ${url}`);
-      return curl(url, headers);
+      console.warn(`  fetch failed (${err.cause?.code || err.message}), retrying with curl: ${url.slice(0, 120)}`);
+      try {
+        return curl(url, headers);
+      } catch (curlErr) {
+        if (attempt >= delays.length) throw curlErr;
+        console.warn(`  curl failed too, retrying in ${delays[attempt]}s`);
+        await sleep(delays[attempt] * 1000);
+        continue;
+      }
     }
     if (res.ok) return Buffer.from(await res.arrayBuffer());
     if ((res.status === 429 || res.status >= 500) && attempt < delays.length) {
@@ -390,6 +470,11 @@ const COUNTRIES = {
   indonesia: 'ID',
   philippines: 'PH',
   vietnam: 'VN',
+  nigeria: 'NG',
+  egypt: 'EG',
+  kenya: 'KE',
+  pakistan: 'PK',
+  ukraine: 'UA',
   england: 'GB',
   scotland: 'GB',
   'united states of america': 'US',
@@ -436,6 +521,15 @@ const COUNTRY_QIDS = {
   Q846: 'QA',
   Q235: 'MC',
   Q347: 'LI',
+  Q33: 'FI',
+  Q36: 'PL',
+  Q191: 'EE',
+  Q213: 'CZ',
+  Q45: 'PT',
+  Q212: 'UA',
+  Q159: 'RU',
+  Q43: 'TR',
+  Q414: 'AR',
 };
 const countryCode = (s) =>
   COUNTRIES[
@@ -473,6 +567,12 @@ const CITY_ALIASES = {
   'back bay': 'Boston',
   'hong kong island': 'Hong Kong',
   central: 'Hong Kong',
+  'city of edinburgh': 'Edinburgh',
+  'city of glasgow': 'Glasgow',
+  'ward of bishopsgate': 'London',
+  'tel aviv-yafo': 'Tel Aviv',
+  sf: 'San Francisco',
+  la: 'Los Angeles',
 };
 
 const ACRONYMS = new Set(
@@ -682,39 +782,194 @@ function cityName(s) {
   const c = plain(String(s || '').replace(/\s*\([^)]*\)/g, '')).replace(/\s+/g, ' ');
   if (!c || c.length > 40 || COUNTRIES[c.toLowerCase()] || REGIONS.has(c.toLowerCase())) return '';
   const alias = CITY_ALIASES[c.toLowerCase()];
-  return alias || (c === c.toUpperCase() ? titleCase(c) : c);
+  if (alias) return alias;
+  if (/^London Borough of /i.test(c)) return 'London';
+  const town = c.replace(/^City of /i, ''); // Wikidata's "City of Portsmouth"
+  return town === town.toUpperCase() ? titleCase(town) : town;
 }
+
+// Cities that name their country, for firms no source gives one a country ("Cambridge" and "Santiago" don't).
+const CITY_COUNTRY = Object.fromEntries(
+  Object.entries({
+    GB: 'london,edinburgh,glasgow,manchester,bristol,oxford,birmingham,leeds,belfast,cardiff,guildford,dundee',
+    US:
+      'new york,san francisco,boston,chicago,los angeles,seattle,austin,palo alto,mountain view,menlo park,' +
+      'san jose,santa clara,sunnyvale,redwood city,san mateo,berkeley,oakland,atlanta,denver,miami,dallas,' +
+      'houston,washington,philadelphia,pittsburgh,san diego,irvine,greenwich,stamford,salt lake city,boulder,' +
+      'bethesda,nashua',
+    CA: 'toronto,vancouver,montreal,ottawa,waterloo,calgary,kitchener',
+    IE: 'dublin,cork',
+    DE: 'berlin,munich,hamburg,frankfurt,cologne',
+    FR: 'paris,lyon',
+    NL: 'amsterdam,rotterdam,utrecht',
+    CH: 'zurich,zürich,geneva,lausanne',
+    IL: 'tel aviv,herzliya,jerusalem,haifa',
+    IN: 'bangalore,bengaluru,mumbai,new delhi,delhi,gurugram,gurgaon,hyderabad,pune,chennai,noida',
+    SE: 'stockholm',
+    DK: 'copenhagen',
+    FI: 'helsinki',
+    NO: 'oslo',
+    ES: 'madrid,barcelona',
+    IT: 'milan,rome',
+    PL: 'warsaw,kraków,krakow',
+    NG: 'lagos',
+    KE: 'nairobi',
+    EG: 'cairo',
+    BR: 'são paulo,sao paulo,rio de janeiro',
+    MX: 'mexico city,monterrey,guadalajara',
+    CO: 'bogotá,bogota,medellín',
+    AR: 'buenos aires',
+    SG: 'singapore',
+    HK: 'hong kong,sheung wan',
+    JP: 'tokyo,osaka,kyoto',
+    KR: 'seoul',
+    CN: 'beijing,shanghai,shenzhen,hangzhou',
+    TW: 'taipei',
+    AU: 'sydney,melbourne,brisbane',
+    AE: 'dubai,abu dhabi',
+    ID: 'jakarta',
+    PK: 'lahore,karachi',
+    UA: 'kyiv',
+    TR: 'istanbul',
+    TH: 'bangkok',
+    LU: 'luxembourg,luxembourg city',
+    HU: 'budapest',
+    BG: 'sofia',
+    LT: 'vilnius',
+    LV: 'riga',
+    BY: 'minsk',
+    SK: 'bratislava',
+    HR: 'zagreb',
+    SI: 'ljubljana',
+    IS: 'reykjavík,reykjavik',
+    BD: 'dhaka',
+    NP: 'kathmandu',
+    JO: 'amman',
+    MA: 'casablanca',
+  }).flatMap(([code, list]) => list.split(',').map((city) => [city, code])),
+);
+const cityCountry = (cities) =>
+  cities.map((c) => CITY_COUNTRY[c.toLowerCase().split(',')[0].trim()]).find(Boolean) || '';
 
 const DEFUNCT_CATEGORY = /^(Defunct |Former )|disestablished in|Companies that have ceased|Liquidated/i;
 
+// Places in category names, most specific first: "Companies based in Cambridge, Massachusetts" is American,
+// "Companies based in New England" and "London, Ontario" aren't English, "New South Wales" isn't Welsh.
+const CATEGORY_PLACES = [
+  [/Canada|Ontario|Toronto|Vancouver|Montreal|Quebec|British Columbia|Alberta/, 'CA'],
+  [/Australia|New South Wales|Sydney|Melbourne/, 'AU'],
+  [
+    new RegExp(
+      'United States|U\\.S\\. state|^American (companies|brands)|New York|New England|New Jersey|Connecticut|' +
+        'Chicago|Illinois|California|San Francisco|Bay Area|Silicon Valley|Mountain View|Massachusetts|Boston|' +
+        'Texas|Florida|Washington|Seattle|Colorado|Utah|Virginia|Pennsylvania',
+    ),
+    'US',
+  ],
+  [
+    new RegExp(
+      'United Kingdom|London|England|Scotland|Wales|Northern Ireland|^British (companies|brands)|Edinburgh|' +
+        'Glasgow|Cambridge|Oxford|Manchester',
+    ),
+    'GB',
+  ],
+  [/Ireland|Dublin/, 'IE'],
+  [/Hong Kong/, 'HK'],
+  [/Singapore/, 'SG'],
+  [/Germany|Berlin|Munich/, 'DE'],
+  [/France|Paris/, 'FR'],
+  [/Netherlands|Amsterdam/, 'NL'],
+  [/Switzerland|Zurich|Zürich|Geneva/, 'CH'],
+  [/Israel|Tel Aviv/, 'IL'],
+];
+
 function categoryCountry(cats) {
-  for (const c of cats) {
-    if (/United Kingdom|London|England|Scotland/.test(c)) return 'GB';
-    if (/Hong Kong/.test(c)) return 'HK';
-    if (/Singapore/.test(c)) return 'SG';
-    if (/United States|New York|Connecticut|Chicago|California|Massachusetts|Texas|Boston|Florida/.test(c)) return 'US';
-  }
+  for (const c of cats) for (const [re, code] of CATEGORY_PLACES) if (re.test(c)) return code;
   return '';
 }
+
+const FINANCE_TAGS = ['hedge', 'quant', 'trading', 'pe', 'credit', 'vc', 'ib', 'asset', 'family'];
+const TECH_TAGS = ['software', 'ai', 'fintech', 'deeptech', 'cyber', 'games', 'yc'];
+const TAG_ORDER = [...FINANCE_TAGS, ...TECH_TAGS];
+
+// Words in a category's name and the tag they give.
+const CATEGORY_TAGS = [
+  [/Hedge fund|Tiger Cub/i, 'hedge'],
+  [/Investment banks?\b/i, 'ib'],
+  [/Private equity/i, 'pe'],
+  [/Venture capital/i, 'vc'],
+  [/derivative trading|Market makers|Proprietary trading|High-frequency trading/i, 'trading'],
+  [/Family offices/i, 'family'],
+  [/Investment management companies|Asset management companies/i, 'asset'],
+  // "Technology companies based in London" are mostly software: the nearest tag.
+  [/Software companies|Software as a service|\bSaaS\b|Cloud computing|Internet companies/i, 'software'],
+  [/^(Information )?technology companies (of|based in)/i, 'software'],
+  [/Artificial intelligence|Machine learning|Generative AI/i, 'ai'],
+  [/Financial technology|Fintech|Cryptocurrency|Payment service providers|Financial software/i, 'fintech'],
+  [/Online banks|Neobanks|Online financial services/i, 'fintech'],
+  [/Semiconductor|Fabless|Robotics|spaceflight|Quantum computing|Photonics|Self-driving/i, 'deeptech'],
+  [/Electronics (companies|manufacturers)|hardware companies/i, 'deeptech'],
+  [/Computer security|Cybersecurity|DDoS mitigation/i, 'cyber'],
+  [/Video game/i, 'games'],
+  [/Y Combinator/i, 'yc'],
+];
 
 function categoryTags(cats) {
   const tags = new Set();
   for (const c of cats) {
-    if (/Hedge fund|Tiger Cub/i.test(c)) tags.add('hedge');
-    if (/Investment banks?\b/i.test(c)) tags.add('ib');
-    if (/Private equity/i.test(c)) tags.add('pe');
-    if (/Venture capital/i.test(c)) tags.add('vc');
-    if (/derivative trading|Market makers|Proprietary trading|High-frequency trading/i.test(c)) tags.add('trading');
-    if (/Family offices/i.test(c)) tags.add('family');
-    if (/Investment management companies|Asset management companies/i.test(c)) tags.add('asset');
+    // Who owns or backed a company says nothing of what it does ("Private equity portfolio companies").
+    if (/portfolio companies|-backed companies/i.test(c)) continue;
+    for (const [re, tag] of CATEGORY_TAGS) if (re.test(c)) tags.add(tag);
   }
   return tags;
 }
 
+// "asset" is the fallback: Wikipedia files many hedge funds under investment management too.
+function finishTags(tags, names) {
+  if (FINANCE_TAGS.some((t) => t !== 'asset' && tags.has(t))) tags.delete('asset');
+  if (!FINANCE_TAGS.some((t) => tags.has(t)) && /\b(asset|investment|wealth) management\b/i.test(names.join(' ')))
+    tags.add('asset');
+  return TAG_ORDER.filter((t) => tags.has(t));
+}
+
+// Wikidata statements, preferred first.
+const claims = (entity, prop) =>
+  (entity.claims?.[prop] || [])
+    .filter((c) => c.rank !== 'deprecated' && c.mainsnak?.datavalue)
+    .sort((a, b) => (b.rank === 'preferred') - (a.rank === 'preferred'));
+const claim = (entity, prop) => claims(entity, prop).map((c) => c.mainsnak.datavalue.value);
+
+// Employees (P1128): the figure with the latest point in time (P585), preferred first among equals. Under 10 for a
+// company Wikipedia writes about is a stray claim (Improbable's 3, 5, 6 and 7 for 2018 to 2025): unknown.
+function headcount(entity) {
+  const when = (c) => c.qualifiers?.P585?.[0]?.datavalue?.value?.time || '';
+  const latest = claims(entity, 'P1128').sort(
+    (a, b) => (when(a) < when(b)) - (when(a) > when(b)) || (b.rank === 'preferred') - (a.rank === 'preferred'),
+  )[0];
+  const n = Math.round(Number(latest?.mainsnak.datavalue.value.amount));
+  return n >= 10 ? n : 0;
+}
+
+// Inception (P571) as a year: "+2014-00-00T00:00:00Z" -> 2014.
+function founded(entity) {
+  const year = Number(/^\+?(\d{4})-/.exec(claim(entity, 'P571')[0]?.time || '')?.[1]);
+  return year >= 1600 && year <= new Date().getFullYear() ? year : 0;
+}
+
+// Articles filed in company categories that are not companies: lists, people, products, and single-word topics like
+// "Neobank" or "Insurtech" (Wikidata makes those classes, P279, not instances).
+const NOT_FIRM = /^(Lists? of|Timeline of|Comparison of|History of|Outline of|Index of) /i;
+
 async function loadWikipedia() {
   const categories = [];
+  const tech = new Set(); // categories (and their subcategories) from TECH_CATEGORIES
   for (const [name, expand] of CATEGORIES) {
-    if (!categories.includes(name)) categories.push(name);
+    const isTech = TECH_CATEGORIES.some(([c]) => c === name);
+    const add = (cat) => {
+      if (!categories.includes(cat)) categories.push(cat);
+      if (isTech) tech.add(cat);
+    };
+    add(name);
     if (!expand) continue;
     const subs = await queryAll({
       list: 'categorymembers',
@@ -724,7 +979,7 @@ async function loadWikipedia() {
     });
     for (const s of subs) {
       const sub = s.title.replace(/^Category:/, '');
-      if (SUBCAT_OK.test(sub) && !SUBCAT_BAD.test(sub) && !categories.includes(sub)) categories.push(sub);
+      if (SUBCAT_OK.test(sub) && !SUBCAT_BAD.test(sub)) add(sub);
     }
   }
 
@@ -742,7 +997,7 @@ async function loadWikipedia() {
       cllimit: 'max',
     });
     for (const m of members) {
-      if (/^List of /i.test(m.title)) continue;
+      if (NOT_FIRM.test(m.title)) continue;
       const page = pages.get(m.title) || { title: m.title, qid: '', cats: new Set(), from: new Set() };
       page.qid ||= m.pageprops?.wikibase_item || '';
       for (const c of m.categories || []) page.cats.add(c.title.replace(/^Category:/, ''));
@@ -769,15 +1024,11 @@ async function loadWikipedia() {
     }
   }
 
-  // Wikidata: website, dissolution, headquarters, country.
+  // Wikidata: website, dissolution, headquarters, country, employees, inception, and whether the item is a
+  // person (P31 human) or a class (P279) rather than a company.
   const byQid = new Map(all.filter((p) => p.qid).map((p) => [p.qid, p]));
   const cityQids = new Set();
   const ids = [...byQid.keys()];
-  const claim = (entity, prop) =>
-    (entity.claims?.[prop] || [])
-      .filter((c) => c.rank !== 'deprecated' && c.mainsnak?.datavalue)
-      .sort((a, b) => (b.rank === 'preferred') - (a.rank === 'preferred'))
-      .map((c) => c.mainsnak.datavalue.value);
   for (let i = 0; i < ids.length; i += 50) {
     const json = await api(WIKIDATA_API, {
       action: 'wbgetentities',
@@ -791,6 +1042,16 @@ async function loadWikipedia() {
       page.dissolved = claim(entity, 'P576').length > 0;
       page.hqQid = claim(entity, 'P159')[0]?.id || '';
       page.countryQid = claim(entity, 'P17')[0]?.id || '';
+      page.employees = headcount(entity);
+      page.founded = founded(entity);
+      // A topic ("Neobank") is a class of things and an instance of nothing. Lansdowne Partners and DailyPay are
+      // filed as subclasses too, but as instances of a business, and Waymo has a website.
+      const has = (...props) => props.some((prop) => claim(entity, prop).length > 0);
+      const topic = has('P279') && !has('P31') && !has('P856', 'P159', 'P1128');
+      // Products filed beside their makers ("ChatGPT", "Pebble (watch)") have a developer or a manufacturer and no
+      // headquarters, staff, industry or legal form; Monzo and Starling Bank, their own apps' developers, have them.
+      const product = has('P178', 'P176') && !has('P159', 'P1128', 'P452', 'P1454');
+      page.notFirm = topic || product || claim(entity, 'P31').some((v) => v.id === 'Q5');
       if (page.hqQid) cityQids.add(page.hqQid);
     }
   }
@@ -820,13 +1081,17 @@ async function loadWikipedia() {
     const site = website(p.wdSite) || website(box.website);
     const city = cityName(cityLabels.get(p.hqQid) || '') || cityName(box.city);
     const country = COUNTRY_QIDS[p.countryQid] || countryCode(plain(box.country || ''));
-    // Topic articles filed in firm categories ("Hedge fund", "Special situation") are not firms:
-    // firm titles are proper nouns.
+    // Topic articles filed in firm categories ("Hedge fund", "Special situation", "Video game developer") are not
+    // firms: firm titles are proper nouns ("Wise (company)", "Rockstar North"; "eToro" and "iRobot" are brands).
     const words = p.title
       .replace(/\s*\(.*\)$/, '')
       .split(' ')
       .slice(1);
-    if (words.some((w) => /^[a-z]/.test(w) && !/^(of|and|the|de|du|la|le|des|von|van|for|in|plc|&)$/.test(w))) {
+    const lower = (w) =>
+      /^[a-z]/.test(w) &&
+      !/[A-Z0-9]/.test(w) &&
+      !/^(of|and|the|de|du|la|le|des|von|van|der|den|for|in|on|at|by|to|a|an|with|und|et|e|y|plc|&)$/.test(w);
+    if (p.notFirm || words.some(lower)) {
       topics++;
       if (process.env.FIRMS_DEBUG) console.log('  topic:', p.title);
       continue;
@@ -837,6 +1102,9 @@ async function loadWikipedia() {
       site,
       city,
       country,
+      employees: p.employees || 0,
+      founded: p.founded || 0,
+      tech: [...p.from].every((c) => tech.has(c)),
       catCountry: categoryCountry([...p.from, ...cats]),
       tags: categoryTags([...p.from, ...cats]),
     });
@@ -845,6 +1113,112 @@ async function loadWikipedia() {
     `Wikipedia: ${categories.length} categories, ${all.length} pages, ${defunct} defunct and ${topics} topic articles dropped`,
   );
   return { firms, members: all.length };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Y Combinator
+
+// YC's industries and tags ("B2B", "Fintech", "Developer Tools", "Manufacturing and Robotics"…) as registry tags.
+const YC_TAGS = new Map(
+  Object.entries({
+    fintech: 'Fintech|Payments|Banking and Exchange|Neobank|Banking as a Service|Crypto / Web3',
+    software:
+      'B2B|Software|SaaS|Enterprise Software|Developer Tools|Infrastructure|Productivity|Analytics|Open Source|' +
+      'API|Data Engineering|Engineering, Product and Design',
+    ai:
+      'Artificial Intelligence|AI|Machine Learning|Generative AI|Deep Learning|Computer Vision|Conversational AI|' +
+      'NLP|AI Assistant|AIOps',
+    deeptech:
+      'Hardware|Hard Tech|Industrials|Robotics|Manufacturing and Robotics|Aerospace|Aviation and Space|Drones|' +
+      'Semiconductors|Quantum Computing|Space Exploration',
+    cyber: 'Security|Cybersecurity',
+    games: 'Gaming',
+  }).flatMap(([tag, labels]) => labels.split('|').map((label) => [label.toLowerCase(), tag])),
+);
+
+// "Winter 2021" -> "W21" (YC's own short form; Spring is X).
+function ycBatch(batch) {
+  const m = /^(Winter|Summer|Fall|Spring) (\d{4})$/.exec(String(batch || '').trim());
+  return m ? { Winter: 'W', Summer: 'S', Fall: 'F', Spring: 'X' }[m[1]] + m[2].slice(2) : '';
+}
+
+// "London, England, United Kingdom; New York City, NY, USA; Remote" -> cities ["London", "New York"] and the
+// first office's country, GB.
+function ycPlaces(locations) {
+  const cities = [];
+  let country = '';
+  for (const loc of String(locations || '').split(/\s*;\s*/)) {
+    const parts = loc.split(',').map((x) => x.trim());
+    if (!parts[0] || /^(remote|partly remote)$/i.test(parts[0])) continue;
+    country ||= countryCode(parts[parts.length - 1]); // "Singapore" is both
+    // "MH, India" and "LA, Nigeria" are a state and its country: no city.
+    if (parts.length === 2 && /^[A-Z]{2}$/.test(parts[0])) continue;
+    const raw = parts[0].replace(/\s+/g, ' ');
+    const city =
+      CITY_ALIASES[raw.toLowerCase()] ||
+      (raw === raw.toLowerCase() || raw === raw.toUpperCase()
+        ? raw.toLowerCase().replace(/(^|[\s-])([a-z])/g, (m, sep, ch) => sep + ch.toUpperCase())
+        : raw);
+    if (!cities.includes(city)) cities.push(city);
+  }
+  return { cities, country };
+}
+
+// "On-demand electronics manufacturing", cut at a word to 120 characters.
+function oneLiner(s) {
+  const t = String(s || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (t.length <= 120) return t;
+  return (
+    t
+      .slice(0, 119)
+      .replace(/\s+\S*$/, '')
+      .replace(/[\s,;:–—-]+$/, '') + '…'
+  );
+}
+
+async function loadYc() {
+  let list;
+  try {
+    const buf = await cached('yc/companies.json', WEEK, () =>
+      get(YC_API, { 'User-Agent': `${PROJECT} node`, Accept: 'application/json' }),
+    );
+    list = JSON.parse(buf.toString('utf8'));
+    if (!Array.isArray(list)) throw new Error('not a list');
+  } catch (err) {
+    console.warn(`  Y Combinator directory unavailable (${err.message}); YC only from its Wikipedia category`);
+    return { firms: [], count: 0 };
+  }
+  const firms = [];
+  for (const c of list) {
+    if (!/^(Active|Public)$/.test(c.status) || !(c.team_size >= YC_MIN_TEAM && c.team_size <= YC_MAX_TEAM)) continue;
+    const web = website(c.website);
+    const name = String(c.name || '').trim();
+    if (!web || !name) continue;
+    const tags = new Set(['yc']);
+    for (const label of [c.industry, ...(c.industries || []), ...(c.tags || [])]) {
+      const tag = YC_TAGS.get(
+        String(label || '')
+          .trim()
+          .toLowerCase(),
+      );
+      if (tag) tags.add(tag);
+    }
+    firms.push({
+      name,
+      slug: String(c.slug || ''),
+      web,
+      ...ycPlaces(c.all_locations),
+      employees: Math.round(c.team_size),
+      batch: ycBatch(c.batch),
+      oneLiner: oneLiner(c.one_liner),
+      tags,
+    });
+  }
+  firms.sort((a, b) => a.name.localeCompare(b.name, 'en') || a.slug.localeCompare(b.slug));
+  console.log(`Y Combinator: ${list.length} companies, ${firms.length} active or public with ${YC_MIN_TEAM}+ staff`);
+  return { firms, count: list.length };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -867,8 +1241,68 @@ function nameTags(names) {
   return tags;
 }
 
-function build(adv, wiki) {
-  // Union-find over advisers (0..A-1) and Wikipedia firms (A..).
+// A firm's record in firms.json's key order, without the empty fields.
+const KEYS = ['n', 'a', 'd', 's', 'c', 'k', 'e', 'm', 'f', 'r', 'w', 'q', 'i', 'y', 'o', 't'];
+function compact(fields) {
+  const firm = {};
+  for (const k of KEYS) {
+    const v = fields[k];
+    if (v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length && k !== 't')) continue;
+    firm[k] = v;
+  }
+  return firm;
+}
+
+const unique = (list) => [...new Set(list.filter(Boolean))];
+const wikiName = (title) => title.replace(/\s*\([^)]*\)$/, '').replace(/,? (plc|Inc\.|LLC|Ltd\.?|Limited|L\.P\.)$/, '');
+const wikiKey = (title) => title.replace(/ /g, '_');
+
+// Tech companies come from Wikipedia's tech categories and YC; everything else is finance.
+const isTech = (it) => it.kind === 'yc' || (it.kind === 'wiki' && it.tech);
+// The staff count that makes a name match across websites believable: an adviser's, as Form ADV gives it.
+const staff = (it) => (it.kind === 'adv' || it.kind === 'kept' ? it.employees || 0 : 0);
+// Whether a website's name matches the firm's: Form ADV sometimes gives a platform's site instead
+// ("pennington.addepar.com" for Pennington Partners), which mustn't pull Addepar the company in.
+function ownSite(it, domain) {
+  const label = domain.split('.')[0].replace(/[^a-z0-9]/g, '');
+  return it.keys.some((key) => {
+    const first = key.split(' ')[0].toLowerCase();
+    const whole = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return (
+      (first.length >= 3 && label.includes(first)) || (label.length >= 3 && whole.includes(label)) || whole === label
+    );
+  });
+}
+
+// A firm kept from the previous build (--no-sec): its Form ADV facts as they were, plus what Wikipedia and
+// Y Combinator add now (an article and its name, the year founded, a YC batch, tech tags).
+function keepFirm(rec, w, wikis, ycs) {
+  const y = ycs[0];
+  const name = !rec.w && w ? wikiName(w.title) : rec.n;
+  const aliases = [...(rec.a || [])];
+  if (name !== rec.n && !aliases.includes(rec.n)) aliases.unshift(rec.n);
+  // Its finance tags as built; the tech ones afresh, so a rebuild with --no-sec drops what no longer applies.
+  const tags = new Set(rec.t.filter((t) => FINANCE_TAGS.includes(t)));
+  for (const x of [...wikis, ...ycs]) for (const t of x.tags) tags.add(t);
+  const cities = unique([...(rec.c || []), w?.city, ...(y?.cities || [])]).slice(0, 4);
+  return compact({
+    ...rec,
+    n: name,
+    a: aliases.slice(0, 3),
+    c: cities,
+    k: rec.k || w?.country || y?.country || w?.catCountry || cityCountry(cities),
+    w: rec.w || (w && wikiKey(w.title)),
+    q: rec.q || w?.qid,
+    i: w?.founded || undefined,
+    y: y?.batch,
+    o: y?.oneLiner,
+    t: finishTags(tags, [name, ...aliases]),
+  });
+}
+
+// kept: the previous build's Form ADV firms, standing in for `adv` when the SEC file isn't there (--no-sec).
+function build(adv, wiki, yc, kept = []) {
+  // Union-find over advisers (or kept firms), Wikipedia firms and YC companies.
   // A domain listed by advisers with three or more unrelated names, none of them matching the domain,
   // is a platform (a podcast host, an ETF brand), not a firm's site. man.com (Man, AHL, GLG) stays.
   const advWeb = adv.map((a) => website(a.site));
@@ -892,32 +1326,80 @@ function build(adv, wiki) {
       kind: 'adv',
       ...a,
       web: platforms.has(advWeb[i]?.domain) ? null : advWeb[i],
-      key: nameKey(a.name),
+      keys: [nameKey(a.name)],
+      places: [advCity(a.city)],
+      countries: [countryCode(a.country)],
     })),
-    ...wiki.map((w) => ({ kind: 'wiki', ...w, web: w.site, key: nameKey(w.title.replace(/\s*\(.*\)$/, '')) })),
+    ...kept.map((rec) => ({
+      kind: 'kept',
+      rec,
+      web: rec.d ? { domain: rec.d, site: rec.s || `https://${rec.d}` } : null,
+      keys: unique([rec.n, ...(rec.a || [])].map(nameKey)),
+      employees: rec.e || 0,
+      places: rec.c || [],
+      countries: [rec.k],
+    })),
+    ...wiki.map((w) => ({
+      kind: 'wiki',
+      ...w,
+      web: w.site,
+      keys: [nameKey(w.title.replace(/\s*\(.*\)$/, ''))],
+      places: [w.city],
+      countries: [w.country || w.catCountry],
+    })),
+    ...yc.map((y) => ({ kind: 'yc', ...y, keys: [nameKey(y.name)], places: y.cities, countries: [y.country] })),
   ];
   const parent = items.map((_, i) => i);
   const domains = items.map((it) => new Set(it.web ? [it.web.domain] : []));
-  const cities = items.map((it) => new Set([it.kind === 'adv' ? advCity(it.city) : it.city].filter(Boolean)));
-  const countries = items.map(
-    (it) => new Set([it.kind === 'adv' ? countryCode(it.country) : it.country || it.catCountry].filter(Boolean)),
-  );
+  const cities = items.map((it) => new Set(it.places.filter(Boolean)));
+  const countries = items.map((it) => new Set(it.countries.filter(Boolean)));
+  const keeps = items.map((it) => it.kind === 'kept');
+  const secs = items.map((it) => it.kind === 'kept' || it.kind === 'adv');
   const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
   const overlap = (a, b) => [...a].some((x) => b.has(x));
+  // A YC company and the Wikipedia article of its name are one company despite different websites when the
+  // article is filed under "Y Combinator companies" (Deel: deel.com, and letsdeel.com on Wikidata), or when both
+  // sites have the same name (replika.ai, replika.com) and no two cities disagree. YC's Runway (runway.team) is not
+  // Runway ML, nor its Conduit (conduit.ai, San Francisco) the New York one (conduit.com).
+  const ycArticle = (a, b, ra, rb) => {
+    const yc = [a, b].find((it) => it.kind === 'yc');
+    const article = [a, b].find((it) => it.kind === 'wiki');
+    if (!yc || !article || secs[ra] || secs[rb]) return false;
+    const label = (web) => web?.domain.split('.')[0];
+    if (article.tags.has('yc')) return true;
+    const citiesAgree = !cities[ra].size || !cities[rb].size || overlap(cities[ra], cities[rb]);
+    return label(yc.web) === label(article.web) && citiesAgree;
+  };
   const union = (a, b, byName) => {
     const ra = find(a);
     const rb = find(b);
     if (ra === rb) return;
-    // A name match may not join two groups that already have different websites, unless a
-    // Wikipedia firm and an adviser share a city (Davidson Kempner: dkpartners.com, davidsonkempner.com),
-    // or a country when one has no city and the adviser is sizeable (50+ staff).
-    if (byName && domains[ra].size && domains[rb].size && !overlap(domains[ra], domains[rb])) {
-      const sameCity = overlap(cities[ra], cities[rb]);
-      const big = Math.max(items[a].employees || 0, items[b].employees || 0) >= 50;
-      const sameCountry = big && (!cities[ra].size || !cities[rb].size) && overlap(countries[ra], countries[rb]);
-      if (items[a].kind === items[b].kind || !(sameCity || sameCountry)) return;
+    // Kept firms stay as the previous build made them: one never absorbs another.
+    if (keeps[ra] && keeps[rb]) return;
+    if (!byName && isTech(items[a]) !== isTech(items[b])) {
+      const fin = isTech(items[a]) ? items[b] : items[a];
+      if ((fin.kind === 'adv' || fin.kind === 'kept') && !ownSite(fin, fin.web.domain)) return;
+    }
+    if (byName) {
+      const conflict = domains[ra].size && domains[rb].size && !overlap(domains[ra], domains[rb]);
+      if (isTech(items[a]) || isTech(items[b])) {
+        // Tech names are often words ("Ripple", "Atlas"): in different countries, or with different websites (but
+        // for a YC company and its own article), they're different companies.
+        if (countries[ra].size && countries[rb].size && !overlap(countries[ra], countries[rb])) return;
+        if (conflict && !ycArticle(items[a], items[b], ra, rb)) return;
+      } else if (conflict) {
+        // A name match may not join two groups that already have different websites, unless a
+        // Wikipedia firm and an adviser share a city (Davidson Kempner: dkpartners.com, davidsonkempner.com),
+        // or a country when one has no city and the adviser is sizeable (50+ staff).
+        const sameCity = overlap(cities[ra], cities[rb]);
+        const big = Math.max(staff(items[a]), staff(items[b])) >= 50;
+        const sameCountry = big && (!cities[ra].size || !cities[rb].size) && overlap(countries[ra], countries[rb]);
+        if (items[a].kind === items[b].kind || !(sameCity || sameCountry)) return;
+      }
     }
     parent[rb] = ra;
+    keeps[ra] ||= keeps[rb];
+    secs[ra] ||= secs[rb];
     for (const d of domains[rb]) domains[ra].add(d);
     for (const c of cities[rb]) cities[ra].add(c);
     for (const c of countries[rb]) countries[ra].add(c);
@@ -931,9 +1413,11 @@ function build(adv, wiki) {
   });
   const firstKey = new Map();
   items.forEach((it, i) => {
-    if (it.key.length < 4) return;
-    if (firstKey.has(it.key)) union(firstKey.get(it.key), i, true);
-    else firstKey.set(it.key, i);
+    for (const key of it.keys) {
+      if (key.length < 4) continue;
+      if (firstKey.has(key)) union(firstKey.get(key), i, true);
+      else firstKey.set(key, i);
+    }
   });
 
   const groups = new Map();
@@ -949,113 +1433,158 @@ function build(adv, wiki) {
       .filter((m) => m.kind === 'adv')
       .sort((a, b) => b.employees - a.employees || b.aum - a.aum || a.crd - b.crd);
     const wikis = members.filter((m) => m.kind === 'wiki').sort((a, b) => a.title.localeCompare(b.title));
+    const ycs = members
+      .filter((m) => m.kind === 'yc')
+      .sort((a, b) => b.employees - a.employees || a.name.localeCompare(b.name, 'en') || a.slug.localeCompare(b.slug));
+    const prev = members.find((m) => m.kind === 'kept')?.rec;
+    if (prev) {
+      firms.push(keepFirm(prev, prev.w ? wikis.find((x) => wikiKey(x.title) === prev.w) : wikis[0], wikis, ycs));
+      continue;
+    }
     const w = wikis[0];
+    const y = ycs[0];
     const maxEmp = Math.max(0, ...advs.map((a) => a.employees));
     const maxAum = Math.max(0, ...advs.map((a) => a.aum));
     const maxFunds = Math.max(0, ...advs.map((a) => a.funds));
-    if (!w && !(maxFunds > 0 && maxAum >= MIN_AUM && maxEmp >= MIN_EMPLOYEES)) continue;
+    if (!w && !y && !(maxFunds > 0 && maxAum >= MIN_AUM && maxEmp >= MIN_EMPLOYEES)) continue;
 
     const lead = advs.find((a) => a.funds > 0) || advs[0];
-    // Wikipedia/Wikidata's site, else the one most of the group's staff work under (ADV lists only
-    // each adviser's first site, sometimes a LinkedIn page or a local subsidiary's domain).
-    let web = w?.site;
+    // A startup's site as YC has it (Wikidata can lag: letsdeel.com for Deel), else Wikipedia/Wikidata's, else
+    // the one most of the group's staff work under (ADV lists only each adviser's first site, sometimes a
+    // LinkedIn page or a local subsidiary's domain).
+    let web = advs.length ? w?.site || y?.web : y?.web || w?.site;
     if (!web) {
       const weight = new Map();
       for (const a of advs) if (a.web) weight.set(a.web.domain, (weight.get(a.web.domain) || 0) + a.employees + 1);
-      const best = [...weight].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0]?.[0];
+      const best = [...weight].sort((x, z) => z[1] - x[1] || x[0].localeCompare(z[0]))[0]?.[0];
       web = (best && lead?.web?.domain === best && lead.web) || advs.find((a) => a.web?.domain === best)?.web;
     }
-    if (!web && !w) continue;
+    // A tech company without a website can't be checked for openings.
+    if (!web && (!w || members.every(isTech))) continue;
 
-    const name = w
-      ? w.title.replace(/\s*\([^)]*\)$/, '').replace(/,? (plc|Inc\.|LLC|Ltd\.?|Limited|L\.P\.)$/, '')
-      : groupName(advs, lead);
+    const name = w ? wikiName(w.title) : advs.length ? groupName(advs, lead) : y.name;
     const aliases = [];
-    for (const a of advs) {
-      const alias = titleCase(a.name.replace(/\s+/g, ' '));
+    for (const alias of [...advs.map((a) => titleCase(a.name.replace(/\s+/g, ' '))), ...ycs.map((x) => x.name)])
       if (alias !== name && !aliases.includes(alias)) aliases.push(alias);
-    }
-    const cities = [];
-    for (const c of [w?.city, ...advs.map((a) => advCity(a.city))]) if (c && !cities.includes(c)) cities.push(c);
-    const country = w?.country || countryCode(lead?.country) || w?.catCountry || '';
+    const cities = unique([w?.city, ...advs.map((a) => advCity(a.city)), ...(y?.cities || [])]);
+    const country = w?.country || countryCode(lead?.country) || y?.country || w?.catCountry || cityCountry(cities);
 
     const tags = new Set();
-    for (const x of wikis) for (const t of x.tags) tags.add(t);
+    for (const x of [...wikis, ...ycs]) for (const t of x.tags) tags.add(t);
     // Fund types reported in Form ADV 7.B: a type counts when it is at least a quarter of the funds.
     const types = {};
     for (const a of advs) for (const [t, n] of Object.entries(a.types)) types[t] = (types[t] || 0) + n;
     const total = Object.values(types).reduce((s, n) => s + n, 0);
     for (const t of ['hedge', 'pe', 'vc', 'credit']) if (total && types[t] / total > 1 / 3) tags.add(t);
-    for (const t of nameTags([name, ...aliases])) tags.add(t);
-    // "asset" is the fallback: Wikipedia files many hedge funds under investment management too.
-    if (tags.size > 1) tags.delete('asset');
-    if (!tags.size && /\b(asset|investment|wealth) management\b/i.test([name, ...aliases].join(' '))) tags.add('asset');
-    const order = ['hedge', 'quant', 'trading', 'pe', 'credit', 'vc', 'ib', 'asset', 'family'];
+    // Finance words in a tech company's name mean something else: "Quantum Motion" builds qubits, not a quant fund.
+    if (members.some((m) => !isTech(m))) for (const t of nameTags([name, ...aliases])) tags.add(t);
 
-    const firm = { n: name };
-    if (aliases.length) firm.a = aliases.slice(0, 3);
-    if (web) {
-      firm.d = web.domain;
-      firm.s = web.site;
-    }
-    if (cities.length) firm.c = cities.slice(0, 4);
-    if (country) firm.k = country;
-    if (maxEmp) firm.e = maxEmp;
-    if (maxAum) firm.m = Math.round(maxAum / 1e8) / 10;
-    if (maxFunds) firm.f = maxFunds;
-    if (lead) firm.r = lead.crd;
-    if (w) {
-      firm.w = w.title.replace(/ /g, '_');
-      if (w.qid) firm.q = w.qid;
-    }
-    firm.t = order.filter((t) => tags.has(t));
-    firms.push(firm);
+    firms.push(
+      compact({
+        n: name,
+        a: aliases.slice(0, 3),
+        d: web?.domain,
+        s: web?.site,
+        c: cities.slice(0, 4),
+        k: country,
+        // Form ADV's staff count, else YC's team size, else Wikidata's.
+        e: maxEmp || y?.employees || w?.employees || undefined,
+        m: maxAum ? Math.round(maxAum / 1e8) / 10 : undefined,
+        f: maxFunds || undefined,
+        r: lead?.crd,
+        w: w && wikiKey(w.title),
+        q: w?.qid,
+        i: w?.founded || undefined,
+        y: y?.batch,
+        o: y?.oneLiner,
+        t: finishTags(tags, [name, ...aliases]),
+      }),
+    );
   }
-  return firms.sort((a, b) => a.n.localeCompare(b.n, 'en') || (a.r || 0) - (b.r || 0));
+  return firms.sort(
+    (a, b) =>
+      a.n.localeCompare(b.n, 'en') ||
+      (a.r || 0) - (b.r || 0) ||
+      (a.d || '').localeCompare(b.d || '') ||
+      (a.w || '').localeCompare(b.w || ''),
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
 
 function summary(firms, bytes) {
-  const count = (fn) => {
+  const count = (list, fn) => {
     const m = new Map();
-    for (const f of firms) for (const k of [].concat(fn(f) || [])) m.set(k, (m.get(k) || 0) + 1);
-    return [...m]
-      .sort((a, b) => b[1] - a[1])
+    for (const f of list) for (const k of [].concat(fn(f) || [])) m.set(k, (m.get(k) || 0) + 1);
+    return [...m].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+  };
+  const top = (pairs, n) =>
+    pairs
+      .slice(0, n)
       .map(([k, v]) => `${k} ${v}`)
       .join(', ');
-  };
   console.log(`\n${firms.length} firms, ${(bytes / 1024).toFixed(0)} KB`);
+  const has = (k) => firms.filter((f) => f[k]).length;
+  const both = firms.filter((f) => f.r && f.w).length;
+  console.log(`  sources:   SEC ${has('r')}, Wikipedia ${has('w')}, both ${both}, YC ${has('y')}`);
   console.log(
-    `  sources:   SEC ${firms.filter((f) => f.r).length}, Wikipedia ${firms.filter((f) => f.w).length}, both ${firms.filter((f) => f.r && f.w).length}`,
+    `  countries: ${top(
+      count(firms, (f) => f.k || '?'),
+      20,
+    )}`,
   );
   console.log(
-    `  countries: ${count((f) => f.k || '?')
-      .split(', ')
-      .slice(0, 15)
-      .join(', ')}`,
+    `  cities:    ${top(
+      count(firms, (f) => f.c?.[0] || '?'),
+      15,
+    )}`,
   );
-  console.log(
-    `  cities:    ${count((f) => f.c?.[0] || '?')
-      .split(', ')
-      .slice(0, 15)
-      .join(', ')}`,
-  );
-  console.log(`  tags:      ${count((f) => (f.t.length ? f.t : ['(none)']))}`);
+  console.log(`  untagged:  ${firms.filter((f) => !f.t.length).length}`);
+  for (const tag of TAG_ORDER) {
+    const tagged = firms.filter((f) => f.t.includes(tag));
+    console.log(
+      `  ${tag.padEnd(9)} ${String(tagged.length).padStart(5)}  ${top(
+        count(tagged, (f) => f.k || '?'),
+        8,
+      )}`,
+    );
+  }
 }
 
-const { file, advisers } = await loadAdv();
-const { firms: wiki, members } = await loadWikipedia();
-const firms = build(advisers, wiki);
-
-const sources = { adv: file, wikipedia: `${members} category members` };
-let built = new Date().toISOString().slice(0, 10);
+// The previous build: its Form ADV firms stand in when the SEC file isn't fetched, and its date stays when
+// nothing changed.
+let prev = null;
 try {
-  const prev = JSON.parse(await readFile(outFile, 'utf8'));
-  if (JSON.stringify([prev.sources, prev.firms]) === JSON.stringify([sources, firms])) built = prev.built;
+  prev = JSON.parse(await readFile(outFile, 'utf8'));
 } catch {
   // first build
 }
+let adv = null;
+if (!noSec) {
+  try {
+    adv = await loadAdv();
+  } catch (err) {
+    console.warn(`Form ADV unavailable: ${err.message}\n  keeping the previous build's SEC firms`);
+  }
+}
+const kept = adv ? [] : (prev?.firms || []).filter((f) => f.r);
+if (!adv && !kept.length) throw new Error('No Form ADV file, and no previous firms.json to keep its SEC firms from');
+const advSource = adv
+  ? adv.file
+  : / \(kept from /.test(prev.sources?.adv || '')
+    ? prev.sources.adv
+    : `${prev.sources?.adv || 'Form ADV'} (kept from ${prev.built})`;
+if (!adv) console.log(`Form ADV: ${kept.length} firms kept from the previous build: ${advSource}`);
+const { firms: wiki, members } = await loadWikipedia();
+const { firms: yc, count: ycCount } = await loadYc();
+const firms = build(adv?.advisers || [], wiki, yc, kept);
+
+const sources = { adv: advSource, wikipedia: `${members} category members` };
+if (ycCount) sources.yc = `${ycCount} companies (yc-oss.github.io)`;
+const built =
+  prev && JSON.stringify([prev.sources, prev.firms]) === JSON.stringify([sources, firms])
+    ? prev.built
+    : new Date().toISOString().slice(0, 10);
 const body =
   `{\n"built": ${JSON.stringify(built)},\n"sources": ${JSON.stringify(sources)},\n"firms": [\n` +
   firms.map((f) => JSON.stringify(f)).join(',\n') +

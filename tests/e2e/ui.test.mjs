@@ -2,7 +2,7 @@
 // (pages.test.mjs covers the same pages in both browsers.)
 import { test as base, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { isFirefox, launch, until } from './harness.mjs';
@@ -31,6 +31,16 @@ async function openExt(path) {
 }
 
 const profile = () => h.bg(async () => (await globalThis.JTF.store.getActive()).profile);
+
+// What the stand-in AI drafts on the Discover page: the body only (the greeting and sign-off are added there).
+const DRAFT = {
+  subject: 'Summer internship enquiry',
+  body: [
+    'I am a final-year student writing to ask whether your firm takes interns this summer.',
+    'I built a reconciliation tool in Python that checks 40,000 trades a night, and I would like to learn how a small investment firm works.',
+    'Would you consider me for a summer internship or other work experience? My CV is attached. Thank you for your time.',
+  ].join('\n\n'),
+};
 
 test('every settings section renders without errors', async () => {
   const page = await openExt('options/options.html');
@@ -348,10 +358,11 @@ test('after JobToFill is removed and added again, the settings page restores the
 });
 
 test('Discover lists registry firms, and watched firms’ new programmes show on the toolbar button', async () => {
-  // Trackr's list comes from the cache, so the search needs no network.
+  // Trackr's and Simplify's lists come from the cache, so the search needs no network.
   await h.bg(() =>
     globalThis.JTF.store.setDiscoverCache({
       trackr: { names: ['man group', 'man'], domains: ['man.com'], at: Date.now(), answered: 1 },
+      listed: { names: [], domains: [], roles: [], at: Date.now(), answered: 1, asked: 1 },
     }),
   );
   const popup = await openExt('popup/popup.html');
@@ -370,6 +381,8 @@ test('Discover lists registry firms, and watched firms’ new programmes show on
   assert.ok((await page.$$('#results .firm')).length >= 10);
   assert.match(await page.textContent('#status'), /firms? match/);
   assert.ok(!(await page.textContent('#results')).includes('Man Group'), 'Trackr’s firms are left out');
+  // A hedge fund search fetches only Trackr's list, but Simplify's kept copy counts too.
+  assert.match(await page.textContent('#results .firm .badges'), /Not on Trackr or Simplify/);
 
   // A watched firm whose careers page gains a programme.
   const careers = h.url('discover-careers.html');
@@ -394,6 +407,312 @@ test('Discover lists registry firms, and watched firms’ new programmes show on
   // A second check finds nothing new.
   assert.equal((await h.bg(() => globalThis.JTFBackground.checkWatchlist())).fresh, 0);
   assert.deepEqual(pageErrors, []);
+  await page.close();
+});
+
+test('Discover: Tech kinds, a model of its own, who to email at a checked firm, the email drawer and the outreach list', async () => {
+  await h.bg(() =>
+    globalThis.JTF.store.setDiscoverCache({
+      trackr: { names: [], domains: [], at: Date.now(), answered: 1 },
+      listed: { names: [], domains: [], roles: [], at: Date.now(), answered: 1, asked: 1 },
+    }),
+  );
+  const page = await openExt('discover/discover.html');
+  const ready = () =>
+    page.waitForFunction(() => /firms in the registry/.test(document.querySelector('#registry-info').textContent));
+  await ready();
+
+  // Kinds of firm in two groups; hedge funds chosen as before.
+  assert.deepEqual(await page.$$eval('#niches .niche-head', (hs) => hs.map((x) => x.textContent)), ['Finance', 'Tech']);
+  assert.ok(await page.$('#niches [data-group="tech"] input[value="software"]'));
+  assert.deepEqual(await page.$$eval('#niches input:checked', (is) => is.map((i) => i.value)), ['hedge']);
+  assert.ok(await page.$('#place option[value="remote"]'), 'new places appear by themselves');
+  assert.equal(await page.isChecked('#use-hn'), false);
+
+  // The page's own AI: "Same as Settings" first; the effort chosen is kept.
+  await page.click('#ai-box summary');
+  assert.match(
+    await page.$eval('#discover-provider option', (o) => o.textContent),
+    /^Same as Settings \(no key yet\)$/,
+  );
+  await page.selectOption('#discover-effort', 'thorough');
+  await until(
+    h.bg,
+    async () => (await globalThis.JTF.store.getSettings()).discoverAi.effort === 'thorough',
+    null,
+    5000,
+  );
+  await page.reload();
+  await ready();
+  assert.equal(await page.inputValue('#discover-effort'), 'thorough');
+  assert.equal(await page.isDisabled('#use-ai'), true, 'no AI key here');
+
+  // A firm whose team page names its Head of Talent: the real checks run on the fixtures, served as its website.
+  await page.selectOption('#place', 'any');
+  await page.selectOption('#size', 'any');
+  await page.click('#search');
+  await page.waitForSelector('#results .firm');
+  const id = await page.$eval('#results .firm', (li) => li.dataset.id);
+  const found = await page.evaluate(
+    async ([home, base]) => {
+      const { discover: D, discoverContacts: C } = globalThis.JTF;
+      // quiet.example's home page is the fixture, which links to its team and careers pages; any other address is
+      // missing (answered here, so the console stays clean).
+      const fetchFn = (u, init) => {
+        const url = new URL(u);
+        if (/(^|\.)quiet\.example$/.test(url.hostname) && url.pathname === '/') return fetch(home, init);
+        if (/^discover-(home|team|careers)\.html$/.test(url.pathname.slice(1)) && u.startsWith(base))
+          return fetch(u, init);
+        return Promise.resolve(new Response('Not found', { status: 404 }));
+      };
+      const firm = {
+        id: 'x',
+        name: 'Quiet Capital',
+        aliases: [],
+        domain: 'quiet.example',
+        site: 'https://quiet.example',
+        cities: ['London'],
+        tags: [],
+      };
+      const result = await D.careers(firm, { fetch: fetchFn, guess: false });
+      const contacts = await C.findContacts(firm, { fetch: fetchFn, pages: result.pages });
+      return { result, contacts };
+    },
+    [h.url('discover-home.html'), h.url('')],
+  );
+  const best = found.contacts.best.map((b) => b.address);
+  assert.ok(best.includes('jane.doe@quiet.example'), JSON.stringify(found.contacts.best));
+  assert.ok(!best.includes('press@quiet.example'), 'never the press office');
+  await h.bg(
+    async ([firmId, f]) => {
+      const { store } = globalThis.JTF;
+      await store.setDiscoverCache({
+        careers: { [firmId]: { at: Date.now(), result: f.result } },
+        contacts: { [firmId]: { at: Date.now(), result: f.contacts } },
+      });
+      await store.setOutreach(firmId, {
+        firm: { id: firmId, name: 'Quiet Capital', domain: 'quiet.example', site: 'https://quiet.example' },
+        status: 'sent',
+        to: 'jane.doe@quiet.example',
+        subject: 'Summer internship',
+        contact: { name: 'Jane Doe', title: 'Head of Talent', email: 'jane.doe@quiet.example', guessed: false },
+      });
+    },
+    [id, found],
+  );
+  await page.reload();
+  await ready();
+  await page.selectOption('#place', 'any');
+  await page.selectOption('#size', 'any');
+  await page.click('#search');
+  const card = `#results .firm[data-id="${id}"]`;
+  await page.waitForSelector(`${card} .contacts`);
+  const text = await page.textContent(card);
+  assert.match(text, /Who to email/);
+  assert.match(text, /Best way in: Programme page/);
+  assert.match(text, /Jane Doe, Head of Talent/);
+  assert.match(text, /Addresses here follow first\.last@quiet\.example \(2 seen\)/);
+  assert.ok(await page.$(`${card} .contacts a[href="mailto:jane.doe@quiet.example"]`));
+  assert.ok(await page.$(`${card} .contacts .pill.ok:text-is("Listed")`));
+  assert.match(await page.textContent(`${card} .outreach-pill`), /^Sent \d+ \w+/);
+  assert.equal(await page.textContent(`${card} button.check`), 'Check again');
+  assert.equal(await page.isDisabled(`${card} button.draft`), true, 'drafting needs an AI key');
+  await page.check('#sort-way');
+  assert.equal(await page.$eval('#results .firm', (li) => li.dataset.id), id, 'the checked firm comes first');
+
+  // Hacker News posts (from the cache: no network) join a tech search, never a finance-only one.
+  await h.bg(() =>
+    globalThis.JTF.store.setDiscoverCache({
+      hn: {
+        posts: [
+          {
+            company: 'Tinyco',
+            domain: 'tinyco.example',
+            site: 'https://tinyco.example',
+            urls: [],
+            // "NY, SF, London, UK & Toronto": a post's country is its first location's, yet it names London.
+            locations: ['New York', 'London'],
+            remote: true,
+            text: 'Tinyco builds lab software.',
+            hnUrl: 'https://news.ycombinator.com/item?id=1',
+            month: 'November 2026',
+            roles: ['Software Engineering Intern'],
+            emails: ['jobs@tinyco.example'],
+            kinds: ['intern'],
+            postedAt: '2026-11-02',
+            boards: [],
+          },
+        ],
+        threads: [],
+        at: Date.now(),
+        answered: 1,
+        asked: 1,
+      },
+    }),
+  );
+  const searched = async () => {
+    await page.click('#search');
+    await page.waitForFunction(() => !document.querySelector('#search').disabled);
+  };
+  const hnCard = '#results .firm[data-id="hn:tinyco.example"]';
+  await page.check('#use-hn');
+  await searched();
+  assert.equal(await page.$(hnCard), null, 'hedge funds only');
+  assert.match(await page.textContent('#status'), /Hacker News posts are tech: tick a Tech kind of firm to see them\./);
+  await page.uncheck('#niches input[value="hedge"]');
+  await page.check('#niches input[value="software"]');
+  await page.selectOption('#place', 'remote');
+  await searched();
+  const hnText = await page.textContent(hnCard);
+  assert.match(hnText, /Software Engineering Intern/);
+  assert.match(hnText, /Apply by email: jobs@tinyco\.example/);
+  assert.match(hnText, /Remote/);
+  assert.equal(await page.getAttribute(`${hnCard} a.pill.hn`, 'href'), 'https://news.ycombinator.com/item?id=1');
+  assert.ok(await page.$(`${hnCard} button.draft`), 'its address is someone to write to');
+  assert.match(await page.textContent('#status'), /1 Hacker News post among them/);
+  // A London search finds it by the city it names, whatever country its first location gave it.
+  await page.selectOption('#place', 'london');
+  await searched();
+  assert.ok(await page.$(hnCard), 'a post naming London fits a London search');
+  await page.selectOption('#place', 'paris');
+  await searched();
+  assert.equal(await page.$(hnCard), null, 'not a Paris one');
+
+  // The outreach tab lists the record, with its status, and exports it.
+  await page.click('#tab-outreach');
+  assert.equal(await page.textContent('#outreach-count'), '1');
+  const row = `#outreach .outreach-item[data-id="${id}"]`;
+  assert.match(await page.textContent(row), /Quiet Capital[\s\S]*Jane Doe, Head of Talent jane\.doe@quiet\.example/);
+  assert.equal(await page.inputValue(`${row} select`), 'sent');
+  await page.selectOption(`${row} select`, 'replied');
+  await until(h.bg, async (i) => (await globalThis.JTF.store.getOutreach())[i].status === 'replied', id, 5000);
+  await page.fill(`${row} textarea`, 'Call back in January');
+  await until(
+    h.bg,
+    async (i) => (await globalThis.JTF.store.getOutreach())[i].notes === 'Call back in January',
+    id,
+    5000,
+  );
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('#outreach-export')]);
+  assert.match(download.suggestedFilename(), /^jobtofill-outreach-\d{4}-\d\d-\d\d\.csv$/);
+  const csv = await readFile(await download.path(), 'utf8');
+  assert.match(csv, /^\ufeffFirm,Website,Contact name,Title,Email,Guessed,Status,Date,Subject,Notes,Best way in\r\n/);
+  assert.match(
+    csv,
+    /Quiet Capital,https:\/\/quiet\.example,Jane Doe,Head of Talent,jane\.doe@quiet\.example,no,Replied,/,
+  );
+  assert.match(csv, /Summer internship,Call back in January,Programme page\r\n$/);
+
+  await h.bg((i) => globalThis.JTF.store.removeOutreach(i), id);
+
+  // With an AI (a stand-in provider, answered here) and Claude's key for the page's own model.
+  await h.context.route('https://ai.test/**', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        model: 'mock',
+        choices: [{ message: { content: JSON.stringify(DRAFT) }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 10, completion_tokens: 10 },
+      }),
+    }),
+  );
+  await h.context.route('https://api.anthropic.com/**', (route) =>
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: [{ id: 'claude-e2e' }] }) }),
+  );
+  const before = await h.bg(async () => {
+    const { store } = globalThis.JTF;
+    const { profile } = await store.getActive();
+    const was = { ai: (await store.getSettings()).ai, personal: { ...profile.personal } };
+    was.notes = (await store.getKit(profile.id)).notes || '';
+    profile.personal.firstName = 'Ada';
+    profile.personal.lastName = 'Lovelace';
+    await store.saveProfile(profile);
+    await store.saveKit(profile.id, {
+      notes: 'Built a reconciliation tool in Python that checks 40,000 trades a night.',
+    });
+    await store.setAiKey('sk-ant-e2e', 'anthropic');
+    await store.setAiKey('test-key', 'custom');
+    await store.saveAiSettings({ provider: 'custom', baseUrl: 'https://ai.test/v1', model: 'mock' });
+    return was;
+  });
+  await page.reload();
+  await ready();
+  await page.click('#tab-find');
+
+  // “Another model…” stays chosen while its id is typed.
+  await page.click('#ai-box summary');
+  await page.selectOption('#discover-provider', 'anthropic');
+  const choice = 'select[name="discover-model-choice"]';
+  await page.waitForSelector(choice);
+  await page.$eval('#ai-saved', (s) => (s.textContent = ''));
+  await page.selectOption(choice, '\u0000another');
+  await page.waitForFunction(() => document.querySelector('#ai-saved').textContent === 'Saved.');
+  assert.equal(await page.inputValue(choice), '\u0000another');
+  await page.fill('input[name="discover-model"]', 'claude-e2e');
+  await page.press('input[name="discover-model"]', 'Tab');
+  await until(
+    h.bg,
+    async () => (await globalThis.JTF.store.getSettings()).discoverAi.model === 'claude-e2e',
+    null,
+    5000,
+  );
+  assert.equal(await page.inputValue(choice), '\u0000another');
+  assert.equal(await page.inputValue('input[name="discover-model"]'), 'claude-e2e');
+  await page.selectOption('#discover-provider', '');
+
+  // Thorough mode says on the check buttons that a page may go to the AI.
+  await page.selectOption('#place', 'any');
+  await page.selectOption('#size', 'any');
+  await searched();
+  assert.match(await page.getAttribute(`${card} button.check`, 'title'), /^In Thorough mode a careers page the rules/);
+  assert.match(await page.getAttribute('#check-top', 'title'), /also read by your AI model \(one call each\)\.$/);
+
+  // A draft to the first address; another “To” greets them instead, and Mark as sent records them.
+  await page.click(`${card} button.draft`);
+  const to = `${card} select[name="contact"]`;
+  const body = `${card} textarea[name="body"]`;
+  assert.equal(await page.inputValue(to), 'internships@quiet.example');
+  await page.click(`${card} button.draft-go`);
+  await page.waitForSelector(body);
+  assert.match(await page.inputValue(body), /^Dear .+ recruiting team,\n\nI am a final-year/);
+  assert.equal(await page.isVisible(`${card} .redraft`), false);
+  await page.selectOption(to, 'jane.doe@quiet.example');
+  assert.match(await page.inputValue(body), /^Dear Jane,\n\nI am a final-year/);
+  assert.equal(
+    await page.textContent(`${card} .redraft`),
+    'Drafted for internships@quiet.example; press Draft again to write it for Jane Doe.',
+  );
+  assert.match(await page.getAttribute(`${card} a.open-mail`, 'href'), /^mailto:jane\.doe@quiet\.example\?subject=/);
+  await page.click(`${card} button.mark-sent`);
+  const record = await until(
+    h.bg,
+    async (i) => {
+      const r = (await globalThis.JTF.store.getOutreach())[i];
+      return r && r.status === 'sent' && r;
+    },
+    id,
+    5000,
+  );
+  assert.deepEqual([record.to, record.contact.name], ['jane.doe@quiet.example', 'Jane Doe']);
+
+  await h.context.unroute('https://ai.test/**');
+  await h.context.unroute('https://api.anthropic.com/**');
+  await h.bg(
+    async ([i, was]) => {
+      const { store } = globalThis.JTF;
+      await store.removeOutreach(i);
+      await store.saveDiscoverAi({ provider: '', effort: 'quick' });
+      await store.setAiKey('', 'anthropic');
+      await store.setAiKey('', 'custom');
+      await store.saveSettings({ ai: was.ai });
+      const { profile } = await store.getActive();
+      profile.personal = was.personal;
+      await store.saveProfile(profile);
+      await store.saveKit(profile.id, { notes: was.notes });
+    },
+    [id, before],
+  );
+  assert.deepEqual(errors, []);
   await page.close();
 });
 

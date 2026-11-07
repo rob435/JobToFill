@@ -14,13 +14,17 @@
  *   similarTo(firms, seeds)                → [{ firm, score, reasons }] registry neighbours of the seed firms
  *   wikiSimilar(seeds, { fetch })          → [{ title, qid, shared: [category] }] firms sharing Wikipedia categories
  *   trackrCompanies({ fetch, now })        → { names: [normalised], domains: [], at }  everyone Trackr lists
- *   careers(firm, { fetch, now })          → { status, pages, boards, roles, programmes, log }
- *   check(entry, { fetch, now })           → { roles, programmes, keys, fresh: [key], status, log }  (watchlist)
+ *   careers(firm, { fetch, now, boards, pages }) → { status, pages, boards, roles, programmes, mentions, texts, log }
+ *                                          (boards and pages known already, as from a Hacker News post, go first)
+ *   check(entry, { fetch, now })           → { roles, programmes, mentions, keys, fresh: [key], status, log }
+ *                                          (watchlist)
  *   afterCheck(state, res, now)            → what that check changes in the firm's stored state (store.setWatchState)
- *   suggest(chat, query, firms, { fetch }) → { found: [result], rejected: [{ name, why }] }  AI ideas, verified
+ *   suggest(chat, query, firms, { fetch, angle }) → { found: [result], rejected: [{ name, why }] }  AI ideas, verified
  *
  * A firm is { id, name, aliases, domain, site, cities, country, employees, aum (USD bn), funds, crd, wiki,
- * qid, tags, source }. A role is { title, url, location, posted, ats, kind: 'internship'|'graduate'|'insight' }.
+ * qid, tags, yc (batch, "W21"), about, source } (a Hacker News firm, source 'hn', may carry remote, boards, pages).
+ * A role is { title, url, location, posted, ats, kind: 'internship'|'graduate'|'insight' }. A programme is
+ * { text, deadline, year } (a sentence that dates it); a mention is { text, kind } (one that describes it, undated).
  */
 (function (root) {
   'use strict';
@@ -32,18 +36,32 @@
 
   /* ------------------------------------------------------------- niches */
 
-  // What the search form offers, and the firms.json tags each one covers.
+  // What the search form offers, in its groups, and the firms.json tags each one covers.
+  const NICHE_GROUPS = { finance: 'Finance', tech: 'Tech' };
+  // prettier-ignore
   const NICHES = {
-    hedge: { label: 'Hedge funds', tags: ['hedge'], wiki: /hedge fund|tiger cub|alternative investment/i },
-    quant: { label: 'Quant and systematic', tags: ['quant'], wiki: /quantitative|hedge fund|derivative trading/i },
-    trading: { label: 'Prop trading and market making', tags: ['trading'], wiki: /trading|market mak/i },
-    asset: { label: 'Asset managers', tags: ['asset'], wiki: /investment management|asset management/i },
-    credit: { label: 'Credit and distressed', tags: ['credit'], wiki: /credit|hedge fund/i },
-    pe: { label: 'Private equity', tags: ['pe'], wiki: /private equity/i },
-    ib: { label: 'Boutique advisory banks', tags: ['ib'], wiki: /investment bank/i },
-    family: { label: 'Family offices', tags: ['family'], wiki: /family office/i },
-    vc: { label: 'Venture capital', tags: ['vc'], wiki: /venture capital/i },
+    hedge: { label: 'Hedge funds', group: 'finance', tags: ['hedge'], wiki: /hedge fund|tiger cub|alternative investment/i },
+    quant: { label: 'Quant and systematic', group: 'finance', tags: ['quant'], wiki: /quantitative|hedge fund|derivative trading/i },
+    trading: { label: 'Prop trading and market making', group: 'finance', tags: ['trading'], wiki: /trading|market mak/i },
+    asset: { label: 'Asset managers', group: 'finance', tags: ['asset'], wiki: /investment management|asset management/i },
+    credit: { label: 'Credit and distressed', group: 'finance', tags: ['credit'], wiki: /credit|hedge fund/i },
+    pe: { label: 'Private equity', group: 'finance', tags: ['pe'], wiki: /private equity/i },
+    ib: { label: 'Boutique advisory banks', group: 'finance', tags: ['ib'], wiki: /investment bank/i },
+    family: { label: 'Family offices', group: 'finance', tags: ['family'], wiki: /family office/i },
+    vc: { label: 'Venture capital', group: 'finance', tags: ['vc'], wiki: /venture capital/i },
+    software: { label: 'Software and SaaS', group: 'tech', tags: ['software'], wiki: /software|saas|cloud computing|internet compan/i },
+    ai: { label: 'AI and machine learning', group: 'tech', tags: ['ai'], wiki: /artificial intelligence|machine learning/i },
+    fintech: { label: 'Fintech and crypto', group: 'tech', tags: ['fintech'], wiki: /financial technology|fintech|cryptocurrency|payment/i },
+    deeptech: { label: 'Deep tech: chips, robotics, space', group: 'tech', tags: ['deeptech'], wiki: /semiconductor|robotics|spaceflight|quantum|hardware|photonics|electronics/i },
+    cyber: { label: 'Cyber security', group: 'tech', tags: ['cyber'], wiki: /computer security|cybersecurity|information security/i },
+    games: { label: 'Games', group: 'tech', tags: ['games'], wiki: /video game/i },
+    startups: { label: 'Backed startups (Y Combinator)', group: 'tech', tags: ['yc'], wiki: /y combinator/i },
   };
+
+  /** Does the query ask for any tech niche (where firms have no SEC record to check them by)? */
+  function wantsTech(niches) {
+    return (niches || []).some((n) => NICHES[n] && NICHES[n].group === 'tech');
+  }
 
   // prettier-ignore
   const SIZES = {
@@ -57,18 +75,30 @@
   // prettier-ignore
   const PLACES = {
     london: { label: 'London', cities: ['london'], country: 'GB' },
+    cambridge: { label: 'Cambridge and Oxford', cities: ['cambridge', 'oxford'], country: 'GB' },
+    manchester: { label: 'Manchester and Leeds', cities: ['manchester', 'leeds', 'salford'], country: 'GB' },
+    scotland: { label: 'Scotland', cities: ['edinburgh', 'glasgow', 'aberdeen', 'dundee', 'st andrews'], country: 'GB' },
     uk: { label: 'United Kingdom', country: 'GB' },
+    dublin: { label: 'Dublin', cities: ['dublin'], country: 'IE' },
     nyc: { label: 'New York', cities: ['new york', 'new york city', 'nyc', 'manhattan'], country: 'US' },
     greenwich: { label: 'Greenwich and Stamford', cities: ['greenwich', 'stamford', 'westport', 'old greenwich', 'darien', 'norwalk'], country: 'US' },
     boston: { label: 'Boston', cities: ['boston', 'cambridge'], country: 'US' },
     chicago: { label: 'Chicago', cities: ['chicago'], country: 'US' },
     sf: { label: 'San Francisco Bay Area', cities: ['san francisco', 'menlo park', 'palo alto', 'san mateo', 'redwood city', 'mountain view', 'oakland', 'burlingame'], country: 'US' },
+    seattle: { label: 'Seattle', cities: ['seattle', 'bellevue', 'redmond', 'kirkland'], country: 'US' },
+    la: { label: 'Los Angeles', cities: ['los angeles', 'santa monica', 'pasadena', 'irvine', 'culver city', 'el segundo'], country: 'US' },
     texas: { label: 'Texas', cities: ['dallas', 'houston', 'austin', 'fort worth', 'san antonio'], country: 'US' },
     us: { label: 'United States', country: 'US' },
+    toronto: { label: 'Toronto and Waterloo', cities: ['toronto', 'waterloo', 'kitchener'], country: 'CA' },
     hk: { label: 'Hong Kong', country: 'HK' },
     sg: { label: 'Singapore', country: 'SG' },
     ch: { label: 'Switzerland', country: 'CH' },
+    paris: { label: 'Paris', cities: ['paris'], country: 'FR' },
+    germany: { label: 'Germany', country: 'DE' },
+    netherlands: { label: 'Netherlands', country: 'NL' },
     europe: { label: 'Europe', countries: ['GB', 'IE', 'FR', 'DE', 'NL', 'CH', 'LU', 'SE', 'DK', 'NO', 'FI', 'IT', 'ES', 'BE', 'AT', 'JE', 'GG', 'MC'] },
+    israel: { label: 'Israel', country: 'IL' },
+    remote: { label: 'Remote', remote: true },
     any: { label: 'Anywhere' },
   };
 
@@ -189,7 +219,7 @@
 
   /* ------------------------------------------------------------ registry */
 
-  /** firms.json's compact record ({ n, a, d, s, c, k, e, m, f, r, w, q, t }) as a firm. */
+  /** firms.json's compact record ({ n, a, d, s, c, k, e, m, f, r, w, q, t, y: YC batch, o: about }) as a firm. */
   function firmFrom(r) {
     if (!r || !r.n) return null;
     const domain = domainOf(r.d || '');
@@ -208,6 +238,9 @@
       wiki: r.w ? String(r.w) : null,
       qid: r.q ? String(r.q) : null,
       tags: Array.isArray(r.t) ? r.t.map(String) : [],
+      yc: r.y ? String(r.y) : null,
+      founded: Number.isFinite(r.i) && r.i > 1500 ? r.i : null,
+      about: r.o ? String(r.o).replace(/\s+/g, ' ').trim().slice(0, 300) : '',
       source: 'registry',
     };
   }
@@ -264,6 +297,15 @@
       rep += 0.15 * firm.verified.length;
       reasons.push(...firm.verified);
     }
+    // Y Combinator picks and vouches for its companies; a "Who is hiring?" post means they hire now.
+    if (firm.yc) {
+      rep += 0.2;
+      reasons.push('Y Combinator-backed');
+    }
+    if (firm.source === 'hn') {
+      rep += 0.15;
+      reasons.push('Hiring on Hacker News this month');
+    }
     let humble = 0.5;
     const e = firm.employees;
     if (e != null) {
@@ -275,14 +317,25 @@
     return { reputation: Math.min(1, rep), humble, onTrackr, reasons };
   }
 
-  /** Is the firm on Trackr's lists ({ names, domains } from trackrCompanies)? */
+  /**
+   * Is the firm on Trackr's lists ({ names, domains } from trackrCompanies)? By domain or full name; by the name's
+   * distinctive part only when that is long enough not to be a coincidence, as in sameFirm (the lists hold "one"
+   * and "ion" for One and ION Group, which mustn't hide One Investment Management or ION Asset Management); or as a
+   * listed name of several words with more after it ("Capital One Financial" is Capital One).
+   */
   function onList(list, firm) {
     if (!list) return false;
     if (firm.domain && (list.domains || []).includes(firm.domain)) return true;
     const names = [firm.name, ...(firm.aliases || [])];
     const set = list.nameSet || (list.nameSet = new Set(list.names || []));
-    if (names.some((n) => set.has(normName(n)) || set.has(coreName(n)))) return true;
-    return false;
+    const listed = (n) => {
+      const words = normName(n).split(' ');
+      const core = coreName(n);
+      if (set.has(words.join(' ')) || ((core.length >= 4 || core.includes(' ')) && set.has(core))) return true;
+      for (let k = 2; k < words.length; k++) if (set.has(words.slice(0, k).join(' '))) return true;
+      return false;
+    };
+    return names.some(listed);
   }
 
   /* --------------------------------------------------------------- search */
@@ -290,7 +343,9 @@
   function placeMatch(firm, place) {
     const p = PLACES[place];
     if (!p || place === 'any') return true;
-    const cities = firm.cities.map((c) => U.normalize(c));
+    // Only a source that says so (a "REMOTE" Hacker News post) makes a firm remote.
+    if (p.remote) return firm.remote === true;
+    const cities = (firm.cities || []).map((c) => U.normalize(c));
     if (p.cities) return firm.country === p.country && cities.some((c) => p.cities.includes(c));
     if (p.countries) return p.countries.includes(firm.country);
     return firm.country === p.country;
@@ -466,7 +521,9 @@
     const names = new Set();
     const domains = new Set();
     let answered = 0;
-    await pool(requests, 6, async (url) => {
+    // 64 small requests (4 regions × 2 industries × 2 seasons × 4 types): a dozen at a time keeps the first search of
+    // the day under half a minute.
+    await pool(requests, 12, async (url) => {
       const r = await get(fetchFn, url, { json: true, timeout: 15000 });
       if (!r.ok || !r.json || !Array.isArray(r.json.programmes)) return;
       answered++;
@@ -475,7 +532,9 @@
         const name = (c && c.name) || '';
         if (name) {
           names.add(normName(name));
-          names.add(coreName(name));
+          // A short core is someone else's as often as not: "Capital One" → "one" would hide a firm called One.
+          const core = coreName(name);
+          if (core.length >= 4 || core.includes(' ')) names.add(core);
         }
         for (const link of [c && c.careersSite, p && p.url]) {
           const d = domainOf(link || '');
@@ -626,10 +685,18 @@
 
   /* --------------------------------------------------------- careers pages */
 
+  // "Internal Communications" (Synthesia's blog) and "Work with an accountant" (FreeAgent's help centre) are not.
   const CAREER_LINK =
-    /career|\bjobs?\b|join[- ]?(us|our|the team)|opportunit|work(ing)?[- ](with|for|at)[- ]|working[- ]here|vacanc|recruit|graduate|early[- ]careers|students?\b|campus|intern|life[- ]at|people[- ]and[- ]culture|join\b|open (roles|positions)|openings|positions/i;
+    /career|\bjobs?\b|join[- ]?(us|our|the team)|opportunit|work(ing)?[- ]with[- ]us|work(ing)?[- ](for|at)[- ]|working[- ]here|vacanc|recruit|graduate|early[- ]careers|students?\b|campus|\bintern(ship)?s?\b|life[- ]at|people[- ]and[- ]culture|join\b|open (roles|positions)|openings|positions/i;
+  // Pages that are something else unless their link says careers (a blog post, a help article).
   const NOT_CAREER =
-    /\/(people|team|our-team|leadership|fund|funds|news|insights|press|media|contact|legal|privacy|cookie|investor|portfolio)(\/|$)|\.(pdf|jpg|png|zip)$|^mailto:|^tel:|^javascript:/i;
+    /\/(people|team|our-team|leadership|fund|funds|news|insights|press|media|contact|legal|privacy|cookie|investor|portfolio|post|blog|hc|articles?)(\/|$)|\.(pdf|jpg|png|zip)$|^mailto:|^tel:|^javascript:/i;
+  // Never a careers page, whatever the link says: Synthesia's "Join" leads to community.synthesia.io/sign_up.
+  const NEVER_CAREER = /(^|\/)(sign[_-]?up|sign[_-]?in|log[_-]?in|register)(\/|$|[?.#])/i;
+  const NOT_CAREER_TEXT =
+    /\bjoin (the|our) (community|newsletter|mailing list|wait-?list|beta|webinar|conversation)\b/i;
+  // A firm's subdomains that aren't about working there (support.freeagent.com, community.synthesia.io).
+  const NOT_CAREER_HOST = /^(support|help|docs|community|status|shop|store)$/i;
   const CAREER_PATHS = [
     '/careers/',
     '/careers',
@@ -646,6 +713,23 @@
   const ATS_DOMAIN =
     /(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|recruitee\.com|teamtailor\.com|personio\.(de|com)|bamboohr\.com|icims\.com|taleo\.net|successfactors\.(com|eu)|oraclecloud\.com|tal\.net|hibob\.com|pinpointhq\.com|jobvite\.com|rippling\.com|dayforcehcm\.com|beapplied\.com|eightfold\.ai|avature\.net|phenompeople\.com|jobs\.net|applytojob\.com|breezy\.hr|comeet\.(co|com)|workforcenow\.adp\.com)$/i;
 
+  /**
+   * An href that is markup or a template, not an address: Marshall Wace's commented-out `<a href="--><!--">` (cut at
+   * its ">", it reads "--") and its "Early Careers, https://www.mwam.com/join-us/early-careers, ", Improbable's script
+   * template `<a href="${job.jobUrl}">`, Synthesia's `'<a href="' + jobUrlWithUtm + '">'`.
+   */
+  function junkHref(raw, u) {
+    if (/[<>]|\$\{|\{\{|%7B|['"`]\s*\+|\+\s*['"`]/i.test(raw) || /.https?:\/\//i.test(raw.split(/[?#]/)[0]))
+      return true;
+    let last = u.pathname.split('/').filter(Boolean).pop() || '';
+    try {
+      last = decodeURIComponent(last);
+    } catch (err) {
+      // Left as it is.
+    }
+    return !!last && !/[\p{L}\p{N}]/u.test(last);
+  }
+
   /** The page's links: [{ url, text }] (absolute, deduplicated). Regex-based so it also runs in a service worker. */
   function links(html, base) {
     const out = [];
@@ -655,9 +739,12 @@
     while ((m = re.exec(String(html || '')))) {
       const href = (m[1].match(/\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i) || [])[0];
       if (!href) continue;
-      const raw = href.replace(/^href\s*=\s*/i, '').replace(/^["']|["']$/g, '');
-      const u = parseUrl(decode(raw), base);
-      if (!u || !/^https?:$/.test(u.protocol)) continue;
+      const value = href.replace(/^href\s*=\s*/i, '');
+      // An opening quote with no closing one: the tag was cut short at a ">" inside the address.
+      if (/^["']/.test(value) && value.slice(-1) !== value[0]) continue;
+      const raw = decode(value.replace(/^["']|["']$/g, ''));
+      const u = parseUrl(raw, base);
+      if (!u || !/^https?:$/.test(u.protocol) || junkHref(raw, u)) continue;
       u.hash = '';
       if (seen.has(u.href)) continue;
       seen.add(u.href);
@@ -697,22 +784,29 @@
     );
   }
 
-  /** Links on the firm's own pages that lead to its careers pages, likeliest first. */
+  /**
+   * Links on the firm's own pages that lead to its careers pages, likeliest first. domain: the firm's domain, or
+   * several (its registered one and the one its site moved to); its subdomains count, job boards too.
+   */
   function careerLinks(html, base, domain) {
-    const own = domain || domainOf(base);
+    const own = [].concat(domain || domainOf(base)).filter(Boolean);
     return links(html, base)
       .filter((l) => {
         const d = domainOf(l.url);
-        if (d !== own && !ATS_DOMAIN.test(d)) return false;
+        const ats = ATS_DOMAIN.test(d);
+        if (!own.includes(d) && !ats) return false;
         const u = parseUrl(l.url);
+        const sub = u.hostname.toLowerCase().slice(0, -d.length).replace(/\.$/, '');
+        if (!ats && NOT_CAREER_HOST.test(sub.split('.')[0])) return false;
         const path = u.pathname + u.search;
+        if (NEVER_CAREER.test(path) || NOT_CAREER_TEXT.test(l.text)) return false;
         if (NOT_CAREER.test(path) && !CAREER_LINK.test(l.text)) return false;
         return CAREER_LINK.test(l.text) || CAREER_LINK.test(path.replace(/[-_/]/g, ' '));
       })
       .map((l) => {
         const t = (l.text + ' ' + l.url).toLowerCase();
         let w = 0;
-        if (/intern|student|graduate|campus|early/.test(t)) w += 3;
+        if (/\bintern(ship)?s?\b|student|graduate|campus|early/.test(t)) w += 3;
         if (/career|job|vacanc|opening|opportunit|position|join/.test(t)) w += 2;
         if (ATS_DOMAIN.test(domainOf(l.url))) w += 2;
         return { ...l, weight: w };
@@ -749,11 +843,16 @@
     [/\b([\w-]+)\.careers\.hibob\.com/gi, (m) => ({ ats: 'hibob', slug: m[1] })],
     [/\b([\w-]+)\.pinpointhq\.com/gi, (m) => ({ ats: 'pinpoint', slug: m[1] })],
     [/\b([\w-]+)\.teamtailor\.com/gi, (m) => ({ ats: 'teamtailor', slug: m[1] })],
-    [/\b([\w-]+)\.jobs\.personio\.(?:de|com)/gi, (m) => ({ ats: 'personio', slug: m[1] })],
+    [
+      /\b([\w-]+)\.jobs\.personio\.(de|com)/gi,
+      (m) => ({ ats: 'personio', slug: m[1], host: `${m[1]}.jobs.personio.${m[2].toLowerCase()}` }),
+    ],
     [/\b([\w-]+)\.bamboohr\.com\/(?:careers|jobs)/gi, (m) => ({ ats: 'bamboohr', slug: m[1] })],
     [/\b([\w-]+)\.icims\.com/gi, (m) => ({ ats: 'icims', slug: m[1] })],
     [/jobs\.jobvite\.com\/([\w-]+)/gi, (m) => ({ ats: 'jobvite', slug: m[1] })],
     [/\b([\w-]+)\.beapplied\.com/gi, (m) => ({ ats: 'applied', slug: m[1] })],
+    [/\b([\w-]+)\.breezy\.hr/gi, (m) => ({ ats: 'breezy', slug: m[1] })],
+    [/ats\.rippling\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?([\w-]+)/gi, (m) => ({ ats: 'rippling', slug: m[1] })],
   ];
   // Slugs that are parts of the boards' own addresses, not employers.
   const NOT_SLUG =
@@ -784,11 +883,42 @@
     return out;
   }
 
+  // Boards on the employer's own subdomain ({slug}.bamboohr.com), where a slug must be a host label.
+  const SUBDOMAIN_ATS = /^(personio|bamboohr|pinpoint|breezy|teamtailor|icims|applied)$/;
+
   /** The request that lists a board's jobs. */
   function boardRequest(b) {
     if (!b || (!b.slug && b.ats !== 'phenom')) return null;
+    if (SUBDOMAIN_ATS.test(b.ats) && !/^[a-z\d][\w-]*$/i.test(b.slug)) return null;
     const slug = encodeURIComponent(b.slug || '');
     switch (b.ats) {
+      case 'personio': {
+        // Personio's public XML feed, on .de or .com as the firm's link had it.
+        const host = /^[\w-]+\.jobs\.personio\.(de|com)$/i.test(b.host || '') ? b.host : `${slug}.jobs.personio.de`;
+        return { url: `https://${host}/xml`, json: false, headers: { Accept: 'application/xml,text/xml,*/*;q=0.8' } };
+      }
+      case 'bamboohr':
+        return { url: `https://${slug}.bamboohr.com/careers/list`, json: true };
+      case 'pinpoint':
+        return { url: `https://${slug}.pinpointhq.com/postings.json`, json: true };
+      case 'breezy':
+        return { url: `https://${slug}.breezy.hr/json`, json: true };
+      case 'rippling':
+        return { url: `https://api.rippling.com/platform/api/ats/v1/board/${slug}/jobs`, json: true };
+      case 'teamtailor':
+        return { url: `https://${slug}.teamtailor.com/jobs`, json: false };
+      case 'icims':
+        // iCIMS lists its results in a frame (in_iframe=1); a search for each kind of student role.
+        return {
+          url: `https://${slug}.icims.com/jobs/search?ss=1&in_iframe=1&searchKeyword=intern`,
+          json: false,
+          searches: ['intern', 'graduate'],
+          query: 'searchKeyword',
+        };
+      case 'jobvite':
+        return { url: `https://jobs.jobvite.com/${slug}/jobs`, json: false };
+      case 'applied':
+        return { url: `https://${slug}.beapplied.com/`, json: false };
       case 'greenhouse':
         return { url: `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs`, json: true };
       case 'lever':
@@ -820,6 +950,17 @@
       default:
         return null;
     }
+  }
+
+  /** Each request a board needs: one, or one per search (Workday's in the body, iCIMS's in the address). */
+  function boardRequests(req) {
+    if (!req || !req.searches) return req ? [req] : [];
+    return req.searches.map((searchText) => {
+      if (req.body) return { ...req, body: { ...req.body, searchText } };
+      const u = parseUrl(req.url);
+      u.searchParams.set(req.query, searchText);
+      return { ...req, url: u.href };
+    });
   }
 
   /** The board's own name for its company, when the API says (for checking a guessed slug). */
@@ -923,10 +1064,90 @@
         for (const l of links(res && res.text, res && res.url))
           if (/\/opp\/\d+/.test(l.url)) add(l.text, l.url, '', null);
         break;
+      case 'personio': {
+        const at = (parseUrl(res && res.url) || {}).host || '';
+        const host = /\.jobs\.personio\.(de|com)$/i.test(at) ? at : `${b.slug}.jobs.personio.de`;
+        for (const p of xmlBlocks(res && res.text, 'position')) {
+          // A position's descriptions and other offices have <name> and <office> tags of their own.
+          const own = p.replace(/<(jobDescriptions|additionalOffices)\b[\s\S]*?<\/\1\s*>/gi, ' ');
+          const id = xmlTag(own, 'id');
+          if (/^\d+$/.test(id))
+            add(xmlTag(own, 'name'), `https://${host}/job/${id}`, xmlTag(own, 'office'), xmlTag(own, 'createdAt'));
+        }
+        break;
+      }
+      case 'bamboohr':
+        for (const j of (json && json.result) || []) {
+          const loc = j.location || j.atsLocation || {};
+          add(
+            j.jobOpeningName,
+            j.id != null && `https://${b.slug}.bamboohr.com/careers/${j.id}`,
+            [loc.city, loc.state].filter(Boolean).join(', '),
+            null,
+          );
+        }
+        break;
+      case 'pinpoint':
+        for (const j of (json && json.data) || []) {
+          const u = j.url && parseUrl(j.url, `https://${b.slug}.pinpointhq.com/`);
+          add(j.title, u && u.href, j.location && j.location.name, j.created_at);
+        }
+        break;
+      case 'breezy':
+        for (const j of Array.isArray(json) ? json : [])
+          add(j.name, j.url, j.location && j.location.name, j.published_date);
+        break;
+      case 'rippling':
+        for (const j of Array.isArray(json) ? json : (json && json.items) || [])
+          add(j.name, j.url, j.workLocation && j.workLocation.label, null);
+        break;
+      case 'teamtailor':
+        for (const l of boardLinks(res, /^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?jobs\/\d+-[\w-]+\/?$/i))
+          add(l.text, l.url, '', null);
+        break;
+      case 'icims':
+        // A result's link carries the frame's query; the job's own address doesn't need it. "Title" is a hidden label.
+        for (const l of boardLinks(res, /^\/jobs\/\d+\/.+\/job\/?$/))
+          add(l.text.replace(/^(job )?title\b\s*:?\s*/i, ''), l.url.replace(/[?#].*$/, ''), '', null);
+        break;
+      case 'jobvite': {
+        const own = new RegExp(`^/${String(b.slug).replace(/[^\w-]/g, '')}/job/[\\w-]+/?$`, 'i');
+        for (const l of boardLinks(res, own)) add(l.text, l.url, '', null);
+        break;
+      }
+      case 'applied':
+        for (const l of boardLinks(res, /^\/apply\/[\w-]+\/?$/)) add(l.text, l.url, '', null);
+        break;
       default:
         break;
     }
     return jobs;
+  }
+
+  /** The links on a board's HTML page whose path is a job's. */
+  function boardLinks(res, pathRe) {
+    return links(res && res.text, res && res.url).filter((l) => {
+      const u = parseUrl(l.url);
+      return u && pathRe.test(u.pathname) && l.text;
+    });
+  }
+
+  /** Every <tag>…</tag> block of an XML document. */
+  function xmlBlocks(xml, tag) {
+    return [...String(xml || '').matchAll(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}\\s*>`, 'gi'))].map(
+      (m) => m[1],
+    );
+  }
+
+  /** The text of the first <tag> in an XML fragment (CDATA unwrapped, entities decoded), or ''. */
+  function xmlTag(xml, tag) {
+    const m = String(xml || '').match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}\\s*>`, 'i'));
+    if (!m) return '';
+    return decode(m[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1'))
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   /** Phenom career sites put their search results in `phApp.ddo = {…};`. */
@@ -969,19 +1190,43 @@
     return [...new Set(out)].filter((s) => s && s.length >= 5).slice(0, 5);
   }
 
+  const TECH_TAGS = Object.values(NICHES).flatMap((n) => (n.group === 'tech' ? n.tags : []));
+
+  /**
+   * Websites worth trying for a firm with none on record, 3 at most: "Robey Warshaw" → www.robeywarshaw.com, then
+   * .co.uk for a British firm and .ai or .io for a tech one.
+   */
+  function guessSites(firm) {
+    const name = normName(firm.name).replace(/ /g, '');
+    if (name.length < 5 || !/^[a-z\d]+$/.test(name)) return [];
+    const tech = (firm.tags || []).some((t) => TECH_TAGS.includes(t));
+    return ['com', firm.country === 'GB' && 'co.uk', tech && 'ai', tech && 'io']
+      .filter(Boolean)
+      .slice(0, 3)
+      .map((tld) => `https://www.${name}.${tld}`);
+  }
+
   // Boards that answer for any name, so a guess there proves nothing.
   const GUESSABLE = ['greenhouse', 'lever', 'ashby', 'workable'];
 
-  /** Does a board (reached by guessing its slug) belong to the firm? */
+  /**
+   * Does a board (reached by guessing its slug) belong to the firm? Without a name to compare, the slug must spell
+   * the whole name (not just its first word) or the firm's domain (Wayve, wayve.ai: Ashby's "wayve"), in five
+   * letters or more: three or four are somebody else's as often as not ("gsa", "man").
+   */
   function boardIsFirm(b, res, firm) {
     const name = boardName(b, res && res.json);
-    if (name) return sameFirm(name, firm.name) || firm.aliases.some((a) => sameFirm(name, a));
-    // No name to compare: the slug must spell the whole name (not just its first word).
-    const whole = normName(firm.name).replace(/ /g, '');
+    if (name) return sameFirm(name, firm.name) || (firm.aliases || []).some((a) => sameFirm(name, a));
     const slug = String(b.slug || '')
       .toLowerCase()
       .replace(/[-_]/g, '');
-    return slug.length >= 8 && (slug === whole || slug === U.normalize(firm.name).replace(/ /g, ''));
+    if (slug.length < 5) return false;
+    const label = domainOf(firm.domain || firm.site || '').split('.')[0];
+    return (
+      slug === normName(firm.name).replace(/ /g, '') ||
+      slug === U.normalize(firm.name).replace(/ /g, '') ||
+      slug === label.replace(/-/g, '')
+    );
   }
 
   /* ------------------------------------------------------ programme pages */
@@ -1063,17 +1308,132 @@
     return out.slice(0, 8);
   }
 
+  // A named student programme: "Technology Internship Programme", "The HBK Summer Intern Experience", "our intern
+  // class of 2022", "Business Operations Graduate Programme", "spring weeks", "a placement year".
+  const NAMED_PROGRAMME =
+    /\b(intern(ship)?s?|summer (analyst|associate|intern(ship)?)s?|off[- ]cycle( intern(ship)?s?)?|graduate|early[- ]careers?|(industrial )?placement|apprenticeship)\s+(programmes?|programs?|schemes?|class(es)?|experiences?|cohorts?)\b|\b(insight|spring) (weeks?|days?|programmes?|programs?)\b|\bplacement years?\b|\byear in industry\b/i;
+  // The firm saying it runs one: "At Marshall Wace, we annually offer a range of internship programmes", "We host a
+  // 12 week immersive paid internship program" (HBK).
+  const WE_OFFER =
+    /\bwe( \w+)? (offer|run|host|hold|operate)s?\b[^.!?]{0,80}?\b(intern(ship)?s?|summer (analyst|associate)s?|graduate (programme|program|scheme)s?|early[- ]careers? (programme|program)s?|placements?|insight (days?|weeks?)|spring weeks?)\b/i;
+  const INTERNS_DO =
+    /\binterns (work|join|spend|gain|receive|rotate|take part|participate|will|are (paired|given|assigned|placed))\b/i;
+  // "We do not currently offer internships", "no internships at this time", "not currently recruiting".
+  const NEGATIVE =
+    /\b(do(es)?n['’]?t|do(es)? not|cannot|can['’]t|won['’]t|will not|are not|aren['’]t|is not|isn['’]t|no longer)\b[^.!?]{0,40}\b(offer|run|host|have|hire|hiring|accept|accepting|recruit|recruiting|take|taking|available|open)|\bno (current |open |available )?(internships?|interns|placements?|graduate|vacancies|openings|programmes?|programs?|positions?)\b|\bnot (currently |presently )?(hiring|accepting|recruiting|offering|running|available)\b/i;
+  const BOILERPLATE =
+    /\bcookies?\b|privacy|consent|gdpr|terms (of use|and conditions)|copyright|©|all rights reserved|registered (in|office|number|with)|regulated by|authori[sz]ed (and regulated )?by|disclaimer/i;
+  // A testimonial ("I interned on the Strategy team", "my internship") is one person's summer, not the programme.
+  const FIRST_PERSON = /(^|\s)I(\s|['’](m|ve|d|ll)\b)|\b(my|me|myself)\b/;
+
+  /** A sentence or heading's weight as evidence of the firm's own student programme (0: none). */
+  function mentionWeight(s, heading) {
+    const t = s.replace(/\b(internal|international|internet)\w*/gi, ' ');
+    if (/\?$/.test(s) || BOILERPLATE.test(s) || NEGATIVE.test(s) || FIRST_PERSON.test(s)) return 0;
+    if (WE_OFFER.test(t)) return 3;
+    const m = NAMED_PROGRAMME.exec(t);
+    // In a sentence, the programme must be someone's ("our", "the", "Marshall Wace's"), not internships in general.
+    if (
+      m &&
+      (heading || /\b(our|the|an?|its|this|these|[\w&]+['’]s)\s+([^\s.!?]+\s+){0,5}$/i.test(t.slice(0, m.index)))
+    )
+      return 2;
+    return INTERNS_DO.test(t) ? 1 : 0;
+  }
+
+  /** 'insight', 'internship' or 'graduate': what kind of programme a mention describes. */
+  function mentionKind(s) {
+    const t = s.replace(/\b(internal|international|internet)\w*/gi, ' ');
+    if (/\b(insight|spring) (weeks?|days?|programmes?|programs?)\b/i.test(t)) return 'insight';
+    if (/\bintern|summer (analyst|associate)|off[- ]cycle|placement|year in industry|apprentice/i.test(t))
+      return 'internship';
+    return 'graduate';
+  }
+
+  /** Text cut to `max` characters at a word, with an ellipsis. */
+  function clip(s, max) {
+    return s.length <= max ? s : s.slice(0, max - 1).replace(/\s+\S*$/, '') + '…';
+  }
+
+  /**
+   * What a careers page says about the firm's own student programmes when it gives no date (HBK's "The HBK Summer
+   * Intern Experience", "Shray joined our intern class of 2022"; Marshall Wace's "we annually offer a range of
+   * internship programmes"): up to 4 sentences or headings (a heading with the sentence under it), the strongest
+   * evidence first chosen, in page order. Leaves out what programmesFromText() finds (dated), negatives ("we do not
+   * currently offer internships"), testimonials and cookie text. [{ text, kind: 'internship'|'graduate'|'insight' }]
+   */
+  function mentionsFromText(text, now = Date.now()) {
+    const units = [];
+    String(text || '')
+      .split('\n')
+      .filter((line) => line.trim())
+      .forEach((line, n) => {
+        const parts = line
+          .split(/(?<=[.!?])\s+(?=[A-Z0-9“"])|\s•\s/)
+          .map((x) =>
+            x
+              .replace(/\s+/g, ' ')
+              .replace(/^\s*•\s*/, '')
+              .trim(),
+          )
+          .filter(Boolean);
+        parts.forEach((s, k) => {
+          // A heading: a short line of its own without a full stop ("Technology Internship Programme").
+          const heading = parts.length === 1 && s.length <= 90 && !/[.!?:;,]$/.test(s) && s.split(' ').length <= 12;
+          units.push({ s, heading, line: n, first: k === 0 });
+        });
+      });
+    const dated = programmesFromText(text, now).map((p) => U.normalize(p.text));
+    const out = [];
+    const seen = new Set();
+    for (let i = 0; i < units.length; i++) {
+      const u = units[i];
+      if (u.s.length < 15 || u.s.length > 400) continue;
+      let weight = mentionWeight(u.s, u.heading);
+      if (!weight) continue;
+      let s = u.s;
+      // A heading takes the sentence under it: "Technology Internship Programme — Find out more about our
+      // Technology Internship available in London, New York, Singapore and Hong Kong."
+      const next = units[i + 1];
+      if (u.heading && next && next.line === u.line + 1 && next.first && !next.heading && next.s.length <= 250) {
+        // "Summer Internship Programme — We don't run an internship programme this year." is none.
+        if (NEGATIVE.test(next.s)) continue;
+        if (!BOILERPLATE.test(next.s) && !FIRST_PERSON.test(next.s)) {
+          weight = Math.max(weight, mentionWeight(next.s, false));
+          s = `${s} — ${next.s}`;
+          i++;
+        }
+      }
+      const norm = U.normalize(s);
+      if (dated.some((d) => d && (norm.includes(d) || d.includes(norm)))) continue;
+      const key = U.normalize(u.heading ? u.s : s).slice(0, 80);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ text: clip(s, 300), kind: mentionKind(s), weight, at: out.length });
+    }
+    return out
+      .sort((a, b) => b.weight - a.weight || a.at - b.at)
+      .slice(0, 4)
+      .sort((a, b) => a.at - b.at)
+      .map(({ text: t, kind }) => ({ text: t, kind }));
+  }
+
+  /** An address Cloudflare hid ("/cdn-cgi/l/email-protection#…", data-cfemail): the first byte XORs the rest. */
+  function cfEmail(hex) {
+    const key = parseInt(hex.slice(0, 2), 16);
+    let e = '';
+    for (let i = 2; i + 1 < hex.length; i += 2) e += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16) ^ key);
+    return /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(e) ? e.toLowerCase() : '';
+  }
+
   /** Addresses for applying by email, Cloudflare's hidden ones decoded ("/cdn-cgi/l/email-protection#…"). */
   function emails(html) {
     const out = new Set();
     const s = String(html || '');
     for (const m of decode(s).matchAll(/mailto:([\w.+-]+@[\w-]+(?:\.[\w-]+)+)/gi)) out.add(m[1].toLowerCase());
     for (const m of s.matchAll(/(?:data-cfemail="|email-protection#)([\da-f]{8,})/gi)) {
-      const hex = m[1];
-      const key = parseInt(hex.slice(0, 2), 16);
-      let e = '';
-      for (let i = 2; i < hex.length; i += 2) e += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16) ^ key);
-      if (/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(e)) out.add(e.toLowerCase());
+      const e = cfEmail(m[1]);
+      if (e) out.add(e);
     }
     return [...out]
       .filter((e) => /career|recruit|job|grad|intern|hr|people|talent|student|apply|join/i.test(e))
@@ -1102,11 +1462,22 @@
   /**
    * Everything the firm's careers pages show for students: boards found on its site (or guessed and proved to
    * be its), the student roles on them, and programme sentences on plain pages.
-   * status: 'roles' (student roles open) · 'programme' (a programme page, no board) · 'board' (a board, no
-   * student roles now) · 'page' (a careers page, nothing for students) · 'none' (no careers page found) ·
-   * 'blocked' (the site turns robots away) · 'unreachable'.
+   * status: 'roles' (student roles open) · 'programme' (a programme page, no board) · 'described' (a page
+   * describes a student programme but gives no date: `mentions`) · 'board' (a board, no student roles now) · 'page'
+   * (a careers page, nothing for students) · 'none' (no careers page found) · 'blocked' (the site turns robots
+   * away) · 'unreachable'.
    */
-  async function careers(firm, { fetch: fetchFn, now = Date.now(), guess = true, all = false } = {}) {
+  async function careers(
+    firm,
+    {
+      fetch: fetchFn,
+      now = Date.now(),
+      guess = true,
+      all = false,
+      boards: knownBoards = [],
+      pages: knownPages = [],
+    } = {},
+  ) {
     const log = [];
     const result = {
       status: 'none',
@@ -1116,11 +1487,25 @@
       roles: [],
       other: 0,
       programmes: [],
+      mentions: [],
       emails: [],
+      texts: [],
       log,
     };
     let site = firm.site;
     if (!site && firm.qid) site = await wikidataSite(firm.qid, { fetch: fetchFn });
+    // No website on record (Robey Warshaw): its name as an address, kept only when the page there names the firm.
+    let guessedHome = null;
+    if (!site && guess) {
+      for (const url of guessSites(firm)) {
+        const r = await get(fetchFn, url + '/', { retries: 0, timeout: 12000 });
+        if (!r.ok || r.blocked || !pageIsFirm(r.text, firm)) continue;
+        site = siteOf(r.url) || url;
+        guessedHome = r;
+        log.push({ url: r.url, outcome: 'guessed site' });
+        break;
+      }
+    }
     result.site = site || '';
     const boards = [];
     const addBoards = (list) => {
@@ -1131,9 +1516,23 @@
         if (!boards.some(same)) boards.push(b);
       }
     };
+    // Boards and pages known already (a Hacker News post's links) count as found on the firm's site.
+    addBoards(givenBoards([...(knownBoards || []), ...(firm.boards || [])], firm));
+    const given = [...(knownPages || []), ...(firm.pages || [])].map((p) => siteUrl(p)).filter(Boolean);
     const pageTexts = [];
+    const visited = new Set();
+    const queue = [...new Set(given)];
+    // Addresses tried on the off chance (/careers/, /internships/), as against those a page links to: Marshall Wace
+    // links /join-us/internships/, which is no guess.
+    const guesses = new Set();
+    // A Hacker News firm's site is worked out from its post, not registered: when its home page doesn't name the
+    // firm, nothing on that site is the firm's (Zephyr Labs "featured in the NYT" isn't hiring at nytimes.com).
+    let foreign = false;
+    // The firm's own domains: links elsewhere aren't followed, nor pages that land elsewhere read (Speech Graphics'
+    // "Careers Handbook" redirects to a PDF on static1.squarespace.com), whatever host a page itself is on.
+    const own = [firm.domain, domainOf(site), ...given.map(domainOf)].filter(Boolean);
     if (site) {
-      let home = await get(fetchFn, site + '/');
+      let home = guessedHome || (await get(fetchFn, site + '/'));
       // Some firms only answer on www. (or only without it).
       if (!home.ok && !home.blocked) {
         const u = parseUrl(site);
@@ -1141,60 +1540,89 @@
         const again = await get(fetchFn, `https://${other}/`, { retries: 0 });
         if (again.ok) home = again;
       }
-      log.push({
-        url: site + '/',
-        outcome: home.ok ? 'home page' : home.blocked ? 'blocked' : `failed: ${home.status || home.error}`,
-      });
+      if (!guessedHome)
+        log.push({
+          url: site + '/',
+          outcome: home.ok ? 'home page' : home.blocked ? 'blocked' : `failed: ${home.status || home.error}`,
+        });
       if (home.blocked) result.status = 'blocked';
       else if (!home.ok) result.status = 'unreachable';
-      let candidates = [];
       if (home.ok) {
-        if (!pageIsFirm(home.text, firm)) log.push({ url: home.url, outcome: 'doesn’t name the firm' });
-        addBoards(detectBoards(home.text, home.url));
-        candidates = careerLinks(home.text, home.url, domainOf(home.url) || firm.domain).map((l) => l.url);
+        const named = pageIsFirm(home.text, firm);
+        if (!named) log.push({ url: home.url, outcome: 'doesn’t name the firm' });
+        foreign = !named && firm.source === 'hn';
+        if (!foreign) {
+          // A site that moved (its old address redirects to the new) is the firm's under its new domain too.
+          own.push(domainOf(home.url));
+          addBoards(detectBoards(home.text, home.url));
+          queue.push(...careerLinks(home.text, home.url, own).map((l) => l.url));
+        }
       }
       // Sites without a careers link (or a menu built by script) usually still have /careers/.
-      if (home.ok || home.status === 404) {
+      if (!foreign && (home.ok || home.status === 404)) {
         const origin = parseUrl(home.url || site).origin;
-        for (const p of CAREER_PATHS) candidates.push(origin + p);
-      }
-      const visited = new Set();
-      const queue = [...new Set(candidates)];
-      let fetched = 0;
-      while (queue.length && fetched < 6) {
-        const url = queue.shift();
-        const key = url.replace(/\/+$/, '').toLowerCase();
-        if (visited.has(key)) continue;
-        visited.add(key);
-        // A link to a job board names the board: no need to load it.
-        const linked = detectBoards(url, url).filter((b) => boardRequest(b));
-        if (ATS_DOMAIN.test(domainOf(url)) && linked.length) {
-          addBoards(linked);
-          continue;
-        }
-        const guessed = CAREER_PATHS.some((p) => url.endsWith(p));
-        // Guessed paths only until one answers.
-        if (guessed && result.pages.length) continue;
-        fetched++;
-        const r = await get(fetchFn, url, { retries: 0, timeout: 15000 });
-        if (!r.ok || r.blocked) {
-          if (!guessed) log.push({ url, outcome: r.blocked ? 'blocked' : `failed: ${r.status || r.error}` });
-          continue;
-        }
-        // A guessed path that lands back on the home page isn't a careers page.
-        if (guessed && parseUrl(r.url) && parseUrl(r.url).pathname.replace(/\/+$/, '') === '') continue;
-        log.push({ url: r.url, outcome: 'careers page' });
-        result.pages.push(r.url);
-        addBoards(detectBoards(r.text, r.url));
-        result.emails.push(...emails(r.text));
-        pageTexts.push(pageText(r.text));
-        // One level deeper: "Students", "Internships", "Open positions".
-        if (!ATS_DOMAIN.test(domainOf(r.url))) {
-          for (const l of careerLinks(r.text, r.url, domainOf(r.url) || firm.domain).slice(0, 4))
-            if (!visited.has(l.url.replace(/\/+$/, '').toLowerCase())) queue.push(l.url);
+        for (const url of CAREER_PATHS.map((p) => origin + p).filter((u) => !queue.includes(u))) {
+          queue.push(url);
+          guesses.add(url);
         }
       }
     }
+    let fetched = 0;
+    while (queue.length && fetched < 6) {
+      const url = queue.shift();
+      const key = pageKey(url);
+      const guessed = guesses.has(url);
+      // Guessed paths only until one answers.
+      if (visited.has(key) || (guessed && result.pages.length)) continue;
+      visited.add(key);
+      // A link to a job board names the board: no need to load it.
+      const linked = detectBoards(url, url).filter((b) => boardRequest(b));
+      if (ATS_DOMAIN.test(domainOf(url)) && linked.length) {
+        addBoards(linked);
+        continue;
+      }
+      fetched++;
+      const r = await get(fetchFn, url, { retries: 0, timeout: 15000 });
+      if (!r.ok || r.blocked) {
+        if (!guessed) log.push({ url, outcome: r.blocked ? 'blocked' : `failed: ${r.status || r.error}` });
+        continue;
+      }
+      // A guessed path that lands back on the home page isn't a careers page.
+      if (guessed && parseUrl(r.url) && parseUrl(r.url).pathname.replace(/\/+$/, '') === '') continue;
+      if (/^\s*%PDF/.test(r.text)) {
+        log.push({ url: r.url, outcome: 'PDF, not read' });
+        continue;
+      }
+      const landed = domainOf(r.url);
+      // A page the firm's own post links is its own wherever it lands; any other stays on its site or a job board.
+      if (given.includes(url)) own.push(landed);
+      else if (!own.includes(landed) && !ATS_DOMAIN.test(landed)) {
+        log.push({ url: r.url, outcome: 'not the firm’s site' });
+        continue;
+      }
+      // A page read already, reached again by a redirect.
+      const at = pageKey(r.url);
+      if (at !== key && result.pages.some((p) => pageKey(p) === at)) continue;
+      visited.add(at);
+      log.push({ url: r.url, outcome: 'careers page' });
+      result.pages.push(r.url);
+      addBoards(detectBoards(r.text, r.url));
+      result.emails.push(...emails(r.text));
+      const text = pageText(r.text);
+      pageTexts.push(text);
+      // What the page says, for the AI to read when there are no roles to show (a few pages, each clipped).
+      if (result.texts.length < 3) result.texts.push({ url: r.url, text: tidyText(text).slice(0, 8000) });
+      // One level deeper: "Students", "Internships", "Open positions" (not on a site that isn't the firm's: only
+      // the pages its post links are read there).
+      if (!foreign && !ATS_DOMAIN.test(landed)) {
+        for (const l of careerLinks(r.text, r.url, own).slice(0, 4)) {
+          guesses.delete(l.url);
+          if (!visited.has(pageKey(l.url))) queue.push(l.url);
+        }
+      }
+    }
+    // Known pages that all failed, with no site or board to go on, mean the firm couldn't be reached.
+    if (!site && given.length && !result.pages.length && !boards.length) result.status = 'unreachable';
     // Pages on a board's own host (careers.brevanhoward.com) are the board.
     for (const b of boards) {
       if (b.ats === 'phenom' && b.url) {
@@ -1209,22 +1637,28 @@
     }
     // Nothing on the site: try the boards most firms like these use, and keep a board only if it is the firm's.
     if (guess && !boards.some((b) => boardRequest(b))) {
-      for (const slug of guessSlugs(firm)) {
+      // Not by the domain of a site that isn't the firm's ("nytimes").
+      const who = foreign ? { ...firm, domain: '', site: '' } : { ...firm, domain: firm.domain || domainOf(site) };
+      for (const slug of guessSlugs(who)) {
+        // Every board for the slug, so an empty account doesn't win over the one with the jobs (Wayve's are on
+        // Ashby, not on an empty Workable "wayve").
+        const found = [];
         for (const ats of GUESSABLE) {
           const b = { ats, slug, found: 'guessed' };
           const req = boardRequest(b);
           const r = await get(fetchFn, req.url, { json: true, retries: 0, timeout: 12000 });
           if (!r.ok || !r.json) continue;
-          if (!boardIsFirm(b, r, firm)) {
+          if (!boardIsFirm(b, r, who)) {
             log.push({ url: req.url, outcome: 'someone else’s board' });
             continue;
           }
           log.push({ url: req.url, outcome: `${ats} board (by name)` });
           b.cached = r;
-          boards.push(b);
-          break;
+          found.push(b);
         }
-        if (boards.length) break;
+        const listing = found.filter((b) => parseBoard(b, b.cached).length);
+        boards.push(...(listing.length ? listing : found.slice(0, 1)));
+        if (found.length) break;
       }
     }
     // List each board that has an API.
@@ -1234,16 +1668,12 @@
       if (!req) continue;
       const responses = [];
       if (b.cached) responses.push(b.cached);
-      else if (req.searches) {
-        for (const searchText of req.searches) {
-          const r = await get(fetchFn, req.url, { ...req, body: { ...req.body, searchText }, retries: 1 });
+      else
+        for (const one of boardRequests(req)) {
+          const r = await get(fetchFn, one.url, { ...one, retries: 1 });
           if (r.ok) responses.push(r);
+          else if (!req.searches) log.push({ url: req.url, outcome: `board failed: ${r.status || r.error}` });
         }
-      } else {
-        const r = await get(fetchFn, req.url, { ...req, retries: 1 });
-        if (r.ok) responses.push(r);
-        else log.push({ url: req.url, outcome: `board failed: ${r.status || r.error}` });
-      }
       delete b.cached;
       b.jobs = 0;
       for (const r of responses) {
@@ -1272,11 +1702,61 @@
       ...p,
       text: p.text.replace(/\[email(?:\s|&#160;|&nbsp;)+protected\]/gi, result.emails[0] || 'the address on the page'),
     }));
+    // Undated: the programmes the pages describe ("we annually offer a range of internship programmes").
+    result.mentions = mentionsFromText(pageTexts.join(' \n '), now);
     if (result.roles.length) result.status = 'roles';
     else if (result.programmes.length) result.status = 'programme';
+    else if (result.mentions.length) result.status = 'described';
     else if (boards.length) result.status = 'board';
     else if (result.pages.length) result.status = 'page';
+    // With roles to show there is nothing for the AI to read.
+    if (result.status === 'roles') result.texts = [];
     return result;
+  }
+
+  /** A page's text with its runs of spaces and blank lines closed up (for the AI, which pays by the word). */
+  function tidyText(text) {
+    return String(text || '')
+      .replace(/[ \t\u00a0]+/g, ' ')
+      .replace(/ *\n[\s]*/g, '\n')
+      .trim();
+  }
+
+  /**
+   * Boards known from elsewhere (a Hacker News post), kept when they can be listed and their host is a board's,
+   * or the firm's own for a Phenom site: { ats, slug, host?, site?, url?, found }.
+   */
+  function givenBoards(list, firm) {
+    const out = [];
+    for (const raw of list || []) {
+      if (!raw || !raw.ats) continue;
+      const b = { ...raw, found: raw.found || 'linked' };
+      const host = String(b.host || '');
+      if (/^(workday|oleeo)$/.test(b.ats) && !ATS_DOMAIN.test(host)) continue;
+      if (b.ats === 'phenom' && (!firm.domain || domainOf(host || b.url) !== firm.domain)) continue;
+      if (b.ats === 'oleeo' && !b.url) b.url = `https://${host}/vx/candidate/jobboard/vacancy/1/adv/`;
+      if (boardRequest(b) || b.ats === 'phenom') out.push(b);
+    }
+    return out;
+  }
+
+  /**
+   * A page's address as the crawl tells pages apart: without its hash, a trailing slash, or a tracking or scrolling
+   * query (FreeAgent's careers.freeagent.com/?scroll_to=js-careers-jobs-block is careers.freeagent.com/).
+   */
+  function pageKey(url) {
+    const u = parseUrl(url);
+    if (!u) return String(url || '').toLowerCase();
+    for (const k of [...u.searchParams.keys()])
+      if (/^(utm_\w*|scroll_to|ref|source)$/i.test(k)) u.searchParams.delete(k);
+    const query = u.searchParams.toString();
+    return (u.origin + u.pathname.replace(/\/+$/, '') + (query ? '?' + query : '')).toLowerCase();
+  }
+
+  /** An http(s) address from a string or { url }, or ''. */
+  function siteUrl(p) {
+    const u = parseUrl(typeof p === 'string' ? p : p && p.url);
+    return u && /^https?:$/.test(u.protocol) ? u.href : '';
   }
 
   /* ------------------------------------------------------------ watchlist */
@@ -1296,17 +1776,11 @@
     const known = (entry.boards || []).filter((b) => boardRequest(b));
     let res;
     if (known.length || (entry.pages || []).length) {
-      res = { status: 'none', roles: [], programmes: [], log: [] };
+      res = { status: 'none', roles: [], programmes: [], mentions: [], log: [] };
       for (const b of known) {
-        const req = boardRequest(b);
-        const searches = req.searches || [null];
-        for (const searchText of searches) {
-          const r = await get(fetchFn, req.url, {
-            ...req,
-            body: req.body ? { ...req.body, searchText: searchText || '' } : undefined,
-            retries: 1,
-          });
-          res.log.push({ url: req.url, outcome: r.ok ? 'ok' : `failed: ${r.status || r.error}` });
+        for (const one of boardRequests(boardRequest(b))) {
+          const r = await get(fetchFn, one.url, { ...one, retries: 1 });
+          res.log.push({ url: one.url, outcome: r.ok ? 'ok' : `failed: ${r.status || r.error}` });
           if (r.ok)
             res.roles.push(
               ...parseBoard(b, r)
@@ -1319,11 +1793,16 @@
       for (const url of (entry.pages || []).slice(0, 3)) {
         const r = await get(fetchFn, url, { retries: 1 });
         res.log.push({ url, outcome: r.ok ? 'ok' : `failed: ${r.status || r.error}` });
-        if (r.ok) texts.push(pageText(r.text));
+        if (r.ok && !/^\s*%PDF/.test(r.text)) texts.push(pageText(r.text));
       }
       res.programmes = programmesFromText(texts.join(' \n '), now);
-      const failed = res.log.every((l) => l.outcome !== 'ok');
-      res.status = failed ? 'unreachable' : res.roles.length ? 'roles' : res.programmes.length ? 'programme' : 'quiet';
+      // Shown, but not items: only roles and programmes are new or seen.
+      res.mentions = mentionsFromText(texts.join(' \n '), now);
+      if (res.log.every((l) => l.outcome !== 'ok')) res.status = 'unreachable';
+      else if (res.roles.length) res.status = 'roles';
+      else if (res.programmes.length) res.status = 'programme';
+      else if (res.mentions.length) res.status = 'described';
+      else res.status = 'quiet';
     } else {
       res = await careers(firm, { fetch: fetchFn, now });
     }
@@ -1363,21 +1842,24 @@
 
   /**
    * Ask the AI for more firms like the query, then keep only those that check out: in the registry, or with
-   * a website that names them plus an SEC registration or a Wikipedia article. chat: (messages, options) →
-   * { json }. Returns { found: [{ firm, reasons, why }], rejected: [{ name, why }] }.
+   * a website that names them plus an SEC registration or a Wikipedia article (for tech, a careers page will
+   * do instead). angle: a sentence steering the search ("Prefer firms that take speculative applications by
+   * email."). chat: (messages, options) → { json }. Returns { found: [{ firm, reasons, why }], rejected:
+   * [{ name, why }] }.
    */
-  async function suggest(chat, query, firms, { fetch: fetchFn, exclude = [], signal, max = 20 } = {}) {
+  async function suggest(chat, query, firms, { fetch: fetchFn, exclude = [], signal, max = 20, angle = '' } = {}) {
     const q = query || {};
     const niches = (q.niches || []).map((n) => (NICHES[n] ? NICHES[n].label : n)).join(', ') || 'finance';
     const place = (PLACES[q.place] || PLACES.any).label;
     const size = (SIZES[q.size] || SIZES.any).label;
     const seeds = (q.seedNames || []).join(', ');
+    const tech = wantsTech(q.niches);
     const { json } = await chat(
       [
         {
           role: 'system',
           content:
-            'You help a student find internships at reputable but low-profile firms: well-regarded, regulated, often decades old, but small and rarely advertised (think HBK, Lansdowne Partners, Egerton Capital, Robey Warshaw, not Goldman Sachs or Citadel). ' +
+            'You help a student find internships at reputable but low-profile firms: well-regarded, regulated, often decades old, but small and rarely advertised, in finance (think HBK, Lansdowne Partners, Egerton Capital, Robey Warshaw, not Goldman Sachs or Citadel) or tech (well-funded, profitable or long-established companies of 20–500 people, not FAANG or the unicorns everyone applies to). ' +
             'Only name firms you are confident exist today, with their real website domain. Never invent a firm or a domain; fewer, real names are better. ' +
             'Leave out household names and anyone listed in "already known". ' +
             'Reply with JSON only: {"firms":[{"name":"","website":"example.com","city":"","why":"under 15 words"}]}',
@@ -1389,7 +1871,8 @@
             (seeds ? `Similar to: ${seeds}\n` : '') +
             (q.text ? `Also: ${q.text}\n` : '') +
             `Already known (don't repeat): ${exclude.slice(0, 80).join('; ')}\n` +
-            `Up to ${max} firms.`,
+            `Up to ${max} firms.` +
+            (angle ? `\nFocus: ${String(angle).trim()}` : ''),
         },
       ],
       { json: true, temperature: 0.3, maxTokens: 2500, signal },
@@ -1408,7 +1891,7 @@
         found.push({ firm: known, reasons: ['In the registry'], why });
         return;
       }
-      const v = await verify({ name, website: idea.website, city: idea.city }, { fetch: fetchFn });
+      const v = await verify({ name, website: idea.website, city: idea.city }, { fetch: fetchFn, tech });
       if (v.firm) found.push({ firm: v.firm, reasons: v.reasons, why });
       else rejected.push({ name, why: v.why });
     });
@@ -1417,9 +1900,11 @@
 
   /**
    * Prove a firm the registry doesn't know exists: its website must load and name it, and an independent
-   * record (an active SEC registration or a Wikipedia article about a firm) must agree. { firm, reasons } or { why }.
+   * record (an active SEC registration or a Wikipedia article about a firm) must agree. A tech firm has no SEC
+   * record, so with `tech` its own careers page or job board will do instead of an article. { firm, reasons }
+   * or { why }.
    */
-  async function verify(idea, { fetch: fetchFn } = {}) {
+  async function verify(idea, { fetch: fetchFn, tech = false } = {}) {
     const site = siteOf(idea.website || '');
     const stub = {
       name: idea.name,
@@ -1440,14 +1925,18 @@
     if (siteOk) reasons.push(`${stub.domain} names the firm`);
     if (sec) reasons.push(`SEC-registered (${[sec.city, sec.country].filter(Boolean).join(', ') || 'active'})`);
     if (wiki) reasons.push('Wikipedia article');
+    const hiring = tech && siteOk && !(sec || wiki) && (await hasCareers(home, stub, fetchFn));
+    if (hiring) reasons.push('Has a careers page');
     let finalSite = siteOk ? site : '';
     if (!finalSite && wiki && wiki.qid) finalSite = await wikidataSite(wiki.qid, { fetch: fetchFn });
-    if (!(sec || wiki))
+    if (!(sec || wiki || hiring))
       return {
         why:
           site && !siteOk
             ? `${stub.domain || 'its website'} doesn’t load or doesn’t name it, and no registry knows it`
-            : 'no SEC registration or Wikipedia article found',
+            : tech
+              ? 'no Wikipedia article or careers page found'
+              : 'no SEC registration or Wikipedia article found',
       };
     if (!finalSite) return { why: 'no working website found' };
     if (!siteOk && finalSite) reasons.push('website from Wikidata');
@@ -1470,11 +1959,28 @@
     };
   }
 
+  /** Does the firm's home page carry a job board, or link to a careers page that loads? */
+  async function hasCareers(home, firm, fetchFn) {
+    if (detectBoards(home.text, home.url).some((b) => boardRequest(b))) return true;
+    for (const l of careerLinks(home.text, home.url, domainOf(home.url) || firm.domain).slice(0, 2)) {
+      if (ATS_DOMAIN.test(domainOf(l.url))) {
+        if (detectBoards(l.url, l.url).some((b) => boardRequest(b))) return true;
+        continue;
+      }
+      const r = await get(fetchFn, l.url, { retries: 0, timeout: 15000 });
+      // A careers link that lands back on the home page is a menu built by script, not a page.
+      if (r.ok && !r.blocked && parseUrl(r.url) && parseUrl(r.url).pathname.replace(/\/+$/, '') !== '') return true;
+    }
+    return false;
+  }
+
   const discover = {
+    NICHE_GROUPS,
     NICHES,
     SIZES,
     PLACES,
     roleKind,
+    wantsTech,
     normName,
     coreName,
     sameFirm,
@@ -1485,6 +1991,7 @@
     lookup,
     standing,
     onList,
+    placeMatch,
     search,
     similarTo,
     get,
@@ -1493,11 +2000,18 @@
     wikiSimilar,
     wikiFind,
     links,
+    decode,
+    textOf,
+    pageText,
+    pageIsFirm,
+    cfEmail,
     careerLinks,
     detectBoards,
     boardRequest,
+    boardRequests,
     parseBoard,
     programmesFromText,
+    mentionsFromText,
     deadlineIn,
     emails,
     careers,

@@ -19,6 +19,9 @@
         <button id="tab-watch" role="tab" type="button" aria-selected="false" aria-controls="watch-view">
           Watchlist <span id="watch-count" class="pill"></span>
         </button>
+        <button id="tab-outreach" role="tab" type="button" aria-selected="false" aria-controls="outreach-view">
+          Outreach <span id="outreach-count" class="pill"></span>
+        </button>
       </div>
     </header>
 
@@ -37,7 +40,7 @@
           </div>
           <fieldset class="niches">
             <legend>Kind of firm</legend>
-            <div id="niches" class="chips"></div>
+            <div id="niches" class="niche-groups"></div>
           </fieldset>
           <div class="grid">
             <label class="field"
@@ -66,8 +69,18 @@
               <input id="text" type="text" placeholder="Optional" autocomplete="off" spellcheck="false" />
             </label>
           </div>
-          <div class="row">
-            <label class="check"><input id="hide-trackr" type="checkbox" checked /> Leave out firms Trackr already lists</label>
+          <fieldset class="sources">
+            <legend>Sources</legend>
+            <label class="check"
+              ><input id="hide-trackr" type="checkbox" checked />
+              <span
+                >Leave out firms on Trackr and Simplify’s lists <span class="muted small">(the ones everyone applies to)</span></span
+              ></label
+            >
+            <label class="check"
+              ><input id="use-hn" type="checkbox" />
+              <span>Hacker News ‘Who is hiring’ <span class="muted small">(small tech firms posting this month)</span></span></label
+            >
             <label class="check" id="ai-wrap"
               ><input id="use-ai" type="checkbox" />
               <span
@@ -75,7 +88,33 @@
                 <span class="muted small">(each one checked against the SEC, Wikipedia and its own website)</span></span
               ></label
             >
-          </div>
+          </fieldset>
+          <details id="ai-box">
+            <summary id="ai-summary">AI model for this page</summary>
+            <div class="ai-body">
+              <p id="ai-none" class="small" hidden>
+                No AI key yet. Add one under
+                <button id="ai-settings" class="link" type="button">Settings › Cover letters &amp; AI</button> to ask for more ideas, have
+                careers pages read and draft emails.
+              </p>
+              <div id="ai-fields" class="grid">
+                <label class="field"
+                  ><span>Provider</span>
+                  <select id="discover-provider"></select>
+                </label>
+                <label id="discover-model-field" class="field"><span>Model</span></label>
+                <p id="discover-same" class="muted small wide"></p>
+                <label class="field wide"
+                  ><span>Effort</span>
+                  <select id="discover-effort">
+                    <option value="quick">Quick (one round of ideas)</option>
+                    <option value="thorough">Thorough (several angles, more ideas, reads pages)</option>
+                  </select>
+                </label>
+              </div>
+              <span id="ai-saved" class="muted small" aria-live="polite"></span>
+            </div>
+          </details>
           <div class="row">
             <button id="search" class="primary" type="submit">Search</button>
             <span id="status" class="muted small" aria-live="polite"></span>
@@ -87,7 +126,9 @@
             <h2 id="results-title">Firms</h2>
             <div class="row">
               <label class="check small"><input id="only-open" type="checkbox" /> Only firms with something open</label>
+              <label class="check small"><input id="sort-way" type="checkbox" /> Best way in first</label>
               <button id="check-top" class="small" type="button">Check the top 10</button>
+              <button id="results-export" class="small" type="button">Export results as CSV</button>
             </div>
           </div>
           <ol id="results" class="firms"></ol>
@@ -121,9 +162,29 @@
         </section>
       </div>
 
+      <div id="outreach-view" role="tabpanel" aria-labelledby="tab-outreach" hidden>
+        <section class="card">
+          <div class="card-head">
+            <h2>Outreach</h2>
+            <div class="row">
+              <span id="outreach-status" class="muted small" aria-live="polite"></span>
+              <button id="outreach-export" class="small" type="button">Export CSV</button>
+            </div>
+          </div>
+          <p class="muted small">
+            Every firm you drafted an email to or wrote to. Set the status as replies come in, and keep notes (“Spoke to Jane, call back in
+            January”). JobToFill never sends anything: emails go from your own email app.
+          </p>
+          <div id="outreach-empty" class="empty">
+            <p class="muted">Nothing yet. Check a firm’s careers and contacts, then press <strong>Draft an email</strong>.</p>
+          </div>
+          <ol id="outreach" class="firms"></ol>
+        </section>
+      </div>
+
       <p class="muted small footnote">
-        Firms come from the SEC’s register of investment advisers (Form ADV) and Wikipedia. Roles are read live from each firm’s own careers
-        pages and job boards; nothing is sent anywhere else unless you ask the AI.
+        Firms come from the SEC’s register of investment advisers (Form ADV), Wikipedia, Wikidata and Y Combinator’s directory. Roles and
+        contacts are read live from each firm’s own pages and job boards; nothing is sent anywhere else unless you ask the AI.
       </p>
     </div>
 
@@ -144,7 +205,12 @@
     <script src="../lib/store.js"></script>
     <script src="../lib/ai.js"></script>
     <script src="../lib/jobpage.js"></script>
+    <script src="../lib/letter.js"></script>
+    <script src="../lib/doctext.js"></script>
     <script src="../lib/discover.js"></script>
+    <script src="../lib/discover-contacts.js"></script>
+    <script src="../lib/discover-sources.js"></script>
+    <script src="../lib/discover-outreach.js"></script>
     <script type="module" src="discover.js"></script>
   </body>
 </html>

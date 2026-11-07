@@ -24,7 +24,14 @@
  *   watchlist     firms watched for new internships: [{ id, firm, boards, pages, emails, addedAt }] (Discover page)
  *   watch:<id>    what the last checks of a watched firm found: { seen: [key], fresh: [item], checkedAt, status,
  *                 roles, programmes } (written by the page and the background, so kept apart from the list)
- *   discoverCache Trackr's company list and recent careers checks ({ trackr, careers: { [firmId]: { at, result } } })
+ *   discoverCache what the Discover page fetched, kept so it isn't fetched again: { trackr (Trackr's company list),
+ *                 listed (the names and domains on Simplify's lists, discoverSources.simplifyListings without its
+ *                 roles), hn (this month's Hacker News "Who is
+ *                 hiring" posts, discoverSources.hnHiring), careers: { [firmId]: { at, result } } (careers checks) and
+ *                 contacts: { [firmId]: { at, result } } (discoverContacts.findContacts) }; never in a backup
+ *   outreach      emails to firms, written on the Discover page: { [firmId]: { firm: { id, name, domain, site },
+ *                 status: 'drafted'|'sent'|'replied'|'closed', to, subject, notes, contact: { name, title, email,
+ *                 guessed }, way, at (first saved), sentAt, updatedAt } }; in backups
  */
 (function (root) {
   'use strict';
@@ -66,6 +73,9 @@
     autoAdvance: false,
     // The settings page's "Get started" checklist was hidden by the person (it also goes once setup is done).
     setupDismissed: false,
+    // The AI the Discover page uses: provider '' is the one under Settings › Cover letters & AI; effort 'quick' asks
+    // for one round of ideas, 'thorough' for several angles and has pages read (discoverAiConfig).
+    discoverAi: { provider: '', model: '', effort: 'quick' },
   };
 
   // answerNotes: the candidate's own rules for answers ("I have never applied to any of these firms").
@@ -88,6 +98,8 @@
   const WATCH_LIMIT = 200;
   const SEEN_LIMIT = 1000;
   const CAREERS_CACHE_LIMIT = 300;
+  const OUTREACH_LIMIT = 500;
+  const OUTREACH_STATUSES = ['drafted', 'sent', 'replied', 'closed'];
   const area = () => JTF.api.storage.local;
 
   // Read-modify-write operations run one at a time within a context so they don't drop each other's changes.
@@ -97,6 +109,16 @@
       const run = queue.then(() => fn(...args));
       queue = run.catch(() => {});
       return run;
+    };
+  }
+
+  /** The Discover page's AI choice over its defaults: { provider ('' = as Settings), model, effort }. */
+  function discoverAiSettings(settings) {
+    const saved = (settings && settings.discoverAi) || {};
+    return {
+      provider: typeof saved.provider === 'string' ? saved.provider : '',
+      model: typeof saved.model === 'string' ? saved.model : '',
+      effort: saved.effort === 'thorough' ? 'thorough' : 'quick',
     };
   }
 
@@ -110,6 +132,7 @@
   function withDefaults(saved) {
     const settings = Object.assign({}, DEFAULT_SETTINGS, saved || {});
     settings.aiSensitive = aiSensitiveSettings(settings);
+    settings.discoverAi = discoverAiSettings(settings);
     return settings;
   }
 
@@ -316,6 +339,47 @@
     if (other)
       config.fallback = { provider: other, model: modelFor(ai, other), baseUrl: '', apiKey: keys[other], ...fast };
     return config;
+  }
+
+  /**
+   * Change the Discover page's AI: { provider ('' = as Settings), model, effort ('quick' | 'thorough') }. A new
+   * provider without a model starts from the one saved for it under Settings.
+   */
+  const saveDiscoverAi = exclusive(async function saveDiscoverAi(patch) {
+    const settings = await getSettings();
+    const prev = discoverAiSettings(settings);
+    const next = discoverAiSettings({ discoverAi: Object.assign({}, prev, patch) });
+    if (!PROVIDER_IDS.includes(next.provider)) next.provider = '';
+    if (next.provider !== prev.provider && !('model' in (patch || {}))) next.model = '';
+    if (!next.provider) next.model = '';
+    next.model = next.model.trim();
+    settings.discoverAi = next;
+    await area().set({ settings });
+    return next;
+  });
+
+  /**
+   * The AI the Discover page uses, ready for JTF.ai: the provider chosen there with its model (or the one saved for
+   * it under Settings, or its default) when there is a key for it, else aiConfig()'s. `source` says which
+   * ('discover' | 'settings'), `effort` how hard to look; fast mode and the stand-in follow the Settings.
+   */
+  async function discoverAiConfig() {
+    const [settings, keys] = await Promise.all([getSettings(), getAiKeys()]);
+    const d = discoverAiSettings(settings);
+    if (!d.provider || !keys[d.provider]) return { ...(await aiConfig()), source: 'settings', effort: d.effort };
+    const ai = aiSettings(settings);
+    const fast = ai.fast === true ? { fast: true } : {};
+    const config = {
+      provider: d.provider,
+      model: d.model || modelFor(ai, d.provider),
+      baseUrl: d.provider === 'custom' ? ai.baseUrl || '' : '',
+      apiKey: keys[d.provider],
+      ...fast,
+    };
+    const other = ai.fallback !== false && FALLBACK_ORDER.find((id) => id !== d.provider && keys[id]);
+    if (other)
+      config.fallback = { provider: other, model: modelFor(ai, other), baseUrl: '', apiKey: keys[other], ...fast };
+    return { ...config, source: 'discover', effort: d.effort };
   }
 
   /* ------------------------------------------------------ verification codes */
@@ -644,7 +708,8 @@
   // What the backup file holds (see exportData): a change to any of these rewrites it. Generated letters,
   // the last Quick apply, the application log and caches are left out (the log rides along with the rest).
   // "vault": the encrypted vault of older versions, until its passwords are moved over (passwords.js).
-  const BACKED_UP = /^(profiles|profileOrder|settings|passwords|vault|aiKeys|nylas|answers|watchlist|doc:.+|kit:.+)$/;
+  const BACKED_UP =
+    /^(profiles|profileOrder|settings|passwords|vault|aiKeys|nylas|answers|watchlist|outreach|doc:.+|kit:.+)$/;
   const backsUp = (key) => BACKED_UP.test(key);
 
   /**
@@ -664,7 +729,8 @@
     if (all.nylas || Object.values(all.aiKeys || {}).some((k) => String(k || '').trim())) return true;
     return (
       (Array.isArray(all.answers) && all.answers.length > 0) ||
-      (Array.isArray(all.watchlist) && all.watchlist.length > 0)
+      (Array.isArray(all.watchlist) && all.watchlist.length > 0) ||
+      Object.keys(outreachOf(all.outreach)).length > 0
     );
   }
 
@@ -732,21 +798,118 @@
     return state;
   });
 
-  async function getDiscoverCache() {
-    return (await area().get('discoverCache')).discoverCache || { trackr: null, careers: {} };
+  /**
+   * Simplify's lists as kept: only the names and domains are used (to leave those firms out), and its 3,000 roles
+   * would be rewritten with the cache on every check. An older cache loses them on its next write.
+   */
+  function listedOf(listed) {
+    if (!listed || typeof listed !== 'object') return null;
+    const out = Object.assign({}, listed);
+    delete out.roles;
+    return out;
   }
 
-  /** Remember a firm's careers check (the newest few hundred) or Trackr's list. */
-  const setDiscoverCache = exclusive(async function setDiscoverCache({ trackr, careers }) {
+  async function getDiscoverCache() {
+    const cache = (await area().get('discoverCache')).discoverCache || {};
+    return Object.assign({ trackr: null, hn: null }, cache, {
+      listed: listedOf(cache.listed),
+      careers: cache.careers || {},
+      contacts: cache.contacts || {},
+    });
+  }
+
+  /**
+   * Remember what Discover fetched: Trackr's list, Simplify's names and domains and the Hacker News posts whole, and
+   * firms' careers and contact checks by firm id ({ [firmId]: { at, result } }, the newest few hundred of each).
+   */
+  const setDiscoverCache = exclusive(async function setDiscoverCache({ trackr, hn, listed, careers, contacts }) {
     const cache = await getDiscoverCache();
     if (trackr) cache.trackr = trackr;
-    if (careers) {
-      cache.careers = Object.assign(cache.careers || {}, careers);
-      const ids = Object.keys(cache.careers).sort((a, b) => cache.careers[b].at - cache.careers[a].at);
-      for (const id of ids.slice(CAREERS_CACHE_LIMIT)) delete cache.careers[id];
+    if (hn) cache.hn = hn;
+    if (listed) cache.listed = listedOf(listed);
+    for (const [key, add] of [
+      ['careers', careers],
+      ['contacts', contacts],
+    ]) {
+      if (!add) continue;
+      cache[key] = Object.assign(cache[key], add);
+      const ids = Object.keys(cache[key]).sort((a, b) => (cache[key][b].at || 0) - (cache[key][a].at || 0));
+      for (const id of ids.slice(CAREERS_CACHE_LIMIT)) delete cache[key][id];
     }
     await area().set({ discoverCache: cache });
   });
+
+  /* ------------------------------------------------------------- outreach */
+
+  /** A firm as an outreach record keeps it: just enough to name it and link to it. */
+  const firmRef = (firm, id) => ({
+    id: String((firm && firm.id) || id || ''),
+    name: String((firm && firm.name) || id || '').trim(),
+    domain: String((firm && firm.domain) || ''),
+    site: String((firm && firm.site) || ''),
+  });
+
+  /** A time in milliseconds from a stored or imported one (a number, digits or a date), or null. */
+  function timeOf(t) {
+    const n = typeof t === 'number' ? t : typeof t === 'string' ? (/^\s*\d+\s*$/.test(t) ? +t : Date.parse(t)) : NaN;
+    // Past 8.64e15 a Date is invalid, and the outreach export's toISOString() throws.
+    return Number.isFinite(n) && n > 0 && n <= 8.64e15 ? n : null;
+  }
+
+  /**
+   * The records worth keeping from a stored or imported outreach object, the newest OUTREACH_LIMIT. Times are made
+   * numbers: an imported record without updatedAt is dated now (and at with it), and a sentAt that isn't a time goes.
+   */
+  function outreachOf(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const now = Date.now();
+    const entries = Object.entries(raw)
+      .filter(([, e]) => e && typeof e === 'object' && e.firm && typeof e.firm.name === 'string' && e.firm.name.trim())
+      .map(([id, e]) => {
+        const updatedAt = timeOf(e.updatedAt) || now;
+        const rec = { ...e, status: OUTREACH_STATUSES.includes(e.status) ? e.status : 'drafted', updatedAt };
+        rec.at = timeOf(e.at) || updatedAt;
+        const sentAt = timeOf(e.sentAt);
+        if (sentAt) rec.sentAt = sentAt;
+        else delete rec.sentAt;
+        return [id, rec];
+      });
+    entries.sort(([, a], [, b]) => b.updatedAt - a.updatedAt);
+    return Object.fromEntries(entries.slice(0, OUTREACH_LIMIT));
+  }
+
+  /** Every firm written to (or drafted for): { [firmId]: record }. */
+  async function getOutreach() {
+    return outreachOf((await area().get('outreach')).outreach);
+  }
+
+  /**
+   * Create or change a firm's outreach record: patch { firm, status, to, subject, notes, contact, way }. Status
+   * 'none', or a null patch, removes it. The first save sets `at`; the first 'sent', `sentAt`.
+   */
+  const setOutreach = exclusive(async function setOutreach(id, patch) {
+    const all = await getOutreach();
+    if (!id) throw new Error('An outreach record needs the firm’s id.');
+    if (!patch || patch.status === 'none') {
+      delete all[id];
+      await area().set({ outreach: all });
+      return null;
+    }
+    const now = Date.now();
+    const old = all[id] || { status: 'drafted', to: '', subject: '', notes: '', at: now };
+    const next = Object.assign({}, old, patch, { updatedAt: now });
+    next.firm = firmRef(patch.firm || old.firm, id);
+    if (!OUTREACH_STATUSES.includes(next.status))
+      next.status = OUTREACH_STATUSES.includes(old.status) ? old.status : 'drafted';
+    if (next.status === 'sent' && !next.sentAt) next.sentAt = now;
+    for (const k of ['to', 'subject', 'notes']) next[k] = String(next[k] == null ? '' : next[k]);
+    all[id] = next;
+    await area().set({ outreach: outreachOf(all) });
+    return next;
+  });
+
+  /** Forget a firm's outreach record. */
+  const removeOutreach = (id) => setOutreach(id, null);
 
   const setBackupInfo = exclusive(async function setBackupInfo(patch) {
     const info = Object.assign(await getBackupInfo(), patch);
@@ -793,6 +956,8 @@
     if (answers.length) out.answers = answers;
     const watchlist = await getWatchlist();
     if (watchlist.length) out.watchlist = watchlist;
+    const outreach = await getOutreach();
+    if (Object.keys(outreach).length) out.outreach = outreach;
     // The API keys come back with everything else after a reinstall, unless that's switched off.
     const keys = opts.keys != null ? opts.keys : aiSettings(all.settings).backupKeys !== false;
     if (keys) {
@@ -813,6 +978,7 @@
     if (data.history) set.history = data.history;
     if (Array.isArray(data.answers)) set.answers = data.answers;
     if (Array.isArray(data.watchlist)) set.watchlist = data.watchlist.filter((w) => w && w.id && w.firm);
+    if (data.outreach && typeof data.outreach === 'object') set.outreach = outreachOf(data.outreach);
     if (data.passwords && typeof data.passwords === 'object') set.passwords = data.passwords;
     // A backup from before passwords were kept as they are: its encrypted vault waits to be moved over (passwords.js).
     if (data.vault && typeof data.vault === 'object') set.vault = data.vault;
@@ -865,6 +1031,8 @@
     setAiKey,
     saveAiSettings,
     aiConfig,
+    saveDiscoverAi,
+    discoverAiConfig,
     getNylas,
     setNylas,
     backsUp,
@@ -899,6 +1067,9 @@
     setWatchState,
     getDiscoverCache,
     setDiscoverCache,
+    getOutreach,
+    setOutreach,
+    removeOutreach,
     exportData,
     importData,
     hasData,

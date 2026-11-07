@@ -1,0 +1,128 @@
+[
+  {
+    "source": "Simplify",
+    "category": "Quant",
+    "company_name": "Hudson River Trading",
+    "id": "0b6f3c1e-2a4d-4e8b-9f1a-6c2d7e8f9a01",
+    "title": "Software Engineering Intern – Summer 2027",
+    "active": true,
+    "terms": [
+      "Summer 2027"
+    ],
+    "date_updated": 1793633408,
+    "date_posted": 1793577600,
+    "url": "https://www.hudsonrivertrading.com/hrt-job/software-engineering-intern-summer-2027/",
+    "locations": [
+      "New York, NY"
+    ],
+    "company_url": "https://simplify.jobs/c/Hudson-River-Trading",
+    "is_visible": true,
+    "sponsorship": "Other",
+    "degrees": []
+  },
+  {
+    "source": "Simplify",
+    "category": "AI/ML/Data",
+    "company_name": "CACI",
+    "id": "6674b1fc-940a-48c7-86a8-2b55cab6a36d",
+    "title": "AI/ML Engineering Co-op",
+    "active": true,
+    "terms": [
+      "Spring 2027"
+    ],
+    "date_updated": 1793633408,
+    "date_posted": 1793577600,
+    "url": "https://caci.wd1.myworkdayjobs.com/external/job/King-of-Prussia-PA-US/AI-ML-Engineering-Co-op---Spring-2027_334662-1",
+    "locations": [
+      "King of Prussia, PA"
+    ],
+    "company_url": "https://simplify.jobs/c/CACI",
+    "is_visible": true,
+    "sponsorship": "Other",
+    "degrees": []
+  },
+  {
+    "source": "Simplify",
+    "category": "Software",
+    "company_name": "Ramp",
+    "id": "9d2e4f60-1b3c-4a5d-8e7f-0a1b2c3d4e5f",
+    "title": "Software Engineer Intern, Backend",
+    "active": true,
+    "terms": [
+      "Summer 2027"
+    ],
+    "date_updated": 1793547008,
+    "date_posted": 1793491200,
+    "url": "https://jobs.ashbyhq.com/ramp/1f2e3d4c-5b6a-7980-a1b2-c3d4e5f60718/application",
+    "locations": [
+      "New York, NY"
+    ],
+    "company_url": "",
+    "is_visible": true,
+    "sponsorship": "Other",
+    "degrees": []
+  },
+  {
+    "source": "Simplify",
+    "category": "Software",
+    "company_name": "TikTok",
+    "id": "4c5d6e7f-8091-4a2b-b3c4-d5e6f7081920",
+    "title": "Software Engineer Intern (TikTok Live) - 2027 Summer (BS/MS)",
+    "active": true,
+    "terms": [
+      "Summer 2027"
+    ],
+    "date_updated": 1793460608,
+    "date_posted": 1793404800,
+    "url": "https://lifeattiktok.com/search/7550000000000000001",
+    "locations": [
+      "San Jose, CA"
+    ],
+    "company_url": "https://simplify.jobs/c/TikTok",
+    "is_visible": true,
+    "sponsorship": "Other",
+    "degrees": []
+  },
+  {
+    "source": "Simplify",
+    "category": "Hardware",
+    "company_name": "Old Mill Robotics",
+    "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+    "title": "Embedded Systems Intern",
+    "active": false,
+    "terms": [
+      "Summer 2026"
+    ],
+    "date_updated": 1783006208,
+    "date_posted": 1782950400,
+    "url": "https://job-boards.greenhouse.io/oldmillrobotics/jobs/4012345007",
+    "locations": [
+      "Pittsburgh, PA"
+    ],
+    "company_url": "https://simplify.jobs/c/Old-Mill-Robotics",
+    "is_visible": true,
+    "sponsorship": "Other",
+    "degrees": []
+  },
+  {
+    "source": "Simplify",
+    "category": "Software",
+    "company_name": "Hidden Holdings Co",
+    "id": "2b3c4d5e-6f70-4819-a2b3-c4d5e6f70812",
+    "title": "Software Intern",
+    "active": true,
+    "terms": [
+      "Summer 2027"
+    ],
+    "date_updated": 1792510208,
+    "date_posted": 1792454400,
+    "url": "https://hiddenholdings.example/jobs/1",
+    "locations": [
+      "Remote in USA"
+    ],
+    "company_url": "https://simplify.jobs/c/Hidden-Holdings-Co",
+    "is_visible": false,
+    "sponsorship": "Other",
+    "degrees": []
+  }
+]

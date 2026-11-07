@@ -116,13 +116,57 @@ legend {
   color: var(--danger);
 }
 
-.niches {
+.niches,
+.sources {
   border: 0;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+/* The kinds of firm in two short groups, each under its own small heading ("Finance", "Tech"). */
+.niche-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.niche-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.niche-head {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.sources .check {
+  align-items: baseline;
+}
+.sources .check input {
+  align-self: center;
+}
+
+/* The AI model for this page: a summary line until opened. */
+#ai-box {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+#ai-box[open] summary {
+  margin-bottom: 10px;
+}
+.ai-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ai-body p {
+  margin: 0;
+}
+.wide {
+  grid-column: 1 / -1;
 }
 .chips {
   display: flex;
@@ -245,6 +289,10 @@ legend {
   border-left: 3px solid var(--primary);
   padding-left: 8px;
 }
+/* What a page says about its programme without a date: worth reading, not a deadline. */
+.programme.mention {
+  border-left-color: var(--border-strong);
+}
 .new {
   background: var(--ok-weak);
 }
@@ -256,6 +304,115 @@ legend {
 .roles li.new {
   border-radius: 6px;
 }
+/* Who to email, the best way in, what the AI read. */
+.way {
+  margin: 0;
+}
+.contacts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.contacts h3 {
+  font-size: 13px;
+}
+.contact-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: 13px;
+}
+.contact-list .who {
+  font-weight: 600;
+}
+.contacts button.link {
+  align-self: flex-start;
+}
+.contact-list .why {
+  color: var(--muted);
+  font-size: 12px;
+}
+.hn-post {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.hn-post p {
+  margin: 0;
+}
+
+/* The email drawer under a card. */
+.drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+}
+.drawer p {
+  margin: 0;
+}
+.kinds {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+.kinds legend {
+  width: 100%;
+  padding: 0 0 5px;
+}
+.checks {
+  gap: 2px;
+}
+.ok-text {
+  color: var(--ok);
+}
+.warn-text {
+  color: var(--warn);
+}
+/* "Open in your email app" is a mailto: link that looks like the buttons beside it. */
+a.button {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 4px 9px;
+  font-size: 12.5px;
+  font-weight: 550;
+  text-decoration: none;
+}
+a.button.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-text);
+}
+a.button.primary:hover {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+/* Outreach: status beside the notes, stacked on a phone. */
+.outreach-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 170px) minmax(0, 1fr);
+  gap: 10px;
+}
+.outreach-fields textarea {
+  min-height: 0;
+}
+.outreach-item p {
+  margin: 0;
+}
+@media (max-width: 640px) {
+  .outreach-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .empty {
   display: flex;
   flex-direction: column;
