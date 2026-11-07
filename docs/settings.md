@@ -59,6 +59,8 @@ A question left on “— don’t fill —” is left for you to answer each tim
 
 The section also lists the AI’s answers per application and your last 25 letters, with their PDFs.
 
+**Discover’s own model.** Toolbar › _Discover internships_ › _AI model for this page_ chooses the provider and model Discover uses for its own AI calls (more ideas, reading a careers page, drafting an email), separately from the one above: _Same as Settings_ by default, or any provider you’ve added a key for and any of its models. _Quick_ asks the model for one round of ideas; _Thorough_ asks from several angles and reads more. The choice is saved with your settings.
+
 **Questions the AI may also answer.** These kinds of question are held back from the AI (legal and health ones unless you’ve written answer guidance) until you switch them on. Each is off by default; “All of them” switches every one on.
 
 | Switch                                 | With it on                                                                                                                                                                                                                                                                                                                                              |

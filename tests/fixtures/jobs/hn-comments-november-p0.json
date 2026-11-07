@@ -1,0 +1,166 @@
+{
+  "exhaustive": {
+    "nbHits": true,
+    "typo": true
+  },
+  "exhaustiveNbHits": true,
+  "exhaustiveTypo": true,
+  "hits": [
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "fernhill_ops"
+        },
+        "comment_text": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Fernhill Systems | Staff Engineer | Remote (EU) | Full-time | <a href=\"https://fernhill.systems\" rel=\"nofollow\">https://fernhill.systems</a><p>Observability for industrial control systems. 30 people, Rust and ClickHouse."
+        },
+        "story_title": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Ask HN: Who is hiring? (November 2026)"
+        }
+      },
+      "_tags": [
+        "comment",
+        "author_fernhill_ops",
+        "story_50338728"
+      ],
+      "author": "fernhill_ops",
+      "comment_text": "Fernhill Systems | Staff Engineer | Remote (EU) | Full-time | <a href=\"https:&#x2F;&#x2F;fernhill.systems\" rel=\"nofollow\">https:&#x2F;&#x2F;fernhill.systems</a><p>Observability for industrial control systems. 30 people, Rust and ClickHouse.",
+      "created_at": "2026-11-04T09:30:02Z",
+      "created_at_i": 1793784602,
+      "objectID": "50355871",
+      "parent_id": 50338728,
+      "story_id": 50338728,
+      "story_title": "Ask HN: Who is hiring? (November 2026)",
+      "updated_at": "2026-11-04T09:30:02Z"
+    },
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "lumengrid"
+        },
+        "comment_text": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Lumen Grid | NYC | Software Engineer, New Grad | ONSITE | Full-time | <a href=\"https://lumengrid.com\" rel=\"nofollow\">https://lumengrid.com</a><p>We build battery dispatch software for apartment buildings in New York. Seed-funded, 8 people.<p>New grads welcome: we'll pair you with a senior engineer for your first three months.<p>Email careers at lumengrid dot com with something you've built."
+        },
+        "story_title": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Ask HN: Who is hiring? (November 2026)"
+        }
+      },
+      "_tags": [
+        "comment",
+        "author_lumengrid",
+        "story_50338728"
+      ],
+      "author": "lumengrid",
+      "comment_text": "Lumen Grid | NYC | Software Engineer, New Grad | ONSITE | Full-time | <a href=\"https:&#x2F;&#x2F;lumengrid.com\" rel=\"nofollow\">https:&#x2F;&#x2F;lumengrid.com</a><p>We build battery dispatch software for apartment buildings in New York. Seed-funded, 8 people.<p>New grads welcome: we&#x27;ll pair you with a senior engineer for your first three months.<p>Email careers at lumengrid dot com with something you&#x27;ve built.",
+      "created_at": "2026-11-03T21:06:13Z",
+      "created_at_i": 1793739973,
+      "objectID": "50352210",
+      "parent_id": 50338728,
+      "story_id": 50338728,
+      "story_title": "Ask HN: Who is hiring? (November 2026)",
+      "updated_at": "2026-11-03T21:06:13Z"
+    },
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "quillfeather"
+        },
+        "comment_text": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Quillfeather - Berlin, Germany - Working Student (Backend, 20h/week) - Hybrid<p>Quillfeather builds document automation for German notaries. Small team of 9, Kotlin and Postgres.<p>We're looking for a working student who is enrolled at a German university. German B2 helps.<p>Send a short note and your GitHub to jobs@quillfeather.de"
+        },
+        "story_title": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Ask HN: Who is hiring? (November 2026)"
+        }
+      },
+      "_tags": [
+        "comment",
+        "author_quillfeather",
+        "story_50338728"
+      ],
+      "author": "quillfeather",
+      "comment_text": "Quillfeather - Berlin, Germany - Working Student (Backend, 20h&#x2F;week) - Hybrid<p>Quillfeather builds document automation for German notaries. Small team of 9, Kotlin and Postgres.<p>We&#x27;re looking for a working student who is enrolled at a German university. German B2 helps.<p>Send a short note and your GitHub to jobs@quillfeather.de",
+      "created_at": "2026-11-03T08:17:44Z",
+      "created_at_i": 1793693864,
+      "objectID": "50343988",
+      "parent_id": 50338728,
+      "story_id": 50338728,
+      "story_title": "Ask HN: Who is hiring? (November 2026)",
+      "updated_at": "2026-11-03T08:17:44Z"
+    },
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "northgate_eng"
+        },
+        "comment_text": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Northgate Labs | Senior Backend Engineer, Staff SRE | REMOTE (US only) | Full-time | $185k–$215k + equity<p>We run payment reconciliation for 400+ credit unions. Small team (11 engineers), Go and Postgres, on-call one week in eight.<p>You've shipped and operated distributed systems for 6+ years. No interns or new grads this cycle, sorry: we can't mentor well enough yet.<p>Apply: <a href=\"https://boards.greenhouse.io/northgatelabs\" rel=\"nofollow\">https://boards.greenhouse.io/northgatelabs</a>"
+        },
+        "story_title": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Ask HN: Who is hiring? (November 2026)"
+        }
+      },
+      "_tags": [
+        "comment",
+        "author_northgate_eng",
+        "story_50338728"
+      ],
+      "author": "northgate_eng",
+      "comment_text": "Northgate Labs | Senior Backend Engineer, Staff SRE | REMOTE (US only) | Full-time | $185k–$215k + equity<p>We run payment reconciliation for 400+ credit unions. Small team (11 engineers), Go and Postgres, on-call one week in eight.<p>You&#x27;ve shipped and operated distributed systems for 6+ years. No interns or new grads this cycle, sorry: we can&#x27;t mentor well enough yet.<p>Apply: <a href=\"https:&#x2F;&#x2F;boards.greenhouse.io&#x2F;northgatelabs\" rel=\"nofollow\">https:&#x2F;&#x2F;boards.greenhouse.io&#x2F;northgatelabs</a>",
+      "created_at": "2026-11-02T20:41:05Z",
+      "created_at_i": 1793652065,
+      "objectID": "50341502",
+      "parent_id": 50338728,
+      "story_id": 50338728,
+      "story_title": "Ask HN: Who is hiring? (November 2026)",
+      "updated_at": "2026-11-02T20:41:05Z"
+    }
+  ],
+  "hitsPerPage": 1000,
+  "nbHits": 6,
+  "nbPages": 2,
+  "page": 0,
+  "params": "tags=comment%2Cstory_50338728&hitsPerPage=1000&page=0&advancedSyntax=true&analyticsTags=backend",
+  "processingTimeMS": 2,
+  "processingTimingsMS": {
+    "_request": {
+      "roundTrip": 18
+    },
+    "afterFetch": {
+      "format": {
+        "highlighting": 1,
+        "total": 1
+      },
+      "total": 1
+    },
+    "fetch": {
+      "total": 1
+    },
+    "total": 2
+  },
+  "query": "",
+  "serverTimeMS": 3
+}

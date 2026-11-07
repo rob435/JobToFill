@@ -1,0 +1,100 @@
+{
+  "exhaustive": {
+    "nbHits": true,
+    "typo": true
+  },
+  "exhaustiveNbHits": true,
+  "exhaustiveTypo": true,
+  "hits": [
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "kestrel_dad"
+        },
+        "comment_text": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Is the internship open to students outside the UK? Asking for my daughter's course mates."
+        },
+        "story_title": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Ask HN: Who is hiring? (November 2026)"
+        }
+      },
+      "_tags": [
+        "comment",
+        "author_kestrel_dad",
+        "story_50338728"
+      ],
+      "author": "kestrel_dad",
+      "comment_text": "Is the internship open to students outside the UK? Asking for my daughter&#x27;s course mates.",
+      "created_at": "2026-11-02T18:55:21Z",
+      "created_at_i": 1793645721,
+      "objectID": "50340533",
+      "parent_id": 50340117,
+      "story_id": 50338728,
+      "story_title": "Ask HN: Who is hiring? (November 2026)",
+      "updated_at": "2026-11-02T18:55:21Z"
+    },
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "tidewell_ana"
+        },
+        "comment_text": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Tidewell (YC S24) | London, UK | Software Engineer, ML Engineer | ONSITE (Hybrid ok) | Full-time + INTERNS | <a href=\"https://www.linkedin.com/company/tidewell\" rel=\"nofollow\">https://www.linkedin.com/company/tidewell</a><p>Tidewell forecasts tidal and offshore wind output for grid operators. We're 14 people in Shoreditch, profitable, and our models run every 15 minutes for National Grid ESO and three European TSOs.<p>We're hiring two engineers and, for summer 2027, two INTERNS (penultimate-year or master's students; we pay £3,200/month and sponsor Student visas where we can).<p>Stack: Python, Rust, Postgres, a bit of TypeScript.<p>All roles: <a href=\"https://jobs.lever.co/tidewell\" rel=\"nofollow\">https://jobs.lever.co/tidewell</a><p>More about us: <a href=\"https://www.tidewell.co.uk/\" rel=\"nofollow\">https://www.tidewell.co.uk/</a> and <a href=\"https://www.tidewell.co.uk/careers/internships\" rel=\"nofollow\">https://www.tidewell.co.uk/careers/internships</a><p>Email hiring [at] tidewell.co.uk with \"HN\" in the subject, or me directly: ana.kowalski@tidewell.co.uk"
+        },
+        "story_title": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Ask HN: Who is hiring? (November 2026)"
+        }
+      },
+      "_tags": [
+        "comment",
+        "author_tidewell_ana",
+        "story_50338728"
+      ],
+      "author": "tidewell_ana",
+      "comment_text": "Tidewell (YC S24) | London, UK | Software Engineer, ML Engineer | ONSITE (Hybrid ok) | Full-time + INTERNS | <a href=\"https:&#x2F;&#x2F;www.linkedin.com&#x2F;company&#x2F;tidewell\" rel=\"nofollow\">https:&#x2F;&#x2F;www.linkedin.com&#x2F;company&#x2F;tidewell</a><p>Tidewell forecasts tidal and offshore wind output for grid operators. We&#x27;re 14 people in Shoreditch, profitable, and our models run every 15 minutes for National Grid ESO and three European TSOs.<p>We&#x27;re hiring two engineers and, for summer 2027, two INTERNS (penultimate-year or master&#x27;s students; we pay £3,200&#x2F;month and sponsor Student visas where we can).<p>Stack: Python, Rust, Postgres, a bit of TypeScript.<p>All roles: <a href=\"https:&#x2F;&#x2F;jobs.lever.co&#x2F;tidewell\" rel=\"nofollow\">https:&#x2F;&#x2F;jobs.lever.co&#x2F;tidewell</a><p>More about us: <a href=\"https:&#x2F;&#x2F;www.tidewell.co.uk&#x2F;\" rel=\"nofollow\">https:&#x2F;&#x2F;www.tidewell.co.uk&#x2F;</a> and <a href=\"https:&#x2F;&#x2F;www.tidewell.co.uk&#x2F;careers&#x2F;internships\" rel=\"nofollow\">https:&#x2F;&#x2F;www.tidewell.co.uk&#x2F;careers&#x2F;internships</a><p>Email hiring [at] tidewell.co.uk with &quot;HN&quot; in the subject, or me directly: ana.kowalski@tidewell.co.uk",
+      "created_at": "2026-11-02T18:12:40Z",
+      "created_at_i": 1793643160,
+      "objectID": "50340117",
+      "parent_id": 50338728,
+      "story_id": 50338728,
+      "story_title": "Ask HN: Who is hiring? (November 2026)",
+      "updated_at": "2026-11-02T18:12:40Z"
+    }
+  ],
+  "hitsPerPage": 1000,
+  "nbHits": 6,
+  "nbPages": 2,
+  "page": 1,
+  "params": "tags=comment%2Cstory_50338728&hitsPerPage=1000&page=1&advancedSyntax=true&analyticsTags=backend",
+  "processingTimeMS": 2,
+  "processingTimingsMS": {
+    "_request": {
+      "roundTrip": 18
+    },
+    "afterFetch": {
+      "format": {
+        "highlighting": 1,
+        "total": 1
+      },
+      "total": 1
+    },
+    "fetch": {
+      "total": 1
+    },
+    "total": 2
+  },
+  "query": "",
+  "serverTimeMS": 3
+}

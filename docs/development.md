@@ -28,6 +28,9 @@ extension/
     store.js           profiles, settings, documents, history, backups, cover letter material and letters
     util.js            text normalization, dates, and JTF.api (browser.* in Firefox, chrome.* elsewhere)
     discover.js        Discover: registry search, Trackr dedupe, careers crawl, job boards, verification, watchlist checks
+    discover-contacts.js  who to email at a firm: mailboxes, people and titles on its team and contact pages, the address pattern
+    discover-sources.js   live sources: Hacker News "Who is hiring" posts, Simplify's internship lists (to leave out)
+    discover-outreach.js  the speculative email the AI drafts and the checks it must pass; the AI reading a careers page, verified
     ai.js              chat client: Claude (Anthropic's Messages API, cached) and OpenAI-compatible (OpenRouter,
                        DeepSeek, custom); the providers' suggested models, JSON, retries, fallback, errors
     letter.js          cover letter and CV prompts, and the checks every draft must pass
@@ -53,8 +56,8 @@ extension/
   popup/               toolbar popup
   map/                 the page map viewer: a tab's map to read, search, copy redacted, and click through to the page
   studio/              the cover letter page: find the job, write, check, preview, attach, tailor the CV
-  discover/            Discover internships page: search, careers checks, watchlist
-  data/firms.json      the registry Discover searches (built by scripts/firms.mjs)
+  discover/            Discover internships page: search, careers and contact checks, email drafts, outreach, watchlist
+  data/firms.json      the registry Discover searches: finance and tech firms (built by scripts/firms.mjs)
   options/             settings page: main.js (shell), profile.js, letters.js, email.js, passwords.js, app.js, controls.js,
                        setup.js (Get started), edits.js (what the page changed, put onto the profile as stored now)
 tests/
@@ -78,7 +81,8 @@ tests/
                        msforms.html: Microsoft Forms' question notes and date picker; eploy.html:
                        an upload in a dialog of its own; workday-steps.html: an application in four steps, its
                        sections' own "Add" and the Review step's "Submit"; dayforce-upload.html: two uploads
-                       sharing an id);
+                       sharing an id; discover-home.html, discover-team.html and discover-careers.html: a small
+                       firm's site, for Discover's contact and careers checks);
                        docs/ CVs in many PDF/Word flavours (make.mjs rebuilds them), jobs/ trimmed
                        real job pages and ATS API replies, letters/ an application and its job posting
 scripts/               build, release (signing for Firefox, the GitHub release), static checks, icons, the firms registry,

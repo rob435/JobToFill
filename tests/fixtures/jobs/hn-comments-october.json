@@ -1,0 +1,100 @@
+{
+  "exhaustive": {
+    "nbHits": true,
+    "typo": true
+  },
+  "exhaustiveNbHits": true,
+  "exhaustiveTypo": true,
+  "hits": [
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "orbit_hiring"
+        },
+        "comment_text": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Orbit Analytics | Data Science Intern (Summer 2027) | Boston, MA | ONSITE | <a href=\"https://jobs.ashbyhq.com/orbit-analytics\" rel=\"nofollow\">https://jobs.ashbyhq.com/orbit-analytics</a><p>Orbit Analytics measures foot traffic for city planners from anonymised sensor counts. 20 people near South Station.<p>Current undergrads and master's students welcome. Apply on our board or email interns@orbitanalytics.io"
+        },
+        "story_title": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Ask HN: Who is hiring? (October 2026)"
+        }
+      },
+      "_tags": [
+        "comment",
+        "author_orbit_hiring",
+        "story_49922569"
+      ],
+      "author": "orbit_hiring",
+      "comment_text": "Orbit Analytics | Data Science Intern (Summer 2027) | Boston, MA | ONSITE | <a href=\"https:&#x2F;&#x2F;jobs.ashbyhq.com&#x2F;orbit-analytics\" rel=\"nofollow\">https:&#x2F;&#x2F;jobs.ashbyhq.com&#x2F;orbit-analytics</a><p>Orbit Analytics measures foot traffic for city planners from anonymised sensor counts. 20 people near South Station.<p>Current undergrads and master&#x27;s students welcome. Apply on our board or email interns@orbitanalytics.io",
+      "created_at": "2026-10-01T16:20:31Z",
+      "created_at_i": 1790871631,
+      "objectID": "49924410",
+      "parent_id": 49922569,
+      "story_id": 49922569,
+      "story_title": "Ask HN: Who is hiring? (October 2026)",
+      "updated_at": "2026-10-01T16:20:31Z"
+    },
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "tidewell_ana"
+        },
+        "comment_text": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Tidewell (YC S24) | London, UK | ML Engineer, INTERNS (summer 2027) | ONSITE | <a href=\"https://www.tidewell.co.uk/\" rel=\"nofollow\">https://www.tidewell.co.uk/</a><p>Tidewell forecasts tidal and offshore wind output for grid operators.<p>Email hiring [at] tidewell.co.uk"
+        },
+        "story_title": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "Ask HN: Who is hiring? (October 2026)"
+        }
+      },
+      "_tags": [
+        "comment",
+        "author_tidewell_ana",
+        "story_49922569"
+      ],
+      "author": "tidewell_ana",
+      "comment_text": "Tidewell (YC S24) | London, UK | ML Engineer, INTERNS (summer 2027) | ONSITE | <a href=\"https:&#x2F;&#x2F;www.tidewell.co.uk&#x2F;\" rel=\"nofollow\">https:&#x2F;&#x2F;www.tidewell.co.uk&#x2F;</a><p>Tidewell forecasts tidal and offshore wind output for grid operators.<p>Email hiring [at] tidewell.co.uk",
+      "created_at": "2026-10-01T15:48:09Z",
+      "created_at_i": 1790869689,
+      "objectID": "49923876",
+      "parent_id": 49922569,
+      "story_id": 49922569,
+      "story_title": "Ask HN: Who is hiring? (October 2026)",
+      "updated_at": "2026-10-01T15:48:09Z"
+    }
+  ],
+  "hitsPerPage": 1000,
+  "nbHits": 2,
+  "nbPages": 1,
+  "page": 0,
+  "params": "tags=comment%2Cstory_49922569&hitsPerPage=1000&page=0&advancedSyntax=true&analyticsTags=backend",
+  "processingTimeMS": 2,
+  "processingTimingsMS": {
+    "_request": {
+      "roundTrip": 18
+    },
+    "afterFetch": {
+      "format": {
+        "highlighting": 1,
+        "total": 1
+      },
+      "total": 1
+    },
+    "fetch": {
+      "total": 1
+    },
+    "total": 2
+  },
+  "query": "",
+  "serverTimeMS": 3
+}

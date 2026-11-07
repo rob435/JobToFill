@@ -1,0 +1,66 @@
+[
+  {
+    "source": "Simplify",
+    "category": "Software",
+    "company_name": "Charles Schwab",
+    "id": "3894dc6f-4a40-46a7-a802-6df2df2be783",
+    "title": "Associate Software Development & Engineering",
+    "active": true,
+    "date_updated": 1793633408,
+    "date_posted": 1793577600,
+    "url": "https://career-schwab.icims.com/jobs/129593/job?mobile=true&needsRedirect=false",
+    "locations": [
+      "Austin, TX",
+      "Southlake, TX"
+    ],
+    "company_url": "https://simplify.jobs/c/Charles-Schwab",
+    "is_visible": true,
+    "sponsorship": "Other",
+    "degrees": [
+      "Bachelor's",
+      "Master's",
+      "Bootcamp"
+    ]
+  },
+  {
+    "source": "Simplify",
+    "category": "Quant",
+    "company_name": "Citadel Securities",
+    "id": "5e6f7081-92a3-4b4c-85d6-e7f809a1b2c3",
+    "title": "Software Engineer – 2027 University Graduate (US)",
+    "active": true,
+    "date_updated": 1793374208,
+    "date_posted": 1793318400,
+    "url": "https://www.citadelsecurities.com/careers/details/software-engineer-2027-university-graduate-us/",
+    "locations": [
+      "Miami, FL",
+      "New York, NY"
+    ],
+    "company_url": "https://simplify.jobs/c/Citadel-Securities",
+    "is_visible": true,
+    "sponsorship": "Other",
+    "degrees": [
+      "Bachelor's",
+      "Master's",
+      "PhD"
+    ]
+  },
+  {
+    "source": "Simplify",
+    "category": "Quant",
+    "company_name": "Jane Street",
+    "id": "6f708192-a3b4-4c5d-96e7-f8091a2b3c4d",
+    "title": "Software Engineer, New Grad",
+    "active": false,
+    "date_updated": 1781537408,
+    "date_posted": 1781481600,
+    "url": "https://www.janestreet.com/join-jane-street/position/7000000002/",
+    "locations": [
+      "New York, NY"
+    ],
+    "company_url": "https://simplify.jobs/c/Jane-Street",
+    "is_visible": true,
+    "sponsorship": "Other",
+    "degrees": []
+  }
+]

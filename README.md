@@ -10,6 +10,7 @@ A browser extension for Chrome, Edge, Brave and Firefox that fills in job applic
 - **Answers the rest with AI**, if you add your own API key: “Why do you want to join us?” and anything else it doesn’t know. AI answers are outlined in orange so you can check them.
 - **Writes cover letters and tailors your CV** to the job.
 - **Signs you in to job portals**, makes a strong password for each one, and types in the codes they email you.
+- **Finds firms that don’t advertise**: small hedge funds, boutique advisers and low-profile tech companies, who to email there, and a draft of the email.
 - **Fills everyday forms too**: sign-ups and checkouts, with your saved passwords and cards.
 - **Never submits.** You always press Submit yourself.
 - **Private.** No account, no server, no tracking. Your details stay in your browser, apart from what you send to your own AI provider.
@@ -46,6 +47,7 @@ Firefox updates JobToFill by itself. In Chrome, unzip a newer release over the s
 | Get the letter, CV and form in one go | JobToFill button › _Quick apply_                            |
 | Remember answers you typed            | JobToFill button › _Learn from this page_                   |
 | Put one detail into a box             | Right-click the box › _Insert from profile_                 |
+| Find firms that don’t advertise       | JobToFill button › _Discover internships_                   |
 
 More: [docs/using.md](docs/using.md).
 
