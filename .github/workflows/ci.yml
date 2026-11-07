@@ -41,7 +41,8 @@ jobs:
   chromium:
     name: End-to-end (Chromium)
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: that became 26.04, where Playwright 1.56 “does not support chromium on ubuntu26.04-x64”.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
