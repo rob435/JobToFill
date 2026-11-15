@@ -831,6 +831,10 @@
     const entries =
       ctx && ctx.entry ? (/^edu\./.test(type) ? 'education' : /^exp\./.test(type) ? 'experience' : '') : '';
     if (entries && (p[entries] || []).length && (ctx.index || 0) >= p[entries].length) return true;
+    // A job you still have ends nowhere: its "To" is no gap in your profile (Workday's goes once "I currently work here"
+    // is ticked, after the page was read).
+    const job = type === 'exp.end' && (p.experience || [])[(ctx && ctx.index) || 0];
+    if (job && job.current) return true;
     // So is a language entry past the languages you list (one Workday read from your CV).
     const languages = ctx && ctx.entry && /^lang\./.test(type) ? P.languageEntries(p).length : 0;
     if (languages && (ctx.index || 0) >= languages) return true;

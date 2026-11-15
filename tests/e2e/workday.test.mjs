@@ -1,8 +1,9 @@
 // End-to-end: Workday's and Oracle's own widgets as live applications have them. Workday (workday-prompts.html, with
 // workday-widgets.js): a country preselected from the visitor's IP address, an address section rebuilt per country,
-// Canvas Kit Selects that fade out, search prompts whose rows only take a click inside them, year spin buttons drawn by
-// an aria-hidden "…-display", Skills that takes several (its searches slow, as the live ones are), and an upload that
-// takes several files.
+// Canvas Kit Selects that fade out, search prompts whose rows only take a click inside them, dates whose box is named
+// only "current value is YYYY" (the label is its fieldset's legend) and whose year spin button is drawn by an
+// aria-hidden "…-display", Skills that takes several (its searches slow, as the live ones are), and an upload that takes
+// several files.
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PROFILE, RESUME_PDF, launch, text, value } from './harness.mjs';
@@ -84,6 +85,11 @@ test('Workday: a country picked from the IP address is put right, then the addre
   assert.equal(await text(page, '#education-1--degree'), 'Bachelors');
   assert.equal(await value(page, '#education-1--firstYearAttended-dateSectionYear-input'), '2023');
   assert.equal(await value(page, '#education-1--lastYearAttended-dateSectionYear-input'), '2027');
+  // What Workday keeps once the focus has left each box, not just what it shows.
+  assert.deepEqual(await page.$$eval('[data-date]', (l) => l.map((f) => f.dataset.error || f.dataset.value)), [
+    '2023',
+    '2027',
+  ]);
   assert.equal(await value(page, '#education-1--gradeAverage'), '2:1', 'the class, never a GPA made up from it');
   // Skills takes them one by one, each ticked in the list that stays open.
   assert.deepEqual(await chips(page, 'formField-skills'), ['Python', 'SQL', 'Stata']);

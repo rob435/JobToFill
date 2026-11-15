@@ -145,6 +145,11 @@ test('SuccessFactors: each block starts with its "From Date"; school country and
 
 const uploads = (page) =>
   page.$$eval('[data-automation-id="file-upload-item-name"]', (items) => items.map((i) => i.textContent));
+// What each of Workday's date boxes keeps ("2023", "2020-03"), by its id; an invalid date shows as its error.
+const kept = (page) =>
+  page.$$eval('[data-date]', (fields) =>
+    Object.fromEntries(fields.map((f) => [f.dataset.id, f.dataset.error || f.dataset.value])),
+  );
 const setLetter = (name) =>
   h.bg(
     ([id, file, dataUrl]) =>
@@ -154,7 +159,7 @@ const setLetter = (name) =>
 const fillWith = async (page, options) =>
   h.bg(([id, opts]) => globalThis.JTFBackground.fillTab(id, opts), [await h.tabId(page), options]);
 
-test('Workday (Shell): "Resume/CV/Transcripts" takes CV, letter and transcript; the class for the GPA; year-only dates', async () => {
+test('Workday (Shell): "Resume/CV/Transcripts" takes CV, letter and transcript; the class for the GPA; From and To', async () => {
   await setLetter('Ada_Lovelace_letter.pdf');
   const CV = 'Ada_Lovelace_CV.pdf';
   const TRANSCRIPT = 'Ada_Lovelace_transcript.pdf';
@@ -168,6 +173,19 @@ test('Workday (Shell): "Resume/CV/Transcripts" takes CV, letter and transcript; 
     assert.equal(await value(page, '#ed1-gpa'), '2:1', '"…Otherwise, provide your overall result…": the class, no GPA');
     assert.equal(await value(page, '#ed1-from-dateSectionYear-input'), '2023', 'the "YYYY" box under "From"');
     assert.equal(await value(page, '#ed1-to-dateSectionYear-input'), '2027', 'and under "To (Actual or Expected)"');
+    // Each date box is named only "current value is YYYY"; "From" and "To" are its fieldset's legend. What Workday keeps
+    // once the focus leaves a box: the years, and each job's month and year (the month moved the focus on to the year;
+    // nothing typed for it went in there). A job you still have has no end.
+    assert.deepEqual(await kept(page), {
+      'workExperience-1--startDate': '2020-03',
+      'workExperience-1--endDate': '',
+      'workExperience-2--startDate': '2016-08',
+      'workExperience-2--endDate': '2020-02',
+      'ed1-from': '2023',
+      'ed1-to': '2027',
+    });
+    assert.equal(await value(page, '#workExperience-1--jobTitle'), 'Senior Engineer');
+    assert.equal(await page.$eval('#workExperience-1--currentlyWorkHere', (box) => box.checked), true);
     assert.deepEqual(
       await uploads(page),
       [CV, 'Ada_Lovelace_letter.pdf', TRANSCRIPT],

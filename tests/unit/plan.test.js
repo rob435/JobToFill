@@ -179,6 +179,8 @@ test('value resolution', () => {
   );
   assert.equal(fields.resolve('job.currentCompany', p).text, 'Analytical Engines');
   assert.equal(fields.resolve('exp.end', p, ctx({ index: 0 })), null, 'no end date for a current job');
+  assert.equal(fields.leftEmpty('exp.end', p, ctx({ index: 0 })), true, 'and none missing from the profile');
+  assert.equal(fields.leftEmpty('exp.end', p, ctx({ index: 1 })), false);
   assert.equal(fields.resolve('exp.end', p, ctx({ index: 1, part: 'year' })).text, '2019');
   assert.equal(fields.resolve('exp.current', p, ctx({ index: 0 })).canonical, 'yes');
   assert.equal(fields.resolve('edu.school', p, ctx({ index: 1 })).text, 'Cambridge');
@@ -2996,6 +2998,21 @@ test('Workday (Shell): year-only "From" / "To (Actual or Expected)" boxes are th
       box({ label: 'From', placeholder: 'YYYY' }),
       box({ label: 'To (Actual or Expected)', placeholder: 'YYYY' }),
     ],
+    // As dom.js reads Workday's 2026 apply flow: the box's group is named only "current value is YYYY", so the group
+    // is its fieldset's legend, which is also the nearest heading.
+    'the legend of its fieldset (Workday 2026)': ['firstYearAttended', 'lastYearAttended'].map((id, i) => {
+      const legend = i ? 'To (Actual or Expected)' : 'From';
+      return box({
+        aria: 'Year',
+        group: legend,
+        section: legend,
+        sectionHelp: '',
+        attrs: 'dateSectionYear-input',
+        id: `education-1--${id}-dateSectionYear-input`,
+        ancestors: `education-1--${id}-dateSectionYear dateInputWrapper education-1--${id}`,
+        describedby: 'use right and left arrows to navigate spin buttons',
+      });
+    }),
   };
   const entry = (s) => desc({ section: 'Education 1', sectionHelp: SHELL_HELP, ...s });
   for (const [name, [from, to]] of Object.entries(variants)) {
