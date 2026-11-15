@@ -272,7 +272,12 @@ async function fillOnce(tabId, opts) {
   payload.ai = aiReady.ok;
   payload.applicationHosts = await applicationHosts(tabId, opts.applicationHosts);
   payload.accountFlow = !!opts.flow && !opts.only && settings.accountFlow !== false;
-  if (opts.auto) payload.settleFirst = true;
+  // So is the next step of an application, after auto-advance clicked "Next" (Workday shows its header and step bar
+  // a moment before the step's questions).
+  if (opts.auto || opts.advance) payload.settleFirst = true;
+  // A fill JobToFill makes itself on a page it may have been through (Quick apply's second, the account flow's)
+  // builds on the one before it; one the person presses tries everything again.
+  payload.again = !!(opts.quick || opts.auto || opts.replace);
   if (payload.accountFlow) {
     const flow = await getFlow(tabId);
     if (flow) payload.accountIgnore = flowIgnore(flow);
@@ -346,7 +351,7 @@ async function fillFrames(tabId, opts, payload, letter, aiReady) {
     if (aiReady.ok) {
       summary.ai = { status: 'running', stage: 'job', asked: pending.length };
       const aiToast = opts.aiToast != null ? opts.aiToast : opts.toast;
-      run = answerWithAi(tabId, pending, { toast: aiToast && settings.toast !== false });
+      run = answerWithAi(tabId, pending, { toast: aiToast && settings.toast !== false, again: payload.again });
       if (opts.waitAi) summary.ai = await run;
     } else summary.ai = { status: aiReady.reason, asked: pending.length };
   }
@@ -478,7 +483,22 @@ async function aiSettled(tabId) {
  */
 const ADVANCE_STEPS = 12;
 const ADVANCE_WAIT = 20e3; // how long the next step may take to show
-const advancing = new Map(); // tabId -> { steps }: the steps clicked through since the Fill you pressed
+// tabId -> { steps, ai }: the steps clicked through since the Fill you pressed, and the answers the AI put in on them
+const advancing = new Map();
+
+/**
+ * What the AI put into the step a fill has just done, counted once a run: { filled, unsure }, `unsure` the questions
+ * whose written answer says something about you that your material doesn't back up ("check this is true: …").
+ */
+function aiOnStep(tabId) {
+  const run = aiRuns.get(tabId);
+  if (!run || run.status !== 'done' || run.counted) return { filled: 0, unsure: [] };
+  run.counted = true;
+  const unsure = (run.items || [])
+    .filter((it) => it.filled && (it.warnings || []).some((w) => /^check this is true/.test(w)))
+    .map((it) => it.question);
+  return { filled: run.filled || 0, unsure };
+}
 
 /**
  * After a fill: the step's next move, { lines, act? }, or null when it isn't a step of an application. `held`: the
@@ -486,7 +506,8 @@ const advancing = new Map(); // tabId -> { steps }: the steps clicked through si
  * answers, before the step is looked at again and left.
  */
 async function advanceStep(tabId, payload, opts, { held, settle, hosts = [] } = {}) {
-  const steps = opts.advance && advancing.has(tabId) ? advancing.get(tabId).steps : 0;
+  const so = opts.advance && advancing.has(tabId) ? advancing.get(tabId) : { steps: 0, ai: 0 };
+  const steps = so.steps;
   const look = async () => {
     const states = await callFrames(tabId, 'stepState', [{ profile: payload.profile, applicationHosts: hosts }]).catch(
       () => [],
@@ -503,10 +524,16 @@ async function advanceStep(tabId, payload, opts, { held, settle, hosts = [] } = 
   if (!page) return end('');
   const p = page.progress;
   const where = p && p.total ? ` (step ${p.step} of ${p.total})` : '';
-  // A form of one page offers its submit too: only a form of steps says so.
+  // A form of one page offers its submit too: only a form of steps says so. The steps left behind without a look are
+  // accounted for: what the AI answered on them is yours to read before you send it.
+  const byAi = so.ai
+    ? ` The AI answered ${plural(so.ai, 'question')} on the way (dashed orange outline on their steps): read them first.`
+    : '';
   if (page.final)
     return end(
-      steps || (p && p.total > 1) ? `That’s the last step${where}: check your application and submit it yourself.` : '',
+      steps || (p && p.total > 1)
+        ? `That’s the last step${where}: check your application and submit it yourself.${byAi}`
+        : '',
     );
   if (!page.next) return end('');
   // Quick apply's fill puts them in, and carries on from there.
@@ -526,9 +553,15 @@ async function advanceStep(tabId, payload, opts, { held, settle, hosts = [] } = 
     const named = joinList(empty.slice(0, 4).map((b) => `“${b.label}”`)) + (empty.length > 4 ? ' and the rest' : '');
     return end(`Fill in ${named}, ${carry}.`);
   }
+  // A step isn't left on an answer the AI's own check couldn't stand behind.
+  const ai = aiOnStep(tabId);
+  if (ai.unsure.length)
+    return end(
+      `The AI’s answer to “${util.cleanLabel(ai.unsure[0], 80)}” says something your CV doesn’t back up: check it (the popup lists it), ${carry}.`,
+    );
   if (!page.ready) return end('');
   if (steps >= ADVANCE_STEPS) return end(`JobToFill stopped after ${ADVANCE_STEPS} steps: carry on yourself.`);
-  advancing.set(tabId, { steps: steps + 1 });
+  advancing.set(tabId, { steps: steps + 1, ai: so.ai + ai.filled });
   return {
     lines: [`Clicking “${page.next}” for the next step${where}…`],
     act: async () => {
@@ -562,9 +595,9 @@ async function nextStepShown(tabId, before, profile, hosts) {
     if (tab.status !== 'loading') {
       const states = await callFrames(tabId, 'stepState', [{ profile, applicationHosts: hosts }]).catch(() => []);
       const now = states.find((s) => s.frameId === before.frameId) || states[0];
-      // Another step: one with questions at once, one without (Workday's Review) once it stays the same for a look,
-      // so a step still being drawn isn't taken for it.
-      if (now && now.signature !== before.signature && (now.application || now.signature === last)) return true;
+      // Another step, once it stays the same for a look: one still being drawn (Workday's next step, whose first
+      // questions are there before the rest) isn't taken for it, nor filled half-drawn.
+      if (now && now.signature !== before.signature && now.signature === last) return true;
       // Still the same step, now with an error ("Please fill in all required fields"): it was turned down.
       if (now && now.signature === before.signature && now.errors.length) return false;
       last = now ? now.signature : null;
@@ -1751,12 +1784,44 @@ function aiSummaryText(run) {
  * One round of AI answers: reuse what this application already has, write the rest, put them into the form,
  * save the new ones. `pending`: the frames' reports, each with its frameId. Returns what was answered.
  */
+// tabId -> { url, keys: Map(question key -> why) }: the questions the model declined on this page, so a fill JobToFill
+// makes itself there (Quick apply's second) doesn't ask them all again on your key.
+const declined = new Map();
+
+/** The questions declined before on the page a tab shows now (none once it has moved on). */
+function declinedOn(tabId, url) {
+  const kept = declined.get(tabId);
+  if (kept && kept.url === url) return kept.keys;
+  const keys = new Map();
+  declined.set(tabId, { url, keys });
+  return keys;
+}
+
 async function answerRound(tabId, pending, ctx) {
   const { profile, settings, config, controller, report, tab } = ctx;
   // Ids are per frame: the model gets them unique.
   const items = pending.map((p) => ({ ...p, id: `${p.frameId}:${p.id}` }));
   const byId = new Map(items.map((it) => [it.id, it]));
-  const { reused, rest } = answers.reuse(items, await store.answersFor({ profileId: profile.id, tabId, url: tab.url }));
+  const kit = await store.getKit(profile.id);
+  // The candidate's own rules for answers: the answer guidance in settings and the profile's extra details.
+  const guidance = [kit.answerNotes, profile.extraDetails]
+    .map((x) => String(x || '').trim())
+    .filter(Boolean)
+    .join('\n\n');
+  // The kinds of sensitive question the person lets the AI answer too (Settings › Cover letters & AI): none unless
+  // switched on.
+  const allow = store.aiSensitiveSettings(settings);
+  const saved = await store.answersFor({ profileId: profile.id, tabId, url: tab.url });
+  // An answer saved for this application stands in only for a question the AI may still be asked: never for a
+  // declaration or a legal question it is kept from now (a setting switched off since, guidance taken out).
+  const reused = answers.reuse(items, saved).reused.filter((a) => !answers.withheld(byId.get(a.id), guidance, allow));
+  const taken = new Set(reused.map((a) => a.id));
+  // What the model declined a moment ago on this page it would decline again: a fill JobToFill makes itself doesn't
+  // ask a second time (one the person presses, or "Answer with AI", does).
+  const before = declinedOn(tabId, tab.url);
+  const again = ctx.again ? items.filter((it) => !taken.has(it.id) && before.has(answers.questionKey(it))) : [];
+  for (const it of again) taken.add(it.id);
+  const rest = items.filter((it) => !taken.has(it.id));
   let written = { answers: [], skipped: [], calls: 0 };
   if (rest.length) {
     if (!ctx.job) {
@@ -1764,21 +1829,12 @@ async function answerRound(tabId, pending, ctx) {
       ctx.job = (await jobFor(tabId).catch(() => null)) || {};
     }
     report({ stage: 'writing', company: ctx.job.company || '' });
-    const kit = await store.getKit(profile.id);
     const [cvText, bank] = await Promise.all([cvTextFor(profile, kit), store.answerBank(profile.id)]);
     const chat = async (messages, options) => {
       const r = await llm.chat(config, { messages, ...options, signal: controller.signal });
       if (r.usage && typeof r.usage.cost === 'number') ctx.cost = (ctx.cost || 0) + r.usage.cost;
       return r;
     };
-    // The candidate's own rules for answers: the answer guidance in settings and the profile's extra details.
-    const guidance = [kit.answerNotes, profile.extraDetails]
-      .map((x) => String(x || '').trim())
-      .filter(Boolean)
-      .join('\n\n');
-    // The kinds of sensitive question the person lets the AI answer too (Settings › Cover letters & AI): none unless
-    // switched on.
-    const allow = store.aiSensitiveSettings(settings);
     written = await answers.answer(
       chat,
       { profile, kit, cvText, job: ctx.job, bank, guidance, allow, today: Date.now() },
@@ -1807,7 +1863,9 @@ async function answerRound(tabId, pending, ctx) {
       for (const r of f.results || []) status.set(`${frameId}:${r.id}`, r.status);
     }
   }
-  if (written.answers.length)
+  // An answer that fitted none of its list's options is not kept: reused, it would fail the same way every time.
+  const kept = written.answers.filter((a) => !/^(nomatch|error)$/.test(status.get(a.id) || ''));
+  if (kept.length)
     await store.saveAnswers({
       profileId: profile.id,
       url: tab.url,
@@ -1815,7 +1873,7 @@ async function answerRound(tabId, pending, ctx) {
       tabId,
       company: ctx.job.company || '',
       role: ctx.job.title || '',
-      items: written.answers.map((a) => {
+      items: kept.map((a) => {
         const it = byId.get(a.id);
         return {
           key: answers.questionKey(it),
@@ -1839,11 +1897,15 @@ async function answerRound(tabId, pending, ctx) {
       reused: !!a.reused,
       filled: status.get(a.id) === 'filled',
     })),
-    skipped: written.skipped.map((x) => ({
-      question: (byId.get(x.id) || {}).question || '',
-      reason: x.reason,
-      withheld: x.withheld || null,
-    })),
+    skipped: [
+      ...written.skipped.map((x) => {
+        const it = byId.get(x.id);
+        // Kept back by a setting is no answer of the model's: asked again as soon as the setting allows.
+        if (it && !x.withheld) before.set(answers.questionKey(it), x.reason);
+        return { question: (it || {}).question || '', reason: x.reason, withheld: x.withheld || null };
+      }),
+      ...again.map((it) => ({ question: it.question, reason: before.get(answers.questionKey(it)), withheld: null })),
+    ],
   };
 }
 
@@ -1891,13 +1953,15 @@ async function answerWithAi(tabId, pending, opts = {}) {
       tab: await api.tabs.get(tabId),
       job: null,
       cost: 0,
+      again: !!opts.again,
     };
     const first = await answerRound(tabId, pending, ctx);
     const total = { ...first };
     if (first.filled) {
       // Give the page a moment to show what the answers revealed, then answer only questions not asked before.
       await new Promise((resolve) => setTimeout(resolve, 700));
-      const frames = await callFrames(tabId, 'pending', [{ profile, settings, ai: true }]).catch(() => []);
+      // What the answers revealed is the rules' first ("Full degree title" once the degree type is chosen).
+      const frames = await callFrames(tabId, 'pending', [{ profile, settings, ai: true, rules: true }]).catch(() => []);
       const seen = new Set(first.keys);
       const fresh = frames
         .flatMap((f) => (f.items || []).map((item) => ({ ...item, frameId: f.frameId })))
@@ -2890,6 +2954,7 @@ api.tabs.onRemoved.addListener((tabId) => {
   endFlow(tabId);
   lastSecrets.delete(tabId);
   advancing.delete(tabId);
+  declined.delete(tabId);
   // A run still asking the model for a closed tab would spend the person's credit on answers with nowhere to go.
   const run = aiRuns.get(tabId);
   if (run && run.status === 'running') run.controller.abort();

@@ -4693,3 +4693,53 @@ test('a UK address’s region: your county, else its nation from your town or po
     ['Scotland', 'Wales', 'Northern Ireland', 'England', 'Wales', 'England', ''],
   );
 });
+
+test('one-off questions about your degree open no second education entry', () => {
+  const p = sample();
+  p.education = [p.education[0]];
+  const combo = (question) => desc({ question }, { kind: 'combo' });
+  // Lloyds' questionnaire: the degree's type, its subject area, its full title in a box, then its grade.
+  const lloyds = matcher.plan(
+    [
+      combo('Undergraduate degree type'),
+      combo('Undergraduate degree subject area'),
+      desc({ question: 'Full degree title' }, { kind: 'textarea' }),
+      combo('Undergraduate subject grade'),
+      combo('Is your undergraduate grade Expected or Obtained?'),
+      combo(
+        'Are you on track to achieve, or have already achieved, an undergraduate degree, or higher (e.g. Masters, PhD), or international equivalent?',
+      ),
+      combo('Post Graduate Qualification?'),
+    ],
+    p,
+  ).results;
+  assert.deepEqual(
+    lloyds.map((r) => [r.type, r.index || 0]),
+    [
+      ['edu.degree', 0],
+      ['edu.field', 0],
+      ['edu.degree', 0],
+      ['edu.gpa', 0],
+      ['edu.completed', 0],
+      ['edu.attended', 0],
+      ['edu.attended', 0],
+    ],
+  );
+  // The same without a level in their words, and with a question nobody knows in between.
+  const plain = matcher.plan(
+    [
+      combo('Degree type'),
+      combo('Is this your first application to us this year?'),
+      desc({ label: 'Full degree title' }, { kind: 'text' }),
+    ],
+    p,
+  ).results;
+  assert.deepEqual(
+    plain.map((r) => [r && r.type, (r && r.index) || 0]),
+    [
+      ['edu.degree', 0],
+      [null, 0],
+      ['edu.degree', 0],
+    ],
+  );
+});

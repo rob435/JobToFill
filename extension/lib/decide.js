@@ -4,7 +4,9 @@
  * benchmark scores what the extension does:
  *   field(desc, r, profile, context, opts)   fill, upload, leave, skip, consent or missing, with the value
  *   picks(desc, v)                           the options a value picks in a list the page offers
- *   forAi(desc, r, profile, context, prev, before)  whether a field left empty goes to the AI, and the rules' guess
+ *   outcome(r, d, res)                       what the rules' turn left a field as (OUTCOMES): the fill records it
+ *   forAi(desc, r, profile, context, prev, before, allow, tried)  whether a field left empty goes to the AI, and the
+ *                                            rules' guess
  *   page(descs, profile, opts)               every field of a page, as a fill would leave it
  */
 (function (root) {
@@ -47,6 +49,65 @@
     /^(no|none|n a|not applicable|never|i (do|did|have|am|was) not|i (don t|didn t|haven t|m not|wasn t))\b/;
   // Lists, whose answer the page shows as the option picked.
   const CHOICE_KINDS = new Set(['select', 'radio', 'checkbox', 'checkboxes', 'combo', 'combobox']);
+
+  /**
+   * A field's life through a fill, spelt out: what the rules' turn can leave it as, and what each allows next.
+   * The fill records one for every field it meets (content/main.js, by element) and each later stage reads it, rather
+   * than working out again from the page what happened to it:
+   *   reread  a closed list (a dropdown whose options exist only while it is open) left like this is opened and read
+   *           once, and the rules look at it again with its options (a grade list of "1st | 2:1 | 2:2" is a class, a
+   *           "Yes | No" under "…County Court Judgements…" no county)
+   *   ai      it may then be the AI's (forAi() decides, with what may never be sent)
+   *   yours   it is left for the person, and said so by name
+   * Every field ends in exactly one of them; none ends empty without a word.
+   */
+  const OUTCOMES = {
+    // It held something already: yours, the site's, an earlier fill's.
+    kept: { reread: false, ai: false, yours: false },
+    // The profile's answer went in.
+    filled: { reread: false, ai: false, yours: false },
+    // Yours to decide, by design: an acknowledgement with the setting off, an opt-in, a referee's details. The AI's
+    // only where the candidate lets it answer that kind (forAi).
+    left: { reread: false, ai: true, yours: true },
+    // Not asked of you: a follow-up to an answer you didn't give, an upload for a level you haven't studied at.
+    skipped: { reread: false, ai: true, yours: false },
+    // Empty on purpose, as its words read ("A-Level Subject 4" for three A-levels, a GPA box for a 2:1).
+    blank: { reread: true, ai: true, yours: false },
+    // No rule knows the question.
+    unknown: { reread: true, ai: true, yours: true },
+    // Recognised, and the profile has nothing for it.
+    missing: { reread: true, ai: true, yours: true },
+    // A list none of whose options is the profile's answer.
+    nomatch: { reread: true, ai: true, yours: true },
+    // The page didn't take it.
+    failed: { reread: false, ai: true, yours: true },
+  };
+
+  /**
+   * What the rules' turn left a field as: one of OUTCOMES, from its plan entry `r`, what field() decided (`d`) and,
+   * when a value was put, what the page made of it (`res`: fill.apply's { status, reason }).
+   */
+  function outcome(r, d, res) {
+    if (!r || !r.type) return 'unknown';
+    if (res) {
+      if (res.status === 'filled') return 'filled';
+      if (res.status === 'skipped') return res.reason === 'has value' ? 'kept' : 'skipped';
+      return res.status === 'nomatch' ? 'nomatch' : 'failed';
+    }
+    if (!d) return 'unknown';
+    if (d.action === 'consent') return 'left';
+    if (d.action === 'skip') return 'skipped';
+    if (d.action === 'leave') return d.unresolved ? 'blank' : 'left';
+    return 'missing';
+  }
+
+  // A list's own prompt, with or without its "Required": what a dropdown is called when the page gives it no name
+  // of its own. It asks nothing anyone can answer, and twenty of them on a page read the same.
+  const PROMPT_ONLY =
+    /^(please )?(select|choose|pick)( (one|an? (option|item|answer|value|response)|options?|from (the )?(list|options)))?( required| optional)?$/;
+  // Contact details read into a question that isn't one: what a list none of whose options fits them hands back to
+  // the AI as a question nobody recognised. Never a diversity question, a consent, an upload or a secret.
+  const MISREAD = /^(name\.|address\.|phone|links\.)/;
 
   /** What a field's value is worked out from: the plan's entry and part, the question, the page's help, the options. */
   function contextOf(desc, r, context, extra) {
@@ -217,15 +278,17 @@
    * the profile leaves empty on purpose, a follow-up whose condition the list before it rules out), else { guess }: what
    * the rules would have put there (a choice none of whose options matched it), or null. `prevType`: the type of the
    * field before it; `before`: what that field holds, when it is a list (beforeOf()); `allow`: settings.aiSensitive,
-   * the kinds of question the candidate lets the AI answer too (MAY_ALLOW), none when left out.
+   * the kinds of question the candidate lets the AI answer too (MAY_ALLOW), none when left out; `tried`: what the
+   * rules' turn left it as (outcome()), when they had one.
    */
-  function forAi(desc, r, profile, context, prevType, before = null, allow = null) {
+  function forAi(desc, r, profile, context, prevType, before = null, allow = null, tried = null) {
     if (NO_AI_KINDS.has(desc.kind)) return null;
+    if (tried && OUTCOMES[tried] && !OUTCOMES[tried].ai) return null;
     // A box the plan set aside as someone else's address (iCIMS's "Address" and "Postal Code" in a job entry: the
     // employer's) is nobody's to guess.
     if (r && !r.type && r.dropped && NOT_FOR_AI.test(r.dropped)) return null;
     const q = U.normalize(M().questionText(desc));
-    if (q.length < 3) return null;
+    if (q.length < 3 || PROMPT_ONLY.test(q)) return null;
     if (before != null && conditionFails(desc, r, before)) return null;
     let guess = null;
     if (r && r.type === 'custom') guess = { type: 'custom', value: r.answer };
@@ -234,6 +297,10 @@
       // A date of birth in one box: its day, month and year boxes apart are no question to ask on their own.
       const allowed = allows(allow, r.type) && !(r.type === 'dob' && r.part);
       if (!def || def.consent || def.secret || def.file) return null;
+      // A list the rules took for a contact detail, none of whose options is it (Lloyds' "Do you have four or more
+      // County Court Judgements…?" read as a county, over Yes and No): they misread it, and it is the AI's as a
+      // question nobody recognised, without their guess.
+      if (tried === 'nomatch' && MISREAD.test(r.type) && (desc.options || []).length) return { guess: null };
       if (!allowed && (NOT_FOR_AI.test(r.type) || def.leave)) return null;
       const ctx = contextOf(desc, r, context);
       // A grade your profile holds is the rules' to give (or to leave, as a class in a GPA box that wants a number):
@@ -241,8 +308,12 @@
       if (F().gradeHeld(r.type, profile, ctx) || (!allowed && F().leftEmpty(r.type, profile, ctx))) return null;
       const v = F().resolve(r.type, profile, ctx);
       if (v && (desc.kind === 'checkbox' || (FOLLOW_UP.test(q) && !F().followUpAnswer(v, desc.kind)))) return null;
-      // A sanctions answer the rules couldn't settle ("It depends") is no answer to pass on.
-      if (v && v.kind !== 'sanctions') guess = { type: r.type, value: v.text };
+      // A sanctions answer the rules couldn't settle ("It depends") is no answer to pass on. Nor is a yes or no read
+      // only from what stands around the field (a fieldset's legend, a wrapper's id): the question itself may ask the
+      // opposite ("…legal right to work in the UK without requiring a visa or sponsorship?" under a paragraph on
+      // sponsorship).
+      const around = r.source === 'rule' && r.score < 0.6 && /^(yes|no)$/.test(v ? v.canonical || '' : '');
+      if (v && v.kind !== 'sanctions' && !around) guess = { type: r.type, value: v.text };
     }
     // "Please specify" after a diversity question is the AI's too when diversity questions are.
     const ownBefore = allows(allow, 'eeo.') ? /^(account\.|cc\.)/ : PRIVATE_BEFORE;
@@ -267,6 +338,8 @@
     return {
       question: U.cleanLabel(M().questionText(desc), 600),
       help: U.cleanLabel(s.describedby || '', 300),
+      // The rest of a long question read line by line: the paragraphs before what it asks, the notes after.
+      context: U.cleanLabel(s.preamble || '', 900),
       kind: desc.kind,
       options: options && options.length ? options : null,
       multiple: desc.kind === 'checkboxes' || !!desc.multiple,
@@ -317,6 +390,7 @@
     descs.forEach((desc, i) => {
       const r = results[i];
       const entry = { type: (r && r.type) || null, index: (r && r.index) || 0, part: (r && r.part) || null };
+      let d = null;
       if (!r || !r.type) entry.action = 'none';
       else {
         // What the list a follow-up box follows came to hold; unknown for a menu whose options weren't read (its
@@ -324,7 +398,7 @@
         const list = r.follows != null ? descs[r.follows] : null;
         const known = list && (list.options || []).length && out[r.follows];
         const followed = known ? out[r.follows].text || '' : null;
-        const d = field(desc, r, profile, ctx, { ctx: { consents: !!opts.consents }, followed });
+        d = field(desc, r, profile, ctx, { ctx: { consents: !!opts.consents }, followed });
         entry.action = d.action;
         if (d.action === 'upload') {
           const carried = carriedBy(desc, r, profile, uploadTypes, (t) => !!docs[t]);
@@ -342,7 +416,8 @@
         const prev = i > 0 && results[i - 1] ? results[i - 1].type : null;
         const on = conditionOn(r, i);
         const before = on >= 0 && out[on] ? beforeOf(descs[on], out[on].text) : null;
-        const ai = forAi(desc, r, profile, ctx, prev, before, opts.allow);
+        const tried = outcome(r, d, entry.action === 'nomatch' ? { status: 'nomatch' } : null);
+        const ai = forAi(desc, r, profile, ctx, prev, before, opts.allow, tried);
         const why = ai && opts.withheld ? opts.withheld(aiItem(desc, ai.guess)) : null;
         if (why) entry.withheld = why;
         else if (ai) {
@@ -356,6 +431,8 @@
   }
 
   const decide = {
+    OUTCOMES,
+    outcome,
     field,
     picks,
     forAi,

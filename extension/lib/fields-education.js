@@ -738,12 +738,26 @@
     // "…other than a masters degree": a doctorate or another postgraduate qualification.
     if (/\bother than (a |an )?(masters?|msc|ma)\b/.test(q)) asked = ['doctorate'];
     if (!asked.length) asked = ['bachelor', 'master', 'doctorate'];
+    // "…an undergraduate degree, or higher (e.g. Masters, PhD)": every degree above it counts too.
+    const degrees = ['bachelor', 'master', 'doctorate'];
+    const lowest = Math.min(...asked.map((l) => degrees.indexOf(l)).filter((n) => n >= 0));
+    if (/\bor (higher|above)\b/.test(q) && lowest < degrees.length)
+      asked = [...new Set([...asked, ...degrees.slice(lowest)])];
     // Accenture's "Do you currently have or are you working towards a postgraduate qualification?": an integrated
     // master's (MEng, MSci) is an undergraduate degree, though a master's when asked about one.
     const postgrad = /\bpost ?grad/.test(q);
     const levels = (e) =>
       postgrad && JTF.matcher.isIntegratedMasters(U.normalize(e.degree)) ? ['bachelor'] : entryLevels(e);
-    return val(list.some((e) => levels(e).some((l) => asked.includes(l))) ? 'Yes' : 'No');
+    const held = [...new Set(list.flatMap(levels).filter((l) => asked.includes(l)))];
+    if (!held.length) return val('No');
+    // A list of the qualifications instead of a Yes (Lloyds' "Post Graduate Qualification?": "Master's Degree |
+    // Doctoral Degree (including PhD/DPhil) | … | No"): the highest you hold, by its name.
+    const NAMES = {
+      doctorate: ['Doctoral Degree', 'Doctorate', 'PhD'],
+      master: ['Master’s Degree', 'Masters', 'Master'],
+    };
+    const named = ['doctorate', 'master'].filter((l) => held.includes(l)).flatMap((l) => NAMES[l]);
+    return val('Yes', { candidates: ['Yes', ...named] });
   }
 
   /**
@@ -1100,7 +1114,7 @@
         // Capgemini's "…degree completed or still predicted?" [Completed | Predicted].
         return enrolled.canonical === 'yes'
           ? val('No', { candidates: ['No', 'Predicted', 'Expected', 'In progress', 'Ongoing', 'Still studying'] })
-          : val('Yes', { candidates: ['Yes', 'Completed', 'Achieved', 'Graduated', 'Awarded'] });
+          : val('Yes', { candidates: ['Yes', 'Completed', 'Achieved', 'Obtained', 'Graduated', 'Awarded'] });
       },
     },
 

@@ -1062,3 +1062,108 @@ test('answer: a batch whose call fails leaves only its own questions; stopped or
   });
   await assert.rejects(A.answer(stop, input, items, { signal: controller.signal }), /not valid JSON/);
 });
+
+// Lloyds' Workday questionnaire: twenty dropdowns that once all read "Select One Required", their steps at one address.
+test('questions that can’t be told apart never share an answer, a follow-up link or a key', () => {
+  const understood = (id, section, context) => ({
+    id,
+    question: 'I have read and understood',
+    kind: 'combo',
+    options: ['Yes', 'No'],
+    section,
+    context,
+  });
+  const a = understood('1', 'Application Questions 2 of 3', 'Reasonable adjustments during recruitment process…');
+  const b = understood('2', 'Application Questions 2 of 3', 'Please, have a look at the Preparation Hub…');
+  const c = understood('3', 'Application Questions 3 of 3', '');
+  // The heading a question stands under is part of what it is: the next step's is another question.
+  assert.equal(A.questionKey(a), A.questionKey(b));
+  assert.notEqual(A.questionKey(a), A.questionKey(c));
+  const saved = [
+    { key: A.questionKey(a), value: 'No', kind: 'choice' },
+    { key: A.questionKey(c), value: 'Yes', kind: 'choice' },
+  ];
+  // Two that read the same on one page are each asked anew: one saved answer never goes into both.
+  const twice = A.reuse([a, b, c], saved);
+  assert.deepEqual(
+    twice.reused.map((r) => [r.id, r.value]),
+    [['3', 'Yes']],
+  );
+  assert.deepEqual(
+    twice.rest.map((r) => r.id),
+    ['1', '2'],
+  );
+  assert.deepEqual(
+    A.reuse([a], saved).reused.map((r) => r.value),
+    ['No'],
+  );
+
+  // "The question before" is linked by id only when one question in the list reads so.
+  const next = {
+    id: '9',
+    question: 'If no, why not?',
+    kind: 'text',
+    follows: { question: 'I have read and understood', answer: '' },
+  };
+  assert.equal(A.questionJson(next, [a, next]).follows.id, '1');
+  const unsure = A.questionJson(next, [a, b, next]).follows;
+  assert.equal(unsure.id, undefined);
+  assert.equal(unsure.answer, '(not answered)');
+});
+
+test('the rest of a long question goes with it as help, and still says what kind of question it is', () => {
+  const employed = {
+    id: '1',
+    question: 'Are you currently employed by Lloyds Banking Group?',
+    kind: 'combo',
+    options: ['Yes', 'No'],
+    context:
+      'Important: Information for Contingent Workers and Lloyds Banking Group employees: • If you are a contingent worker (employed by a third party to work at Lloyds Banking Group), you must apply via the Contingent Worker careers site and answer ‘No’ to this question.',
+  };
+  const q = A.questionJson(employed);
+  assert.equal(q.question, 'Are you currently employed by Lloyds Banking Group?');
+  assert.match(q.help, /contingent worker.*answer ‘No’ to this question/);
+  // With none, a question is sent as before.
+  assert.equal(A.questionJson({ ...employed, context: '' }).help, undefined);
+
+  const w = (item, allow) => A.withheld({ kind: 'combo', options: ['Yes', 'No'], ...item }, '', allow);
+  // A legal question by the paragraphs over it, though its asked line says little.
+  assert.equal(
+    w({
+      question: 'Do you have any to declare?',
+      context: 'Criminal convictions. We ask every applicant about unspent convictions.',
+    }),
+    'guidance',
+  );
+  // Credit history is a legal matter, kept back without guidance or the setting.
+  for (const question of [
+    'Do you have four or more County Court Judgements or judgment debts?',
+    'We need to know a little bit about your credit history. Do you have a non-discharged bankruptcy or an individual voluntary arrangement (in Scotland a trust deed)',
+    'Have you ever been dismissed from a previous employer?',
+  ]) {
+    assert.equal(w({ question }), 'guidance', question);
+    assert.equal(w({ question }, { legal: true }), null, question);
+  }
+  // Extra time in an assessment is a health question, though it never says "reasonable adjustments".
+  for (const question of [
+    'Do you require an industry standard adjustment of 25%?',
+    'For the Job Insight Assessment do you require an industry standard adjustment of 25%?',
+    'Will you need extra time in our online tests?',
+  ]) {
+    assert.equal(w({ question }), 'guidance', question);
+    assert.equal(w({ question }, { health: true }), null, question);
+  }
+  // The statement to agree to is a declaration, whatever stands over it; the paragraphs on adjustments around
+  // another question don't make that one a health question.
+  assert.equal(
+    w({ question: 'I have read and understood', context: 'Reasonable adjustments during recruitment process…' }),
+    'consent',
+  );
+  assert.equal(
+    w({
+      question: 'Are you able to commit to three days a week in the office?',
+      context: 'If you need an accommodation, we’ll partner with you.',
+    }),
+    null,
+  );
+});

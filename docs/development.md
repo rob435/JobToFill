@@ -20,7 +20,8 @@ extension/
     fields-*.js        its parts by topic: values, profile, personal, education, documents, availability,
                        work, diversity, compliance, and rules (RULES, one ordered list)
     matcher.js         classification, section/entry planning, option matching, formatting
-    decide.js          what a fill does with each field (fill, leave for you, ask the AI), as the benchmark scores it
+    decide.js          what a fill does with each field (fill, leave for you, ask the AI), as the benchmark scores it,
+                       and the outcomes a field can end a fill in (OUTCOMES: what each allows next)
     account.js         job-portal accounts: the click allow/deny-list, "already exists" messages, shared-host employers
     geo.js             countries (ISO codes + aliases) and US/CA/AU regions
     passwords.js       saved logins and cards, password generator and page password rules
@@ -80,7 +81,9 @@ tests/
                        virtual lists, and its links that grow a box at a time;
                        msforms.html: Microsoft Forms' question notes and date picker; eploy.html:
                        an upload in a dialog of its own; workday-steps.html: an application in four steps, its
-                       sections' own "Add" and the Review step's "Submit"; dayforce-upload.html: two uploads
+                       sections' own "Add" and the Review step's "Submit"; workday-questions.html: Lloyds'
+                       application questions, each a rich-text legend over a Select that calls itself only
+                       "Select One Required", its options there while its menu is open; dayforce-upload.html: two uploads
                        sharing an id; discover-home.html, discover-team.html and discover-careers.html: a small
                        firm's site, for Discover's contact and careers checks);
                        docs/ CVs in many PDF/Word flavours (make.mjs rebuilds them), jobs/ trimmed

@@ -3,6 +3,7 @@
 // step's own "Save and Continue" once it is done, never the Review step's "Submit". Chromium or Firefox.
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { PROFILE, RESUME_PDF, launch, text, typeInto, until, value } from './harness.mjs';
 
 let h;
@@ -257,5 +258,107 @@ test('with it on: a step whose CV Quick apply is still tailoring waits for it, t
     await h.bg(() => globalThis.JTF.store.clearQuickApply());
     await h.bg(() => globalThis.JTF.store.removeLetter('quick-steps'));
     await h.setSettings({ autoAdvance: false });
+  }
+});
+
+/**
+ * An OpenAI-compatible endpoint standing in for the model: it writes the essay Application Questions asks for, and
+ * its fact-check finds `doubt` (words of that essay) unsupported, when given.
+ */
+function mockAi(doubt) {
+  const essay =
+    'Integrity resonates most with me. At Babbage Labs I built difference engines, where careful and honest work is what the people who rely on the results need most.';
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      const json = JSON.parse(body || '{}');
+      const system = (json.messages && json.messages[0] && json.messages[0].content) || '';
+      const last = json.messages.at(-1).content;
+      let reply = { unsupported: [] };
+      if (/strict fact-checker/.test(system)) {
+        // Each answer comes as "[id]" over its text, after "ANSWERS:".
+        const id = (last.slice(last.indexOf('ANSWERS:')).match(/\[([^\]]+)\]/) || [])[1] || 'q1';
+        reply = { unsupported: doubt ? [{ id, quote: doubt, problem: 'not in the CV' }] : [] };
+      } else if (/answer job application form questions/.test(system)) {
+        const ids = [...last.matchAll(/"id":\s*"([^"]+)"/g)].map((m) => m[1]);
+        const fix = /^Some answers need fixing/.test(last) ? (last.match(/^- ([^:]+):/m) || [])[1] : null;
+        reply = { answers: (fix ? [fix] : ids).map((id) => ({ id, answer: essay, basis: 'material' })) };
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          model: 'mock',
+          choices: [{ message: { content: JSON.stringify(reply) }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 10, completion_tokens: 10, cost: 0.0001 },
+        }),
+      );
+    });
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+}
+const useAi = (server) =>
+  h.bg(
+    async (base) => {
+      const { store } = globalThis.JTF;
+      await store.saveSettings({ ai: { provider: 'custom', baseUrl: base, model: 'mock' } });
+      await store.setAiKey(base ? 'test-key' : '');
+    },
+    server ? `http://127.0.0.1:${server.address().port}/v1` : '',
+  );
+
+test('with it on: what the AI answered on the steps it left is said at the last one', async () => {
+  const ai = await mockAi();
+  await useAi(ai);
+  await h.setSettings({ autoAdvance: true });
+  try {
+    const page = await h.open('workday-steps.html?values=1');
+    await recordToasts(page);
+    await shortcut(page);
+    await reaches(page, 4);
+    assert.equal(
+      await toastSays(page, /That’s the last step/),
+      'That’s the last step (step 4 of 4): check your application and submit it yourself. The AI answered 1 question on the way (dashed orange outline on their steps): read them first.',
+    );
+    const s = await state(page);
+    assert.match(s.values.values, /^Integrity resonates most with me/);
+    assert.equal(s.submitted, false);
+    await page.close();
+  } finally {
+    await h.setSettings({ autoAdvance: false });
+    await useAi(null);
+    ai.close();
+  }
+});
+
+test('with it on: a step isn’t left on an answer the AI’s own check couldn’t back up', async () => {
+  const ai = await mockAi('I built difference engines');
+  await useAi(ai);
+  await h.setSettings({ autoAdvance: true });
+  try {
+    // The answer saved for this application by the test above would be put back unchecked: forgotten first.
+    await h.bg(async () => {
+      const { store } = globalThis.JTF;
+      for (const saved of await store.getAnswers()) await store.removeAnswers(saved.id);
+    });
+    const page = await h.open('workday-steps.html?values=1');
+    await recordToasts(page);
+    await shortcut(page);
+    await reaches(page, 3);
+    const said = await toastSays(page, /doesn’t back up/);
+    assert.match(
+      said,
+      /The AI’s answer to “Which of our five values resonates most with you, and why\?” says something your CV doesn’t back up: check it \(the popup lists it\), then press Fill to carry on\.$/,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    const s = await state(page);
+    assert.equal(s.step, 3, 'stopped at Application Questions, its answer in for you to read');
+    assert.match(await value(page, '#values'), /^Integrity resonates most with me/);
+    assert.equal(s.submitted, false);
+    await page.close();
+  } finally {
+    await h.setSettings({ autoAdvance: false });
+    await useAi(null);
+    ai.close();
   }
 });

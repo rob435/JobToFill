@@ -711,3 +711,85 @@ test('live forms: options about sponsorship under an eligibility label, and essa
   assert.equal(typeOf('Technical skills', 'textarea', null), 'skills');
   assert.equal(typeOf('Which programming languages are you proficient in?', 'textarea', null), 'skills');
 });
+
+/* ------------------------------------------------- Lloyds' Workday questions */
+
+test('Lloyds: grade expected or obtained, studying at that level or higher, and what only a former employee says yes to', () => {
+  const p = british();
+  p.education = [
+    {
+      school: 'University of Glasgow',
+      degree: 'BSc',
+      field: 'Computing Science',
+      gpa: '',
+      classification: '2:1',
+      location: 'Glasgow, Scotland',
+      startDate: '2025-09',
+      endDate: '2028-06',
+    },
+  ];
+  const status = opts('Expected', 'Obtained');
+  const q = 'Is your undergraduate grade Expected or Obtained?';
+  assert.deepEqual(picks(status, ask(p, 'edu.completed', q)), ['Expected']);
+  const graduate = british();
+  graduate.education = [{ ...p.education[0], startDate: '2021-09', endDate: '2025-06' }];
+  assert.deepEqual(picks(status, ask(graduate, 'edu.completed', q)), ['Obtained']);
+
+  const onTrack =
+    'Are you on track to achieve, or have already achieved, an undergraduate degree, or higher (e.g. Masters, PhD), or international equivalent?';
+  assert.equal(ask(p, 'edu.attended', onTrack).text, 'Yes');
+  assert.equal(ask(p, 'edu.attended', 'Post Graduate Qualification?').text, 'No');
+  // "…or higher": a master's alone is one too.
+  const masters = british();
+  masters.education = [{ ...p.education[0], degree: 'MSc', classification: '' }];
+  assert.equal(ask(masters, 'edu.attended', onTrack).text, 'Yes');
+  assert.equal(ask(masters, 'edu.attended', 'Post Graduate Qualification?').text, 'Yes');
+  assert.equal(ask(p, 'edu.country', 'Country of Study').text, 'United Kingdom');
+  // As the live lists offer them: where you studied as "Within UK", your class as "2.1", and a list of postgraduate
+  // qualifications ending in "No".
+  assert.deepEqual(picks(opts('Within UK', 'Outside of the UK'), ask(p, 'edu.country', 'Country of Study')), [
+    'Within UK',
+  ]);
+  const abroad = british();
+  abroad.education = [{ ...p.education[0], school: 'Sorbonne', location: 'Paris, France' }];
+  assert.deepEqual(picks(opts('Within UK', 'Outside of the UK'), ask(abroad, 'edu.country', 'Country of Study')), [
+    'Outside of the UK',
+  ]);
+  const GRADES = opts('1st', '2.1', '2.2', '3rd', 'Distinction', 'Merit', 'Pass', 'Fail', 'Other');
+  assert.equal(
+    matcher.classify(desc({ question: 'Undergraduate subject grade' }, { kind: 'combo', options: GRADES })).type,
+    'edu.classification',
+  );
+  assert.deepEqual(picks(GRADES, ask(p, 'edu.classification', 'Undergraduate subject grade')), ['2.1']);
+  const POSTGRAD = opts('Master’s Degree', 'Doctoral Degree (including PhD/DPhil)', 'Other (Please Specify)', 'No');
+  assert.deepEqual(picks(POSTGRAD, ask(p, 'edu.attended', 'Post Graduate Qualification?')), ['No']);
+  assert.deepEqual(picks(POSTGRAD, ask(masters, 'edu.attended', 'Post Graduate Qualification?')), ['Master’s Degree']);
+  assert.deepEqual(
+    picks(
+      opts('British/Irish citizen', 'Indefinite leave to remain in the UK', 'Time limited visa', 'Other'),
+      ask(p, 'job.authorized', 'Please indicate the basis on which you have the legal right to work in the UK'),
+    ),
+    ['British/Irish citizen'],
+  );
+
+  // Never having worked there answers them all No; having worked there says nothing about a career break, a
+  // redundancy or its programmes.
+  const asked = [
+    'Are you currently employed by Lloyds Banking Group?',
+    'Are you re-joining LBG after arranging a career break?',
+    'Have you been made redundant by Lloyds Banking Group within the past two years, including any subsidiary companies of Lloyds Banking Group.',
+    'Have you previously taken part in a Lloyds Banking Group Next Gen Talent Programme within the last 12 months?',
+  ];
+  p.compliance.previouslyEmployed = 'No';
+  for (const question of asked) assert.equal(ask(p, 'compliance.previouslyEmployed', question).text, 'No', question);
+  p.compliance.previouslyEmployed = 'Yes';
+  for (const question of asked) assert.equal(ask(p, 'compliance.previouslyEmployed', question), null, question);
+  p.compliance.previouslyEmployed = '';
+  for (const question of asked) assert.equal(ask(p, 'compliance.previouslyEmployed', question), null, question);
+
+  // Extra time in an assessment is the adjustments answer, when the profile gives one.
+  assert.equal(typeOf('Do you require an industry standard adjustment of 25%?'), 'job.adjustments');
+  assert.equal(ask(p, 'job.adjustments', 'Do you require an industry standard adjustment of 25%?'), null);
+  p.job.adjustments = 'No';
+  assert.equal(ask(p, 'job.adjustments', 'Do you require an industry standard adjustment of 25%?').text, 'No');
+});

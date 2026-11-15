@@ -42,8 +42,10 @@
 
   const R = (type, re, opts) => Object.assign({ type, re }, opts || {});
 
+  // Lloyds' "…By submitting this application form, you declare that the information in this form is… true and correct…
+  // Are you happy to submit your application?" [Yes | No] is a declaration too (answering it sends nothing).
   const CONSENT =
-    /acknowledg|\b(answer|applicant|candidate|application) certification\b|\b(allow|permit|authori[sz]e) (us|[a-z]+) to (process|store|hold|use|retain) (your|my) (personal )?(data|information|details)\b|\bcertification of (answers|application|accuracy)\b|\bi (have )?(read|reviewed|understood)\b|\bi (hereby )?(confirm|agree|accept|consent|certify|attest|declare|understand)\b|\bconfirm (if |that |whether )?you (have )?(understand|understood|accept|agree)\b|\bconsent\b|privacy (notice|policy|statement)|notice at collection|data (protection|privacy|processing) (notice|policy|statement)|terms (and |& )?conditions|terms of (use|service)|\bgdpr\b|candidate (privacy|data) (notice|policy)|confidentiality (agreement|undertaking|notice|statement)|non ?disclosure (agreement|undertaking)|maintain (the )?(strict )?confidentiality|\b(the )?information (that )?i (have )?(provided|given|supplied|submitted|entered) (is|are|was) (true|accurate|correct|complete)\b/;
+    /acknowledg|\bare you happy to (submit|proceed with|continue with) (your|this|the) application\b|\b(answer|applicant|candidate|application) certification\b|\b(allow|permit|authori[sz]e) (us|[a-z]+) to (process|store|hold|use|retain) (your|my) (personal )?(data|information|details)\b|\bcertification of (answers|application|accuracy)\b|\bi (have )?(read|reviewed|understood)\b|\bi (hereby )?(confirm|agree|accept|consent|certify|attest|declare|understand)\b|\bconfirm (if |that |whether )?you (have )?(understand|understood|accept|agree)\b|\bconsent\b|privacy (notice|policy|statement)|notice at collection|data (protection|privacy|processing) (notice|policy|statement)|terms (and |& )?conditions|terms of (use|service)|\bgdpr\b|candidate (privacy|data) (notice|policy)|confidentiality (agreement|undertaking|notice|statement)|non ?disclosure (agreement|undertaking)|maintain (the )?(strict )?confidentiality|\b(the )?information (that )?i (have )?(provided|given|supplied|submitted|entered) (is|are|was) (true|accurate|correct|complete)\b/;
   const OPT_IN =
     /marketing|newsletter|promotion|(applicant|candidate|talent) (database|pool)|\bsms\b|text messages?|whats ?app|job alerts?|talent (community|network|pool)|future (opportunit|roles?|jobs?|vacanc|positions?|openings?)|other (roles|positions|opportunities|openings)|keep (me|my)|contact me|contact (me|you) (about|regarding|for|with) (other |new |future |relevant |suitable )?(job |career |employment )?(opportunit|roles?|jobs?|vacanc|positions?|openings?)|subscribe|\bupdates\b|share my (data|information|details) with|\bnews (and |& )?(events|updates)\b|\b(job|vacancy|posting) (posting )?notifications?\b/;
 
@@ -226,7 +228,7 @@
     ),
     R(
       'job.authorized',
-      /without (the )?(need for |requiring |needing |requirement of |any )?(employer |visa |company |immigration )?sponsor/,
+      /without (the )?(need (for|of) |requiring |needing |requirement (of|for) |any )?(an? |any )?((employer|visa|company|immigration|work) (or |and )?)*sponsor|^(please )?(confirm|is it (true|correct|the case)) (that )?you (do not|don t|will not|won t|never) (\w+ ){0,2}(require|need)\w* (\w+ ){0,3}sponsor|^(do|will) you not (\w+ ){0,2}(require|need)\w* (\w+ ){0,3}sponsor/,
     ),
     R(
       'job.sponsorship',
@@ -379,10 +381,11 @@
       // position." in one box is the question.
       { kinds: CHOICE.concat(LONG_TEXT), not: /^if (yes|so)\b|\bwhen and\b/ },
     ),
-    // "Do you require any reasonable adjustments to participate in the recruitment process?"
+    // "Do you require any reasonable adjustments to participate in the recruitment process?", Lloyds' "For the Job
+    // Insight Assessment do you require an industry standard adjustment of 25%?" (extra time).
     R(
       'job.adjustments',
-      /\breasonable adjustments?\b|^(do|will|would) you (require|need|have) any (special|additional|access) (requirements?|arrangements?|needs)\b|\b(require|need|request)\b.{0,40}\b(adjustments?|accommodations?|support|(special|additional|access) (requirements?|arrangements?|needs|assistance))\b.{0,60}\b(recruitment|application|interview|assessment|selection|hiring)\b|\badjustments? (to|during|in|for) (the |our )?(recruitment|application|interview|assessment|selection)|\b(additional|special|access) (requirements?|needs)\b.{0,80}\b(interview|assessment|recruitment)\b/,
+      /\breasonable adjustments?\b|\b(do|will|would) you (require|need)\b.{0,40}\b(adjustments?|(extra|additional) time)\b|^(do|will|would) you (require|need|have) any (special|additional|access) (requirements?|arrangements?|needs)\b|\b(require|need|request)\b.{0,40}\b(adjustments?|accommodations?|support|(special|additional|access) (requirements?|arrangements?|needs|assistance))\b.{0,60}\b(recruitment|application|interview|assessment|selection|hiring)\b|\badjustments? (to|during|in|for) (the |our )?(recruitment|application|interview|assessment|selection)|\b(additional|special|access) (requirements?|needs)\b.{0,80}\b(interview|assessment|recruitment)\b/,
       {
         // A text box asking it as a yes/no question ("Do you require any special requirements if you are invited to
         // attend an interview?" on Phenom) takes the answer too; one asking what they are is left for you.
@@ -469,9 +472,12 @@
       notAny: OPT_IN,
       yieldsTo: ['edu.end', 'job.startDate'],
     }),
+    // Lloyds asks for them in a sentence, over a text area: "Secondary email address It’s important we are able to
+    // contact you… so please include a secondary email address (personal…) if you have one.", "…please include a
+    // secondary Phone Number if you have one."
     R(
       'contact.other',
-      /^(fax|pager|telex)( (number|no))?$|^(alternate|alternative|secondary|additional|backup|second|other) (e ?mail|email address|phone|phone number|telephone|mobile)( number)?$/,
+      /^(fax|pager|telex)( (number|no))?$|^(alternate|alternative|secondary|additional|backup|second|other) (e ?mail|email address|phone|phone number|telephone|mobile)( number)?$|^secondary e ?mail address\b|\b(include|provide|add|enter|give us) an? (alternate|alternative|secondary|additional|backup|second) (e ?mail( address)?|phone( number)?|telephone( number)?|mobile( number)?)\b/,
       { kinds: TEXTISH },
     ),
     R('exp.supervisor', /^(supervisor|line manager|manager|reporting manager)( s)?( name| full name)?$/, {
@@ -522,9 +528,21 @@
           /\b(never|formerly) worked\b|\b(former|current) \w* ?employee\b/i.test(o.text),
         ),
     }),
+    // What only someone who has worked there can say yes to (Lloyds): "Are you re-joining LBG after arranging a career
+    // break?", "Have you been made redundant by Lloyds Banking Group within the past two years…?", "Have you previously
+    // taken part in a Lloyds Banking Group Next Gen Talent Programme within the last 12 months?". Never having worked
+    // there answers them No; having worked there says nothing (DEFS). Not a redundancy or a programme anywhere else.
     R(
       'compliance.previouslyEmployed',
-      /^(do|are) you (currently |presently )?(work|working|employed) (for|by|at|with) (us|our (company|firm|group|organi[sz]ation|business))\b|\b(previously|ever|before) (completed|done|undertaken|had) (an? )?(internship|placement|work placement|work experience)\b.*\b(at|with|for)\b|\b(previously|ever|formerly|before|in the past) (been )?(worked|employed|work|been employed|interned)\b.*\b(for|at|by|with)\b|\b(current or former|former|ex) (employee|staff member|intern)\b|\bhave you (ever )?worked (for|at|with) (us|our)\b|\bworked (for|at) [a-z ]+ (before|previously|in the past)\b|\bbeen employed (by|at|with) [a-z ]+ (before|previously|in the past)\b/,
+      /^are you re ?joining\b|\bmade redundant by (?!(an?|any|another|other|your|previous|former|current|the)\b)|^have you (previously|ever|already) (taken part|participated) in (a|an|one of our|our)\b.{0,80}\b(programmes?|programs?|internships?|placements?|schemes?)\b/,
+      {
+        kinds: CHOICE,
+        not: /\b(another|other|any other) (\w+ )?(employers?|compan(y|ies)|organi[sz]ations?|firms?|banks?)\b|\bsimilar\b|\belsewhere\b/,
+      },
+    ),
+    R(
+      'compliance.previouslyEmployed',
+      /^(do|are) you (currently |presently )?(work|working|employed) (for|by|at|with) (us|our (company|firm|group|organi[sz]ation|business))\b|^(do|are) you (currently |presently )?(work|working|employed) (for|by|at|with) (?!(an?|any|another|other|the moment|present|home|this time)\b)[a-z][a-z ]{1,40}$|\b(previously|ever|before) (completed|done|undertaken|had) (an? )?(internship|placement|work placement|work experience)\b.*\b(at|with|for)\b|\b(previously|ever|formerly|before|in the past) (been )?(worked|employed|work|been employed|interned)\b.*\b(for|at|by|with)\b|\b(current or former|former|ex) (employee|staff member|intern)\b|\bhave you (ever )?worked (for|at|with) (us|our)\b|\bworked (for|at) [a-z ]+ (before|previously|in the past)\b|\bbeen employed (by|at|with) [a-z ]+ (before|previously|in the past)\b/,
       {
         kinds: CHOICE.concat(LONG_TEXT),
         not: /\bapplied\b|\binterview|\brelated|famil|relative|\bin (finance|banking|consulting|the industry|a similar)|\b(ernst|ey|deloitte|pwc|pricewaterhouse\w*|kpmg|auditors?|audit)\b/,
@@ -741,6 +759,21 @@
       /\b(currently|ever) (or have you (ever )?)?attended (a )?(university|college|higher education)\b|\b(studying|studied) for,? or (have you )?(completed|obtained|achieved)\b/,
       { kinds: CHOICE },
     ),
+    // Lloyds' "Are you on track to achieve, or have already achieved, an undergraduate degree, or higher (e.g. Masters,
+    // PhD), or international equivalent?", and its bare "Post Graduate Qualification?" over Yes and No (a closed list
+    // whose options aren't read yet is taken for one: a list of qualifications has no "No" to pick).
+    R(
+      'edu.attended',
+      /^are you on (track|course) (to|for)\b.{0,60}\b(degree|qualification|bachelor\w*|master\w*|graduat\w*)\b|\b(achieve|obtain|complete|gain|graduate with),? or (have )?(you )?already (achieved|obtained|completed|gained|graduated)\b|^post ?graduate (qualification|degree)s?$/,
+      {
+        kinds: CHOICE,
+        // …or one that lists the qualifications and a "No" of its own ("Master's Degree | Doctoral Degree… | No").
+        test: (desc) =>
+          hasYesNoOptions(desc) ||
+          !(desc.options || []).length ||
+          desc.options.some((o) => /^(no|none|n ?a|not applicable)$/.test(U.normalize(o.text))),
+      },
+    ),
     // Accenture's "Do you currently have or are you working towards a postgraduate qualification?".
     R(
       'edu.attended',
@@ -769,9 +802,11 @@
           ),
       },
     ),
+    // Lloyds' "Is your undergraduate grade Expected or Obtained?" [Expected | Obtained] too, asked as a question:
+    // Charles River's "Bachelor's Degree Class (expected or achieved)" over a list of grades wants the class.
     R(
       'edu.completed',
-      /^(have|did) you (already |now )?graduated?\b|\b(have|has) you (already |now )?(completed|finished|graduated from) (your |all your )(\w+ )?(studies|degree|course|university|education|programme|program)\b|\bconfirm (that )?you have (already )?(completed|finished|graduated)\b|\b(degree|qualification|studies|course)\b.{0,20}\b(completed|complete|achieved|awarded|finished) or (still )?(predicted|expected|ongoing|in progress|pending)\b/,
+      /^(have|did) you (already |now )?graduated?\b|\b(have|has) you (already |now )?(completed|finished|graduated from) (your |all your )(\w+ )?(studies|degree|course|university|education|programme|program)\b|\bconfirm (that )?you have (already )?(completed|finished|graduated)\b|\b(degree|qualification|studies|course)\b.{0,20}\b(completed|complete|achieved|awarded|finished) or (still )?(predicted|expected|ongoing|in progress|pending)\b|^(is|are|was|were) (your|the|this|that)\b.{0,40}\b(grades?|results?|class(ification)?|degree|qualification)\b.{0,20}\b(expected|predicted|anticipated|pending) or (obtained|achieved|actual|awarded|final|confirmed|completed)\b/,
       { kinds: CHOICE },
     ),
     R(
@@ -818,10 +853,11 @@
         not: /\bcountry\b|type of school|\bschool type\b|state (school|run|funded)|grammar|fee paying|independent|private|\b(14|fourteen|aged?)\b|post ?code|\bzip\b|^(are|do|did|have|were|was) you\b/,
       },
     ),
-    // "Country of School", "Institution country", "Country where you obtained your degree"; "Country of Employer".
+    // "Country of School", "Institution country", "Country where you obtained your degree", "Country of Study" (Lloyds);
+    // "Country of Employer".
     R(
       'edu.country',
-      /\bcountr(y|ies)\b.*\b(school|universit\w*|college|institution|campus|studies|studied|degree)\b|\b(school|universit\w*|college|institution|campus)\b.*\bcountr(y|ies)\b/,
+      /\bcountr(y|ies)\b.*\b(school|universit\w*|college|institution|campus|study|studies|studied|degree)\b|\b(school|universit\w*|college|institution|campus)\b.*\bcountr(y|ies)\b/,
       {
         not: /\b(want|wish|like|prefer\w*|plan|intend|interested)\b|citizen|nationalit|\bbirth\b|residen|\blive\b|\bwork\b|\bvisa\b|authori|\bphone\b|\bcode\b|which countries/,
       },
@@ -861,7 +897,8 @@
       'edu.field',
       /\bcategor(y|ies)\b.*\b(degree|course|studies|subject)\b|fields? of study|\bmajors?\b|\bdisciplines?\b|concentration|area of study|speciali[sz]ation|course of study|program(me)? of study|\bsubjects?\b|study (field|area)|^(your |main |academic )?field$|\bfield (studied|of expertise)\b|course name|\b(your|which|what) (academic )?faculty\b(?! (members?|staff|advis\w*|supervisors?|sponsors?|contacts?|referees?))|^faculty$/,
       {
-        not: /minor|\b(secondary|second|additional|double|joint|other) (major|field|subject|discipline)|\bdid\b|field (sales|service|work|engineer|marketing|operations)|form ?field|field ?(set|label|wrapper|group|container|row|section|input)|\bsubjects? to\b|export control/,
+        // "Undergraduate subject grade" (Lloyds) asks for the grade.
+        not: /minor|\b(secondary|second|additional|double|joint|other) (major|field|subject|discipline)|\bdid\b|field (sales|service|work|engineer|marketing|operations)|form ?field|field ?(set|label|wrapper|group|container|row|section|input)|\bsubjects? to\b|export control|\b(subject|course|degree|major|discipline) (grades?|results?|marks?|classification|outcome)\b/,
       },
     ),
     // "University Course", "Course", "Course title", "Course studied", "Name of course", "Programme name": what you

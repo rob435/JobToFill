@@ -68,8 +68,9 @@
   const CONFLICT =
     /\b(relatives?|related to|family members?|immediate family|spouse|domestic partner|close (personal )?relationships?|acquainted|know anyone|connected (to|with) any)\b/;
   const CLEARANCE = /\b(security )?clearances?\b|\bvett(ing|ed)\b|\bdbs\b|\bbpss\b/;
+  // Extra time too: Lloyds' "Do you require an industry standard adjustment of 25%?".
   const HEALTH =
-    /\b(reasonable adjustments?|adjustments? (to|during|in) (the |our )?(recruitment|application|interview|assessment)|accommodations?|medical|health|impairment|essential functions)\b/;
+    /\b(reasonable adjustments?|adjustments? (to|during|in) (the |our )?(recruitment|application|interview|assessment)|(require|need)\b.{0,40}\badjustments?|(extra|additional) time|accommodations?|medical|health|impairment|essential functions)\b/;
   // Facts only the candidate knows: answered from their material or guidance, never guessed.
   const HISTORY =
     /\b(applied (to|for|with|at)\b.*\b(before|previously|in the past)|previously applied|ever applied|applied before|interviewed with|referr(ed|al|er)|who referred|relatives?|related to|family members?|domestic partner|acquainted|know anyone|connected (to|with) any|current or former (employee|intern)|offers?|deadlines?|other (applications|processes)|in (the )?process (for|with))\b/;
@@ -96,7 +97,9 @@
     // Numbered as on Microsoft Forms ("18. I have uploaded my CV…"): the question is what follows the number.
     const raw = String(item.question || '').replace(/^\s*\d{1,3}\s*[.)]\s+/, '');
     const question = norm(raw);
-    const text = norm([raw, item.section, item.help].filter(Boolean).join(' '));
+    // With the rest of a long question (`context`): "Criminal convictions" over a paragraph and "Do you have any to
+    // declare?" is still a legal question.
+    const text = norm([raw, item.section, item.help, item.context].filter(Boolean).join(' '));
     const options = norm((item.options || []).join(' '));
     const out = (kind, more) => Object.assign({ kind, legal: false, health: false, guided: false }, more);
     if (SECRET.test(question)) return out('secret');
@@ -429,6 +432,9 @@
     const kind = answerKind(item);
     const q = { id: item.id, question: U.cleanLabel(item.question, 600), type: kind };
     if (item.help && norm(item.help) !== norm(item.question)) q.help = U.cleanLabel(item.help, 300);
+    // The rest of a long question (the paragraphs around what it asks: who must answer "No", what a "Yes" sets off)
+    // is help too.
+    if (item.context) q.help = U.cleanLabel([q.help, item.context].filter(Boolean).join(' '), 900);
     if (item.section) q.section = U.cleanLabel(item.section, 100);
     if (item.options && item.options.length) {
       q.options = item.options.slice(0, LONG_LIST).map((o) => U.cleanLabel(o, 200));
@@ -441,10 +447,13 @@
     if (item.required) q.required = true;
     // The question before, with its answer on the page; one being answered in this same list is named by its
     // id, so the two answers agree ("Do you have other offers?" then "If yes, list them").
-    const before =
+    // Only when one question in the list reads so: two that ask the same words can't be told apart, and a wrong link
+    // would have unrelated answers agree.
+    const same =
       item.follows && item.follows.question && !item.follows.answer
-        ? (batch || []).find((b) => b !== item && norm(b.question) === norm(item.follows.question))
-        : null;
+        ? (batch || []).filter((b) => b !== item && norm(b.question) === norm(item.follows.question))
+        : [];
+    const before = same.length === 1 ? same[0] : null;
     // Its answer only where the question before is one the model may see itself: never a date of birth, an NI number
     // or a password typed in a box the rules didn't recognise (content/main.js blanks those it did, decide.hidesAnswer).
     const said = item.follows && item.follows.answer;
@@ -1063,21 +1072,27 @@
 
   /* --------------------------------------------------------------- memory */
 
-  /** A question's identity for reuse: its words and, for choices, its options. */
+  /**
+   * A question's identity for reuse: its words, for choices its options, and the heading it stands under (Workday's
+   * steps share one address: "I have read and understood" on "Application Questions 2 of 3" is not the one on step 3).
+   */
   function questionKey(item) {
-    return [norm(item.question), (item.options || []).map(norm).join('|')].join('#');
+    return [norm(item.question), (item.options || []).map(norm).join('|'), norm(item.section)].join('#');
   }
 
   /**
    * Answers already written for this application (a refill, the next step of the same form): { reused, rest }.
-   * `saved`: [{ key, value, kind }].
+   * `saved`: [{ key, value, kind }]. Questions that can't be told apart here (the same words, options and heading
+   * twice on the page) are each asked anew: one saved answer never goes into two fields.
    */
   function reuse(items, saved) {
     const byKey = new Map((saved || []).map((s) => [s.key, s]));
+    const count = new Map();
+    for (const item of items) count.set(questionKey(item), (count.get(questionKey(item)) || 0) + 1);
     const reused = [];
     const rest = [];
     for (const item of items) {
-      const hit = byKey.get(questionKey(item));
+      const hit = count.get(questionKey(item)) === 1 ? byKey.get(questionKey(item)) : null;
       if (hit)
         reused.push({
           id: item.id,

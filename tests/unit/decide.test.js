@@ -195,3 +195,122 @@ test('forAi: what the rules leave empty goes to the AI for the kinds the candida
   ])
     assert.equal(ai(d, type, ALL), null, type);
 });
+
+test('outcome: what the rules’ turn left a field as, one of OUTCOMES', () => {
+  const r = { type: 'address.state' };
+  assert.equal(decide.outcome(null, null, null), 'unknown');
+  assert.equal(decide.outcome({ type: null }, null, null), 'unknown');
+  assert.equal(decide.outcome(r, { action: 'fill' }, { status: 'filled' }), 'filled');
+  assert.equal(decide.outcome(r, { action: 'fill' }, { status: 'skipped', reason: 'has value' }), 'kept');
+  assert.equal(
+    decide.outcome(r, { action: 'fill' }, { status: 'skipped', reason: 'not one of your answers' }),
+    'skipped',
+  );
+  assert.equal(decide.outcome(r, { action: 'fill' }, { status: 'nomatch', options: ['Yes', 'No'] }), 'nomatch');
+  assert.equal(decide.outcome(r, { action: 'fill' }, { status: 'error' }), 'failed');
+  assert.equal(decide.outcome(r, { action: 'consent' }, null), 'left');
+  assert.equal(decide.outcome(r, { action: 'leave' }, null), 'left');
+  assert.equal(decide.outcome(r, { action: 'leave', unresolved: true }, null), 'blank');
+  assert.equal(decide.outcome(r, { action: 'skip' }, null), 'skipped');
+  assert.equal(decide.outcome(r, { action: 'missing', unresolved: true }, null), 'missing');
+  assert.equal(decide.outcome(r, { action: 'upload' }, null), 'missing');
+  // Every outcome says what may follow; what holds an answer is never the AI's, and a closed list is read again only
+  // where its options could change the answer.
+  for (const [name, o] of Object.entries(decide.OUTCOMES))
+    assert.deepEqual(Object.keys(o).sort(), ['ai', 'reread', 'yours'], name);
+  assert.deepEqual(
+    Object.keys(decide.OUTCOMES).filter((k) => !decide.OUTCOMES[k].ai),
+    ['kept', 'filled'],
+  );
+  assert.deepEqual(
+    Object.keys(decide.OUTCOMES).filter((k) => decide.OUTCOMES[k].reread),
+    ['blank', 'unknown', 'missing', 'nomatch'],
+  );
+});
+
+test('forAi: a list the rules misread goes without their guess; a dropdown’s own prompt is no question', () => {
+  const p = student();
+  p.address.state = 'England';
+  const ctx = { today: new Date(2026, 10, 13) };
+  // Lloyds' credit question as it was once read: a county, by a word of its legend, over Yes and No.
+  const ccj = desc(
+    { aria: 'Select One Required', group: 'Do you have four or more County Court Judgements or judgment debts?' },
+    { kind: 'combo', options: opts('Yes', 'No') },
+  );
+  const county = { type: 'address.state', score: 0.45, source: 'rule' };
+  // Contact details are never the AI's…
+  assert.equal(decide.forAi(desc('County', { kind: 'combo' }), county, p, ctx, null), null);
+  // …but a list none of whose options is one was misread: asked as a question nobody recognised. Not under a
+  // dropdown's own prompt, though ("Select One Required" asks nothing).
+  assert.equal(decide.forAi(ccj, county, p, ctx, null, null, null, 'nomatch'), null);
+  const asked = desc(
+    { question: 'Do you have four or more County Court Judgements or judgment debts?' },
+    { kind: 'combo', options: opts('Yes', 'No') },
+  );
+  assert.deepEqual(decide.forAi(asked, county, p, ctx, null, null, null, 'nomatch'), { guess: null });
+  assert.equal(decide.forAi(asked, county, p, ctx, null, null, null, 'missing'), null);
+  // Never a diversity question or an acknowledgement, whatever its options.
+  assert.equal(
+    decide.forAi(asked, { type: 'eeo.gender', score: 1, source: 'rule' }, p, ctx, null, null, null, 'nomatch'),
+    null,
+  );
+  assert.equal(
+    decide.forAi(asked, { type: 'consent', score: 1, source: 'rule' }, p, ctx, null, null, null, 'nomatch'),
+    null,
+  );
+  // What holds an answer is never asked.
+  assert.equal(decide.forAi(asked, null, p, ctx, null, null, null, 'filled'), null);
+  assert.equal(decide.forAi(asked, null, p, ctx, null, null, null, 'kept'), null);
+  assert.deepEqual(decide.forAi(asked, null, p, ctx, null, null, null, 'unknown'), { guess: null });
+
+  // A yes or no read only from what stands around the field is no guess to pass on: the question itself may ask the
+  // opposite ("…the legal right to work… without requiring… sponsorship?" under a paragraph on sponsorship).
+  const rightToWork = desc(
+    { question: 'Which of these describes you?', group: 'Sponsorship' },
+    { kind: 'combo', options: opts('I am a citizen', 'I hold a visa') },
+  );
+  const around = { type: 'job.sponsorship', score: 0.45, source: 'rule' };
+  assert.deepEqual(decide.forAi(rightToWork, around, p, ctx, null), { guess: null });
+  const own = { type: 'job.sponsorship', score: 1, source: 'rule' };
+  assert.deepEqual(decide.forAi(rightToWork, own, p, ctx, null), { guess: { type: 'job.sponsorship', value: 'No' } });
+});
+
+test('page: Lloyds’ questionnaire, each field as a fill leaves it', () => {
+  const p = student();
+  p.education[0] = { ...p.education[0], gpa: '', classification: '2:1', endDate: '2028-06' };
+  p.compliance.previouslyEmployed = 'No';
+  const YN = opts('Yes', 'No');
+  const q = (question, options, kind = 'combo') => desc({ question }, { kind, options });
+  const descs = [
+    q('Country of Study', opts('France', 'United Kingdom')),
+    q('Undergraduate degree type', opts('Bachelor Degree', 'Integrated Masters Degree')),
+    q('Undergraduate degree subject area', opts('Economics', 'Law')),
+    q('Full degree title', null, 'textarea'),
+    q('Undergraduate subject grade', opts('1st', '2:1', '2:2', '3rd')),
+    q('Is your undergraduate grade Expected or Obtained?', opts('Expected', 'Obtained')),
+    q('Post Graduate Qualification?', YN),
+    q('Do you have the legal right to work in the UK without requiring a visa or sponsorship?', YN),
+    q('Will you require sponsorship from Lloyds Banking Group to carry out this role?', YN),
+    q('Are you re-joining LBG after arranging a career break?', YN),
+    q('Do you have four or more County Court Judgements or judgment debts?', YN),
+  ];
+  const out = decide.page(descs, p, { context: { today: new Date(2026, 10, 13) } });
+  assert.deepEqual(
+    out.map((e) => [e.type, e.index, e.action, e.text || '']),
+    [
+      ['edu.country', 0, 'fill', 'United Kingdom'],
+      ['edu.degree', 0, 'fill', 'Bachelor Degree'],
+      ['edu.field', 0, 'fill', 'Economics'],
+      // More of the same degree, never a second entry's.
+      ['edu.degree', 0, 'fill', 'BSc Economics'],
+      ['edu.classification', 0, 'fill', '2:1'],
+      ['edu.completed', 0, 'fill', 'Expected'],
+      ['edu.attended', 0, 'fill', 'No'],
+      ['job.authorized', 0, 'fill', 'Yes'],
+      ['job.sponsorship', 0, 'fill', 'No'],
+      ['compliance.previouslyEmployed', 0, 'fill', 'No'],
+      [null, 0, 'none', ''],
+    ],
+  );
+  assert.equal(out[10].ai, true);
+});

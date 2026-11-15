@@ -346,6 +346,17 @@
     !n.firstElementChild &&
     /^\(?\s*(required|optional)\s*\)?[.:]?$/i.test(n.textContent.trim());
 
+  /** An element whose text is no part of a label: a control, a script, something hidden, a required mark. */
+  const unread = (n, skip) =>
+    SKIP_TEXT_TAGS.has(n.localName) ||
+    // What is written in an editor is an answer, not part of anyone's label.
+    isEditor(n) ||
+    n.hidden ||
+    n.getAttribute('aria-hidden') === 'true' ||
+    (n.style && n.style.display === 'none') ||
+    isRequiredMarker(n) ||
+    !!(skip && skip(n));
+
   function textOf(node, skip) {
     if (!node) return '';
     if (node.nodeType === 3) return node.nodeValue.replace(/\s+/g, ' ').trim();
@@ -353,23 +364,37 @@
     const walker = doc.createTreeWalker(node, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
       acceptNode(n) {
         if (n.nodeType === 3) return NodeFilter.FILTER_ACCEPT;
-        if (
-          SKIP_TEXT_TAGS.has(n.localName) ||
-          // What is written in an editor is an answer, not part of anyone's label.
-          isEditor(n) ||
-          n.hidden ||
-          n.getAttribute('aria-hidden') === 'true' ||
-          (n.style && n.style.display === 'none') ||
-          isRequiredMarker(n) ||
-          (skip && skip(n))
-        )
-          return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_SKIP;
+        return unread(n, skip) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP;
       },
     });
     let out = '';
     for (let t = walker.nextNode(); t; t = walker.nextNode()) out += t.nodeValue + ' ';
     return out.replace(/\s+/g, ' ').trim();
+  }
+
+  // What starts a line of its own in a rich-text label.
+  const LINE_BREAKS = new Set('p div li ul ol br h1 h2 h3 h4 h5 h6 tr blockquote section article dt dd'.split(' '));
+
+  /**
+   * A label's text line by line, as a person reads it: a new line at each paragraph, list item and <br> (Workday's
+   * rich-text legends: "Your University", "Please note: You may be asked to prove…", "Country of Study"), each
+   * without its required mark.
+   */
+  function linesOf(node) {
+    const lines = [''];
+    const walk = (n) => {
+      for (const c of n.childNodes) {
+        if (c.nodeType === 3) lines[lines.length - 1] += c.nodeValue;
+        else if (c.nodeType === 1 && !unread(c)) {
+          const breaks = LINE_BREAKS.has(c.localName);
+          if (breaks) lines.push('');
+          walk(c);
+          if (breaks) lines.push('');
+        }
+      }
+    };
+    walk(node);
+    return lines.map((t) => U.cleanLabel(t, 2000)).filter(Boolean);
   }
 
   /** Not display: none nor visibility: hidden (whatever its size). */
@@ -772,6 +797,45 @@
       if (node.parentElement && foreignControls(node.parentElement, me) > 0) return null;
     }
     return null;
+  }
+
+  /**
+   * The question a fieldset's legend (or an ARIA group's label) asks of the one control it holds, read line by line:
+   * { question, preamble, block, legend: true }, the line that asks and the rest of the legend (matcher.asks: the
+   * paragraphs before it, the notes after), or the whole legend when no line stands out. Workday's questionnaire: a
+   * rich-text <legend> over a Select whose button says only " Select One Required". Null when the group holds other
+   * fields too, or has no legend.
+   */
+  function legendAsked(el) {
+    const block = el.closest('fieldset, [role="group"], [role="radiogroup"]');
+    if (!block) return null;
+    // The hidden box Workday keeps the choice's id in is nothing a person fills.
+    const others = countedIn(block).filter((c) => c !== el && !el.contains(c) && isVisible(c, { ignoreOpacity: true }));
+    if (others.length) return null;
+    let legend =
+      block.localName === 'fieldset' ? Array.from(block.children).find((c) => c.localName === 'legend') : null;
+    if (!legend) {
+      const refs = (block.getAttribute('aria-labelledby') || '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((id) => byId(block, id))
+        .filter((ref) => ref && !ref.contains(el));
+      legend = refs.length === 1 ? refs[0] : null;
+    }
+    const lines = legend ? linesOf(legend) : [];
+    if (!lines.length) return null;
+    const asked = JTF.matcher.asks(lines);
+    const whole = lines.join(' ');
+    return {
+      // No line stands out (Lloyds' neurodiversity paragraphs, which end "…There is no obligation to disclose this in
+      // order to request adjustments for the recruitment process."): all of it, for the matcher to find what it asks
+      // in (its last sentence, past the first 300 characters), and for the AI to read whole.
+      question: asked ? U.cleanLabel(asked.question, 300) : U.cleanLabel(whole, 900),
+      help: '',
+      preamble: asked ? U.cleanLabel(asked.help, 900) : whole.length > 300 ? U.cleanLabel(whole, 900) : '',
+      block,
+      legend: true,
+    };
   }
 
   /**
@@ -1310,10 +1374,16 @@
       s.name = el.getAttribute('name') || '';
       s.id = el.id || '';
       s.title = el.getAttribute('title') || '';
-      // A dropdown labelled only "Select one" (Revolut's) is asked by the heading over it: that is its question.
-      asked = combo && BARE_CHOICE.test(U.normalize(s.label || s.aria)) ? headingBefore(el) : null;
+      // A dropdown labelled only "Select one" (Revolut's) is asked by the heading over it: that is its question. So
+      // is one named after what it shows, required or not (Workday's questionnaire buttons: " Select One Required",
+      // then " No Required" once chosen), by the legend of the fieldset it has to itself.
+      const own = U.normalize(s.label || s.aria).replace(/ (required|optional)$/, '');
+      const bare = combo && BARE_CHOICE.test(own);
+      const showsOnly = combo && !!own && !held && own === U.normalize(visibleText(el));
+      asked = bare || showsOnly ? legendAsked(el) || (bare ? headingBefore(el) : null) : null;
       if (asked) {
-        s.placeholder = s.label || s.aria;
+        // "Select One" is the list's prompt; a choice it shows ("Bachelor Degree") is an answer, never a hint.
+        s.placeholder = bare ? s.label || s.aria : '';
         s.label = '';
         s.aria = '';
         s.question = asked.question;
@@ -1339,7 +1409,8 @@
         groupLabel(el) ||
         (kind === 'file' ? jobviteUploadLabel(el) : '') ||
         (((!s.label && !s.aria) || bareLabel(el)) && kind !== 'checkbox' ? clusterLabel(el) : '');
-      if (group && U.normalize(group) !== U.normalize(s.label || s.aria)) {
+      // A legend already read as the question (legendAsked) is no context besides.
+      if (group && U.normalize(group) !== U.normalize(s.label || s.aria) && !(asked && asked.legend)) {
         // For an upload or a lone checkbox the group's legend is the question; elsewhere it is context.
         if (kind === 'file' || kind === 'checkbox') s.question = group;
         else s.group = group;
@@ -1378,6 +1449,8 @@
       .join(' ');
     s.ancestors = ancestorHints(el);
     s.describedby = describedBy(el) || (asked ? asked.help : '');
+    // The rest of a long question read line by line: what surrounds the ask, never what the field is taken for.
+    if (asked && asked.preamble) s.preamble = asked.preamble;
     return desc;
   }
 
@@ -1410,6 +1483,14 @@
         continue;
       // So is the search box of a dropdown's open menu (iCIMS's).
       if (menuSearchOf(el)) continue;
+      // The tick drawn in a row of a list of options (Workday's Skills results, left open after a pick: each
+      // role="option" a checkbox and "Bash (Scripting Language)") is that option's own, never a question to answer.
+      if (
+        el.localName === 'input' &&
+        /^(checkbox|radio)$/.test(el.type) &&
+        el.closest('[role="listbox"] [role="option"]')
+      )
+        continue;
       const kind = kindOf(el);
       if (!kind || !isUsable(el, kind)) continue;
       if (el.matches(SEGMENT)) {

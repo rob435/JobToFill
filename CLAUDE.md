@@ -57,6 +57,17 @@ detail. Keep the README short: only what everyone needs.
   from `fields.resolve()`) → `fill.apply()` (sets values the way frameworks notice, drives custom dropdowns) →
   read-back and retry. What goes to the AI is `decide.forAi()`. `lib/decide.js` is DOM-free, so the benchmark scores
   exactly what the fill does.
+- **A field's life is written down, not worked out again.** Every field a fill meets gets one outcome
+  (`decide.OUTCOMES`: kept, filled, left, skipped, blank, unknown, missing, nomatch, failed), recorded by element in
+  `main.js` (`state.outcomes`) at every way out of `fillOne`. Later stages read it: a closed list (options only while
+  its menu is open) left unsettled is opened once, its options remembered (`state.options`, which `scan()` puts on
+  its descriptor) and the rules look again; `pendingQuestions` passes the outcome to `forAi()`. A new stage asks the
+  record what happened; it never infers it from the page or from the question's text (twenty dropdowns can all read
+  "Select One").
+- **A question is what the field asks, never what it shows.** A long legend is read line by line (`dom.linesOf`,
+  `matcher.asks`): the asking line is `signals.question`, the rest `signals.preamble` (context for the AI and the
+  help text, never classified). Anything keyed by question text (`answers.questionKey`, `answerField`'s fallback,
+  the `follows` link) must refuse an ambiguous match rather than take the first.
 - **AI answers:** `answerRound` (background) → `answers.answer(chat, …)` with `ai.chat` (`lib/ai.js`: Claude
   through Anthropic's API, and OpenAI-compatible: OpenRouter, DeepSeek, custom). Pipelines take `chat` injected, so they run in Node tests.
 - **Letters and CVs:** `studio/studio.js` → `letter.analyse()` / `letter.write()` / `letter.tailor()`; PDFs by

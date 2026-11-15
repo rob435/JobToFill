@@ -159,7 +159,12 @@
       get(p, ctx) {
         const v = val(p.compliance.previouslyEmployed);
         // FDM's "Do you currently work for us?": someone who worked here before may not now, so only a No answers it.
-        const now = /^(do|are) you (currently |presently )?(work|working|employed)\b/.test(ctx.question || '');
+        // Nor does a Yes say you are re-joining after a career break, were made redundant there or took part in one
+        // of its programmes (Lloyds).
+        const now =
+          /^(do|are) you (currently |presently )?(work|working|employed)\b|^are you re ?joining\b|\bmade redundant by\b|\b(taken part|participated) in\b/.test(
+            ctx.question || '',
+          );
         return v && now && v.canonical !== 'no' ? null : v;
       },
     },

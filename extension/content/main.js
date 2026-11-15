@@ -14,6 +14,13 @@
   // `asked` how many ids were handed out; hold: keeps the background awake.
   // aiFilled: field -> the answer the AI put there (remembered with the application, so not "learnt" again).
   // attached: upload -> the file names a fill put there, by type (a new letter takes the place of the one before).
+  // outcomes: field -> what the rules' turn left it as, { state (decide.OUTCOMES), type, label }: every later stage
+  // reads this rather than working out again from the page what happened (fillPage's mark, pendingQuestions);
+  // prior: the fill before's, for a fill JobToFill makes itself on the same page (see fillPage);
+  // ruled: a fill has had its turn here, so fields without an outcome are ones it never saw.
+  // options: closed list -> the options it offered when it was last opened (a menu drawn only while open is read
+  // once, for the rules' second look and the AI); several: those that take more than one; peeked: the lists opened
+  // just to read them.
   const state = {
     history: [],
     overlay: null,
@@ -23,6 +30,12 @@
     hold: null,
     aiFilled: new WeakMap(),
     attached: new WeakMap(),
+    outcomes: new WeakMap(),
+    prior: new WeakMap(),
+    ruled: false,
+    options: new WeakMap(),
+    several: new WeakSet(),
+    peeked: new WeakSet(),
   };
 
   // This copy of the script's own mark on the ids it hands out: one injected after the page changed doesn't reuse
@@ -71,8 +84,29 @@
     return JTF.api.runtime.sendMessage(message).catch((err) => ({ error: String((err && err.message) || err) }));
   }
 
+  // Dropdowns whose options may exist only while their menu is open.
+  const LIST_KINDS = new Set(['combo', 'combobox']);
+
+  /** Keep what a closed list offered when it was opened (texts, and whether it takes several), for every later read. */
+  function rememberOptions(el, texts, multi) {
+    if (multi) state.several.add(el);
+    const list = (texts || []).filter(Boolean);
+    // A long list (countries, universities) is searched by typing the answer, never read through.
+    if (list.length && list.length <= 150)
+      state.options.set(
+        el,
+        list.map((text) => ({ text, value: text })),
+      );
+  }
+
   function scan(profile) {
     const fields = JTF.dom.collect(document);
+    // A closed list read before is known by its options from now on, as a <select> is.
+    for (const f of fields) {
+      if (!LIST_KINDS.has(f.kind)) continue;
+      if (!f.desc.options && state.options.has(f.el)) f.desc.options = state.options.get(f.el);
+      if (state.several.has(f.el)) f.desc.multiple = true;
+    }
     const planned = JTF.matcher.plan(
       fields.map((f) => f.desc),
       profile,
@@ -516,6 +550,17 @@
     // A page the account flow landed on after one of its clicks (the application after signing in) is still drawing
     // its form: it is filled once it has gone quiet.
     if (payload.settleFirst) await settle(4000, 800);
+    // Each fill is the rules' turn anew (a fill of just your letter leaves the form's other fields as they were).
+    // What the one before it made of a field stays to hand: a fill JobToFill makes itself on a page it has been
+    // through (Quick apply's second, with the letter and CV; the one after a sign-in) doesn't search again a list none
+    // of whose options was your answer. The options a closed list offered are kept whoever fills: its menu need not
+    // be opened to be read a second time.
+    if (!payload.only)
+      Object.assign(state, {
+        prior: payload.again ? state.outcomes : new WeakMap(),
+        outcomes: new WeakMap(),
+        ruled: true,
+      });
     let scanned = await scanWhenDrawn(profile);
     // Room for each of your education and job entries first: a section's own "Add" (Workday's My Experience starts
     // with none), then the page is read again.
@@ -731,12 +776,31 @@
       }
       return res.status;
     };
+    /**
+     * Note what the rules' turn left a field as (decide.outcome): every way out of fillOne passes here, so no field
+     * is left without one. A list's options read on the way are kept with it.
+     */
+    const mark = (field, r, d, res, label, tried) => {
+      const was = JTF.decide.outcome(r, d, res);
+      // Nothing recognised in a field that holds something: the person's answer, kept.
+      const held = was === 'unknown' && JTF.fill.hasValue(field);
+      state.outcomes.set(field.el, {
+        state: held ? 'kept' : was,
+        type: (r && r.type) || null,
+        label: label || '',
+        // The answer a list had no option for: the same one is not searched for again (see `prior`).
+        tried: was === 'nomatch' ? tried || '' : '',
+      });
+      if (res && res.options) rememberOptions(field.el, res.options, res.multi);
+    };
     /** Fill one field from the profile; `count` adds what it asks about to the report's lists. */
     const fillOne = async (field, r, { count = true } = {}) => {
       // The page is on its way out (an upload sent it to be read): the one it comes back as is filled instead.
       if (leave.gone()) return null;
       if (!r || !r.type) {
         if (count) report.unknown++;
+        mark(field, r);
+        state.outcomes.get(field.el).counted = count;
         return null;
       }
       if (r.type === 'file.coverLetter' || r.type === 'coverLetter') report.wantsLetter = true;
@@ -745,19 +809,28 @@
       if (only && !carried.some((t) => only.has(t))) return null;
       if (hold && carried.some((t) => hold.has(t))) {
         report.held++;
+        mark(field, r, { action: 'leave' });
         return null;
       }
       report.detected++;
       const def = JTF.fields.DEFS[r.type];
       const label = labelFor(field, r);
-      if (carried.length > 1) return fillUpload(field, carried, label);
+      if (carried.length > 1) {
+        const status = await fillUpload(field, carried, label);
+        mark(field, r, { action: 'upload' }, status ? { status, reason: 'has value' } : null, label);
+        return status;
+      }
       if (field.kind === 'file' && attachedBefore.has(r.type)) {
         report.skipped++;
+        mark(field, r, null, { status: 'skipped', reason: 'has value' }, label);
         return 'skipped';
       }
       const question = U.normalize(JTF.matcher.questionText(field.desc));
       // "I'm not a robot" is only ticked when no CAPTCHA stands behind it.
-      if (r.type === 'human' && JTF.flow.captcha(document)) return null;
+      if (r.type === 'human' && JTF.flow.captcha(document)) {
+        mark(field, r, { action: 'leave' }, null, label);
+        return null;
+      }
       if (uploaded && !settled && field.kind !== 'file') {
         await settle();
         settled = true;
@@ -767,20 +840,30 @@
       const d = JTF.decide.field(field.desc, r, profile, context, { ctx: extra, followed });
       if (d.action === 'consent') {
         if (!JTF.fill.hasValue(field)) report.consents++;
+        mark(field, r, d, null, label);
         return null;
       }
       // An upload for a level you haven't studied at, an opt-in, a follow-up that isn't for you: nothing to do.
-      if (!d.unresolved && (d.action === 'skip' || d.action === 'leave')) return null;
+      if (!d.unresolved && (d.action === 'skip' || d.action === 'leave')) {
+        mark(field, r, d, null, label);
+        return null;
+      }
       let v = d.action === 'upload' ? await valueFor(field, r, def) : d.value;
       // A box that holds part of a number (see splitBoxes) gets its part, or nothing when the number doesn't fit.
       if (v && r.segment) {
         v = segmentValue(v, r.segment);
-        if (!v || !v.text) return null;
+        if (!v || !v.text) {
+          mark(field, r, { action: 'skip' }, null, label);
+          return null;
+        }
       }
       // A link in another box already: your next one, or nothing (see linkOnce).
       if (v && /^links\./.test(r.type)) {
         v = linkOnce(field, v, question);
-        if (!v) return null;
+        if (!v) {
+          mark(field, r, { action: 'skip' }, null, label);
+          return null;
+        }
       }
       if (!v) {
         // A document you haven't added is missing too; what the profile leaves empty on purpose isn't.
@@ -789,6 +872,7 @@
           report.missingTypes.push(r.type);
         }
         traceStep(field, r, null, { status: 'nothing to put' }, 0, 'fill');
+        mark(field, r, d, null, label);
         return null;
       }
       // An upload that lists this very file as taken (iCIMS shows the CV it read, its file box empty again): not again,
@@ -800,16 +884,30 @@
         shows(uploadBox(field.el).textContent || '', v.document)
       ) {
         report.skipped++;
+        mark(field, r, d, { status: 'skipped', reason: 'has value' }, label);
         return 'skipped';
       }
       const started = Date.now();
-      const res = await JTF.fill.apply(field, v, {
-        overwrite: settings.overwrite || !!payload.force || !!(replace && replace.has(r.type)),
-        correct: CORRECTED.has(r.type),
-        comboboxes: settings.comboboxes !== false,
-        history,
-      });
-      traceStep(field, r, v, res, started, 'fill');
+      // The fill before this one found none of this list's options to be this answer: it is not opened and searched
+      // again for the same one.
+      const before = state.prior.get(field.el);
+      const same =
+        !!before &&
+        before.state === 'nomatch' &&
+        before.type === r.type &&
+        before.tried === v.text &&
+        LIST_KINDS.has(field.kind) &&
+        !JTF.fill.hasValue(field);
+      const res = same
+        ? { status: 'nomatch', reason: 'as before' }
+        : await JTF.fill.apply(field, v, {
+            overwrite: settings.overwrite || !!payload.force || !!(replace && replace.has(r.type)),
+            correct: CORRECTED.has(r.type),
+            comboboxes: settings.comboboxes !== false,
+            history,
+          });
+      traceStep(field, r, v, res, same ? 0 : started, 'fill');
+      mark(field, r, d, res, label, v.text);
       if ((def && def.file) || r.type === 'coverLetter')
         report.docs[r.type] = res.status === 'filled' ? 'filled' : report.docs[r.type] || res.status;
       if (res.status === 'filled') {
@@ -889,11 +987,74 @@
         }
       }
     }
+    // A closed list the rules couldn't settle by its words (nothing recognised, nothing in your profile, none of
+    // its options yours) is opened and read, once, and looked at again with its options, as a <select> is from the
+    // start: Lloyds' "Undergraduate subject grade" [1st | 2:1 | 2:2] is your class, its "Post Graduate
+    // Qualification?" [Yes | No] a yes or no, and a "County Court Judgements" question over Yes and No no county.
+    const unsettled = (field) => {
+      const o = state.outcomes.get(field.el);
+      return !!o && !o.again && JTF.decide.OUTCOMES[o.state].reread && !JTF.fill.hasValue(field);
+    };
+    const secondLook = async () => {
+      if (only || settings.comboboxes === false) return 0;
+      let read = 0;
+      for (const field of scan(profile).fields) {
+        if (leave.gone()) return 0;
+        if (!LIST_KINDS.has(field.kind) || field.desc.options || !unsettled(field)) continue;
+        if (state.peeked.has(field.el) || read >= MAX_REREAD) continue;
+        read++;
+        state.peeked.add(field.el);
+        const menu = await JTF.fill.peekOptions(field).catch(() => null);
+        if (menu) rememberOptions(field.el, menu.options, menu.multi);
+      }
+      const next = scan(profile);
+      let added = 0;
+      for (let i = 0; i < next.fields.length; i++) {
+        const field = next.fields[i];
+        const r = next.results[i];
+        if (!LIST_KINDS.has(field.kind) || !state.options.has(field.el) || !unsettled(field)) continue;
+        const was = state.outcomes.get(field.el);
+        was.again = true;
+        // Read the same way, with the same answer none of its options was: nothing new to try.
+        if (!r || !r.type || (was.state === 'nomatch' && was.type === r.type)) continue;
+        // Counted once already (as unknown, missing or unmatched): only what changes is put right.
+        const before = { detected: report.detected, failed: report.failed, unmatched: report.unmatched.length };
+        const status = await fillOne(field, r, { count: false });
+        const now = state.outcomes.get(field.el);
+        if (now) now.again = true;
+        if (was.state !== 'unknown') report.detected = before.detected;
+        else if (was.counted) report.unknown = Math.max(0, report.unknown - 1);
+        if (status !== 'filled') {
+          if (was.state === 'nomatch') {
+            report.failed = before.failed;
+            report.unmatched.length = before.unmatched;
+          }
+          continue;
+        }
+        added++;
+        const drop = (list, item) => list.includes(item) && list.splice(list.indexOf(item), 1);
+        if (was.state === 'nomatch') {
+          report.failed = Math.max(0, before.failed - 1);
+          drop(report.unmatched, was.label);
+        } else if (was.state === 'missing') {
+          drop(report.missing, was.label);
+          if (was.type !== r.type) drop(report.missingTypes, was.type);
+        }
+      }
+      return added;
+    };
+    const reread = await secondLook();
+    if (reread) report.reread = reread;
+    if (leave.gone()) return Object.assign(report, { reloading: leave.gone(), undoable: false });
+
     // Answers can reveal more questions: the ethnicity subgroup once the group is picked, "If yes,
     // please give details", the country once "Yes, I need sponsorship" is chosen. Fill fields that
-    // weren't on the page before, a couple of rounds at most.
+    // weren't on the page before, a couple of rounds at most. So are fields the page drew late (the next step of an
+    // application still arriving when it was read: Workday's header alone, then its questions).
     const seen = new Set(fields.map((f) => f.el));
-    for (let round = 0; round < 2 && (filledKeys.size || uploaded || waiting.length); round++) {
+    const late = () =>
+      JTF.dom.collect(document).some((f) => !seen.has(f.el) && f.kind !== 'file' && !JTF.fill.hasValue(f));
+    for (let round = 0; round < 2 && (filledKeys.size || uploaded || waiting.length || late()); round++) {
       await settle(1500, 300);
       const next = scan(profile);
       const fresh = next.fields
@@ -922,6 +1083,8 @@
         report.unmatched.splice(report.unmatched.indexOf(w.label), 1);
         added++;
       }
+      // The lists among them that their words didn't settle get their second look too.
+      if (fresh.length) added += await secondLook();
       report.revealed = (report.revealed || 0) + added;
       if (!added) break;
     }
@@ -1104,6 +1267,8 @@
   /* ----------------------------------------------------------- AI answers */
 
   const MAX_PENDING = 40;
+  // Closed lists opened to be read in one fill, for the rules' second look.
+  const MAX_REREAD = 40;
   // Questions kept for answers still to come: several reads' worth (Quick apply's second fill, the AI's second
   // round), the oldest let go first.
   const KEPT_PENDING = MAX_PENDING * 8;
@@ -1133,14 +1298,20 @@
       const prevType = prev && prev.r && prev.r.type;
       const on = JTF.decide.conditionOn(r, i);
       const before = fields[on] ? JTF.decide.beforeOf(fields[on].desc, JTF.fill.currentValue(fields[on])) : null;
-      const asked = JTF.decide.forAi(field.desc, r, profile, context, prevType, before, allow);
+      // What the rules' turn left it as, while that still holds: read the same way, and empty as they left it.
+      const o = state.outcomes.get(field.el);
+      const tried = o && o.type === ((r && r.type) || null) && !/^(kept|filled)$/.test(o.state) ? o.state : null;
+      const asked = JTF.decide.forAi(field.desc, r, profile, context, prevType, before, allow, tried);
       if (!asked) continue;
       const item = JTF.decide.aiItem(field.desc, asked.guess);
-      if (!field.desc.options && peek && (field.kind === 'combo' || field.kind === 'combobox')) {
+      // A closed list not read yet (the fill's second look reads those it leaves) is opened now.
+      if (!field.desc.options && peek && LIST_KINDS.has(field.kind) && !state.peeked.has(field.el)) {
+        state.peeked.add(field.el);
         const seen = await JTF.fill.peekOptions(field).catch(() => null);
         // A long list (countries, universities) is searched by typing the answer.
         if (seen && seen.options.length && seen.options.length <= 150) item.options = seen.options;
         if (seen && seen.multi) item.multiple = true;
+        if (seen) rememberOptions(field.el, seen.options, seen.multi);
       }
       const id = `${RUN}-${++state.asked}`;
       state.pending.set(id, { field, question: U.normalize(item.question) });
@@ -1165,6 +1336,57 @@
   }
 
   /**
+   * The rules' turn for fields no fill has looked at yet (they have no outcome): the questions an AI answer revealed
+   * ("Full degree title" once the degree type is chosen, "Please specify" after "Other"), before the AI is asked
+   * about them. The profile's answer goes in where it has one; uploads, passwords and cards wait for a fill, which
+   * has them. Only on a page a fill has been through: "Answer with AI" on its own fills in nothing from your profile.
+   */
+  async function rulesFirst(payload) {
+    if (!state.ruled) return;
+    const { profile } = payload;
+    const settings = payload.settings || {};
+    const history = [];
+    try {
+      const { fields, results, context } = scan(profile);
+      context.jobLocation = jobLocation(payload);
+      const extra = { secrets: null, consents: !!settings.consents };
+      for (let i = 0; i < fields.length; i++) {
+        const field = fields[i];
+        const r = results[i];
+        const def = r && r.type ? JTF.fields.DEFS[r.type] : null;
+        if (state.outcomes.has(field.el) || field.kind === 'file' || (def && (def.file || def.secret))) continue;
+        const note = (d, res) => {
+          const was = JTF.fill.hasValue(field) && !res ? 'kept' : JTF.decide.outcome(r, d, res);
+          state.outcomes.set(field.el, { state: was, type: (r && r.type) || null, label: labelFor(field, r) });
+          if (res && res.options) rememberOptions(field.el, res.options, res.multi);
+        };
+        if (!r || !r.type || JTF.fill.hasValue(field)) {
+          note(null, null);
+          continue;
+        }
+        const followed = r.followsField ? JTF.fill.currentValue(r.followsField) : null;
+        const d = JTF.decide.field(field.desc, r, profile, context, { ctx: extra, followed });
+        // A part of a number over several boxes, or one link of several, is a fill's to work out.
+        if (d.action !== 'fill' || r.segment || /^links\./.test(r.type)) {
+          if (d.action !== 'fill') note(d, null);
+          continue;
+        }
+        const started = Date.now();
+        const res = await JTF.fill.apply(field, d.value, {
+          overwrite: false,
+          comboboxes: settings.comboboxes !== false,
+          history,
+        });
+        traceStep(field, r, d.value, res, started, 'fill');
+        note(d, res);
+        if (res.status === 'filled' && settings.highlight !== false) JTF.fill.highlight(res.target || field.el);
+      }
+    } finally {
+      remember(history);
+    }
+  }
+
+  /**
    * The field an AI answer is for: the one its id was given to, while it is on the page and still asks that
    * question; else the field on the page now that asks it (a re-render made it anew).
    */
@@ -1175,7 +1397,10 @@
       const { el, kind, members } = kept.field;
       if (askedOf({ desc: JTF.dom.describe(el, kind, members) }) === want) return kept.field;
     }
-    return fresh().find((f) => askedOf(f) === want) || null;
+    // Made anew by a re-render: the one field asking it now. Two that ask the same words ("I have read and
+    // understood" under two notices) can't be told apart, and an answer never goes to the wrong one.
+    const same = fresh().filter((f) => askedOf(f) === want);
+    return same.length === 1 ? same[0] : null;
   }
 
   /** The value object JTF.fill.apply takes for an AI answer. */
@@ -1491,6 +1716,8 @@
       return { clicked: res.clicked || '', refused: res.refused || '' };
     }),
     pending: serial(async (payload) => {
+      // The questions an AI answer revealed are the rules' first (the AI's second round asks with `rules`).
+      if (payload.rules) await rulesFirst(payload);
       const { context } = scan(payload.profile);
       context.jobLocation = jobLocation(payload);
       return {
@@ -1523,11 +1750,16 @@
         return { url: JTF.snapshot.cleanUrl(location.href), error: String((err && err.message) || err) };
       }
     },
+    /**
+     * What the last fill's rules left this field as (decide.OUTCOMES: "nomatch", "missing", "left"…), or null when no
+     * fill has looked at it: for a bug report's snapshot.
+     */
+    outcome: (field) => (state.outcomes.has(field.el) ? state.outcomes.get(field.el).state : null),
     /** Does this field still hold the answer the AI put there (for the page map)? */
     aiFilled: (field) => state.aiFilled.has(field.el) && state.aiFilled.get(field.el) === JTF.fill.currentValue(field),
     /** Put back what every fill and AI answer changed since the last Undo, once the one under way has finished. */
-    undo: serial(() => {
-      const n = JTF.fill.undo(state.history);
+    undo: serial(async () => {
+      const n = await JTF.fill.undo(state.history);
       JTF.fill.clearHighlights();
       return { undone: n };
     }),
