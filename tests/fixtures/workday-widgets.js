@@ -5,6 +5,11 @@
 //   is closing opens it again; Escape, or a mousedown anywhere outside the menu (the button included), closes it. A
 //   row takes a click, or Enter or Space on the highlighted row; the button then shows the choice, and its value is
 //   the choice's ID, never its text. Letters typed on the closed button pick the first choice they start.
+// - Search prompts ("selectinput"), as measured on lbg.wd3.myworkdayjobs.com in November 2026: a search goes to the
+//   server on Enter and takes 0.4 to 2.2 s (`data-delay` on the field, 200 ms here unless set); meanwhile a popup at
+//   the end of <body> holds <div data-automation-id="responsiveMonikerPrompt" aria-busy="true"> and there is no list
+//   at all. A search with exactly one match is picked by the prompt itself, and no list is shown (not in a prompt
+//   that takes several). Escape does not close the results; a mousedown anywhere else does.
 // - Search prompts ("selectinput"): a search box, a chip for each pick, and a list of results whose rows only take a
 //   click that lands inside them: menuItem (role="option", aria-selected while highlighted, not when picked) >
 //   promptLeafNode (the click handler; data-automation-checked) > the radio or checkbox and the label (promptOption).
@@ -35,13 +40,15 @@ window.WD = (function () {
     .wd-year { display: inline-block; position: relative; width: 34px; height: 24px; cursor: pointer; border: 1px solid #888; }
     .wd-year [data-automation-id$="-display"] { position: absolute; z-index: 1; width: 100%; height: 24px; display: flex; align-items: center; justify-content: center; }
     .wd-year input { position: absolute; color: rgba(255, 255, 255, 0.01); left: 0; overflow: hidden; top: 0; transform: scale(0.01); width: 1px; z-index: -1000; }
+    .css-77hcv { display: none; }
   `;
   document.head.appendChild(css);
 
   // What is open over the page: each closes on Escape and on a mousedown outside what it counts as its own.
   const popups = new Set();
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' || e.key === 'Esc') for (const p of [...popups]) p.hide();
+    // A Select's menu closes on Escape; a prompt's results don't.
+    if (e.key === 'Escape' || e.key === 'Esc') for (const p of [...popups]) if (!p.staysOnEscape) p.hide();
   });
   document.addEventListener('mousedown', (e) => {
     for (const p of [...popups]) if (!p.owns(e.target)) p.hide();
@@ -271,7 +278,13 @@ window.WD = (function () {
     let list = null;
     let rows = [];
     let highlighted = -1;
-    const popup = { owns: (t) => container.contains(t) || (!!list && list.contains(t)), hide: () => hide() };
+    const popup = {
+      owns: (t) => container.contains(t) || (!!list && list.contains(t)),
+      hide: () => hide(),
+      staysOnEscape: true,
+    };
+    const delay = Number(field.dataset.delay) || 200;
+    let busy = null;
 
     function drawChips() {
       chipList.replaceChildren();
@@ -328,11 +341,28 @@ window.WD = (function () {
       hide();
     }
     async function results(query) {
-      await later(200); // the search goes to the server
+      // The search goes to the server: until it answers, a busy popup and no list.
+      if (busy) busy.remove();
+      busy = document.createElement('div');
+      busy.innerHTML =
+        '<div data-automation-id="responsiveMonikerPrompt" aria-busy="true" style="height: 200px; width: 280px"></div>';
+      place(busy, container);
+      field.dataset.searches = String(+(field.dataset.searches || 0) + 1);
+      await later(delay);
+      if (busy) busy.remove();
+      busy = null;
       const q = query.trim().toLowerCase();
       if (q.length < min || input.value.trim().toLowerCase() !== q) return;
       const hits = options.filter((o) => q.split(/\s+/).every((w) => o.toLowerCase().includes(w)));
       hide();
+      // Its only match is picked by the prompt itself, and nothing is listed.
+      if (hits.length === 1 && !multi) {
+        picked.clear();
+        picked.add(hits[0]);
+        drawChips();
+        input.value = '';
+        return;
+      }
       list = document.createElement('div');
       list.setAttribute('role', 'listbox');
       list.setAttribute('tabindex', '-1');

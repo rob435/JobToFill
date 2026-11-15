@@ -454,6 +454,8 @@
       options: options ? options.slice(0, 50) : null,
       optionCount: options ? options.length : null,
       hasValue,
+      // What the last fill's rules left it as ("filled", "nomatch", "missing", "left"…): never a value.
+      outcome: root.__jtf && root.__jtf.outcome ? root.__jtf.outcome(field) : null,
       required: isRequired(field),
       invalid: isInvalid(field),
       validity: validityOf(el),

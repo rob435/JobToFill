@@ -52,10 +52,20 @@
       .replace(/(^|[\s,(/])([AD]\*{1,2})[\s:]*$|[\s*:]+$/, (m, pre, grade) => (grade ? pre + grade : ''))
       .replace(/^\*+\s*/, '');
     if (s.length <= max) return s;
-    const sentences = s.split(/(?<=[.!?…])\s+(?=["“'(]?[A-Z])/);
+    // "(e.g. Masters, PhD)" ends no sentence.
+    const sentences = s.split(
+      /(?<=[.!?…])(?<!\b(?:[Ee]\.g|[Ii]\.e|[Ee]tc|vs|[Ii]ncl|[Aa]pprox|[Cc]f|Mr|Mrs|Ms|Dr|St)\.)\s+(?=["“'(]?[A-Z])/,
+    );
     // "Please note…" asks nothing.
     const please = (t) => /^please\b(?! (note|be aware|bear in mind|remember)\b)/i.test(t);
-    const ask = sentences.filter((t) => /\?$/.test(t)).pop() || sentences.filter(please).pop();
+    // Nor is what you are asked to agree to lost: "…or calling on 0345… I have read and understood".
+    const ack = (t) => /^I (have )?(read|reviewed|understood|understand|confirm|agree|accept|acknowledge)\b/.test(t);
+    const end = sentences[sentences.length - 1];
+    const ask =
+      (ack(end) && end) ||
+      sentences.filter((t) => /\?$/.test(t)).pop() ||
+      sentences.filter(ack).pop() ||
+      sentences.filter(please).pop();
     if (ask && ask !== sentences[0] && ask.length <= max / 2 && s.lastIndexOf(ask) + ask.length > max)
       return s.slice(0, max - ask.length - 2).trim() + '… ' + ask;
     return s.slice(0, max).trim() + '…';

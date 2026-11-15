@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <title>Corporate Banking &amp; Markets Internship</title>
+  <style>
+    body { font: 14px system-ui; max-width: 760px; margin: 24px auto; }
+    fieldset { border: 0; margin: 18px 0; padding: 0; }
+    legend { padding: 0; }
+    legend p { margin: 0; }
+    button[aria-haspopup] { min-width: 280px; text-align: left; padding: 8px; }
+    .requiredAsterisk { color: #b00; text-decoration: none; }
+    .footer { display: flex; gap: 12px; margin-top: 20px; }
+    #state { background: #f4f4f4; padding: 8px; font-size: 12px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <!--
+    Lloyds Banking Group's application questions on Workday (lbg.wd3.myworkdayjobs.com), as its questionnaire steps
+    drew them on 14 November 2026: the legends, the options each list offers and the questions that only come once
+    another is answered are the live form's own. Each question is a <fieldset> whose <legend> is rich text (paragraphs,
+    empty paragraphs between them, <br>, bold headings, notes in brackets, the required "*" after its last word), over
+    a Canvas Kit Select whose button names itself only after what it shows: aria-label=" Select One Required", then
+    " No Required" once chosen (the label's place before it is empty, as the label is rich text). The options exist
+    only while the menu is open. The question is often not the legend's last sentence, nor a sentence with a "?":
+    "Country of Study" under a note, "I have read and understood" after "What do we mean by disability?" and its
+    answer. "Full degree title" comes once the degree type is chosen; after the right to work, its basis (Yes) or
+    whether you need sponsoring (No).
+    ?step=2 is "Application Questions 2 of 3" (one question required), ?step=3 "Application Questions 3 of 3".
+  -->
+  <h2>Corporate Banking &amp; Markets Internship</h2>
+  <ol data-automation-id="progressBar">
+    <li data-automation-id="progressBarCompletedStep"><label>My Information</label></li>
+    <li data-automation-id="progressBarCompletedStep"><label>My Experience</label></li>
+    <li data-automation-id="progressBarActiveStep"><label id="step-1">Application Questions 1 of 3</label></li>
+    <li data-automation-id="progressBarInactiveStep"><label id="step-2">Application Questions 2 of 3</label></li>
+    <li data-automation-id="progressBarInactiveStep"><label id="step-3">Application Questions 3 of 3</label></li>
+    <li data-automation-id="progressBarInactiveStep"><label>Review</label></li>
+  </ol>
+  <div>
+    <h3 tabindex="-1" id="heading">Application Questions 1 of 3</h3>
+    <div><abbr>*</abbr> Indicates a required field</div>
+    <div data-automation-id="applyFlowPrimaryQuestionsPage">
+      <div><div data-automation-id="instructionalText"><p>Please answer the questions below</p></div></div>
+      <div role="group" aria-labelledby="primaryQuestionnaire-section"><div data-fkit-id="primaryQuestionnaire--null" id="questions"></div></div>
+    </div>
+  </div>
+  <div class="footer">
+    <button type="button" data-automation-id="pageFooterBackButton">Back</button>
+    <button type="button" data-automation-id="pageFooterNextButton" id="next">Save and Continue</button>
+  </div>
+  <pre id="state"></pre>
+
+  <script src="workday-widgets.js"></script>
+  <script>
+    const STAR = '<abbr title="required" class="requiredAsterisk">*</abbr>';
+    const YN = 'Yes|No';
+    const SUBJECTS = 'Agriculture / Environmental / Earth Sciences|Architecture / Built Environment|Arts / Humanities (e.g., History, Philosophy)|Biology / Biomedical / Life Sciences|Business / Management|Chemistry / Materials Science|Computer Science / Software Engineering|Cyber Security / Information Security|Data Science / AI / Analytics|Economics|Education|Engineering (incl. Mechanical, Electrical, Civil, Chemical)|Finance / Accounting|Health / Medicine / Nursing / Pharmacy|Hospitality / Tourism / Events|Human Resources / People|Information Technology / Systems|Languages / Linguistics / Area Studies|Law / Legal Studies|Marketing / Communications / Media|Mathematics / Statistics / Actuarial|Physics / Astronomy|Psychology|Social Sciences (e.g., Politics, Sociology, Geography)|Other';
+    // Each question: [name, the legend's rich text as Workday draws it (with {*} where its asterisk sits), options,
+    // and for one drawn only after an answer: [the question it follows, the answer that brings it]].
+    const STEP_1 = [
+      ['employed', `<p>Are you currently employed by Lloyds Banking Group?</p><br><p><b>Important: Information for Contingent Workers and Lloyds Banking Group employees:</b></p><p>• If you are a contingent worker (employed by a third party to work at Lloyds Banking Group), you must apply via the Contingent Worker careers site and answer ‘No’ to this question. Failure to do so will result in your application being automatically declined.</p><br><p>• If you are employed directly by Lloyds Banking Group (permanent or fixed-term), you must apply via the internal careers portal.  Failure to do so will result in your application being automatically declined.{*}</p>`, YN],
+      ['country', `<p><b>Your University<br>Please note: You may be asked to prove any of your qualifications at a later stage in the application process.<br><br>Country of Study</b>{*}</p>`, 'Within UK|Outside of the UK'],
+      ['degreeType', `<p>Undergraduate degree type{*}</p>`, 'Bachelor Degree|Integrated Master’s Degree|Degree Apprenticeships|Other (Please Specify)'],
+      ['subject', `<p>Undergraduate degree subject area{*}</p>`, SUBJECTS],
+      ['title', `<p><b>Full degree title</b>{*}</p>`, null, ['degreeType', /./]],
+      ['grade', `<p><b>Undergraduate subject grade</b>{*}</p>`, '1st|2.1|2.2|3rd|Distinction|Merit|Pass|Fail|Other'],
+      ['gradeStatus', `<p><b>Is your undergraduate grade Expected or Obtained?</b>{*}</p>`, 'Expected|Obtained'],
+      ['onTrack', `<p><b>Important – eligibility requirement</b></p><p>This programme has a minimum academic requirement.</p><p>If you answer “No” to the question below, your application will not be progressed and will be automatically declined, as you would not meet the essential eligibility criteria for this role.</p><br><p>Are you on track to achieve, or have already achieved, an undergraduate degree, or higher (e.g. Masters, PhD), or international equivalent?{*}</p>`, YN],
+      ['postgraduate', `<p>Post Graduate Qualification?{*}</p>`, 'Master’s Degree|Doctoral Degree (including PhD/DPhil)|Postgraduate Certificates and Diplomas|Other Level 7 & 8 Qualifications|Other (Please Specify)|No'],
+      ['applied', `<p><b>This is an essential eligibility requirement.</b></p><p>We allow only one application per campaign year across our Graduate and Undergraduate Schemes.</p><p>If you select “Yes”, your application will be automatically declined and will not be progressed further.</p><p>Only select “No” if you have not already applied for this campaign year.</p><br><p>Have you already applied to any of our Graduate or Undergraduate Schemes for this campaign year?{*}</p>`, YN],
+      ['programme', `<p>Have you previously taken part in a Lloyds Banking Group Next Gen Talent Programme within the last 12 months?<br>(This includes an Internship, Industrial Placement, Graduate Programme, or Apprenticeship.){*}</p>`, YN],
+      ['rightToWork', `<p>Lloyds Banking Group is only able to consider offering sponsorship to applicants that meet the Home Office requirements. Our ability to sponsor candidates is limited and therefore we aim to use our sponsorship certificates when recruiting in to skill shortage areas or our most specialist roles.</p><p><br>Do you have the legal right to work in the UK without requiring a visa or sponsorship?{*}</p>`, YN],
+      ['basis', `<p>Please indicate the basis on which you have the legal right to work in the UK{*}</p>`, 'British/Irish citizen|Indefinite leave to remain in the UK|Settled status/pre-settled status (EUSS)|Time limited visa|Other', ['rightToWork', /^Yes$/]],
+      ['sponsorship', `<p>Will you require sponsorship from Lloyds Banking Group to carry out this role?{*} </p>`, YN, ['rightToWork', /^No$/]],
+      ['passport', `<p><b>Will you hold a valid and in date passport or national identity card prior to June, when you will commence your employment?</b>{*}</p>`, YN],
+      ['dismissed', `<p><b>Have you ever been dismissed from a previous employer?</b>{*}</p>`, YN],
+      ['disciplinary', `<p><b>Have you been, or are you currently subject of, a formal disciplinary investigation?</b>{*}</p>`, YN],
+      ['bankruptcy', `<p><span>We need to know a little bit about your credit history. Do you have a non-discharged bankruptcy or an individual voluntary arrangement (in Scotland a trust deed){*}</span></p>`, YN],
+      ['ccj', `<p>We also need to know if you have any County Court Judgements (CCJs) or defaults totalling over £10k. &nbsp; If you're successful, as a regulated bank we'll investigate any adverse credit which may impact your application.{*}</p>`, YN],
+      ['ccjFour', `<p><b>Do you have four or more County Court Judgements  or judgment debts?</b>{*}</p>`, YN],
+      ['interests', `<p><b>Do you have any external/outside business interests or other roles which will continue after you start working for Lloyds Banking Group?</b>{*}</p>`, YN],
+      ['careerBreak', `<p style="text-align:left"><span>Are you re-joining LBG after arranging a career break?{*}</span></p>`, YN],
+      ['redundant', `<p><span><span>Have you been made redundant by Lloyds Banking Group within the past two years, including any subsidiary companies of Lloyds Banking Group.{*}</span></span></p>`, YN],
+      ['age', `<p>Lloyds Banking Group is committed to valuing diversity and creating an inclusive culture in which all of our colleagues are valued and respected. If you choose to share information around your<span style="display: inline;"> ethnicity/disability/sexuality</span> it will allow us to monitor our processes to ensure they are free from bias, enable us to carry out robust statistical analysis of our work force to ensure that a diverse set of colleagues are represented across all roles and levels and support us in developing group wide initiatives to support our aim to develop an inclusive culture.</p><p>If you do choose to share this information with us it will be stored securely on your HR Record, we will only use it for the above purposes and we will not share it with your line manager. If you change your mind, don’t worry, you can always ask us to add, amend or remove this data by emailing <a href="mailto:careers@example.com"><span style="display: inline;">careers@example.com</span></a></p><p></p><p>What is your age (in years) as at today?{*}</p>`, 'Under 21 years|21 - 24 years|25 - 28 years|29 years and above|Do not wish to disclose'],
+      ['occupation', `<p><span>What was the occupation of your main household earner when you were aged about 14?{*}</span></p>`, 'Modern professional and traditional professional occupations such as teacher, nurse, physiotherapist, social worker, musician, police officer (sergeant or above), software designer, accountant, solicitor, medical practitioner, scientist, civil engineer or mechanical engineer|Senior, middle or junior managers or administrators such as finance manager, chief executive, large business owner, office manager, retail manager, bank manager, restaurant manager, warehouse manager|Clerical and intermediate occupations such as secretary, personal assistant, call centre agent, clerical worker, nursery nurse|Technical and craft occupations such as motor mechanic, plumber, printer, electrician, gardener, train driver|Routine, semi-routine manual and service occupations such as postal worker, machine operative, security guard, caretaker, farm worker, catering assistant, sales assistant, HGV driver, cleaner, porter, packer, labourer, waiter or waitress, bar staff|Long-term unemployed (claimed Jobseeker’s Allowance or earlier unemployment benefit for more than a year)|Small business owners who employed fewer than 20 people such as corner shop owners, small plumbing companies, retail shop owner, single restaurant or cafe owner, taxi owner, garage owner|Other such as retired, this question does not apply to me, I don’t know|Do not wish to disclose'],
+    ];
+    const CONTACT = 'If you wish to speak to us prior to submitting your application please contact us by emailing<span> talent@example.com</span> or calling on 0345 000 0000.';
+    const STEP_2 = [
+      ['secondaryEmail', `<p>Secondary email address<br>It’s important we are able to contact you throughout the application process so please include a secondary email address (personal email address and not an academic email address.) if you have one.</p>`, null],
+      ['secondaryPhone', `<p><b>It’s important we are able to contact you throughout the application process so please include a secondary Phone Number if you have one.</b></p>`, null],
+      ['understoodAdjustments', `<p>Reasonable adjustments during recruitment process</p><p></p><p>We recognise that everyone is different and at Lloyds Banking Group we want to ensure that every candidate feels comfortable and is given the opportunity to perform at their best. If you are a person with a disability, or if you have a condition that you believe may affect your performance during the selection process, we would be happy to make adjustments or accommodations for you to enable you to complete the process on an equal basis. </p><p></p><p>Further detail on our assessments are provided below with the opportunity for you to inform us of any adjustments you may require. In addition, the Preparation Hub will enable you to gain an understanding of what to expect from the selection process, the potential impact of any disability and an understanding of what adjustments, if any, you feel would be needed. You can access the Preparation Hub from our Graduate website; a link will also be included within the email you will receive inviting you to complete your assessment.</p><p></p><p>${CONTACT}</p><p></p><p>I have read and understood</p>`, YN],
+      ['adjustOnline', `<p>You will be asked to complete our Online Assessment. During the assessment, you will be presented with a range of assessment material which includes audio content, additional resources ( articles, mock emails) and different question types. Some of the questions will require you to rank order a selection of responses, pick a response, demonstrate your preferences, or analyse and interpret the information and data. Any supporting charts and graphs are data driven, enabling you to interact with them and display values. All audio content includes closed captions and allows users to pause. Our question text is displayed at a minimum size of 14px and you are able to zoom in/out of the content on the screen. The assessment items also have keyboard navigation available. You are able to take breaks during the assessment however, the assessment does include some time-limited and time-recorded questions. This may have an impact on the ability to complete the assessment in a fair manner and you may require additional time or adjustments to complete these questions within the Assessment. </p><p></p><p>If you have a disability, long term health or neurodiverse condition you may require reasonable adjustments to be made in order to take this assessment. </p><p></p><p>We advise that if you are unsure whether you require adjustments, please do reach out to have a discussion before taking the tests as unfortunately they cannot be repeated.</p><p></p><p>Do you require an industry standard adjustment of 25%?<br> </p><p>(Please note if you select yes this will trigger the adjustment to be applied, we will contact you to validate this is correct)</p><p></p><p>${CONTACT}</p>`, YN],
+      ['adjustInsight', `<p><br>If you are successful at the Online Assessment stage, you will be invited to complete the Job Insight Assessment. This stage will provide you with an insight into the role you are applying to, and enable you to experience some of the activities you may be required to undertake if successful in joining Lloyds Banking Group. You will be presented with multiple scenarios with several questions exploring how you would respond, as well as data for you to analyse and interpret. The Job Insight assessment includes questions where candidates will be required to record a video response, written response or indicate your preferences. These questions will be time-limited or time-recorded. This may have an impact on the ability to complete the assessment in a fair manner and you may require additional time or adjustments to complete these questions within the Job Insight Assessment.</p><p></p><p>For the Job Insight Assessment do you require an industry standard adjustment of 25%?</p><p></p><p>(Please note if you select yes this will trigger the adjustment to be applied, we will contact you to validate this is correct)</p>`, YN],
+      ['understoodHub', `<p>Please, have a look at the Preparation Hub which can be found on our Graduate website to enable you to better understand what to expect from our assessments, the type of questions that will be covered and what adjustments, if any, you feel would be needed. If you wish to discuss any further adjustments or accommodations with us, please contact us by emailing<span> talent@example.com</span> or calling on 0345 000 0000. </p><p><br>If there is anything you wish to share with us, please do not start an assessment until you have spoken to the team regarding your requirements.</p><p><br>I have read and understood</p>`, YN],
+      ['neurodiversity', `<p>At Lloyds Banking Group we are committed to the employment and career development of people with neuro-diverse conditions.</p><p></p><p>Neurodiversity covers a whole range of conditions but is not limited to Autism, Asperger’s Syndrome, ADHD, Dyslexia ,Dyscalculia, Dyspraxia.</p><p></p><p>If you have not selected any of the adjustments above or if none of the adjustments shown are relevant we would welcome a further discussion with you regarding the assessment process and what adjustments you feel would be appropriate. Please select yes if that is the case <span>and we will get in touch. Please do not complete the first stage assessment until we have spoken. </span></p><p></p><p>There is no obligation to disclose this in order to request adjustments for the recruitment process.{*}</p>`, YN],
+      ['understoodDcs', `<p>Disability Confident Scheme (DCS) - Lloyds Banking Group is committed to building an inclusive and diverse workforce, which reflects our customer base and allows us to benefit from the widest pool of talent. If you have a disability, long-term health or neurodiverse condition you are eligible to apply via our Disability Confident Scheme (DCS).</p><p></p><p>The Disability Confident Scheme (DCS) allows eligible candidates who meet the minimum application criteria, to progress through the assessment stages as long as they meet or exceed 90% of the standard progression benchmark for the scheme applied for.</p><p></p><p>If you are considering making an application under the Disability Confident Scheme (DCS), and have any questions, please contact the team at<span> dcs@example.com</span> or by calling 0345 000 0000. As part of our Disability Confident Scheme (DCS), should you tick the box to declare you are eligible, we may require further information in due course.</p><p></p><p>What do we mean by disability?</p><p>The Equality Act 2010 describes people with disabilities, long term health or neuro-diverse conditions as someone who has a physical or mental impairment which has a substantial and adverse long-term effect on his or her ability to carry out normal day-to-day activities.</p><p></p><p>I have read and understood</p>`, YN],
+      ['dcs', `<p>I consider myself to have a disability as defined above and would like to apply under the Disability Confident Scheme (DCS) in the event that my application meets the minimum criteria for the role.</p>`, YN],
+      ['happy', `<p><b>Next Steps<br>Thank you for completing your application details, you will need to click on submit before completing the remaining part of the process.<br><br>The next step is the Lloyds Banking Group Online Assessment.<br><br>To prepare for the Online Assessment, think about the things you enjoy doing, the things you do well, and how they’ll be beneficial to the role you’re applying for. You’ll also find it useful to learn more about our company by looking at our Group website -<span> https://example.com</span><br><br>By submitting this application form, you declare that the information in this form is to the best of your knowledge true and correct. Please check that any emails in relation to your application are not diverted to your junk mail box. Your email account may have a setting which deletes your junk mail automatically (e.g. in Hotmail: Options &gt; Filters). If this is the case, we suggest that you turn this off temporarily before you register. <br><br>Please note that you MUST complete the Assessments within the timescales provided. <br><br>Are you happy to submit your application?</b></p>`, YN],
+    ];
+    const STEP_3 = [
+      ['penultimate', `<p><b>Important – Eligibility Requirement</b></p><p>This programme is only open to students in their <b>penultimate year of study</b>. Please ensure you meet this requirement before answering.</p><br><p>Are you currently in your penultimate year of study?</p><p>If you answer <b>"No"</b>, your application will be declined and you will not be considered for this opportunity.{*}<br></p>`, YN],
+    ];
+
+    const step = Number(new URLSearchParams(location.search).get('step')) || 1;
+    const questions = step === 3 ? STEP_3 : step === 2 ? STEP_2 : STEP_1;
+    if (step > 1) {
+      document.getElementById('heading').textContent = `Application Questions ${step} of 3`;
+      document.getElementById('step-1').parentElement.dataset.automationId = 'progressBarCompletedStep';
+      document.getElementById('step-2').parentElement.dataset.automationId =
+        step === 2 ? 'progressBarActiveStep' : 'progressBarCompletedStep';
+      if (step === 3) document.getElementById('step-3').parentElement.dataset.automationId = 'progressBarActiveStep';
+    }
+    const state = { chosen: {}, opened: {}, continued: 0 };
+    const show = () => {
+      for (const b of document.querySelectorAll('#questions button')) state.opened[b.dataset.q] = +(b.dataset.opened || 0);
+      document.getElementById('state').textContent = JSON.stringify(state);
+    };
+    const list = document.getElementById('questions');
+    // Every question's field is made once; the page holds those whose condition is met, in the form's order.
+    const fields = questions.map(([name, legend, options, when], i) => {
+      const required = legend.includes('{*}');
+      const id = `bfdfd382915910221dd7${String(i).padStart(4, '0')}0003`;
+      const field = document.createElement('div');
+      field.dataset.automationId = `formField-${id}`;
+      field.dataset.fkitId = `primaryQuestionnaire--${id}`;
+      const control = options
+        ? `<div style="width: 100%; max-width: 344px; min-width: 280px;"><div><button aria-haspopup="listbox" type="button" value="" aria-label=" Select One${required ? ' Required' : ''}" name="${id}" id="primaryQuestionnaire--${id}" data-q="${name}">Select One</button><span class="menu-icon"></span></div></div>`
+        : `<div><textarea id="primaryQuestionnaire--${id}" aria-required="${required}" data-q="${name}"></textarea></div>`;
+      field.innerHTML = `<fieldset><legend><div id="${options ? 'rich-label' + (661 + i) : 'label-' + id}"><div data-automation-id="richText">${legend.replace('{*}', STAR)}</div></div></legend><div>${control}<div></div></div></fieldset>`;
+      const btn = field.querySelector('button');
+      if (!btn) {
+        field.querySelector('textarea').addEventListener('input', (e) => {
+          state.chosen[name] = e.target.value;
+          show();
+        });
+      } else {
+        btn.dataset.options = options;
+        // WD.select reads whether the list is required from the field's asterisk, so the field is in the page first.
+        list.appendChild(field);
+        WD.select(btn, (label) => {
+          // The button names itself after its choice: " No Required".
+          btn.setAttribute('aria-label', ` ${label}${required ? ' Required' : ''}`);
+          if (label === 'Select One') delete state.chosen[name];
+          else state.chosen[name] = label;
+          sync();
+          show();
+        });
+        btn.addEventListener('click', () => setTimeout(show, 0));
+        field.remove();
+      }
+      return { name, field, when };
+    });
+    function sync() {
+      let before = null;
+      for (const { name, field, when } of fields) {
+        const on = !when || when[1].test(state.chosen[when[0]] || '');
+        if (on && !field.isConnected) list.insertBefore(field, before ? before.nextSibling : list.firstChild);
+        if (!on && field.isConnected) {
+          field.remove();
+          delete state.chosen[name];
+        }
+        if (on) before = field;
+      }
+    }
+    sync();
+    document.getElementById('next').addEventListener('click', () => {
+      state.continued++;
+      show();
+    });
+    show();
+  </script>
+</body>
+</html>

@@ -1782,3 +1782,235 @@ test('every rule and autocomplete token names a type some part defines', () => {
   for (const [type, def] of Object.entries(fields.DEFS))
     assert.ok(def.label && (typeof def.get === 'function' || def.file || def.consent), type);
 });
+
+// Lloyds Banking Group's Workday questionnaire (lbg.wd3.myworkdayjobs.com, November 2026): each question a rich-text
+// legend, read line by line.
+test('asks: the line of a rich-text question that asks, and the rest', () => {
+  const CONTACT =
+    'If you wish to speak to us prior to submitting your application please contact us by emailing talent@example.com or calling on 0345 000 0000.';
+  const cases = [
+    // A heading, a note, then the label.
+    [
+      [
+        'Your University',
+        'Please note: You may be asked to prove any of your qualifications at a later stage in the application process.',
+        'Country of Study',
+      ],
+      'Country of Study',
+    ],
+    // The question first, then who must answer what.
+    [
+      [
+        'Are you currently employed by Lloyds Banking Group?',
+        'Important: Information for Contingent Workers and Lloyds Banking Group employees:',
+        '• If you are a contingent worker (employed by a third party to work at Lloyds Banking Group), you must apply via the Contingent Worker careers site and answer ‘No’ to this question. Failure to do so will result in your application being automatically declined.',
+      ],
+      'Are you currently employed by Lloyds Banking Group?',
+    ],
+    // What a "No" costs, then the question.
+    [
+      [
+        'Important – eligibility requirement',
+        'This programme has a minimum academic requirement.',
+        'If you answer “No” to the question below, your application will not be progressed and will be automatically declined, as you would not meet the essential eligibility criteria for this role.',
+        'Are you on track to achieve, or have already achieved, an undergraduate degree, or higher (e.g. Masters, PhD), or international equivalent?',
+      ],
+      'Are you on track to achieve, or have already achieved, an undergraduate degree, or higher (e.g. Masters, PhD), or international equivalent?',
+    ],
+    // A note in brackets after it.
+    [
+      [
+        'Have you previously taken part in a Lloyds Banking Group Next Gen Talent Programme within the last 12 months?',
+        '(This includes an Internship, Industrial Placement, Graduate Programme, or Apprenticeship.)',
+      ],
+      'Have you previously taken part in a Lloyds Banking Group Next Gen Talent Programme within the last 12 months?',
+    ],
+    // The question in the middle: a note and who to contact after it.
+    [
+      [
+        'You will be asked to complete our Online Assessment. This may have an impact on the ability to complete the assessment in a fair manner and you may require additional time or adjustments.',
+        'If you have a disability, long term health or neurodiverse condition you may require reasonable adjustments to be made in order to take this assessment.',
+        'We advise that if you are unsure whether you require adjustments, please do reach out to have a discussion before taking the tests as unfortunately they cannot be repeated.',
+        'Do you require an industry standard adjustment of 25%?',
+        '(Please note if you select yes this will trigger the adjustment to be applied, we will contact you to validate this is correct)',
+        CONTACT,
+      ],
+      'Do you require an industry standard adjustment of 25%?',
+    ],
+    // No question at all: the statement to agree to, under four paragraphs.
+    [
+      [
+        'Reasonable adjustments during recruitment process',
+        'We recognise that everyone is different and at Lloyds Banking Group we want to ensure that every candidate feels comfortable. If you are a person with a disability, we would be happy to make adjustments or accommodations for you.',
+        CONTACT,
+        'I have read and understood',
+      ],
+      'I have read and understood',
+    ],
+    // A follow-up on the answer, after the question on its line.
+    [
+      ['Background checks', 'Have you ever been convicted? If yes, please give details.'],
+      'Have you ever been convicted? If yes, please give details.',
+    ],
+  ];
+  for (const [lines, question] of cases) {
+    const got = matcher.asks(lines);
+    assert.equal(got && got.question, question, lines[0]);
+    assert.equal(got.help, lines.filter((t) => t !== question).join(' '), 'the rest is kept, in order');
+  }
+  // A question that heads its own answer, then the statement to agree to: the statement is the ask (the live form's
+  // Disability Confident Scheme paragraphs).
+  const dcs = matcher.asks([
+    'Disability Confident Scheme (DCS) - Lloyds Banking Group is committed to building an inclusive and diverse workforce.',
+    'If you are considering making an application under the Disability Confident Scheme (DCS), and have any questions, please contact the team at dcs@example.com or by calling 0345 000 0000.',
+    'What do we mean by disability?',
+    'The Equality Act 2010 describes people with disabilities, long term health or neuro-diverse conditions as someone who has a physical or mental impairment.',
+    'I have read and understood',
+  ]);
+  assert.equal(dcs.question, 'I have read and understood');
+  // What a "No" costs, after the question (the live "penultimate year" step).
+  const year = matcher.asks([
+    'Important – Eligibility Requirement',
+    'This programme is only open to students in their penultimate year of study. Please ensure you meet this requirement before answering.',
+    'Are you currently in your penultimate year of study?',
+    'If you answer "No", your application will be declined and you will not be considered for this opportunity.',
+  ]);
+  assert.equal(year.question, 'Are you currently in your penultimate year of study?');
+  // One line, or prose with nothing that asks: the whole text stays the question.
+  assert.equal(matcher.asks(['Country of Study']), null);
+  assert.equal(matcher.asks(['We value integrity.', 'Our people are our strength.']), null);
+});
+
+test('Lloyds’ questions, each by the line that asks', () => {
+  const YN = opts('Yes', 'No');
+  const combo = (question, options, preamble) =>
+    typeOf(desc({ question, preamble: preamble || '' }, { kind: 'combo', options: options || null }));
+  // With its options known (a list read once), and before (a Workday Select is closed until opened).
+  for (const o of [YN, null]) {
+    assert.equal(combo('Country of Study', null), 'edu.country');
+    assert.equal(
+      combo('Is your undergraduate grade Expected or Obtained?', o && opts('Expected', 'Obtained')),
+      'edu.completed',
+    );
+    assert.equal(
+      combo(
+        'Are you on track to achieve, or have already achieved, an undergraduate degree, or higher (e.g. Masters, PhD), or international equivalent?',
+        o,
+      ),
+      'edu.attended',
+    );
+    assert.equal(combo('Post Graduate Qualification?', o), 'edu.attended');
+    assert.equal(
+      combo('Do you have the legal right to work in the UK without requiring a visa or sponsorship?', o),
+      'job.authorized',
+    );
+    assert.equal(
+      combo('Will you require sponsorship from Lloyds Banking Group to carry out this role?', o),
+      'job.sponsorship',
+    );
+    assert.equal(combo('Are you currently employed by Lloyds Banking Group?', o), 'compliance.previouslyEmployed');
+    assert.equal(combo('Are you re-joining LBG after arranging a career break?', o), 'compliance.previouslyEmployed');
+    assert.equal(
+      combo(
+        'Have you been made redundant by Lloyds Banking Group within the past two years, including any subsidiary companies of Lloyds Banking Group.',
+        o,
+      ),
+      'compliance.previouslyEmployed',
+    );
+    assert.equal(
+      combo(
+        'Have you previously taken part in a Lloyds Banking Group Next Gen Talent Programme within the last 12 months?',
+        o,
+      ),
+      'compliance.previouslyEmployed',
+    );
+    assert.equal(combo('Do you require an industry standard adjustment of 25%?', o), 'job.adjustments');
+    assert.equal(
+      combo('For the Job Insight Assessment do you require an industry standard adjustment of 25%?', o),
+      'job.adjustments',
+    );
+    // "County Court Judgements" is no county, a credit question nothing in a profile answers.
+    assert.equal(combo('Do you have four or more County Court Judgements or judgment debts?', o), null);
+    // Under four paragraphs on adjustments, it is still the acknowledgement: the paragraphs classify nothing.
+    assert.equal(
+      combo(
+        'I have read and understood',
+        o,
+        'Reasonable adjustments during recruitment process We recognise that everyone is different… If you are a person with a disability, we would be happy to make adjustments or accommodations for you.',
+      ),
+      'consent',
+    );
+  }
+  // "(expected or achieved)" after a label says either will do: it still asks for the class (Charles River).
+  assert.equal(
+    typeOf(
+      desc('Bachelor’s Degree Class (expected or achieved)', {
+        kind: 'select',
+        options: opts('4.0', '3.9', '2.1 Upper Second Class Honours'),
+      }),
+    ),
+    'edu.classification',
+  );
+  // A grade list is your class once its options are read, a grade before.
+  assert.equal(combo('Undergraduate subject grade', opts('1st', '2:1', '2:2', '3rd')), 'edu.classification');
+  assert.equal(combo('Undergraduate subject grade', null), 'edu.gpa');
+  assert.equal(combo('Undergraduate degree subject area', null), 'edu.field');
+  // The live list names the qualifications and ends in a "No" of its own: still whether you have one. A list of
+  // qualifications alone is no yes or no.
+  const POSTGRAD = opts(
+    'Master’s Degree',
+    'Doctoral Degree (including PhD/DPhil)',
+    'Postgraduate Certificates and Diplomas',
+    'Other Level 7 & 8 Qualifications',
+    'Other (Please Specify)',
+    'No',
+  );
+  assert.equal(combo('Post Graduate Qualification?', POSTGRAD), 'edu.attended');
+  assert.notEqual(combo('Post Graduate Qualification?', opts('MSc', 'PhD')), 'edu.attended');
+  // The other steps: a declaration that sends nothing, and the year you are in.
+  assert.equal(
+    combo(
+      'Are you happy to submit your application?',
+      opts('Yes', 'No'),
+      'Next Steps… By submitting this application form, you declare that the information in this form is to the best of your knowledge true and correct.',
+    ),
+    'consent',
+  );
+  assert.equal(combo('Are you currently in your penultimate year of study?', opts('Yes', 'No')), 'edu.year');
+  assert.equal(
+    combo(
+      'Please indicate the basis on which you have the legal right to work in the UK',
+      opts('British/Irish citizen', 'Indefinite leave to remain in the UK', 'Time limited visa', 'Other'),
+    ),
+    'job.authorized',
+  );
+  // A redundancy or a programme anywhere else says nothing about this employer.
+  assert.equal(combo('Have you ever been made redundant by a previous employer?', YN), null);
+  assert.notEqual(combo('Are you currently employed by a recruitment agency?', YN), 'compliance.previouslyEmployed');
+});
+
+test('a long question flattened into one label still asks its last question, past the cut', () => {
+  // The same legends where nothing splits them into lines (one <label>, a legend of plain text).
+  const sponsorship =
+    'Lloyds Banking Group is only able to consider offering sponsorship to applicants that meet the Home Office requirements. Our ability to sponsor candidates is limited and therefore we aim to use our sponsorship certificates when recruiting in to skill shortage areas or our most specialist roles. Do you have the legal right to work in the UK without requiring a visa or sponsorship?';
+  assert.ok(sponsorship.length > 300);
+  assert.equal(typeOf(desc({ question: sponsorship }, { kind: 'combo' })), 'job.authorized');
+  assert.equal(
+    typeOf(desc({ question: sponsorship }, { kind: 'radio', options: opts('Yes', 'No') })),
+    'job.authorized',
+  );
+  // "(e.g. Masters, PhD)" ends no sentence.
+  const onTrack =
+    'Important – eligibility requirement. This programme has a minimum academic requirement. If you answer “No” to the question below, your application will not be progressed. Are you on track to achieve, or have already achieved, an undergraduate degree, or higher (e.g. Masters, PhD), or international equivalent?';
+  assert.equal(typeOf(desc({ question: onTrack }, { kind: 'radio', options: opts('Yes', 'No') })), 'edu.attended');
+  // Cut short, a label keeps the statement it asks you to agree to.
+  const understood =
+    'Reasonable adjustments during recruitment process. We recognise that everyone is different and at Lloyds Banking Group we want to ensure that every candidate feels comfortable and is given the opportunity to perform at their best. If you are a person with a disability, or if you have a condition that you believe may affect your performance during the selection process, we would be happy to make adjustments. I have read and understood';
+  assert.match(util.cleanLabel(understood, 300), /… I have read and understood$/);
+  // The sponsorship question asked the other way round is the right to work's.
+  for (const q of [
+    'Please confirm you do not require visa sponsorship to work in the UK',
+    'Do you NOT require sponsorship to work in the UK?',
+  ])
+    assert.equal(typeOf(desc(q, { kind: 'select', options: opts('Yes', 'No') })), 'job.authorized', q);
+});

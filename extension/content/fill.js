@@ -502,7 +502,9 @@
 
   /**
    * The selected values ("chips") of a react-select style widget, looking only inside its own
-   * container. Hidden helper inputs (react-select's required-field shim) don't count as neighbours.
+   * container. Hidden helper inputs don't count as neighbours: react-select's required-field shim, nor a box a
+   * widget keeps its value in out of sight by its class alone (Workday's form kit puts `<input type="text"
+   * class="css-77hcv">`, display: none, with no aria-hidden and no tabindex, beside its Selects).
    */
   function chipsOf(el) {
     const selector = isMulti(el) ? `${CHIP}, ${TAG}` : CHIP;
@@ -510,7 +512,14 @@
     for (let i = 0; a && i < 5; i++, a = a.parentElement) {
       const others = Array.from(
         a.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]'),
-      ).filter((c) => c !== el && !c.contains(el) && c.getAttribute('aria-hidden') !== 'true' && c.tabIndex >= 0);
+      ).filter(
+        (c) =>
+          c !== el &&
+          !c.contains(el) &&
+          c.getAttribute('aria-hidden') !== 'true' &&
+          c.tabIndex >= 0 &&
+          dom().isVisible(c, { ignoreOpacity: true }),
+      );
       if (others.length) return [];
       const all = Array.from(a.querySelectorAll(selector));
       if (all.length) return all.filter((c) => !all.some((o) => o !== c && o.contains(c)));
@@ -900,6 +909,12 @@
 
   /** Is the dropdown still fetching results ("Loading…", aria-busy)? */
   function isLoading(el) {
+    // A Workday prompt's search goes to the server (0.7 to 2.2 s for a skill on Lloyds' form): until the results
+    // come there is no list at all, only a popup at the end of <body> that says it is busy.
+    if (searchesOnEnter(el)) {
+      const busy = el.ownerDocument.querySelector('[data-automation-id="responsiveMonikerPrompt"][aria-busy="true"]');
+      if (busy && dom().isVisible(busy)) return true;
+    }
     const lb = listboxFor(el);
     const menu = lb ? lb.parentElement || lb : null;
     if (lb && lb.getAttribute('aria-busy') === 'true') return true;
@@ -914,14 +929,20 @@
       .map((o) => o.textContent)
       .join('|');
 
-  /** Wait until the options stop changing (async searches return in stages), up to `timeout` ms. */
-  async function waitForOptions(el, timeout, previous, staleList) {
+  /**
+   * Wait until the options stop changing (async searches return in stages), up to `timeout` ms, and as long again
+   * while the widget says it is still searching. `done()`: the widget settled the search some other way (Workday
+   * picks a search's only match itself, and lists nothing): no more waiting.
+   */
+  async function waitForOptions(el, timeout, previous, staleList, done) {
     const start = Date.now();
     let lastKey = null;
     let stable = 0;
     let empty = 0;
     let opts = [];
-    while (Date.now() - start < timeout) {
+    const waited = () => Date.now() - start;
+    while (waited() < timeout || (waited() < timeout * 2 && isLoading(el))) {
+      if (done && done()) return [];
       opts = currentOptions(el);
       // An empty menu that has stopped loading ("No options") won't fill up later. A Workday prompt's search
       // answers with a list of its own ("No Items."): that one is final at once.
@@ -944,6 +965,14 @@
       text: dom().textOf(o) || o.getAttribute('aria-label') || '',
       value: o.getAttribute('data-value') || o.getAttribute('value') || '',
     }));
+  }
+
+  /** The answers a list of options offers, as text: no prompt ("Select One"), no "No options", each once. */
+  function offeredTexts(options) {
+    const texts = options
+      .map((o) => JTF.util.cleanLabel(o.text, 200))
+      .filter((t) => t && !M().isPlaceholder(JTF.util.normalize(t)) && !/^no (options|results)/i.test(t));
+    return [...new Set(texts)];
   }
 
   /** Type like a person: key events around the input event, so widgets that open on keyup notice. */
@@ -1257,8 +1286,12 @@
     // after a pick, aria-expanded="true" all the while): clicking its button before that would open it again, over the
     // next field, and an open Radix Select leaves the rest of the page aria-hidden and unclickable.
     for (let waited = 0; waited < 400 && listboxFor(el); waited += 30) await sleep(30);
-    // A value list hides its box while open and closes on a click anywhere else.
-    if (dom().valueList(el) && listboxFor(el)) pointerClick(el.ownerDocument.body);
+    // A value list hides its box while open and closes on a click anywhere else. So do a Workday prompt's results,
+    // which Escape leaves where they are (its Skills list stays open after every pick, rows of ticks and all).
+    if ((dom().valueList(el) || searchesOnEnter(el)) && listboxFor(el)) {
+      pointerClick(el.ownerDocument.body);
+      for (let waited = 0; waited < 400 && listboxFor(el); waited += 30) await sleep(30);
+    }
     // A button toggles its menu: clicked again, it closes.
     if (!(await menuGone(el)) && !typed) pointerClick(el);
   }
@@ -1348,6 +1381,8 @@
     let opts = straight ? [] : await openMenu(el, searchable);
     // The menu offered options when it opened, though a search may find none later.
     const offered = opts.length > 0;
+    // What it listed then, whole: a list that isn't typed into, with every row in the page (see `listed` below).
+    const whole = !searchable && !virtualScroller(listboxFor(el), opts, el) ? offeredTexts(describeOptions(opts)) : [];
     const multi = isMulti(el);
     // A dropdown button whose menu has a search box of its own (select2, Choices): typing goes there.
     const box = searchable ? el : menuSearchBox(el);
@@ -1384,9 +1419,18 @@
         // after each pick, until the next search replaces it).
         const before = optionsKey(opts.length ? opts : currentOptions(el));
         const shown = searchesOnEnter(el) ? listboxFor(el) : undefined;
+        // Workday picks a search's only match itself ("United Kingdom" among its phone codes: the chip is there
+        // 0.4 s later and no list is ever shown): a chip that wasn't there before the search, and is your answer.
+        const held = chipsOf(el).map((c) => dom().textOf(c));
+        const itself = () =>
+          chipsOf(el)
+            .map((c) => dom().textOf(c))
+            .find((t) => t && !held.includes(t) && M().matchOption([{ text: t, value: '' }], yours) === 0);
         typeQuery(box, query);
         if (searchesOnEnter(el)) key(el, 'Enter');
-        opts = await waitForOptions(el, SEARCH_WAIT, before, shown);
+        opts = await waitForOptions(el, SEARCH_WAIT, before, shown, searchesOnEnter(el) ? itself : null);
+        const took = searchesOnEnter(el) ? itself() : null;
+        if (took) return { chosen: took, opts: [], multi, offered: true, listed: [] };
         if (opts.length) sawAny = true;
         idx = pick(yours);
         if (idx >= 0) break;
@@ -1401,7 +1445,8 @@
       idx = pick();
       if (idx >= 0) break;
     }
-    if (idx < 0) return { chosen: null, opts, multi, offered };
+    // `listed`: the options read when none was yours, for whoever answers the question next (see fillCombo).
+    if (idx < 0) return { chosen: null, opts, multi, offered, listed: whole };
     let chosen = await choose(el, opts[idx]);
     // A two-level list (Workday's "Social Media" > "LinkedIn"): the category opened its own options; pick from those.
     for (let depth = 0; chosen && chosen.drilled && depth < 2; depth++) {
@@ -1415,6 +1460,11 @@
     return { chosen: chosen && chosen.drilled ? null : chosen, opts, multi: multi || kept || isMulti(el), offered };
   }
 
+  /**
+   * Pick `v` in a custom dropdown. { status: 'filled', value } or { status: 'nomatch', options }: the options the
+   * list offered when none of them was yours (a button's menu, read whole as it opened; none for a box that searches
+   * as you type), so the question can be looked at again with them and never needs opening a second time to ask.
+   */
   async function fillCombo(field, v) {
     const el = field.el;
     const isInput = el.localName === 'input';
@@ -1422,12 +1472,14 @@
     const items = v.kind === 'list' ? v.items.map((item) => JTF.fields.val(item)) : null;
     const chosen = [];
     let sawOptions = false;
+    let listed = [];
     let multi = isMulti(el);
     const queue = multi && items ? items.slice() : [v];
 
     while (queue.length) {
       const value = queue.shift();
       const r = await pickOne(el, value, searchable, chosen);
+      if (r.listed && r.listed.length) listed = r.listed;
       if (r.opts.length || r.offered || listboxFor(el)) sawOptions = true;
       if (r.chosen) chosen.push(r.chosen);
       else if (isInput && !buttonInput(el)) {
@@ -1461,7 +1513,9 @@
 
     await closeMenu(el);
     if (isInput) el.blur();
-    return chosen.length ? { status: 'filled', value: chosen.join(', ') } : { status: 'nomatch' };
+    return chosen.length
+      ? { status: 'filled', value: chosen.join(', ') }
+      : { status: 'nomatch', options: listed, multi };
   }
 
   /**
@@ -1478,10 +1532,8 @@
       const multi = isMulti(el);
       // A virtual list has only the rows in view in the page: scroll through it for the rest.
       const box = virtualScroller(listboxFor(el), opts, el);
-      const options = (box ? await readVirtualList(el, box) : describeOptions(opts))
-        .map((o) => JTF.util.cleanLabel(o.text, 200))
-        .filter((t) => t && !M().isPlaceholder(JTF.util.normalize(t)) && !/^no (options|results)/i.test(t));
-      return { options: [...new Set(options)], multi };
+      const options = offeredTexts(box ? await readVirtualList(el, box) : describeOptions(opts));
+      return { options, multi };
     } finally {
       await closeMenu(el);
       if (isInput) el.blur();
@@ -1998,6 +2050,8 @@
         case 'combobox': {
           if (opts.comboboxes) {
             const prev = el.value;
+            // What a dropdown button showed before the pick ("Select One", or the choice it replaces), for Undo.
+            const shown = kind === 'combo' ? comboText(el) : '';
             // The site's chip ("Italy (+39)") goes first, or the right one would only join it.
             if (correcting && kind === 'combobox' && chipsOf(el).length) {
               // A single choice is replaced by the next pick: only a list that takes several must be emptied first.
@@ -2005,10 +2059,16 @@
               await sleep(150);
               key(el, 'Escape'); // clearing can pop the menu open again
             }
-            const res = await fillCombo(field, v);
+            let res = await fillCombo(field, v);
+            // Nothing picked, yet it holds your answer now: the site chose it meanwhile (Workday sets the phone code
+            // from the country a moment after that is picked, or took a search's only match as it was typed).
+            if (res.status === 'nomatch' && hasValue(field) && agrees(field, v))
+              res = { status: 'skipped', reason: 'has value' };
             // A picked option is undone with the widget's clear button; typed text by typing back.
             if (res.status === 'filled' && kind === 'combobox')
               history.push(res.typed ? { el, kind, prev } : { el, kind, prev: '', picked: true });
+            // A button's pick is taken back by picking what it showed before, where its list still offers that.
+            if (res.status === 'filled' && kind === 'combo') history.push({ el, kind, prev: shown, menu: true });
             // Read back later only when it can be read now: a widget that never shows its pick isn't picked again.
             if (res.status === 'filled') res.check = { had: hasValue(field) };
             return res;
@@ -2206,6 +2266,7 @@
     if (h.kind === 'select') return Array.from(h.el.options, (o) => o.selected).join();
     if (h.kind === 'file') return Array.from(h.el.files || [], (f) => f.name).join('\n');
     if (h.picked) return boxText(h.el) + h.el.value;
+    if (h.menu) return comboText(h.el);
     return isEditable(h.el) ? h.el.innerHTML : textIn(h.el);
   }
 
@@ -2222,15 +2283,39 @@
     return members.some((m, i) => m.localName !== 'input' && before[i] !== prev[i] && (prev[i] || h.kind !== 'radio'));
   }
 
+  /**
+   * Take back a dropdown button's pick: open its menu and pick what it showed before the fill, its own prompt
+   * ("Select One") or the choice the fill replaced. False when the list no longer offers that: Workday greys its
+   * prompt out in a required list, so a pick there stays.
+   */
+  async function unpick(el, prev) {
+    const U = JTF.util;
+    const want = U.normalize(prev);
+    try {
+      const opts = await openMenu(el, false);
+      const off = (o) => o.getAttribute('aria-disabled') === 'true' || o.hasAttribute('disabled');
+      const texts = opts.map((o) => U.normalize(dom().textOf(o) || o.getAttribute('aria-label') || ''));
+      // The same words, else (it showed a prompt) the list's own prompt, however worded.
+      let idx = texts.findIndex((t, i) => !!want && t === want && !off(opts[i]));
+      if (idx < 0 && M().isPlaceholder(want)) idx = texts.findIndex((t, i) => M().isPlaceholder(t) && !off(opts[i]));
+      if (idx < 0) return false;
+      return !!(await choose(el, opts[idx]));
+    } finally {
+      await closeMenu(el);
+    }
+  }
+
   /** Put back what each entry's field held before the fill. Returns how many fields that changed. */
-  function undo(history) {
+  async function undo(history) {
     let n = 0;
     for (const h of history.slice().reverse()) {
       try {
         if (!h.el.isConnected) continue;
         const was = heldNow(h);
         const before = ticks(h);
-        if (h.kind === 'select') {
+        if (h.menu) {
+          if (!(await unpick(h.el, h.prev))) continue;
+        } else if (h.kind === 'select') {
           if (h.prevMany) h.prevMany.forEach((on, i) => h.el.options[i] && (h.el.options[i].selected = on));
           else h.el.selectedIndex = h.prev;
           fire(h.el, 'change');

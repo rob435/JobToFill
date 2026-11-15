@@ -98,7 +98,9 @@
 
   // A paragraph's sentences: "…of any individual. We recognise that… If you are invited for an interview, are…".
   // A long label cut short ("…confirm that they are… Are you at least 18 years of age?") ends a sentence where it was cut.
-  const SENTENCE_END = /(?<=[.?!…])\s+(?=["'“(]?[A-Z0-9])/;
+  // "(e.g. Masters, PhD)" ends none.
+  const SENTENCE_END =
+    /(?<=[.?!…])(?<!\b(?:[Ee]\.g|[Ii]\.e|[Ee]tc|vs|[Ii]ncl|[Aa]pprox|[Cc]f|Mr|Mrs|Ms|Dr|St)\.)\s+(?=["'“(]?[A-Z0-9])/;
   // A radio group's question too: Accenture's "…we have to confirm that they are legally entitled to work. Are you at
   // least 18 years of age?" over its Yes and No asks your age.
   const FOCUS_KEYS = new Set(['label', 'question', 'aria', 'nearby', 'group']);
@@ -114,6 +116,10 @@
     // An instruction after the question ("If your university is not listed, select other", Isio) is not what it asks.
     const said = all.filter((t) => !INSTRUCTION.test(norm(t)));
     const sentences = said.length ? said : all;
+    // A statement to agree to that ends it is what it asks ("…What do we mean by disability? The Equality Act 2010
+    // describes… I have read and understood").
+    const end = norm(sentences[sentences.length - 1]);
+    if (ACK_LINE.test(end)) return end;
     const asks = sentences.filter((t) => /\?\s*$/.test(t.trim()));
     return norm(asks.length ? asks[asks.length - 1] : sentences[sentences.length - 1]);
   }
@@ -124,19 +130,93 @@
   const INSTRUCTION =
     /^(if|where)\b.*\b(not listed|not shown|not (in|on) (the|this) list|other|n ?a|not applicable)\b|^(please )?(select|choose|tick|pick|check) (all|one|any|only one|as many)\b|^(this|the) (field|question) is (optional|required)\b|^if you (do not|don t|cannot|can t|are unable to|choose not to) (agree|accept|confirm|meet|consent)\b.*\b(unable|not be able|cannot|can t|will not)\b/;
 
+  // A line of a rich-text question that asks nothing: "Please note: You may be asked to prove any of your
+  // qualifications…", "Important – eligibility requirement" (Lloyds on Workday).
+  const NOTE_LINE = /^(please note|note|nb|n b|important|disclaimer|tip|hint|for example|for instance|e g)\b/;
+  // Who to talk to instead: "If you wish to speak to us prior to submitting your application please contact us by
+  // emailing … or calling on 0345…", "…please do reach out to have a discussion before taking the tests".
+  const CONTACT_LINE = /\b(contact (us|the|our)|get in touch|reach out|emailing|calling on|speak to (us|the|a|our))\b/;
+  // What a sentence asks without a question mark: "We also need to know if you have any County Court Judgements",
+  // "Please confirm whether…", "Tell us about a time…".
+  const INDIRECT_ASK =
+    /\b(need|like|want|wish) to know (if|whether|your|the|what|which|how)\b|^(please )?(confirm|indicate|tell us|let us know|state|specify|select|choose|provide|enter|describe|explain|outline|list|give|answer)\b/;
+  const WH_ASK = /^(what|which|when|where|who|whom|whose|how|why)\b/;
+  // A follow-up on the answer, after the question on its line: "If yes, please give details."
+  const CONDITIONAL =
+    /^if (yes|no|not|so|applicable|you (have )?(answered|selected|said|chose|chosen|ticked|checked))\b/;
+  const ENDS_SENTENCE = /[.!?…]["'”’)\]]*$/;
+  // What you are asked to agree to, said in the first person: "I have read and understood", "I confirm that…".
+  const ACK_LINE =
+    /^i (have (read|reviewed|understood)|read|understand|confirm|agree|accept|acknowledge|consent|declare|certify)\b/;
+  const bracketed = (t) => /^[([].*[)\]][.:]?$/.test(t);
+
+  /** A line that is a note, a bullet of instructions, a heading ending in a colon or who to contact: never the ask. */
+  function noteLine(t) {
+    const n = norm(t);
+    return (
+      bracketed(t) ||
+      /^[•·▪◦‣*–-]\s/.test(t) ||
+      /:$/.test(t) ||
+      NOTE_LINE.test(n) ||
+      INSTRUCTION.test(n) ||
+      (CONTACT_LINE.test(n) && !/\?["'”’)\]]*$/.test(t))
+    );
+  }
+
+  /** Does a line ask something: its last sentence, before any follow-up on the answer ("If yes, …"), a question? */
+  function lineAsks(t) {
+    const sentences = t
+      .split(SENTENCE_END)
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const aside = (x) => bracketed(x) || CONDITIONAL.test(norm(x)) || INSTRUCTION.test(norm(x));
+    while (sentences.length > 1 && aside(sentences[sentences.length - 1])) sentences.pop();
+    const last = sentences[sentences.length - 1] || '';
+    const n = norm(last);
+    if (CONDITIONAL.test(n)) return false;
+    return /\?["'”’)\]]*$/.test(last) || YES_NO_QUESTION.test(n) || WH_ASK.test(n) || INDIRECT_ASK.test(n);
+  }
+
+  /**
+   * What a rich-text question asks, from its lines (a paragraph, a list item, the text between two <br>):
+   * { question, help }, the line that asks and the rest (the preamble before it, the notes after), or null when no
+   * line stands out (one line, or prose throughout). The asking line is the last that puts a question ("Do you
+   * require an industry standard adjustment of 25%?" between three paragraphs on the assessment and "(Please note if
+   * you select yes…)"), else the last short line that is no sentence: "Country of Study" under "Your University" and
+   * "Please note: You may be asked to prove…", "I have read and understood" under four paragraphs on adjustments
+   * (Lloyds on Workday). A statement to agree to that ends it is the ask, even after a question. Notes, bullets and
+   * who to contact never ask.
+   */
+  function asks(lines) {
+    const all = (lines || []).map((t) => String(t).replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (all.length < 2) return null;
+    const open = all.map((t, i) => (noteLine(t) ? -1 : i)).filter((i) => i >= 0);
+    let at = -1;
+    // A statement to agree to at the very end is the ask, whatever came before it: Lloyds' Disability Confident
+    // paragraphs hold "What do we mean by disability?" (a heading over its answer) and end "I have read and understood".
+    const last = open[open.length - 1];
+    if (last != null && ACK_LINE.test(norm(all[last]))) at = last;
+    if (at < 0) for (const i of open) if (lineAsks(all[i])) at = i;
+    if (at < 0) for (const i of open) if (!ENDS_SENTENCE.test(all[i]) && all[i].split(' ').length <= 14) at = i;
+    if (at < 0) return null;
+    return { question: all[at], help: all.filter((t, i) => i !== at).join(' ') };
+  }
+
   function signalTexts(desc) {
     const out = [];
     const s = desc.signals || {};
     for (const key of Object.keys(WEIGHTS)) {
       if (!s[key]) continue;
       // "Mobile Number (+CountryCode)", "(country code + number)": that plus is a word.
-      const raw = String(s[key])
-        .slice(0, 300)
-        .replace(/\+\s*(?=country|((phone|mobile) )?number)/gi, ' plus ');
+      const full = String(s[key]).replace(/\+\s*(?=country|((phone|mobile) )?number)/gi, ' plus ');
+      const raw = full.slice(0, 300);
       let text = norm(raw);
       const m = text.match(EXAMPLES);
       if (m && text.slice(0, m.index).split(' ').length > 6) text = text.slice(0, m.index).trim();
-      const focus = FOCUS_KEYS.has(key) ? focusOf(raw) : '';
+      // What it asks is read from all of it: a paragraph on sponsorship, then "Do you have the legal right to work in
+      // the UK without requiring a visa or sponsorship?" past the cut, still asks about your right to work.
+      const focus = FOCUS_KEYS.has(key) ? focusOf(full) : '';
+      if (focus && full.length > 300 && !text.includes(focus)) text = (text + ' ' + focus).trim();
       if (text) out.push({ key, text, weight: WEIGHTS[key], focus });
     }
     return out;
@@ -245,7 +325,8 @@
     const head = asked.split(/\?|\.\s/)[0];
     if (OTHER_FOLLOW_UP.test(norm(head.split(' ').length >= 4 ? head : asked))) return null;
     // A Yes/No question is never answered with a name, a school or a link.
-    const yesNoAsked = YES_NO_QUESTION.test(norm(s.question || s.label || s.aria || ''));
+    const lead = String(s.question || s.label || s.aria || '');
+    const yesNoAsked = YES_NO_QUESTION.test(norm(lead)) || YES_NO_QUESTION.test(focusOf(lead));
     const yesNo = yesNoOptions(desc) || yesNoAsked;
     const byType = new Map();
     const ruledOut = new Set();
@@ -575,11 +656,12 @@
   /**
    * What the page says about a control besides its question: the help text it points to (aria-describedby) and the
    * instructions under its section's heading ("If your school/university uses a GPA system… Otherwise, provide your
-   * overall result in your school/university's grading system" under Workday's "Education").
+   * overall result in your school/university's grading system" under Workday's "Education"), and the rest of a long
+   * question read line by line (`preamble`: the paragraphs around what it asks).
    */
   function helpText(desc) {
     const s = desc.signals || {};
-    return U.cleanLabel([s.describedby, s.sectionHelp].filter(Boolean).join(' '), 600);
+    return U.cleanLabel([s.describedby, s.preamble, s.sectionHelp].filter(Boolean).join(' '), 600);
   }
 
   /** "how did you hear|referral" -> phrases; "/^why .* us\??$/i" -> RegExp. */
@@ -611,9 +693,23 @@
 
   /* --------------------------------------------------------------------- plan */
 
+  // Questions about your studies as a whole, never one entry's own boxes: a second one opens no second entry
+  // (Lloyds' "Are you on track to achieve… an undergraduate degree?" then "Post Graduate Qualification?").
+  const NO_ENTRY = new Set([
+    'edu.level',
+    'edu.year',
+    'edu.classAtLeast',
+    'edu.attended',
+    'edu.majorIn',
+    'edu.inCountry',
+    'edu.qualification',
+    'edu.equivalent',
+    'edu.enrolled',
+  ]);
+
   function groupOf(type) {
     if (!type) return null;
-    if (type.startsWith('edu.') && !['edu.level', 'edu.year', 'edu.classAtLeast'].includes(type)) return 'edu';
+    if (type.startsWith('edu.') && !NO_ENTRY.has(type)) return 'edu';
     if (type.startsWith('exp.')) return 'exp';
     if (type.startsWith('lang.')) return 'lang';
     return null;
@@ -877,7 +973,13 @@
     let detached = null; // the section of a run of one-off questions, all about the first entry
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
-      if (!r || !r.type) continue;
+      if (!r || !r.type) {
+        // A question none of the rules knew ("Is this your first application to us this year?") ends the stretch: the
+        // "Degree title" after it is no second entry's.
+        const q = questionText(descs[i]);
+        if (/\?\s*$/.test(q) || norm(q).split(' ').length >= 6) prev = null;
+        continue;
+      }
       // A list's "please specify" box answers for the list: the same entry, never the next one.
       if ((r.part === 'specify' || r.unlisted) && r.follows != null) {
         const list = results[r.follows];
@@ -1020,6 +1122,18 @@
         }
         r.dropped = r.type;
         r.type = null;
+        continue;
+      }
+      // "Full degree title" in a box a few fields after the degree's list (Lloyds: type, subject area, then the
+      // title) is more of the same degree, wherever it comes in the entry: never the next entry.
+      if (
+        st.seen.has(key) &&
+        st.index >= 0 &&
+        TEXT_KINDS.has(descs[i].kind) &&
+        /\b(exact|full|complete|official)\b/.test(norm(questionText(descs[i])))
+      ) {
+        Object.assign(r, { index: detached === g ? 0 : st.index, entry: true });
+        prev = g;
         continue;
       }
       if (prev !== g) {
@@ -1287,7 +1401,8 @@
     let m = t.match(/(\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?)/);
     if (m) return [+m[1], +m[2]];
     m =
-      t.match(/(\d+(?:\.\d+)?)\s*(?:\+|or more|and (?:above|over|up)|plus)/) ||
+      // "29 years and above" (Lloyds' age bands) too.
+      t.match(/(\d+(?:\.\d+)?)\s*(?:years?|yrs?)?\s*(?:\+|or (?:more|over|older)|and (?:above|over|up|older)|plus)/) ||
       t.match(/(?:more than|over|above|at least|greater than)\s*(\d+(?:\.\d+)?)/);
     if (m) return [+m[1], Infinity];
     m = t.match(/(?:>=|≥|=>)\s*(\d+(?:\.\d+)?)/);
@@ -1763,6 +1878,19 @@
    * different one. Returns an index, -1 (nothing safe) or null (not a country list: use generic matching).
    */
   function bestCountry(opts, v, cands) {
+    // One country and everywhere else (Lloyds' "Country of Study": "Within UK | Outside of the UK"): the side yours
+    // is on.
+    const sides = opts
+      .map((o) => {
+        const m = o.n.match(/^(within|inside|in|outside(?: of)?|not in|out of) (?:the )?(.+)$/);
+        const row = m && JTF.geo.findCountry(m[2]);
+        return row ? { o, iso2: row[0], out: /^(outside|not in|out of)/.test(m[1]) } : null;
+      })
+      .filter(Boolean);
+    if (v.iso2 && sides.some((s) => s.out) && sides.some((s) => !s.out)) {
+      const side = sides.find((s) => (s.iso2 === v.iso2) !== s.out);
+      return side ? side.o.i : -1;
+    }
     const known = opts.map((o) => ({ o, row: countryOfOption(o.text) || countryOfOption(o.value) }));
     if (!known.some((k) => k.row)) return null;
     const same = known.filter((k) => k.row && k.row[0] === v.iso2);
@@ -2326,6 +2454,7 @@
     textVariants,
     classify,
     plan,
+    asks,
     questionText,
     helpText,
     canonicalOf,

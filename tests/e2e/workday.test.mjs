@@ -1,7 +1,8 @@
 // End-to-end: Workday's and Oracle's own widgets as live applications have them. Workday (workday-prompts.html, with
 // workday-widgets.js): a country preselected from the visitor's IP address, an address section rebuilt per country,
 // Canvas Kit Selects that fade out, search prompts whose rows only take a click inside them, year spin buttons drawn by
-// an aria-hidden "…-display", Skills that takes several, and an upload that takes several files.
+// an aria-hidden "…-display", Skills that takes several (its searches slow, as the live ones are), and an upload that
+// takes several files.
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PROFILE, RESUME_PDF, launch, text, value } from './harness.mjs';
@@ -115,6 +116,27 @@ test('Workday: a country picked from the IP address is put right, then the addre
   assert.equal(await page.$$eval('[data-automation-id="activeListContainer"], .wd-menu', (l) => l.length), 0);
   assert.equal(await page.$$eval('button[aria-haspopup][aria-expanded="true"]', (l) => l.length), 0);
   assert.ok(took < 20000, `the fill took ${took} ms`);
+
+  // Skills came through a search that takes 1.5 s (as the live one does: a busy popup and no list meanwhile), the
+  // school and the phone code were picked by the prompt itself (the search's only match), and the results that Escape
+  // leaves open were closed with a click elsewhere.
+  // Filled again, nothing is done twice: every prompt already holds its chip, so none is searched again, no skill is
+  // clicked off, no Select is opened, and nothing is called unmatched.
+  const again = await h.fill(page);
+  assert.equal(again.error, undefined);
+  assert.equal(again.filled, 0, JSON.stringify(again));
+  assert.equal(again.failed, 0, JSON.stringify(again.unmatched));
+  assert.deepEqual(again.unmatched, []);
+  assert.deepEqual(await chips(page, 'formField-countryPhoneCode'), ['United Kingdom (+44)']);
+  assert.deepEqual(await chips(page, 'formField-schoolItem'), ['University of Glasgow']);
+  assert.deepEqual(await chips(page, 'formField-skills'), ['Python', 'SQL', 'Stata']);
+  assert.ok(
+    (await page.$$eval('button[aria-haspopup="listbox"]', (list) => list.map((b) => b.dataset.opened))).every(
+      (n) => n === '1',
+    ),
+    'no Select opened a second time',
+  );
+  assert.equal(await page.$$eval('[data-automation-id="activeListContainer"], .wd-menu', (l) => l.length), 0);
   await page.close();
 });
 
