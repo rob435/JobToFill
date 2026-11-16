@@ -256,6 +256,9 @@ function fillTab(tabId, options) {
 async function fillOnce(tabId, opts) {
   const { payload, letter } = await fillPayload(tabId);
   if (opts.consents) payload.settings = { ...payload.settings, consents: true };
+  // A fill JobToFill makes itself, after your press (the check's, Apply for me's later ones): never over what you typed
+  // since, whatever Overwrite says.
+  if (opts.keep) payload.settings = { ...payload.settings, overwrite: false };
   const { settings } = payload;
   if (opts.only) Object.assign(payload, { only: opts.only, force: opts.force !== false });
   if (opts.replace) payload.replace = opts.replace;
@@ -350,7 +353,9 @@ async function fillFrames(tabId, opts, payload, letter, aiReady) {
   const pending = frames.flatMap((f) => (f.pending || []).map((item) => ({ ...item, frameId: f.frameId })));
   summary.pending = pending.length;
   let run = null;
-  if (pending.length && !opts.only && opts.ai !== false) {
+  // Stopped meanwhile (Apply for me's Stop): no AI is started, and nothing is clicked.
+  const halted = () => !!(opts.signal && opts.signal.aborted);
+  if (pending.length && !opts.only && opts.ai !== false && !halted()) {
     if (aiReady.ok) {
       summary.ai = { status: 'running', stage: 'job', asked: pending.length };
       const aiToast = opts.aiToast != null ? opts.aiToast : opts.toast;
@@ -409,7 +414,7 @@ async function fillFrames(tabId, opts, payload, letter, aiReady) {
       ai: aiReady.ok || (!!opts.quick && (await aiAvailable(settings)).ok),
     });
   // The click (or the wait for a CAPTCHA) comes after the toast that announces it.
-  if (account && account.act) await account.act().catch(() => {});
+  if (account && account.act && !halted()) await account.act().catch(() => {});
   // The next step is filled in the background: the fill that got here is done.
   if (advance && advance.act) advance.act().catch(() => advancing.delete(tabId));
   return summary;
@@ -1965,7 +1970,8 @@ async function answerWithAi(tabId, pending, opts = {}) {
     if (current()) broadcast(tabId, run);
   };
   // The replaced run's keep-alive gives way to this one's, whose time limit counts from now.
-  if (replacing) await callFrames(tabId, 'release', [], [0]).catch(() => {});
+  // Apply for me holds the page for the whole run: an AI run inside it never lets go of that.
+  if (replacing && !pilots.has(tabId)) await callFrames(tabId, 'release', [], [0]).catch(() => {});
   await callFrames(tabId, 'hold', [240000], [0]).catch(() => {});
   try {
     const { profile, settings } = await store.getActive();
@@ -2022,7 +2028,7 @@ async function answerWithAi(tabId, pending, opts = {}) {
     if (run.toast && current() && error !== 'Stopped.') await showToast(tabId, aiSummaryText(run));
     return runView(run);
   } finally {
-    if (current()) callFrames(tabId, 'release', [], [0]).catch(() => {});
+    if (current() && !pilots.has(tabId)) callFrames(tabId, 'release', [], [0]).catch(() => {});
   }
 }
 
@@ -2085,8 +2091,12 @@ async function quickStart(tabId, opts = {}) {
   const now = await store.getQuickStatus();
   if (now && now.state === 'running' && now.studioTabId == null)
     await store.setQuickStatus({ ...now, studioTabId: studio.id });
-  // Apply for me makes its own fills, and puts the letter and CV in when they're ready (see pilotRun).
-  if (!opts.pilot) quickFirst.set(tabId, quickFirstFill(tabId));
+  // Apply for me makes its own fills, and puts the letter and CV in when they're ready (see pilotRun). A Quick apply of
+  // its own is no late letter of an Apply for me before it.
+  if (!opts.pilot) {
+    await takePilotEnded(tabId);
+    quickFirst.set(tabId, quickFirstFill(tabId));
+  }
   return { ok: true, studioTabId: studio.id };
 }
 
@@ -2120,6 +2130,7 @@ async function quickFirstFill(tabId) {
       consents: true,
       aiToast: false,
       flow: true,
+      forceAi: true,
       announce,
     });
   } catch (err) {
@@ -2157,9 +2168,26 @@ async function quickFill(tabId, letterId, options) {
   await store.saveLetter({ id: letterId, tabId, attachedAt: Date.now(), url: tab.url });
   // Apply for me is going through the application: it puts them in, on the step that has their uploads.
   const pilot = pilots.get(tabId);
-  if (pilot || pilotsStopped.delete(tabId)) {
-    if (pilot) Object.assign(pilot, { letters: 'done', cv: !!(options && options.cv) });
+  if (pilot) {
+    Object.assign(pilot, { letters: 'done', cv: !!(options && options.cv) });
     return { filled: 0, detected: 0, letter: true, cv: !!(options && options.cv), deferred: true };
+  }
+  // Apply for me ended (or was stopped) before they were ready: they go into their uploads, and nothing else is
+  // filled, ticked or pressed.
+  const ended = await takePilotEnded(tabId);
+  if (ended) {
+    const docs = ['file.coverLetter', 'coverLetter', ...(options && options.cv ? ['file.resume'] : [])];
+    const put = await fillTab(tabId, { quick: true, only: docs, force: true });
+    const docsIn = (put && put.docs) || {};
+    const cvIn = docsIn['file.resume'] === 'filled';
+    const letterIn = docsIn['file.coverLetter'] === 'filled' || docsIn.coverLetter === 'filled';
+    if (cvIn || letterIn)
+      await showToast(
+        tabId,
+        `Your ${[letterIn && 'cover letter', cvIn && 'tailored CV'].filter(Boolean).join(' and ')} ${cvIn && letterIn ? 'are' : 'is'} in now.`,
+        { duration: 15000 },
+      );
+    return { filled: (put && put.filled) || 0, detected: (put && put.detected) || 0, letter: letterIn, cv: cvIn };
   }
   const first = await takeQuickFirst(tabId);
   const withCv = !!(options && options.cv);
@@ -2187,6 +2215,7 @@ async function quickFill(tabId, letterId, options) {
     aiToast: true,
     announce,
     check: true,
+    forceAi: true,
   });
   if (summary.error) return { error: summary.error };
   done = done || doneText(summary);
@@ -2246,10 +2275,12 @@ function quickDoneText(summary, first, { withCv, run }) {
  */
 async function quickRelease(tabId, message) {
   const pilot = pilots.get(tabId);
-  if (pilot || pilotsStopped.delete(tabId)) {
-    if (pilot) Object.assign(pilot, { letters: 'failed', reason: message || 'Quick apply stopped' });
+  if (pilot) {
+    Object.assign(pilot, { letters: 'failed', reason: message || 'Quick apply stopped' });
     return { attached: false };
   }
+  // After an Apply for me that ended first, as after a Quick apply: the usual CV and letter, nothing else.
+  await takePilotEnded(tabId);
   await takeQuickFirst(tabId);
   const tab = await api.tabs.get(tabId).catch(() => null);
   if (!tab) return { attached: false };
@@ -2289,9 +2320,28 @@ const runs = new Map();
 const runKey = (tabId) => `run:${tabId}`;
 // tabId -> Apply for me's state while it runs there: { letters: off | running | done | failed, cv, reason }.
 const pilots = new Map();
-// Tabs where Apply for me was stopped while its letter and CV were still being written: when they arrive they are kept
-// (Last quick apply), and nothing more is filled or pressed on a page the person took back.
-const pilotsStopped = new Set();
+// Tabs where Apply for me ended (stopped, or done) while its letter and CV were still being written, kept in session
+// storage too (a worker restart must not forget it): when they arrive, they go into their uploads and nothing else is
+// filled or pressed on a page the person has taken back.
+const pilotEndedKey = (tabId) => `pilotEnded:${tabId}`;
+const PILOT_ENDED_KEPT = 15 * 60e3;
+
+/** Apply for me ended here with its letter and CV still being written (`stopped`: by the person). */
+function markPilotEnded(tabId, stopped) {
+  return sessionArea()
+    .set({ [pilotEndedKey(tabId)]: { stopped: !!stopped, at: Date.now() } })
+    .catch(() => {});
+}
+
+/** The mark markPilotEnded left for this tab, if fresh ({ stopped }), and forget it. */
+async function takePilotEnded(tabId) {
+  const kept = await sessionGet(pilotEndedKey(tabId), null);
+  if (kept)
+    await sessionArea()
+      .remove(pilotEndedKey(tabId))
+      .catch(() => {});
+  return kept && Date.now() - kept.at < PILOT_ENDED_KEPT ? kept : null;
+}
 
 const PILOT_STEPS = 15; // steps pressed through at most
 const PILOT_TRIES = 3; // presses of one step the page may turn down before it stops
@@ -2299,12 +2349,14 @@ const PILOT_LETTERS = 5 * 60e3; // the longest a step with uploads waits for the
 const PILOT_TOTAL = 25 * 60e3; // the longest a whole run takes
 const CHECK_ROUNDS = 3;
 
-/** What a run says to the popup (jtf:run-progress) and keeps for one opened later (session storage). */
+/**
+ * What a run says to the popup (jtf:run-progress) and keeps for one opened later (session storage). One another run
+ * replaced (Apply for me pressed during Fill this page's check) says nothing more.
+ */
 function reportRun(tabId, run, patch) {
   Object.assign(run, patch || {});
-  const view = { ...run };
-  delete view.controller;
-  delete view.done;
+  const view = reportView(run);
+  if (runs.get(tabId) !== run) return view;
   api.runtime.sendMessage({ type: 'jtf:run-progress', tabId, run: view }).catch(() => {});
   sessionArea()
     .set({ [runKey(tabId)]: view })
@@ -2349,14 +2401,42 @@ function finishRun(tabId, run, state, message, patch) {
 async function runStatus(tabId) {
   const run = runs.get(tabId);
   if (run) return reportView(run);
-  return sessionGet(runKey(tabId), null);
+  const kept = await sessionGet(runKey(tabId), null);
+  if (!kept || kept.state !== 'running') return kept;
+  // Kept as running, but this worker never started it: the one that did was stopped in the middle.
+  const view = {
+    ...kept,
+    state: 'error',
+    stage: 'done',
+    finishedAt: Date.now(),
+    message: 'Stopped: JobToFill was restarted in the middle. What’s filled in stays: carry on yourself.',
+  };
+  await sessionArea()
+    .set({ [runKey(tabId)]: view })
+    .catch(() => {});
+  return view;
 }
-const reportView = (run) => {
+/** A run as the popup and session storage see it: no controller, and no field values in its problems. */
+function reportView(run) {
   const view = { ...run };
   delete view.controller;
   delete view.done;
+  if (Array.isArray(view.problems)) view.problems = view.problems.map(({ value, ai, ...it }) => it);
   return view;
-};
+}
+
+/** `promise`, or `fallback` once `ms` have passed or `signal` aborts: no call into a page holds a run up for ever. */
+function within(promise, ms, signal, fallback = []) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms);
+    const done = (v) => {
+      clearTimeout(timer);
+      resolve(v);
+    };
+    Promise.resolve(promise).then(done, () => done(fallback));
+    if (signal) signal.addEventListener('abort', () => done(fallback), { once: true });
+  });
+}
 
 // Why a field is left for you, by what the page said about it (content/main.js problems).
 const LEFT_WHY = {
@@ -2389,11 +2469,21 @@ const problemName = (it) => util.cleanLabel(it.question || it.label || 'a field'
 async function checkAndFix(tabId, { hosts = [], ai = false, run = null, refused = false, fill = null } = {}) {
   const { profile, settings } = await store.getActive();
   const s = { ...settings, consents: true };
+  const since = run ? run.startedAt : 0;
+  const signal = run ? run.controller.signal : null;
   const look = (fix, fresh) =>
-    callFrames(tabId, 'problems', [{ profile, settings: s, fix, refused: fresh, applicationHosts: hosts }]).catch(
-      () => [],
+    within(
+      callFrames(tabId, 'problems', [{ profile, settings: s, fix, refused: fresh, since, applicationHosts: hosts }]),
+      60e3,
+      signal,
     );
   const asked = new Set();
+  // The AI's written answers on this page its own fact-check couldn't stand behind ("check this is true: …").
+  const unsure = [];
+  const noteUnsure = (out) => {
+    for (const it of (out && out.items) || [])
+      if (it.filled && (it.warnings || []).some((w) => /^check this is true/.test(w))) unsure.push(it.question);
+  };
   // Why the AI left a question (the fill's run, then the check's own): "diversity question: yours…", "not in the
   // material". Keyed by the question's words.
   const reasons = new Map();
@@ -2407,6 +2497,10 @@ async function checkAndFix(tabId, { hosts = [], ai = false, run = null, refused 
   for (let round = 0; round < CHECK_ROUNDS; round++) {
     if (run && run.controller.signal.aborted) break;
     const frames = await look(true, refused && round === 0);
+    // Undo pressed since this check began: what it put back stays put back.
+    if (frames.some((f) => f.undone))
+      return { fixed, items: [], errors: [], left: [], waiting: [], unsure, undone: true };
+    if (signal && signal.aborted) break;
     const items = frames.flatMap((f) => (f.items || []).map((it) => ({ ...it, frameId: f.frameId })));
     const rewrote = frames.reduce((n, f) => n + (f.rewrote || 0), 0);
     fixed += rewrote;
@@ -2427,12 +2521,14 @@ async function checkAndFix(tabId, { hosts = [], ai = false, run = null, refused 
           stage: 'fixing',
           message: `asking the AI about ${plural(toAi.length, 'field')} the page still wants…`,
         });
+      if (signal && signal.aborted) break;
       const out = await answerWithAi(
         tabId,
         toAi.map((it) => ({ ...it.ai, frameId: it.frameId })),
         { fix: true },
       );
       noteSkipped(out);
+      noteUnsure(out);
       fixed += (out && out.filled) || 0;
       if (run) run.ai += (out && out.filled) || 0;
     }
@@ -2460,7 +2556,7 @@ async function checkAndFix(tabId, { hosts = [], ai = false, run = null, refused 
   // Written again the way the page asks, and the page still says the same: its verdict, or one it gives only when the
   // step is sent. Apply for me presses to find out; a check with no press to follow lists them.
   const waiting = items.filter((it) => it.fix === 'waiting').map(leftOf);
-  return { fixed, items, errors, left, waiting };
+  return { fixed, items, errors, left, waiting, unsure };
 }
 
 /** A list of fields, as a sentence: “A”, “B” and 2 more. */
@@ -2486,15 +2582,20 @@ function checkAfter(tabId, kind, { settle, hosts, ai }) {
   if (pilots.has(tabId)) return null;
   const run = startRun(tabId, kind);
   reportRun(tabId, run, { stage: 'answering', message: 'the AI is answering the questions left…' });
+  const stopped = () => runs.get(tabId) !== run || run.controller.signal.aborted;
   run.done = (async () => {
     if (settle) await settle();
+    if (stopped()) return finishRun(tabId, run, 'stopped', 'Stopped before checking the page.');
     reportRun(tabId, run, { stage: 'checking', message: 'checking the page…' });
     const check = await checkAndFix(tabId, {
       hosts,
       ai,
       run,
-      fill: () => fillTab(tabId, { pilot: true, ai: false, applicationHosts: hosts }),
+      // Never over what you typed since you pressed, whatever Overwrite says.
+      fill: () => fillTab(tabId, { pilot: true, ai: false, keep: true, applicationHosts: hosts }),
     });
+    if (check.undone) return finishRun(tabId, run, 'stopped', 'Undone: the check stopped there.');
+    if (stopped()) return finishRun(tabId, run, 'stopped', 'Stopped.');
     const left = [...check.left, ...check.waiting];
     const lines = checkLines({ left });
     const fixed = check.fixed ? `Put right ${plural(check.fixed, 'field')} the page still wanted. ` : '';
@@ -2518,46 +2619,65 @@ async function autopilot(tabId) {
   const prior = runs.get(tabId);
   if (prior && prior.kind === 'auto' && prior.state === 'running')
     return { error: 'Apply for me is already running on this page.' };
-  pilotsStopped.delete(tabId);
   const run = startRun(tabId, 'auto');
   run.done = pilotRun(tabId, run).catch((err) => finishRun(tabId, run, 'error', String((err && err.message) || err)));
   return { ok: true };
 }
 
-/** What the steps say now: the step to work on, as advanceStep reads it (null when no step of an application). */
-async function pilotLook(tabId, profile, hosts, steps, stale) {
-  const states = await callFrames(tabId, 'stepState', [{ profile, applicationHosts: hosts, stale }]).catch(() => []);
+/**
+ * What the steps say now: the step to work on, as advanceStep reads it; null when every frame answered and none is a
+ * step of an application; { failed: true } when the look itself failed (the page was going away mid-look).
+ */
+async function pilotLook(tabId, profile, hosts, steps, stale, signal) {
+  const states = await within(
+    callFrames(tabId, 'stepState', [{ profile, applicationHosts: hosts, stale }]),
+    15e3,
+    signal,
+  );
+  const read = states.filter((s) => s && s.signature);
+  if (!read.length) return { failed: true };
   const step = (s) => s.application || (steps > 0 && !s.fields);
   return (
-    states.find((s) => s.application && s.next) ||
-    states.find((s) => step(s) && (s.final || s.progress)) ||
-    states.find((s) => s.application) ||
+    read.find((s) => s.application && s.next) ||
+    read.find((s) => step(s) && (s.final || s.progress)) ||
+    read.find((s) => s.application) ||
     null
   );
 }
 
 /**
  * After a press of a step's Next: 'moved' (another step, once it stays the same for a look), 'refused' (still the same
- * step, now with an error: a new one, or any after a moment), 'stuck' (nothing changed) or 'gone' (the tab closed).
+ * step, now with an error), 'dialog' (a dialog opened over it), 'stuck' (nothing changed) or 'gone' (the tab closed). Only the step's own frame is read. A
+ * refusal is looked for first: an error under its fields can change what they say (the signature) without the step
+ * changing. A banner up before the press (Workday's "Errors Found") says nothing until it has gone and come back: a
+ * slow save is no refusal.
  */
-async function afterPress(tabId, before, profile, hosts) {
+async function afterPress(tabId, before, profile, hosts, signal) {
   const until = Date.now() + ADVANCE_WAIT;
+  const at = (s) => (s.progress ? `${s.progress.step}/${s.progress.total}` : '');
   let last = null;
-  let same = 0;
+  let cleared = false;
   await sleep(800);
-  while (Date.now() < until) {
+  while (Date.now() < until && !(signal && signal.aborted)) {
     const tab = await api.tabs.get(tabId).catch(() => null);
     if (!tab) return 'gone';
     if (tab.status !== 'loading') {
-      const states = await callFrames(tabId, 'stepState', [{ profile, applicationHosts: hosts }]).catch(() => []);
-      const now = states.find((s) => s.frameId === before.frameId) || states[0];
-      if (now && now.signature !== before.signature && now.signature === last) return 'moved';
-      if (now && now.signature === before.signature) {
-        same++;
-        const fresh = now.errors.some((e) => !before.errors.includes(e));
-        if (now.errors.length && (fresh || same >= 4)) return 'refused';
+      const states = await within(callFrames(tabId, 'stepState', [{ profile, applicationHosts: hosts }]), 15e3, signal);
+      const now = states.find((s) => s && s.frameId === before.frameId && s.signature);
+      if (!now) {
+        last = null;
+        await sleep(500);
+        continue;
       }
-      last = now ? now.signature : null;
+      // A dialog opened over the step, or the step now asked inside one: stop before anything touches it.
+      const opened = (now.dialogs || []).some((d) => !(before.dialogs || []).includes(d));
+      if (opened || (now.inDialog && !before.inDialog)) return 'dialog';
+      const fresh = now.errors.some((e) => !before.errors.includes(e));
+      if (before.errors.some((e) => !now.errors.includes(e))) cleared = true;
+      const sameStep = at(now) === at(before) && now.fields === before.fields && now.next === before.next;
+      if (now.errors.length && sameStep && (fresh || cleared)) return 'refused';
+      if (now.signature !== before.signature && now.signature === last) return 'moved';
+      last = now.signature;
     }
     await sleep(500);
   }
@@ -2587,6 +2707,22 @@ async function lettersReady(tabId, pilot, signal) {
   }
 }
 
+/** Wait (ADVANCE_WAIT at most) for the tab to have finished loading, and a moment more. */
+async function tabSettled(tabId, signal) {
+  for (const until = Date.now() + ADVANCE_WAIT; Date.now() < until && !(signal && signal.aborted);) {
+    const tab = await api.tabs.get(tabId).catch(() => null);
+    if (!tab || tab.status === 'complete') break;
+    await sleep(400);
+  }
+  await sleep(800);
+}
+
+/** The questions the AI answered whose written answer its own fact-check couldn't stand behind. */
+const unsureOf = (ai) =>
+  ((ai && ai.items) || [])
+    .filter((it) => it.filled && (it.warnings || []).some((w) => /^check this is true/.test(w)))
+    .map((it) => it.question);
+
 /** Apply for me's run: see autopilot(). */
 async function pilotRun(tabId, run) {
   const { profile, settings } = await store.getActive();
@@ -2603,10 +2739,12 @@ async function pilotRun(tabId, run) {
     if (pilot.letters === 'running') {
       const status = await store.getQuickStatus().catch(() => null);
       if (status && status.state === 'error') Object.assign(pilot, { letters: 'failed', reason: status.message });
-      else if (signal.aborted)
-        notes.push('Your cover letter and tailored CV are still being written: they’ll be under Last quick apply.');
       else
-        notes.push('Your cover letter and tailored CV are still being written: they go in by themselves when ready.');
+        notes.push(
+          signal.aborted
+            ? 'Your cover letter and tailored CV are still being written: they go into their uploads when ready (nothing else is filled or pressed), and they’re under Last quick apply.'
+            : 'Your cover letter and tailored CV are still being written: they go in by themselves when ready.',
+        );
     }
     if (pilot.letters === 'failed' && !notes.some((n) => /usual CV/.test(n)))
       notes.push(
@@ -2619,16 +2757,24 @@ async function pilotRun(tabId, run) {
   };
 
   const ready = await aiAvailable(settings, { force: true });
-  // The letter and CV are started on the first page that isn't a sign-in (whose text is no job to write for).
+  let hosts = await applicationHosts(tabId);
+  // The letter and CV, once the page is an application (or the job's own posting): a checkout's or a sign-in's text is
+  // no job to write for. A Quick apply already writing for this tab is carried on with: its letter and CV are these.
   const startLetters = async () => {
-    if (!ready.ok || pilot.letters !== 'off') return;
-    const [page] = await callFrames(tabId, 'accountState', [{ profile }], [0]).catch(() => []);
-    if (page && /^(login|signup|verify|chooser)$/.test(page.kind || '')) return;
+    if (!ready.ok || pilot.letters !== 'off' || signal.aborted) return;
+    const look = await pilotLook(tabId, profile, hosts, run.steps, [], signal);
+    const tab = await api.tabs.get(tabId).catch(() => null);
+    const described = jobpage.ats((tab && tab.url) || '').stage === 'description';
+    if (!(look && look.application) && !described) return;
+    if (await quickRunningFor(tabId)) {
+      pilot.letters = 'running';
+      return;
+    }
     pilot.letters = 'asked';
     say('letters', 'writing your cover letter and tailoring your CV…');
     const q = await quickStart(tabId, { pilot: true }).catch((err) => ({ error: String((err && err.message) || err) }));
-    if (q.error) notes.push(`No cover letter or tailored CV: ${q.error}`);
-    else pilot.letters = 'running';
+    if (!q.error || (await quickRunningFor(tabId))) pilot.letters = 'running';
+    else notes.push(`No cover letter or tailored CV: ${q.error}`);
   };
   if (!ready.ok)
     notes.push(
@@ -2636,33 +2782,38 @@ async function pilotRun(tabId, run) {
         ? 'No AI is set up (Settings › Cover letters & AI), so JobToFill filled what your profile answers and wrote no cover letter.'
         : 'The AI isn’t allowed to answer here, so JobToFill filled what your profile answers.',
     );
-  await callFrames(tabId, 'hold', [PILOT_TOTAL], [0]).catch(() => {});
-  let hosts = await applicationHosts(tabId);
   let tries = 0;
   let refused = false;
   let stale = [];
   let flowWaits = 0;
+  let lookFails = 0;
+  let passes = 0;
+  // What was on the page when Next was last pressed: the control, the dialogs over the step, whether the step was in one.
+  let pressed = null;
   try {
     for (;;) {
       if (signal.aborted) return done('stopped', 'stopped. What’s filled in stays: carry on yourself.');
       if (Date.now() - started > PILOT_TOTAL) return done('stopped', 'stopped after 25 minutes: carry on yourself.');
       // The page that keeps this worker awake is a new one after each step (and the AI's runs let go of it).
-      await callFrames(tabId, 'hold', [PILOT_TOTAL], [0]).catch(() => {});
-      await startLetters();
+      await within(callFrames(tabId, 'hold', [PILOT_TOTAL], [0]), 15e3, signal);
       say('reading', `reading the page${where()}…`);
-      await callFrames(tabId, 'sweep').catch(() => {});
+      await within(callFrames(tabId, 'sweep'), 30e3, signal);
+      if (signal.aborted) continue;
       // A job's description with no application on it (Brevan Howard's posting, whose only form is "Sign up to receive
       // job alerts"): nothing there is the application's, so nothing is filled.
       if (!run.steps) {
         const tab = await api.tabs.get(tabId).catch(() => null);
         const described = jobpage.ats((tab && tab.url) || '').stage === 'description';
-        if (described && !(await pilotLook(tabId, profile, hosts, 0, [])))
+        if (described && (await pilotLook(tabId, profile, hosts, 0, [], signal)) === null)
           return done(
             'stopped',
             'this is the job’s description, not its application: press its “Apply” button, then press Apply for me on the form.',
           );
       }
+      await startLetters();
+      if (signal.aborted) continue;
       say('filling', `filling in your details${where()}…`);
+      // Only the first fill may write over what is there (Settings › Overwrite): later ones never touch what you typed.
       const summary = await fillTab(tabId, {
         pilot: true,
         consents: true,
@@ -2670,9 +2821,19 @@ async function pilotRun(tabId, run) {
         forceAi: true,
         waitAi: ready.ok,
         ai: ready.ok ? undefined : false,
+        keep: passes++ > 0,
+        signal,
         applicationHosts: hosts,
       });
-      if (summary.error) return done('error', summary.error);
+      if (signal.aborted) continue;
+      if (summary.error) {
+        // The page was going away under the fill (a step saving, a redirect): it is read again once it has loaded.
+        if (lookFails++ < 2) {
+          await tabSettled(tabId, signal);
+          continue;
+        }
+        return done('error', summary.error);
+      }
       run.filled += summary.filled || 0;
       run.ai += (summary.ai && summary.ai.filled) || 0;
       hosts = await applicationHosts(tabId, hosts);
@@ -2694,7 +2855,7 @@ async function pilotRun(tabId, run) {
         return done('stopped', account.lines.join(' '));
       // The letter and CV go into this step's uploads: it waits for them.
       if (summary.held && pilot.letters === 'running') {
-        const at = await pilotLook(tabId, profile, hosts, run.steps, stale);
+        const at = await pilotLook(tabId, profile, hosts, run.steps, stale, signal);
         if (at && at.progress && at.progress.total)
           reportRun(tabId, run, { step: at.progress.step, total: at.progress.total });
         say('letters', `waiting for your cover letter and tailored CV to go in${where()}…`);
@@ -2706,6 +2867,8 @@ async function pilotRun(tabId, run) {
                 pilot: true,
                 consents: true,
                 ai: false,
+                keep: true,
+                signal,
                 replace: ['file.coverLetter', 'coverLetter', ...(pilot.cv ? ['file.resume'] : [])],
                 applicationHosts: hosts,
               })
@@ -2723,14 +2886,25 @@ async function pilotRun(tabId, run) {
         ai: ready.ok,
         run,
         refused,
-        fill: () => fillTab(tabId, { pilot: true, consents: true, ai: false, applicationHosts: hosts }),
+        fill: () =>
+          fillTab(tabId, { pilot: true, consents: true, ai: false, keep: true, signal, applicationHosts: hosts }),
       });
+      if (check.undone) return done('stopped', 'undone: Apply for me stopped there.');
+      if (signal.aborted) continue;
       refused = false;
       run.fixed += check.fixed;
       reportRun(tabId, run, { left: check.left, problems: check.items });
-      const page = await pilotLook(tabId, profile, hosts, run.steps, stale);
+      const page = await pilotLook(tabId, profile, hosts, run.steps, stale, signal);
+      if (page && page.failed) {
+        if (lookFails++ < 3) {
+          await tabSettled(tabId, signal);
+          continue;
+        }
+        return done('stopped', `the page kept changing while JobToFill read it${where()}: carry on yourself.`);
+      }
+      lookFails = 0;
       if (!page) {
-        const [acct] = await callFrames(tabId, 'accountState', [{ profile }], [0]).catch(() => []);
+        const [acct] = await within(callFrames(tabId, 'accountState', [{ profile }], [0]), 15e3, signal);
         if (acct && /^(login|signup|verify|chooser)$/.test(acct.kind || ''))
           return done(
             'stopped',
@@ -2750,6 +2924,16 @@ async function pilotRun(tabId, run) {
       }
       const p = page.progress;
       if (p && p.total) reportRun(tabId, run, { step: p.step, total: p.total });
+      // A dialog the last press opened ("You're about to submit your application. [Cancel] [Continue]", "Are you
+      // sure?"), or a step now asked inside one: never answered for you.
+      if (pressed) {
+        const opened = (page.dialogs || []).filter((d) => !pressed.dialogs.includes(d));
+        if (opened.length || (page.inDialog && !pressed.inDialog))
+          return done(
+            'stopped',
+            `the page opened “${util.cleanLabel(opened[0] || page.inDialog, 90)}”${where()}: answer it yourself (JobToFill never does), then press Apply for me again.`,
+          );
+      }
       const left = check.left;
       if (page.final) {
         run.final = true;
@@ -2787,31 +2971,60 @@ async function pilotRun(tabId, run) {
           `fill in ${fieldList(named)}${where()} (${named[0].why}), then press Apply for me again.`,
         );
       }
-      const real = page.errors.filter((e) => !stale.includes(e));
-      if (left.length && real.length)
+      // A step isn't left on an answer the AI's own fact-check couldn't stand behind (as auto-advance does).
+      const unsure = [...unsureOf(summary.ai), ...(check.unsure || [])];
+      if (unsure.length)
         return done(
           'stopped',
-          `the page says “${real[0]}”${where()}: ${fieldList(left)} ${left.length === 1 ? 'is' : 'are'} yours to put right (${left[0].why}). Then press Apply for me again.`,
+          `the AI’s answer to “${util.cleanLabel(unsure[0], 80)}”${where()} says something your CV doesn’t back up: check it (the popup lists it), then press Apply for me again.`,
+        );
+      // A banner on the step counts as answered only once something answered it: this step pressed and turned down, or
+      // a field put right since.
+      const real = page.errors.filter((e) => !stale.includes(e));
+      const answeredSince = tries > 0 || check.fixed > 0 || (check.waiting || []).length > 0;
+      if (real.length && (left.length || !answeredSince))
+        return done(
+          'stopped',
+          left.length
+            ? `the page says “${real[0]}”${where()}: ${fieldList(left)} ${left.length === 1 ? 'is' : 'are'} yours to put right (${left[0].why}). Then press Apply for me again.`
+            : `the page says “${real[0]}”${where()}: fix that, then press Apply for me again.`,
         );
       if (run.steps >= PILOT_STEPS) return done('stopped', `stopped after ${PILOT_STEPS} steps: carry on yourself.`);
+      // Pressed again only as the same control: what the step offers now isn't what was pressed (a dialog's own
+      // "Continue", another button) is yours to judge.
+      if (tries > 0 && pressed && page.next !== pressed.next)
+        return done(
+          'stopped',
+          `the page now offers “${page.next}” where it offered “${pressed.next}”${where()}: carry on yourself.`,
+        );
       // Stopped meanwhile (a fill or the AI's answers were under way): nothing more is pressed.
       if (signal.aborted) continue;
       // Press the step's own Next: banners already answered by the fixes above don't hold it back.
       stale = page.errors;
+      pressed = { next: page.next, dialogs: page.dialogs || [], inDialog: !!page.inDialog };
       say('next', `pressing “${page.next}”${where()}…`);
-      const [res] = await callFrames(
-        tabId,
-        'advance',
-        [page.next, { profile, applicationHosts: hosts, stale }],
-        [page.frameId],
-      ).catch(() => []);
+      const [res] = await within(
+        callFrames(tabId, 'advance', [page.next, { profile, applicationHosts: hosts, stale }], [page.frameId]),
+        15e3,
+        signal,
+      );
+      if (signal.aborted) continue;
       if (!res || !res.clicked)
         return done(
           'stopped',
           `JobToFill couldn’t press “${page.next}”${res && res.refused ? ` (${res.refused})` : ''}: carry on yourself.`,
         );
-      const moved = await afterPress(tabId, page, profile, hosts);
+      const moved = await afterPress(tabId, page, profile, hosts, signal);
       if (moved === 'gone') return finishRun(tabId, run, 'error', 'The application tab was closed.');
+      if (moved === 'dialog') {
+        const now = await pilotLook(tabId, profile, hosts, run.steps, [], signal);
+        const opened = ((now && now.dialogs) || []).filter((d) => !pressed.dialogs.includes(d));
+        const words = opened[0] || (now && now.inDialog) || '';
+        return done(
+          'stopped',
+          `the page opened ${words ? `“${util.cleanLabel(words, 90)}”` : 'a dialog'} after “${page.next}”${where()}: answer it yourself (JobToFill never does), then press Apply for me again.`,
+        );
+      }
       if (moved === 'moved') {
         run.steps++;
         tries = 0;
@@ -2822,9 +3035,9 @@ async function pilotRun(tabId, run) {
       tries++;
       refused = true;
       if (tries >= PILOT_TRIES) {
-        const now = await pilotLook(tabId, profile, hosts, run.steps, []);
+        const now = await pilotLook(tabId, profile, hosts, run.steps, [], signal);
         const says =
-          now && now.errors.length
+          now && !now.failed && now.errors.length
             ? `the page still says “${now.errors[0]}”`
             : `the page doesn’t move on after “${page.next}”`;
         return done('stopped', `${says}${where()}. Check that step, then press Apply for me again.`);
@@ -2833,7 +3046,13 @@ async function pilotRun(tabId, run) {
     }
   } finally {
     pilots.delete(tabId);
-    if (signal.aborted && pilot.letters === 'running') pilotsStopped.add(tabId);
+    if (pilot.letters === 'running') markPilotEnded(tabId, signal.aborted);
+    // Stopped: a sign-in the run started goes no further either.
+    if (signal.aborted) {
+      clearTimeout(flowTimers.get(tabId));
+      flowTimers.delete(tabId);
+      endFlow(tabId).catch(() => {});
+    }
     callFrames(tabId, 'release', [], [0]).catch(() => {});
   }
 }
@@ -3570,6 +3789,14 @@ api.tabs.onRemoved.addListener((tabId) => {
   const run = aiRuns.get(tabId);
   if (run && run.status === 'running') run.controller.abort();
   aiRuns.delete(tabId);
+  // So would a check or Apply for me: they stop, and nothing of theirs is kept for a tab that is gone.
+  const kept = runs.get(tabId);
+  if (kept && kept.state === 'running') kept.controller.abort();
+  runs.delete(tabId);
+  pilots.delete(tabId);
+  sessionArea()
+    .remove([runKey(tabId), pilotEndedKey(tabId)])
+    .catch(() => {});
 });
 
 /** The page's CAPTCHA was solved (or its terms accepted): check the page again and take the next step. */
@@ -3689,15 +3916,36 @@ const HANDLERS = {
     fillTab(msg.tabId, { toast: !!msg.toast, flow: true, check: msg.check !== false, forceAi: !!msg.ai }),
   'jtf:autopilot': (msg) => autopilot(msg.tabId),
   'jtf:run-status': async (msg) => ({ run: await runStatus(msg.tabId) }),
-  'jtf:run-stop': (msg) => {
+  'jtf:run-stop': async (msg) => {
     const run = runs.get(msg.tabId);
-    if (!run || run.state !== 'running') return { stopped: false };
+    if (!run || run.state !== 'running') {
+      // A card left showing a run this worker never started (it was restarted mid-run): it is closed now.
+      const view = await runStatus(msg.tabId);
+      if (view) api.runtime.sendMessage({ type: 'jtf:run-progress', tabId: msg.tabId, run: view }).catch(() => {});
+      return { stopped: false };
+    }
     run.controller.abort();
     const ai = aiRuns.get(msg.tabId);
     if (ai && ai.status === 'running') ai.controller.abort();
+    // Apply for me's sign-in goes no further either.
+    if (run.kind === 'auto') {
+      clearTimeout(flowTimers.get(msg.tabId));
+      flowTimers.delete(msg.tabId);
+      endFlow(msg.tabId).catch(() => {});
+    }
+    // Said at once, whatever the run was waiting on.
+    finishRun(msg.tabId, run, 'stopped', 'Stopped. What’s filled in stays: carry on yourself.');
     return { stopped: true };
   },
-  'jtf:undo': async (msg) => ({ undone: sum(await callFrames(msg.tabId, 'undo'), 'undone') }),
+  'jtf:undo': async (msg) => {
+    // A check or Apply for me still going would put back what this takes back: it stops first.
+    const run = runs.get(msg.tabId);
+    if (run && run.state === 'running') {
+      run.controller.abort();
+      finishRun(msg.tabId, run, 'stopped', 'Undone: stopped there.');
+    }
+    return { undone: sum(await callFrames(msg.tabId, 'undo'), 'undone') };
+  },
   'jtf:inspect': async (msg) => {
     const { profile, settings } = await store.getActive();
     const frames = await callFrames(msg.tabId, 'inspect', [

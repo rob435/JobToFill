@@ -36,6 +36,10 @@
     options: new WeakMap(),
     several: new WeakSet(),
     peeked: new WeakSet(),
+    // field -> what a fill of the rules left in it, read once the fill had settled: a field holding anything else
+    // since was changed by someone else (the person, with clicks that fire no trusted event on the field itself).
+    leftBy: new WeakMap(),
+    undoneAt: 0,
   };
 
   // This copy of the script's own mark on the ids it hands out: one injected after the page changed doesn't reuse
@@ -780,8 +784,11 @@
      * Note what the rules' turn left a field as (decide.outcome): every way out of fillOne passes here, so no field
      * is left without one. A list's options read on the way are kept with it.
      */
+    // The fields this fill's rules filled, for what each holds once the page has settled (state.leftBy).
+    const filledNow = [];
     const mark = (field, r, d, res, label, tried) => {
       const was = JTF.decide.outcome(r, d, res);
+      if (was === 'filled') filledNow.push(field);
       // Nothing recognised in a field that holds something: the person's answer, kept.
       const held = was === 'unknown' && JTF.fill.hasValue(field);
       state.outcomes.set(field.el, {
@@ -1089,6 +1096,8 @@
       if (!added) break;
     }
     const checked = await recheck(written, { profile, settings, history });
+    // What each field the rules filled holds now, read back once the page has had its say (see putInByUs).
+    for (const f of filledNow) if (f.el.isConnected) state.leftBy.set(f.el, JTF.fill.currentValue(f));
     report.check = checked.check;
     if (checked.repaired) report.repaired = checked.repaired;
     if (checked.restored) report.restored = (report.restored || 0) + checked.restored;
@@ -1379,6 +1388,7 @@
         });
         traceStep(field, r, d.value, res, started, 'fill');
         note(d, res);
+        if (res.status === 'filled') state.leftBy.set(field.el, JTF.fill.currentValue(field));
         if (res.status === 'filled' && settings.highlight !== false) JTF.fill.highlight(res.target || field.el);
       }
     } finally {
@@ -1545,9 +1555,8 @@
     if (els.some(typedByYou)) return false;
     if (state.aiFilled.has(field.el)) return state.aiFilled.get(field.el) === JTF.fill.currentValue(field);
     if (answered.has(field.el)) return answered.get(field.el).value === JTF.fill.currentValue(field);
-    const o = state.outcomes.get(field.el);
-    // What Undo would take back is what a fill wrote: the outcome of the latest fill says "kept" for an earlier one's.
-    return (!!o && o.state === 'filled') || state.history.some((h) => els.includes(h.el));
+    // Still what the rules left there (a later fill says "kept" for an earlier one's): anything else is someone else's.
+    return state.leftBy.has(field.el) && state.leftBy.get(field.el) === JTF.fill.currentValue(field);
   }
 
   /** What the page says is wrong with a field: its own box's message, or one of its members' (a group). */
@@ -1576,6 +1585,8 @@
   async function problems(payload) {
     const { profile, settings } = payload;
     const allow = (settings && settings.aiSensitive) || null;
+    // Undo was pressed since the check began: what it put back stays put back.
+    if (payload.since && state.undoneAt > payload.since) return { items: [], errors: [], rewrote: 0, undone: true };
     // The step was sent and turned down again: every message the page shows now is its verdict on what is there.
     if (payload.refused) answered = new WeakMap();
     const { fields, results, context } = scan(profile);
@@ -1598,7 +1609,8 @@
         if (!said && !(required && empty)) continue;
         const type = (r && r.type) || null;
         const def = type ? JTF.fields.DEFS[type] : null;
-        const value = empty ? '' : U.cleanLabel(JTF.fill.currentValue(field), 300);
+        // Never a password's, a card's or a bank detail's: nothing below needs it.
+        const value = empty || (def && def.secret) ? '' : U.cleanLabel(JTF.fill.currentValue(field), 300);
         const message = said && said !== 'marked invalid' ? said : '';
         const item = {
           label: labelFor(field, r),
@@ -1645,6 +1657,9 @@
         if (done && !empty && done.value === JTF.fill.currentValue(field) && done.message === said) {
           // Answered since the page said so: its verdict comes when the step is sent again.
           item.fix = 'waiting';
+        } else if (!empty && message && ONLY_REQUIRED.test(message.trim())) {
+          // "This field is required" said of a box that holds something now: about the box as it was, not this value.
+          item.fix = 'waiting';
         } else if (!empty && !item.mine) {
           item.why = 'typed';
         } else if (field.kind === 'file' || (def && def.file)) {
@@ -1655,7 +1670,7 @@
         } else {
           // The rules first: the profile's answer, written the way the page asks, or put in where the box is empty.
           const v = type && def ? fieldValue(field, r, profile, context, payload) : null;
-          const text = v && TEXT_LIKE.has(field.kind) ? nextWay(field, v, message, value) : '';
+          const text = v && TEXT_LIKE.has(field.kind) ? nextWay(field, v, message, value, !!payload.fix) : '';
           if (!empty && text) {
             item.fix = 'rules';
             if (payload.fix) {
@@ -1664,6 +1679,7 @@
               if (res.status === 'filled') {
                 rewrote++;
                 answered.set(field.el, { message: said, value: JTF.fill.currentValue(field) });
+                state.leftBy.set(field.el, JTF.fill.currentValue(field));
                 state.outcomes.set(field.el, { state: 'filled', type, label: item.label });
                 if (settings && settings.highlight !== false) JTF.fill.highlight(field.el);
                 item.fix = 'waiting';
@@ -1672,12 +1688,18 @@
           } else if (empty && v && !(def && (def.consent || def.leave)) && !/^(nomatch|failed)$/.test(tried || ''))
             item.fix = 'fill';
           if (item.fix === 'yours') {
-            const asked = forJob && JTF.decide.forAi(field.desc, r, profile, context, prevType, null, allow, tried);
+            // The AI is asked about an empty box, or about its own answer the page turned down: never about a value
+            // the rules put in from your profile (your legal answers, a contact detail), which stays the rules' own.
             const ownAnswer = forJob && state.aiFilled.has(field.el) && item.mine;
+            const asked =
+              forJob &&
+              (empty || ownAnswer) &&
+              JTF.decide.forAi(field.desc, r, profile, context, prevType, null, allow, tried);
             if (asked || ownAnswer) {
               item.fix = 'ai';
               item.ai = aiQuestion(field, r, asked, { said, message, value, before, prevType, allow, required });
-            } else item.why = whyLeft(type, def);
+            } else if (!empty && v && TEXT_LIKE.has(field.kind)) item.why = 'rules';
+            else item.why = whyLeft(type, def);
           }
         }
         items.push(item);
@@ -1718,14 +1740,15 @@
   }
 
   /** The next way of writing `v` that the page's message asks for and no fix has tried on this field yet. */
-  function nextWay(field, v, message, value) {
+  function nextWay(field, v, message, value, commit) {
     const seen = tried.get(field.el) || new Set();
     tried.set(field.el, seen);
-    seen.add(value);
-    const ways = JTF.matcher.messageVariants(v, field.desc, message, value).filter((t) => !seen.has(t));
+    if (commit) seen.add(value);
+    const ways = JTF.matcher.messageVariants(v, field.desc, message, value).filter((t) => !seen.has(t) && t !== value);
     // A message that names nothing a way of writing could meet ("marked invalid"): the next way, three at most.
     if (!ways.length || (!message && seen.size > 3)) return '';
-    seen.add(ways[0]);
+    // Only a way that will be written is used up: a look that doesn't fix leaves them all.
+    if (commit) seen.add(ways[0]);
     return ways[0];
   }
 
@@ -2044,6 +2067,7 @@
     /** Put back what every fill and AI answer changed since the last Undo, once the one under way has finished. */
     undo: serial(async () => {
       const n = await JTF.fill.undo(state.history);
+      state.undoneAt = Date.now();
       JTF.fill.clearHighlights();
       return { undone: n };
     }),

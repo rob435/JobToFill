@@ -656,7 +656,8 @@
   const firstDefault = new WeakMap();
   const firstDefaultByName = new Map();
   function pageDefault(m) {
-    const key = m.name ? `${m.type}|${m.name}|${m.value}` : null;
+    // By the page it is on too: the next step of a one-page application may ask another "q1" with a "yes".
+    const key = m.name ? `${location.pathname}|${m.type}|${m.name}|${m.value}` : null;
     if (key && firstDefaultByName.has(key)) return firstDefaultByName.get(key);
     if (!firstDefault.has(m)) firstDefault.set(m, !!m.defaultChecked);
     if (key) firstDefaultByName.set(key, firstDefault.get(m));
@@ -672,8 +673,11 @@
       case 'select':
         return !isUntouchedSelect(el);
       case 'radio':
+        // Every member's default is noted at the first look, not only those checked then.
+        members.forEach(pageDefault);
         return members.some((m) => isChecked(m) && !pageDefault(m));
       case 'checkboxes':
+        members.forEach(pageDefault);
         return members.some((m) => isChecked(m) !== pageDefault(m));
       case 'checkbox':
         return isChecked(el);
@@ -2472,7 +2476,14 @@
   // typing is (execCommand's input, the change on blur): main.js tells the two apart by the value they left.
   const wrote = new WeakMap();
   /** The value a box holds, as an input or change event leaves it. */
-  const valueIn = (el) => (el.isContentEditable ? el.textContent : 'value' in el ? String(el.value) : '');
+  const valueIn = (el) =>
+    el.isContentEditable
+      ? el.textContent
+      : el.localName === 'input' && /^(radio|checkbox)$/i.test(el.type)
+        ? `${el.checked}|${el.value}` // a box's value is whether it is ticked
+        : 'value' in el
+          ? String(el.value)
+          : '';
   /** A write that notes what it left in the boxes it changed (one it left alone is not its). */
   const noting =
     (fn) =>

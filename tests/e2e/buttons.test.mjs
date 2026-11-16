@@ -197,6 +197,88 @@ function rulesOnly(asked) {
 
 /* ------------------------------------------------------------ Apply for me */
 
+// A step whose Save and Continue opens "You're about to submit your application. [Cancel] [Continue]": that Continue is
+// the submit, whatever it says. Once a bug: a press that didn't move read the step again and took the dialog's
+// Continue for its way on.
+for (const [mode, why] of [
+  ['1', 'a dialog over the step'],
+  ['box', 'a dialog with a box to tick'],
+]) {
+  test(`Apply for me: ${why} that a press opens is never answered, and nothing is sent`, async () => {
+    const page = await open(`workday-validate.html?start=4&confirm=${mode}`);
+    try {
+      const run = await applyForMe(page);
+      const s = await state(page);
+      assert.equal(run.state, 'stopped', told(run));
+      assert.match(run.message, /^The page opened .*answer it yourself \(JobToFill never does\)/);
+      assert.match(run.message, /about to submit your application/);
+      assert.equal(s.submitted, false, 'the dialog’s Continue was never pressed');
+      assert.equal(s.presses[4], 1, 'Save and Continue pressed once, never again under the dialog');
+      if (mode === 'box')
+        assert.equal(await page.$eval('#certify', (el) => el.checked), false, 'the dialog’s box is left alone');
+      await nothingSent(page);
+    } finally {
+      await quickIdle();
+      await page.close();
+    }
+  });
+}
+
+// As auto-advance: a step is never left on an answer the AI's own fact-check couldn't stand behind.
+test('Apply for me: a written answer the fact-check doubts stops the step, and pressing again carries on', async () => {
+  const doubting = await mockAi({ doubt: true });
+  aiOrigins.add(new URL(doubting.url).origin);
+  await forgetAnswers();
+  const use = (url) =>
+    h.bg((u) => globalThis.JTF.store.saveSettings({ ai: { provider: 'custom', baseUrl: u, model: 'mock' } }), url);
+  await use(doubting.url);
+  const page = await open('workday-validate.html?start=3');
+  try {
+    const run = await applyForMe(page);
+    assert.equal(run.state, 'stopped', told(run));
+    assert.match(run.message, /says something your CV doesn’t back up: check it/);
+    assert.equal((await state(page)).step, 3, 'the step was not left');
+    assert.equal((await state(page)).presses[3], undefined, 'Save and Continue never pressed');
+    // Checked: pressed again, the answer stands and the run carries on to Review.
+    await use(ai.url);
+    const again = await applyForMe(page);
+    assert.equal(again.state, 'done', told(again));
+    assert.equal((await state(page)).submitted, false);
+    await nothingSent(page);
+  } finally {
+    await use(ai.url);
+    await quickIdle();
+    await page.close();
+    await doubting.close();
+  }
+});
+
+// Undo during Fill this page's check: what it took back stays taken back.
+test('Fill this page: Undo while the AI answers stops the check, and nothing comes back', async () => {
+  const slow = await mockAi({ delay: 2500 });
+  aiOrigins.add(new URL(slow.url).origin);
+  await forgetAnswers();
+  const use = (url) =>
+    h.bg((u) => globalThis.JTF.store.saveSettings({ ai: { provider: 'custom', baseUrl: u, model: 'mock' } }), url);
+  await use(slow.url);
+  const page = await open('workday-validate.html?start=3');
+  try {
+    await fillThisPage(page);
+    await h.handler('jtf:undo', page);
+    const run = await runEnds(page, 'fill');
+    assert.equal(run.state, 'stopped', told(run));
+    assert.match(run.message, /^Undone/);
+    await sleep(3500);
+    const s = await state(page);
+    assert.equal(s.values.auth || '', '', 'the rules’ answers stay taken back');
+    assert.equal(s.values.why || '', '', 'nor does the AI’s answer go in afterwards');
+  } finally {
+    await use(ai.url);
+    await page.close();
+    await slow.close();
+  }
+});
+
 test('Apply for me: every step of a Workday application that checks each one, up to Review, never Submit', async () => {
   const from = ai.calls.length;
   const page = await open('workday-validate.html?t=a');

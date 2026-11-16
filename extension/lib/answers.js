@@ -224,8 +224,10 @@
     if (l.maxChars) parts.push(`at most ${l.maxChars} characters including spaces`);
     if (l.minWords && !l.maxWords) parts.push(`at least ${l.minWords} words`);
     if (l.minChars) parts.push(`at least ${l.minChars} characters`);
-    if (kind === 'essay' && !l.maxWords && !l.maxChars && !l.sentences && !(l.minWords && l.maxWords))
-      parts.push('80–160 words');
+    // The usual length, never below a floor the question sets ("at least 250 words": 250–330).
+    const floor = Math.max(l.minWords, Math.ceil(l.minChars / 6));
+    if (kind === 'essay' && !l.maxWords && !l.maxChars && !l.sentences)
+      parts.push(floor > 80 ? `${floor}–${floor + 80} words` : '80–160 words');
     if (!parts.length && kind === 'text') parts.push('a short phrase or one sentence');
     return parts.join(', ');
   }
@@ -498,7 +500,11 @@
     // What the profile had that no option matched ("Trackr" for "How did you hear about us?").
     // Never a monitoring answer (withheld() keeps those questions back; this keeps their answers back whatever), unless
     // the candidate lets the AI answer those ("Female" where the options say "Woman").
-    if (item.guess && item.guess.value && (may.eeo || !/^eeo\./.test(item.guess.type || '')))
+    // Nor the profile's legal or health answers ("Yes: my father is a serving MP") unless that kind is switched on: the
+    // application facts hold them back too.
+    const held = sensitivity(item);
+    const kept = (held.legal && !may.legal) || (held.health && !may.health);
+    if (item.guess && item.guess.value && (may.eeo || !/^eeo\./.test(item.guess.type || '')) && !kept)
       q.profileValue = U.cleanLabel(item.guess.value, 200);
     // Relatives at the employer are a conflict of interest, which the candidate may have nothing to declare about.
     const declared = may.legal && sensitivity(item).legal && CONFLICT.test(norm(item.question));
@@ -704,7 +710,11 @@
     if (lim.maxChars && text.length > lim.maxChars)
       errors.push(`Too long: ${text.length} characters; the limit is ${lim.maxChars}.`);
     if (lim.minWords && n < lim.minWords - 10)
-      errors.push(`Too short: ${n} words; write ${lim.minWords}–${lim.maxWords}.`);
+      errors.push(
+        `Too short: ${n} words; write ${lim.maxWords ? `${lim.minWords}–${lim.maxWords}` : `at least ${lim.minWords}`}.`,
+      );
+    if (lim.minChars && text.length < lim.minChars)
+      errors.push(`Too short: ${text.length} characters; write at least ${lim.minChars}.`);
     if (kind === 'text' && !lim.maxWords && n > 45) errors.push(`This box wants a short answer, not ${n} words.`);
 
     // Numbers must come from the material, the posting or the question itself ("In 150 words…"); a grade's from the

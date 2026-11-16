@@ -32,6 +32,9 @@
     - the data consent box must be ticked.
     The Review step's button says "Submit": pressing it would send the application (state.submitted).
     ?lazy=1 draws Application Questions' last question only once it is scrolled into view (below a long notice).
+    ?confirm=1: Voluntary Disclosures' "Save and Continue" opens a dialog over the page, "You're about to submit your
+    application. [Cancel] [Continue]", whose Continue sends the application (state.submitted); ?confirm=box adds a
+    required "I certify…" box to that dialog.
   -->
   <h1 data-automation-id="jobPostingHeader">Summer Analyst Internship 2027</h1>
   <details data-automation-id="jobPostingDescription"><summary>Job description</summary>
@@ -58,6 +61,7 @@
     const STEPS = ['My Information', 'My Experience', 'Application Questions', 'Voluntary Disclosures', 'Review'];
     const params = new URLSearchParams(location.search);
     const lazy = params.has('lazy');
+    const confirm = params.get('confirm');
     const state = { step: Number(params.get('start') || 1), submitted: false, values: {}, presses: {}, refused: {}, experience: 0, education: 0, uploaded: '' };
     const show = () => (document.getElementById('state').textContent = JSON.stringify(state, null, 1));
     const form = document.getElementById('step');
@@ -202,6 +206,14 @@
       if (list.length) {
         state.refused[state.step] = (state.refused[state.step] || 0) + 1;
         show();
+        return;
+      }
+      // The confirmation some sites put before their last step: its Continue is the submit.
+      if (confirm && state.step === 4) {
+        const box = confirm === 'box' ? '<label><input type="checkbox" id="certify" aria-required="true"> I certify that the information I have provided is true and complete<abbr title="required">*</abbr></label>' : '';
+        document.body.insertAdjacentHTML('beforeend', `<div role="dialog" aria-label="Submit application" id="confirm" style="position:fixed;inset:30% 20%;background:#fff;border:1px solid #333;padding:16px"><p>You’re about to submit your application.</p>${box}<button type="button" id="confirm-cancel">Cancel</button> <button type="button" id="confirm-go">Continue</button></div>`);
+        document.getElementById('confirm-cancel').onclick = () => document.getElementById('confirm').remove();
+        document.getElementById('confirm-go').onclick = () => { state.submitted = true; show(); };
         return;
       }
       state.step++;

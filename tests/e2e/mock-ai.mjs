@@ -252,11 +252,12 @@ const TAILORED_CV = {
 /**
  * Start the stand-in provider. Returns { server, url (its /v1 base), calls, count(kind), fail, gate, close() }.
  * `fail.status`: answer every request with that HTTP error. `gate.letter`: a promise that holds the letter's reply.
- * `delay`: milliseconds each reply waits (a slower model). `skipEssays`: the model declines written answers. `terse`:
+ * `delay`: milliseconds each reply waits (a slower model). `skipEssays`: the model declines written answers. `doubt`: the
+ * fact-check doubts the first written answer's first sentence. `terse`:
  * the model's first written answer is one sentence, however long the question asks for (it writes enough once the
  * form's message says how much).
  */
-export function mockAi({ delay = 0, skipEssays = false, terse = false } = {}) {
+export function mockAi({ delay = 0, skipEssays = false, terse = false, doubt = false } = {}) {
   const calls = [];
   const fail = { status: 0 };
   const gate = { letter: null };
@@ -304,6 +305,11 @@ export function mockAi({ delay = 0, skipEssays = false, terse = false } = {}) {
       } else if (kind === 'letter') {
         if (gate.letter) await gate.letter;
         reply = letterFor(first, job);
+      } else if (kind === 'answers-audit' && doubt) {
+        // The first written answer's first sentence, doubted: "check this is true: …".
+        const m = /\[([^\]]+)\]\n([^\n]+)/.exec(first.split('ANSWERS:')[1] || '');
+        const quote = m ? (m[2].match(/^[^.?!]+[.?!]/) || [m[2]])[0] : '';
+        reply = { unsupported: m ? [{ id: m[1], quote, problem: 'not in the CV' }] : [] };
       } else if (kind === 'letter-audit' || kind === 'answers-audit') reply = { unsupported: [] };
       else if (kind === 'same-job') reply = { same: true, confidence: 0.9, reason: 'same title' };
       else if (kind === 'eligibility') reply = { issues: [] };
