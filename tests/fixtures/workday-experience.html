@@ -9,11 +9,43 @@
     button[aria-haspopup] { text-align: left; padding: 6px; }
     [data-automation-id="file-upload-drop-zone"] { border: 1px dashed #888; padding: 12px; display: flex; gap: 8px; align-items: center; }
     .note { color: #555; font-size: 12px; }
+    .date-section { display: flex; gap: 32px; }
+    [hidden] { display: none !important; }
   </style>
 </head>
 <body>
   <h1>My Experience</h1>
   <div data-automation-id="applyFlowMyExpPage">
+    <!-- Work Experience: "From" and "To" are a DateField each, "MM" "/" "YYYY" (workday-widgets.js); "To" goes while
+         "I currently work here" is ticked. -->
+    <div role="group" aria-labelledby="Work-Experience-section" data-automation-id="workExperienceSection">
+      <h3 id="Work-Experience-section">Work Experience</h3>
+      <div role="group" aria-labelledby="Work-Experience-1-panel" data-automation-id="workExperience-1">
+        <h4 id="Work-Experience-1-panel">Work Experience 1</h4>
+        <div data-automation-id="formField-jobTitle"><label for="workExperience-1--jobTitle">Job Title<abbr title="required">*</abbr></label><input type="text" id="workExperience-1--jobTitle"></div>
+        <div data-automation-id="formField-companyName"><label for="workExperience-1--companyName">Company<abbr title="required">*</abbr></label><input type="text" id="workExperience-1--companyName"></div>
+        <div data-automation-id="formField-location"><label for="workExperience-1--location">Location</label><input type="text" id="workExperience-1--location"></div>
+        <div data-automation-id="formField-currentlyWorkHere"><input type="checkbox" id="workExperience-1--currentlyWorkHere"><label for="workExperience-1--currentlyWorkHere">I currently work here</label></div>
+        <div class="date-section">
+          <div data-automation-id="formField-startDate" data-date data-format="mm/yyyy" data-id="workExperience-1--startDate" data-label="From" data-required></div>
+          <div data-automation-id="formField-endDate" data-date data-format="mm/yyyy" data-id="workExperience-1--endDate" data-label="To" data-required></div>
+        </div>
+        <div data-automation-id="formField-roleDescription"><label for="workExperience-1--roleDescription">Role Description</label><textarea id="workExperience-1--roleDescription"></textarea></div>
+      </div>
+      <div role="group" aria-labelledby="Work-Experience-2-panel" data-automation-id="workExperience-2">
+        <h4 id="Work-Experience-2-panel">Work Experience 2</h4>
+        <div data-automation-id="formField-jobTitle"><label for="workExperience-2--jobTitle">Job Title<abbr title="required">*</abbr></label><input type="text" id="workExperience-2--jobTitle"></div>
+        <div data-automation-id="formField-companyName"><label for="workExperience-2--companyName">Company<abbr title="required">*</abbr></label><input type="text" id="workExperience-2--companyName"></div>
+        <div data-automation-id="formField-location"><label for="workExperience-2--location">Location</label><input type="text" id="workExperience-2--location"></div>
+        <div data-automation-id="formField-currentlyWorkHere"><input type="checkbox" id="workExperience-2--currentlyWorkHere"><label for="workExperience-2--currentlyWorkHere">I currently work here</label></div>
+        <div class="date-section">
+          <div data-automation-id="formField-startDate" data-date data-format="mm/yyyy" data-id="workExperience-2--startDate" data-label="From" data-required></div>
+          <div data-automation-id="formField-endDate" data-date data-format="mm/yyyy" data-id="workExperience-2--endDate" data-label="To" data-required></div>
+        </div>
+        <div data-automation-id="formField-roleDescription"><label for="workExperience-2--roleDescription">Role Description</label><textarea id="workExperience-2--roleDescription"></textarea></div>
+      </div>
+    </div>
+
     <!-- Shell's Education section: its instructions sit under the heading, above the entry. -->
     <div role="group" aria-labelledby="Education-section" data-automation-id="educationSection">
       <h3 id="Education-section">Education</h3>
@@ -26,11 +58,11 @@
             data-options="A-Levels|Bachelor's Degree|Master's Degree|Doctorate|Other">Select One</button></div>
         <div data-automation-id="formField-fieldOfStudy"><label for="ed1-field">Field of Study<abbr title="required">*</abbr></label><input type="text" id="ed1-field" data-automation-id="fieldOfStudy"></div>
         <div data-automation-id="formField-gradeAverage"><label for="ed1-gpa">Overall Result (GPA)<abbr title="required">*</abbr></label><input type="text" id="ed1-gpa" data-automation-id="gpa"></div>
-        <!-- Year-only dates: one "YYYY" spin button each, drawn by its "…-display" (workday-widgets.js). -->
-        <div data-automation-id="formField-startDate"><label id="lbl-from">From<abbr title="required">*</abbr></label>
-          <div data-automation-id="dateInputWrapper" data-id="ed1-from"></div></div>
-        <div data-automation-id="formField-endDate"><label id="lbl-to">To (Actual or Expected)<abbr title="required">*</abbr></label>
-          <div data-automation-id="dateInputWrapper" data-id="ed1-to"></div></div>
+        <!-- Year-only dates: a DateField each, one "YYYY" spin button drawn by its "…-display" (workday-widgets.js). -->
+        <div class="date-section">
+          <div data-automation-id="formField-firstYearAttended" data-date data-id="ed1-from" data-label="From" data-required></div>
+          <div data-automation-id="formField-lastYearAttended" data-date data-id="ed1-to" data-label="To (Actual or Expected)" data-required></div>
+        </div>
       </div>
     </div>
 
@@ -53,9 +85,15 @@
 
   <script src="workday-widgets.js"></script>
   <script>
-    // Workday's own Select and year spin buttons.
+    // Workday's own Select and dates.
     document.querySelectorAll('button[aria-haspopup="listbox"]').forEach((btn) => WD.select(btn));
-    document.querySelectorAll('[data-automation-id="dateInputWrapper"][data-id]').forEach(WD.year);
+    document.querySelectorAll('[data-date]').forEach(WD.date);
+    // A job you still have has no end: its "To" goes.
+    document.querySelectorAll('[data-automation-id="formField-currentlyWorkHere"] input').forEach((box) =>
+      box.addEventListener('change', () => {
+        box.closest('[data-automation-id^="workExperience-"]').querySelector('[data-automation-id="formField-endDate"]').hidden = box.checked;
+      }),
+    );
 
     // The drop zone: every file it is given is uploaded and listed, then its file box is emptied.
     const upload = document.getElementById('upload');

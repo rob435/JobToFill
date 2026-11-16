@@ -224,6 +224,9 @@
     el.focus({ preventScroll: true });
     el.dispatchEvent(new FocusEvent('focusin', { bubbles: true, composed: true }));
     if (el.select) el.select();
+    // The browser types into whatever has the focus, and a widget may move it: Workday's date box gives it to the year
+    // once a month is typed in full, and back to the year whenever it redraws while the year is the part selected.
+    const focused = () => dom().deepActiveElement(doc) === el;
     for (const ch of text) {
       const init = keyInit(ch);
       const down = new KeyboardEvent('keydown', init);
@@ -232,7 +235,7 @@
         // A mask that takes the key on keypress puts the character in itself (and says so by cancelling it).
         const press = new KeyboardEvent('keypress', Object.assign({}, init, { charCode: ch.charCodeAt(0) }));
         el.dispatchEvent(press);
-        if (!press.defaultPrevented && !doc.execCommand('insertText', false, ch)) {
+        if (!press.defaultPrevented && !(focused() && doc.execCommand('insertText', false, ch))) {
           setNativeValue(el, el.value + ch);
           el.dispatchEvent(
             new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: ch }),
@@ -359,6 +362,9 @@
     const b = bare(want);
     if (!a || !b) return !a && !b;
     if (a === b) return true;
+    // A spin button holds the number, not how it was typed: Workday's month box holds "3" for "03" (its display
+    // draws "03").
+    if (el.getAttribute('role') === 'spinbutton' && /^\d+$/.test(a) && /^\d+$/.test(b)) return Number(a) === Number(b);
     // An editor may tidy what it took (quotes, spaces): the same start and about the same length, never twice over.
     if (isEditable(el)) return Math.abs(a.length - b.length) <= 0.1 * b.length && a.slice(0, 40) === b.slice(0, 40);
     return a.length >= 0.6 * b.length && (b.includes(a) || a.includes(b));

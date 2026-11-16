@@ -5,8 +5,8 @@
   <title>Shell Assessed Internship Programme 2027 – United Kingdom</title>
   <!--
     A live application (Shell, en-GB), with Workday's own widgets as its pages run them (workday-widgets.js:
-    Canvas Kit's Select, search prompts whose result rows only take a click inside them, year spin buttons drawn by
-    their "…-display"):
+    Canvas Kit's Select, search prompts whose result rows only take a click inside them, dates whose "YYYY" spin
+    buttons are drawn by their "…-display"):
     - Country / Territory comes preselected from the visitor's IP address (Italy here), and the address section
       is rebuilt for the country chosen (Italy: City (Comune) search prompt + Province; United Kingdom: City +
       County), after a round trip.
@@ -19,7 +19,7 @@
     body { font: 14px system-ui; max-width: 760px; margin: 24px auto; }
     [data-automation-id^="formField"] { margin: 10px 0; display: grid; gap: 4px; position: relative; }
     button[aria-haspopup] { text-align: left; padding: 6px; }
-    [data-automation-id="dateInputWrapper"] { display: flex; gap: 6px; }
+    .date-section { display: flex; gap: 32px; }
     [data-automation-id="file-upload-drop-zone"] { border: 2px dashed #99f; padding: 16px; text-align: center; }
     [data-automation-id="file-upload-input-ref"] { position: absolute; width: 1px; height: 1px; opacity: 0; }
   </style>
@@ -85,13 +85,11 @@
         <label for="education-1--gradeAverage">Overall Result (GPA)<abbr>*</abbr></label>
         <input type="text" id="education-1--gradeAverage">
       </div>
-      <div data-automation-id="formField-firstYearAttended">
-        <label id="lbl-from">From<abbr>*</abbr></label>
-        <div data-automation-id="dateInputWrapper" role="group" aria-labelledby="lbl-from" data-id="education-1--firstYearAttended"></div>
-      </div>
-      <div data-automation-id="formField-lastYearAttended">
-        <label id="lbl-to">To (Actual or Expected)<abbr>*</abbr></label>
-        <div data-automation-id="dateInputWrapper" role="group" aria-labelledby="lbl-to" data-id="education-1--lastYearAttended"></div>
+      <!-- The years side by side, each a DateField drawn by workday-widgets.js: a fieldset with the label in its
+           legend, and a date box named only "current value is YYYY". -->
+      <div class="date-section">
+        <div data-automation-id="formField-firstYearAttended" data-date data-id="education-1--firstYearAttended" data-label="From" data-required></div>
+        <div data-automation-id="formField-lastYearAttended" data-date data-id="education-1--lastYearAttended" data-label="To (Actual or Expected)" data-required></div>
       </div>
     </div>
   </div>
@@ -174,7 +172,7 @@
     });
     document.querySelectorAll('[data-automation-id="applyFlowMyInfoPage"] > [data-automation-id^="formField"] > button[aria-haspopup]:not(#country--country), [data-automation-id="educationSection"] button[aria-haspopup]').forEach((b) => WD.select(b));
     document.querySelectorAll('body > div .prompt').forEach((f) => { if (!f.closest('#address')) wirePrompt(f); });
-    document.querySelectorAll('[data-automation-id="dateInputWrapper"][data-id]').forEach(WD.year);
+    document.querySelectorAll('[data-date]').forEach(WD.date);
 
     const LANGUAGES = 'Arabic|Chinese (Mandarin)|English|French|German|Italian|Japanese|Portuguese|Spanish';
     const LEVELS = 'Beginner|Intermediate|Advanced|Fluent';

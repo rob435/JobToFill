@@ -427,7 +427,27 @@
    * says "Date picker closed. No date currently selected." (or nothing yet), beside a `<label for>` saying "From".
    */
   const isStatus = (ref) =>
-    ref.hasAttribute('aria-live') || /^(status|alert|log)$/.test(ref.getAttribute('role') || '');
+    ref.hasAttribute('aria-live') || /^(status|alert|log)$/.test(ref.getAttribute('role') || '') || isReadout(ref);
+
+  /**
+   * A widget reading out its own value: Workday's date box is a role="group" labelled only by the aria-hidden
+   * "hiddenDateValueId-…" beside it, which says "current value is YYYY". That is the value, never the question.
+   */
+  const isReadout = (ref) =>
+    /^hiddenDateValueId\b/.test(ref.id || '') || /^\s*current value is\b/i.test(ref.textContent || '');
+
+  /** A group named by nothing but its own readout (Workday's date box): it asks nothing, the fieldset around it does. */
+  function namedByReadout(group) {
+    if (group.getAttribute('aria-label')) return false;
+    const refs = (group.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean);
+    return (
+      refs.length > 0 &&
+      refs.every((id) => {
+        const ref = byId(group, id);
+        return !ref || isReadout(ref);
+      })
+    );
+  }
 
   /** `outside`: only what lies outside the control: select2's combobox is "labelled" by its own selection ("Italy"). */
   function explicitLabel(el, outside) {
@@ -738,7 +758,10 @@
    * question above a lone "Acknowledge/Confirm" checkbox. Big sections don't count.
    */
   function groupLabel(el) {
-    const group = el.closest('fieldset, [role="group"], [role="radiogroup"]');
+    const GROUP = 'fieldset, [role="group"], [role="radiogroup"]';
+    let group = el.closest(GROUP);
+    // Workday's "YYYY" box sits in a group named "current value is YYYY", inside the fieldset whose legend says "From".
+    while (group && namedByReadout(group)) group = group.parentElement && group.parentElement.closest(GROUP);
     if (!group || group.querySelectorAll(COUNTED_SELECTOR).length > 4) return '';
     let t = '';
     if (group.localName === 'fieldset') t = fieldsetTitle(group);

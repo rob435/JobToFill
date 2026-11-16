@@ -14,8 +14,13 @@
 //   click that lands inside them: menuItem (role="option", aria-selected while highlighted, not when picked) >
 //   promptLeafNode (the click handler; data-automation-checked) > the radio or checkbox and the label (promptOption).
 //   A multi-select prompt (Skills) keeps its list open and ticks the row; a click on a ticked row unticks it.
-// - Year spin buttons ("YYYY"): a 1px input scaled to nothing, behind the aria-hidden "…-display" that shows the year.
-//   It takes what is typed from its input events (React's onChange), digits only, between 1 and 9999.
+// - Dates (DateField, read from candidate-experience-apply-flow 2026.45.12): a fieldset whose <legend> holds the label
+//   ("From", "To (Actual or Expected)"), and a date box, a role="group" named only by the aria-hidden readout beside it
+//   ("current value is YYYY", id "hiddenDateValueId-…"). In the box, a spin button per part ("YYYY" alone in
+//   Education, "MM" "/" "YYYY" in Work Experience): a 1px input scaled to nothing, behind the aria-hidden "…-display"
+//   that draws its digits. A part takes what is typed from its input events (React's onChange), digits only, and a
+//   finished month moves the focus on to the year. The date is kept only when the focus leaves the box: a year under
+//   1900 becomes 1900, a two-digit one this century's, and a month without its year is an invalid date.
 window.WD = (function () {
   'use strict';
 
@@ -37,9 +42,14 @@ window.WD = (function () {
     [data-automation-id="promptLeafNode"] { display: flex; width: 100%; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; }
     [data-automation-id="selectedItemList"] { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
     [data-automation-id="selectedItem"] { display: inline-flex; gap: 4px; background: #eef; }
-    .wd-year { display: inline-block; position: relative; width: 34px; height: 24px; cursor: pointer; border: 1px solid #888; }
-    .wd-year [data-automation-id$="-display"] { position: absolute; z-index: 1; width: 100%; height: 24px; display: flex; align-items: center; justify-content: center; }
-    .wd-year input { position: absolute; color: rgba(255, 255, 255, 0.01); left: 0; overflow: hidden; top: 0; transform: scale(0.01); width: 1px; z-index: -1000; }
+    .wd-fieldset { display: inline-block; padding: 0; border: 0; margin: 0; }
+    .wd-fieldset legend { width: 100%; padding: 0; }
+    .wd-sr { clip: rect(1px, 1px, 1px, 1px); clip-path: polygon(0px 0px, 0px 0px, 0px 0px, 0px 0px); position: absolute; overflow: hidden; white-space: nowrap; height: 1px; width: 1px; margin: -1px; padding: 0; border: 0; }
+    .wd-date { display: inline-flex; align-items: center; height: 40px; padding: 0 4px; border: 1px solid #888; border-radius: 4px; box-sizing: border-box; }
+    .wd-date > div { display: inline-flex; align-items: center; height: 100%; cursor: pointer; }
+    .wd-spin { display: inline-block; position: relative; height: 24px; text-align: center; cursor: pointer; user-select: none; }
+    .wd-spin [data-automation-id$="-display"] { position: absolute; z-index: 1; width: 100%; min-width: 100%; height: 24px; display: flex; align-items: center; justify-content: center; }
+    .wd-spin input { position: absolute; color: rgba(255, 255, 255, 0.01); left: 0; overflow: hidden; top: 0; transform: scale(0.01); width: 1px; z-index: -1000; }
     .css-77hcv { display: none; }
   `;
   document.head.appendChild(css);
@@ -424,59 +434,181 @@ window.WD = (function () {
     drawChips();
   }
 
-  /* -------------------------------------------------------------- year boxes */
+  /* ------------------------------------------------------------------- dates */
 
-  /** A year spin button in a dateInputWrapper whose data-id names it ("education-1--firstYearAttended"). */
-  function year(wrapper) {
-    const base = wrapper.dataset.id + '-dateSectionYear';
-    wrapper.insertAdjacentHTML(
-      'beforeend',
-      `<div class="wd-year" id="${base}"><div aria-hidden="true" id="${base}-display" data-automation-id="dateSectionYear-display">YYYY</div>` +
-        `<input type="text" role="spinbutton" aria-label="Year" aria-valuemax="9999" aria-valuemin="1" aria-valuetext="YYYY" aria-required="true" id="${base}-input" data-automation-id="dateSectionYear-input" value=""></div>`,
-    );
-    const box = wrapper.lastElementChild;
-    const display = box.firstElementChild;
-    const input = box.lastElementChild;
-    let current = null;
-    // React's controlled input: what the state holds is what the box and its display show.
+  const PARTS = {
+    mm: { label: 'Month', automation: 'dateSectionMonth', min: 1, max: 12, placeholder: 'MM' },
+    yyyy: { label: 'Year', automation: 'dateSectionYear', min: 1, max: 9999, placeholder: 'YYYY' },
+  };
+  const clamp = (n, lo, hi) => (isNaN(n) ? null : n === 0 ? 0 : n < lo ? lo : n > hi ? hi : n);
+
+  /**
+   * What the date box keeps when the focus leaves it (its hc()): a month from 1 to 12, a year from 1900 to 9999, and a
+   * year under 100 this century's (within ten years from now) or the last.
+   */
+  function settle(entered) {
+    const y = parseInt(entered.yyyy, 10);
+    const now = new Date().getFullYear();
+    const year = y >= 0 && y < 100 ? y + (now - (now % 100) - (y <= (now % 100) + 10 ? 0 : 100)) : clamp(y, 1900, 9999);
+    const month = clamp(parseInt(entered.mm, 10), 1, 12);
+    return { mm: month == null ? '' : String(month), yyyy: year == null ? '' : String(year) };
+  }
+
+  /**
+   * A DateField on its formField-… div: data-id ("education-1--firstYearAttended"), data-label ("From"), data-format
+   * ("yyyy", or "mm/yyyy"), data-required. What it keeps is on the div as data-value ("2023", "2020-06"), an invalid
+   * date as data-error.
+   */
+  function date(field) {
+    const id = field.dataset.id;
+    const order = (field.dataset.format || 'yyyy').split('/');
+    const required = 'required' in field.dataset;
+    field.innerHTML =
+      `<fieldset class="wd-fieldset"><legend><label id="label-${hex().slice(0, 8)}"><span></span></label></legend>` +
+      `<div><div><div aria-hidden="true" class="wd-sr" id="hiddenDateValueId-${id}"></div>` +
+      `<div role="group" aria-labelledby="hiddenDateValueId-${id}" id="${id}" data-automation-id="dateInputWrapper" class="wd-date"><div tabindex="-1"></div></div>` +
+      `<div hidden id="helpText-${id}">use right and left arrows to navigate spin buttons</div></div></div></fieldset>`;
+    const span = field.querySelector('legend span');
+    span.textContent = field.dataset.label;
+    if (required) span.insertAdjacentHTML('beforeend', '<abbr aria-hidden="true">*</abbr>');
+    const readout = field.querySelector('.wd-sr');
+    const group = field.querySelector('[role="group"]');
+    const row = group.firstElementChild;
+
+    // The DateInput's state, then the DateField's: what was typed, which part is selected, what the form keeps.
+    let entered = { mm: '', yyyy: '' };
+    let selected = null;
+    let kept = '';
+
+    const spins = order.map((key, i) => {
+      const part = PARTS[key];
+      const base = `${id}-${part.automation}`;
+      if (i) row.insertAdjacentHTML('beforeend', '<div aria-hidden="true">/</div>');
+      row.insertAdjacentHTML(
+        'beforeend',
+        `<div class="wd-spin" id="${base}" style="width: ${8.5 * part.placeholder.length}px"><div aria-hidden="true" id="${base}-display" data-automation-id="${part.automation}-display">${part.placeholder}</div>` +
+          `<input role="spinbutton" aria-label="${part.label}" aria-valuemax="${part.max}" aria-valuemin="${part.min}" aria-valuetext="${part.placeholder}" aria-required="${required}" id="${base}-input" value="" data-automation-id="${part.automation}-input"></div>`,
+      );
+      const box = row.lastElementChild;
+      return {
+        key,
+        part,
+        size: String(part.max).length,
+        box,
+        display: box.firstElementChild,
+        input: box.lastElementChild,
+        current: null,
+        dirty: false,
+        prop: null,
+      };
+    });
+    if (spins[0]) spins[0].input.setAttribute('aria-describedby', `helpText-${id}`);
+
+    /** React's render: each spin button shows its state, follows the box's, and takes the focus once selected. */
     function render() {
-      const shown = current == null ? 'YYYY' : String(current).padStart(4, '0');
-      const text = /^\d+$/.test(shown) ? String(parseInt(shown, 10)) : '';
-      display.textContent = shown;
-      input.value = text;
-      input.setAttribute('aria-valuetext', text || 'YYYY');
-      if (text) input.setAttribute('aria-valuenow', text);
-      else input.removeAttribute('aria-valuenow');
-      wrapper.dataset.value = text;
+      readout.textContent = 'current value is ' + order.map((k) => entered[k] || PARTS[k].placeholder).join('/');
+      spins.forEach((s, i) => {
+        const prop = entered[s.key] === '' ? null : parseInt(entered[s.key], 10);
+        if (prop !== s.prop || (s.current != null && prop != null && s.current !== prop)) s.current = prop;
+        s.prop = prop;
+        const shown = s.current == null ? s.part.placeholder : String(s.current).padStart(s.size, '0');
+        const digits = /^\d+$/.test(shown) ? String(parseInt(shown, 10)) : '';
+        s.display.textContent = shown;
+        if (s.input.value !== digits) s.input.value = digits;
+        s.input.setAttribute('aria-valuetext', digits || s.part.placeholder);
+        if (digits) s.input.setAttribute('aria-valuenow', digits);
+        else s.input.removeAttribute('aria-valuenow');
+        if (selected === i && document.activeElement !== s.input) s.input.focus();
+      });
+      field.dataset.value = kept;
     }
-    function update(value) {
-      const n = parseInt(value.slice(0, 4), 10);
-      current = isNaN(n) ? null : Math.min(n, 9999);
+
+    /** A part's new value (its onChange): a month typed in full ("06", or "4" that can only be April) moves on. */
+    function changed(i, value, raw, typed) {
+      const s = spins[i];
+      let v = value;
+      if (s.key === 'yyyy' && v != null && !typed && !raw) v = new Date().getFullYear();
+      entered = Object.assign({}, entered, { [s.key]: v == null ? '' : String(v) });
+      const done =
+        s.key === 'mm'
+          ? v != null && (v !== 0 || raw.length === 2) && (10 * v > 12 || raw.length === 2) && typed
+          : v != null && String(v).length === 4 && typed;
+      if (selected !== null && i < spins.length - 1 && done) selected = i + 1;
+    }
+
+    /** The spin button's validateAndUpdate: the first digits it holds, kept within its range. */
+    function update(i, text, typed) {
+      const s = spins[i];
+      const n = parseInt(text.length > s.size ? text.slice(0, s.size) : text, 10);
+      s.current = isNaN(n) ? null : n > 0 && n < s.part.min ? s.part.min : n > s.part.max ? s.part.max : n;
+      changed(i, s.current, s.input.value, typed);
+      render();
+      if (!typed) s.input.setSelectionRange(0, s.input.value.length);
+    }
+
+    /** The focus leaves the box: the date is settled and kept, or refused when only part of it is there. */
+    function blurred() {
+      entered = settle(entered);
+      selected = null;
+      const parts = order.map((k) => entered[k]);
+      delete field.dataset.error;
+      if (parts.some(Boolean) && (!parts.every(Boolean) || parts.some((p) => Number(p) === 0))) {
+        kept = '';
+        field.dataset.error = 'Invalid date: ' + order.map((k) => entered[k] || PARTS[k].placeholder).join('/');
+      } else {
+        kept = [entered.yyyy, entered.mm && entered.mm.padStart(2, '0')].filter(Boolean).join('-');
+      }
       render();
     }
-    input.addEventListener('focus', () => input.setSelectionRange(0, input.value.length));
-    input.addEventListener('keydown', (e) => {
-      if (/^(Arrow)?(Up|Down)$/.test(e.key)) {
+
+    spins.forEach((s, i) => {
+      s.input.addEventListener('focus', () => {
+        s.dirty = false;
+        s.input.setSelectionRange(0, s.input.value.length);
+      });
+      s.input.addEventListener('keydown', (e) => {
+        if (/^(Arrow)?(Up|Down)$/.test(e.key)) {
+          e.preventDefault();
+          const up = /Up/.test(e.key);
+          const n = s.current == null ? (up ? s.part.min : s.part.max) : s.current + (up ? 1 : -1);
+          update(i, String(n > s.part.max ? s.part.min : n < s.part.min ? s.part.max : n), false);
+          s.dirty = true;
+          return;
+        }
+        const allowed = [/^\d+$/, /Backspace/, /Delete/, /Del/, /Tab/, /Unidentified/].some((re) => re.test(e.key));
+        if (!allowed && !e.metaKey && !e.ctrlKey) return e.preventDefault();
+        // The digit already selected, typed again: kept as it is, the caret after it.
+        if (document.getSelection().toString() === e.key) {
+          update(i, s.input.value, true);
+          s.input.setSelectionRange(1, 1);
+          e.preventDefault();
+        }
+        s.dirty = true;
+      });
+      s.input.addEventListener('input', () => update(i, s.input.value, true));
+      s.box.addEventListener('click', (e) => {
         e.preventDefault();
-        const n = current == null ? (/Up/.test(e.key) ? 1 : 9999) : current + (/Up/.test(e.key) ? 1 : -1);
-        update(String(n < 1 ? 9999 : n > 9999 ? 1 : n));
-        return;
-      }
-      const allowed = [/^\d+$/, /Backspace/, /Delete/, /Del/, /Tab/, /Unidentified/].some((re) => re.test(e.key));
-      if (!allowed && !e.metaKey && !e.ctrlKey) e.preventDefault();
-      // The digit already selected, typed again: kept as it is, the caret after it.
-      else if (document.getSelection().toString() === e.key) {
-        update(input.value);
-        input.setSelectionRange(1, 1);
-        e.preventDefault();
-      }
+        e.stopPropagation();
+        selected = i;
+        render();
+      });
     });
-    input.addEventListener('input', () => update(input.value));
-    // A value set from script, never heard as typing, is put back on the next render.
-    input.addEventListener('blur', render);
-    box.addEventListener('click', () => input.focus());
+    row.addEventListener('click', () => {
+      selected = 0;
+      render();
+    });
+    // The box's own focus and blur (React's onFocus and onBlur, which hear focusin and focusout).
+    group.addEventListener('focusin', (e) => {
+      if (selected == null && e.target instanceof HTMLInputElement) selected = 0;
+      render();
+    });
+    group.addEventListener('focusout', (e) => {
+      const to = e.relatedTarget || document.activeElement;
+      if (to && group.contains(to)) return;
+      blurred();
+    });
     render();
   }
 
-  return { select, prompt, year, later };
+  return { select, prompt, date, later };
 })();
