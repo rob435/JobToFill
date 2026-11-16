@@ -158,19 +158,36 @@
    * The length a question asks for: { minWords, maxWords, maxChars, sentences } from "(250 word limit)", "In 150
    * words", "300–500 words", "max 1,000 characters", "2-4 sentences", the box's maxlength. Defaults by box.
    */
+  const FLOOR =
+    /\b(?:at least|a minimum of|minimum of|minimum|min\.?|no (?:fewer|less) than)\s*(\d{1,5})\s*-?\s*(words?|characters?|chars?)\b/g;
+
   function limits(item) {
     const raw = [item.question, item.help, item.placeholder]
       .filter(Boolean)
       .join(' ')
       .toLowerCase()
       .replace(/(\d),(\d{3})\b/g, '$1$2');
-    const out = { minWords: 0, maxWords: 0, maxChars: item.maxLength > 0 ? item.maxLength : 0, sentences: 0 };
-    let m = raw.match(/(\d{2,4})\s*(?:-|–|—|to)\s*(\d{2,4})\s*words?\b/);
+    const out = {
+      minWords: 0,
+      maxWords: 0,
+      minChars: 0,
+      maxChars: item.maxLength > 0 ? item.maxLength : 0,
+      sentences: 0,
+    };
+    // "(at least 150 characters)", "a minimum of 100 words": a floor, never the ceiling.
+    // Every floor, however many times it is said (the question's "(at least 150 characters)" and the page's message).
+    let rest = raw;
+    for (const f of raw.matchAll(FLOOR)) {
+      const key = /^w/.test(f[2]) ? 'minWords' : 'minChars';
+      out[key] = Math.max(out[key], +f[1]);
+      rest = rest.replace(f[0], ' ');
+    }
+    let m = rest.match(/(\d{2,4})\s*(?:-|–|—|to)\s*(\d{2,4})\s*words?\b/);
     if (m) {
       out.minWords = +m[1];
       out.maxWords = +m[2];
-    } else if ((m = raw.match(/(\d{1,4})\s*-?\s*words?\b/))) out.maxWords = +m[1];
-    m = raw.match(/(\d{2,5})\s*-?\s*(?:characters?|chars?)\b/);
+    } else if ((m = rest.match(/(\d{1,4})\s*-?\s*words?\b/))) out.maxWords = +m[1];
+    m = rest.match(/(\d{2,5})\s*-?\s*(?:characters?|chars?)\b/);
     if (m) out.maxChars = out.maxChars ? Math.min(out.maxChars, +m[1]) : +m[1];
     m = raw.match(/\b(\d|one|two|three|four|five|six)\s*(?:-|–|to|or)\s*(\d|two|three|four|five|six)\s*sentences?\b/);
     if (m) out.sentences = NUMBER_WORDS[m[2]] || +m[2];
@@ -205,7 +222,12 @@
     else if (l.maxWords) parts.push(`at most ${l.maxWords} words`);
     if (l.sentences) parts.push(`at most ${l.sentences} sentence${l.sentences === 1 ? '' : 's'}`);
     if (l.maxChars) parts.push(`at most ${l.maxChars} characters including spaces`);
-    if (!parts.length && kind === 'essay') parts.push('80–160 words');
+    if (l.minWords && !l.maxWords) parts.push(`at least ${l.minWords} words`);
+    if (l.minChars) parts.push(`at least ${l.minChars} characters`);
+    // The usual length, never below a floor the question sets ("at least 250 words": 250–330).
+    const floor = Math.max(l.minWords, Math.ceil(l.minChars / 6));
+    if (kind === 'essay' && !l.maxWords && !l.maxChars && !l.sentences)
+      parts.push(floor > 80 ? `${floor}–${floor + 80} words` : '80–160 words');
     if (!parts.length && kind === 'text') parts.push('a short phrase or one sentence');
     return parts.join(', ');
   }
@@ -419,6 +441,14 @@
       `- Avoid these words and phrases: ${L().CLICHES.slice(0, 44).join(', ')}.`,
       '',
       ...(kinds.length ? ['Questions the candidate has asked you to answer too:', ...kinds, ''] : []),
+      // Only when the form turned answers down: every other prompt stays as the eval measured it.
+      ...(o.fixing
+        ? [
+            'Answers the form turned down:',
+            '- A question with "pageError" was answered before and the form refused that answer ("rejected", when shown) with this message. Answer it again so the form accepts it: do what the message asks (a length, a format, one of the options), with the same facts. Skip it if the message asks for something the material doesn’t give.',
+            '',
+          ]
+        : []),
       'Reply with JSON only: {"answers": [{"id": "…", "answer": "…" (or ["…", "…"] for multi), "basis": "material" | "guidance" | "posting" | "inferred"} or {"id": "…", "skip": true, "reason": "a few words"}]}. One entry per question, in order.',
     ].join('\n');
   }
@@ -445,6 +475,9 @@
     const limit = ['essay', 'text'].includes(kind) ? limitText(item, kind) : '';
     if (limit) q.limit = limit;
     if (item.required) q.required = true;
+    // A box the form turned down ("Error: Enter at least 150 characters."): what it said, and the answer it refused.
+    if (item.pageError) q.pageError = U.cleanLabel(item.pageError, 200);
+    if (item.pageError && item.rejected) q.rejected = U.cleanLabel(item.rejected, 300);
     // The question before, with its answer on the page; one being answered in this same list is named by its
     // id, so the two answers agree ("Do you have other offers?" then "If yes, list them").
     // Only when one question in the list reads so: two that ask the same words can't be told apart, and a wrong link
@@ -467,7 +500,11 @@
     // What the profile had that no option matched ("Trackr" for "How did you hear about us?").
     // Never a monitoring answer (withheld() keeps those questions back; this keeps their answers back whatever), unless
     // the candidate lets the AI answer those ("Female" where the options say "Woman").
-    if (item.guess && item.guess.value && (may.eeo || !/^eeo\./.test(item.guess.type || '')))
+    // Nor the profile's legal or health answers ("Yes: my father is a serving MP") unless that kind is switched on: the
+    // application facts hold them back too.
+    const held = sensitivity(item);
+    const kept = (held.legal && !may.legal) || (held.health && !may.health);
+    if (item.guess && item.guess.value && (may.eeo || !/^eeo\./.test(item.guess.type || '')) && !kept)
       q.profileValue = U.cleanLabel(item.guess.value, 200);
     // Relatives at the employer are a conflict of interest, which the candidate may have nothing to declare about.
     const declared = may.legal && sensitivity(item).legal && CONFLICT.test(norm(item.question));
@@ -673,7 +710,11 @@
     if (lim.maxChars && text.length > lim.maxChars)
       errors.push(`Too long: ${text.length} characters; the limit is ${lim.maxChars}.`);
     if (lim.minWords && n < lim.minWords - 10)
-      errors.push(`Too short: ${n} words; write ${lim.minWords}–${lim.maxWords}.`);
+      errors.push(
+        `Too short: ${n} words; write ${lim.maxWords ? `${lim.minWords}–${lim.maxWords}` : `at least ${lim.minWords}`}.`,
+      );
+    if (lim.minChars && text.length < lim.minChars)
+      errors.push(`Too short: ${text.length} characters; write at least ${lim.minChars}.`);
     if (kind === 'text' && !lim.maxWords && n > 45) errors.push(`This box wants a short answer, not ${n} words.`);
 
     // Numbers must come from the material, the posting or the question itself ("In 150 words…"); a grade's from the
@@ -938,7 +979,12 @@
       ),
       today: input.today || Date.now(),
     };
-    const system = systemPrompt({ name: L().fullName(input.profile), lang, allow: may });
+    const system = systemPrompt({
+      name: L().fullName(input.profile),
+      lang,
+      allow: may,
+      fixing: ask.some((it) => !!it.pageError),
+    });
     let calls = 0;
 
     // The model sees plain ids (q1, q2, …): the page's own ("0:12", frame and field) are easy to garble.

@@ -235,6 +235,18 @@ test('single checkboxes: yes/no questions, acknowledgements, one option of a che
     'Redgate’s talent pool on Ashby',
   );
   assert.equal(box({ label: 'Join our talent community' }), null);
+  // Brevan Howard's job-alert box on Phenom, and Armstrong Watson's third-party sharing: opt-ins, never ticked.
+  assert.equal(
+    box({ label: 'By checking, you are allowing to receive emails regarding employment opportunities' }),
+    'optIn',
+  );
+  assert.equal(
+    box({
+      label: 'Yes',
+      question: 'Are you happy for us to share your information with third party training providers?',
+    }),
+    'optIn',
+  );
   assert.equal(
     box({ label: 'London', question: 'Which other locations are you interested in relocating to?' }),
     'job.locations',
@@ -991,6 +1003,9 @@ test('round 2 (UK engineering / EU Greenhouse): right to work after a preamble, 
     'job.authorized',
   );
   assert.equal(ask('Will you now or in the future require visa sponsorship?'), 'job.sponsorship');
+  // Armstrong Watson on Pinpoint: needing a permit is needing sponsorship, and having one is the right to work.
+  assert.equal(ask('Do you require a Work Permit to work in the United Kingdom?'), 'job.sponsorship');
+  assert.equal(ask('Do you have a valid work permit?'), 'job.authorized');
   // An essay about your visa status wants more than "No".
   assert.equal(
     ask(
@@ -1659,6 +1674,12 @@ test('live survey (Glasgow undergraduate): what each education and background qu
     ['Have you achieved or are you on track for a First or 2:1?', yn, 'edu.classAtLeast'],
     ['Minimum 2:1 required — do you meet this?', yn, 'edu.classAtLeast'],
     ['Do you expect to graduate with honours?', yn, 'edu.classAtLeast'],
+    // Armstrong Watson on Pinpoint: "achieved or predicted" asks for the class, not whether you have finished.
+    [
+      'Do you possess either a 2:1 degree or above (achieved or predicted), or a professional qualification?',
+      yn,
+      'edu.classAtLeast',
+    ],
     ['When did you graduate from High School?', ['2021', '2022', '2023'], 'edu.end:year'],
     [
       'Please specify the grading scale used by your current school.',

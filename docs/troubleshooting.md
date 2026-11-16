@@ -24,6 +24,10 @@ What to do when something doesn’t work, and what JobToFill can’t do yet.
 - AI answers run only on job applications, never on checkout or sign-up pages. A step of nothing but the employer’s own questions (iCIMS’s _Job Specific Questions_) counts: it is part of the application.
 - The popup’s AI card lists the questions it left for you, and why. Diversity questions, declarations, ID numbers and your date of birth are held back, and legal and health questions until you’ve written _Answer guidance_; switch any of them on under Settings › _Cover letters & AI_ › _Questions the AI may also answer_ (the popup says which). Passwords, card details and marketing opt-ins never go. A fact your CV, profile and guidance don’t give (a referrer’s name, a test score) is left for you rather than guessed.
 
+## Apply for me stopped before the end
+
+The popup (and the message on the page) says why and what to do: the field and the reason, such as “Fill in “Gender” (step 4 of 5) (a question JobToFill leaves to you…), then press Apply for me again”. Do that, then press _Apply for me_ again: it carries on from the step you’re on. It stops on purpose at the step that submits (“Ready to submit…”): check the application and press _Submit_ yourself. If it stops with “the page still says …” after three tries, the site is turning the step down for something JobToFill can’t see in a field: read the site’s message on the page. An answer you typed yourself is never changed, even when the site turns it down: correct it, then press _Apply for me_ again.
+
 ## Firefox removed JobToFill when it restarted
 
 That was a temporary install from `about:debugging`. Install the signed `jobtofill.xpi` from the [latest release](https://github.com/rob435/JobToFill/releases/latest) instead: it stays installed and updates itself. Your details come back from the backup file (see below).

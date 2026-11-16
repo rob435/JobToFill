@@ -65,14 +65,64 @@ button.letter svg {
 
 .letter-row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
 .letter-row button.letter {
-  width: auto;
-  padding: 9px 12px;
+  padding: 9px 10px;
   gap: 6px;
   white-space: nowrap;
+}
+/* Apply for me: the one that goes all the way, a little bolder than its neighbour. */
+.letter-row button.pilot {
+  border-width: 2px;
+  font-weight: 650;
+}
+
+/* What the latest run did: Fill this page's check, Fill + letter & CV's, Apply for me's steps. */
+.card.run {
+  gap: 6px;
+}
+.run-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 650;
+}
+.run-head .grow {
+  flex: 1;
+}
+.run-busy::after {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-left: 6px;
+  border: 2px solid var(--primary);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: -1px;
+}
+.run-msg {
+  margin: 0;
+  font-size: 12.5px;
+  white-space: pre-line;
+}
+.run-left {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.run-left b {
+  color: var(--text);
+  font-weight: 600;
+}
+@media (prefers-reduced-motion: reduce) {
+  .run-busy::after {
+    animation: none;
+  }
 }
 .quick-status {
   margin: -4px 0 0;
@@ -224,6 +274,10 @@ button.big.busy::after {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+/* An odd tool out takes the whole row. */
+.tools > :last-child:nth-child(odd) {
+  grid-column: 1 / -1;
 }
 .tool {
   display: flex;

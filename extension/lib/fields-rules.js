@@ -47,7 +47,7 @@
   const CONSENT =
     /acknowledg|\bare you happy to (submit|proceed with|continue with) (your|this|the) application\b|\b(answer|applicant|candidate|application) certification\b|\b(allow|permit|authori[sz]e) (us|[a-z]+) to (process|store|hold|use|retain) (your|my) (personal )?(data|information|details)\b|\bcertification of (answers|application|accuracy)\b|\bi (have )?(read|reviewed|understood)\b|\bi (hereby )?(confirm|agree|accept|consent|certify|attest|declare|understand)\b|\bconfirm (if |that |whether )?you (have )?(understand|understood|accept|agree)\b|\bconsent\b|privacy (notice|policy|statement)|notice at collection|data (protection|privacy|processing) (notice|policy|statement)|terms (and |& )?conditions|terms of (use|service)|\bgdpr\b|candidate (privacy|data) (notice|policy)|confidentiality (agreement|undertaking|notice|statement)|non ?disclosure (agreement|undertaking)|maintain (the )?(strict )?confidentiality|\b(the )?information (that )?i (have )?(provided|given|supplied|submitted|entered) (is|are|was) (true|accurate|correct|complete)\b/;
   const OPT_IN =
-    /marketing|newsletter|promotion|(applicant|candidate|talent) (database|pool)|\bsms\b|text messages?|whats ?app|job alerts?|talent (community|network|pool)|future (opportunit|roles?|jobs?|vacanc|positions?|openings?)|other (roles|positions|opportunities|openings)|keep (me|my)|contact me|contact (me|you) (about|regarding|for|with) (other |new |future |relevant |suitable )?(job |career |employment )?(opportunit|roles?|jobs?|vacanc|positions?|openings?)|subscribe|\bupdates\b|share my (data|information|details) with|\bnews (and |& )?(events|updates)\b|\b(job|vacancy|posting) (posting )?notifications?\b/;
+    /marketing|newsletter|promotion|(applicant|candidate|talent) (database|pool)|\bsms\b|text messages?|whats ?app|job alerts?|talent (community|network|pool)|future (opportunit|roles?|jobs?|vacanc|positions?|openings?)|other (roles|positions|opportunities|openings)|keep (me|my)|contact me|contact (me|you) (about|regarding|for|with) (other |new |future |relevant |suitable )?(job |career |employment )?(opportunit|roles?|jobs?|vacanc|positions?|openings?)|subscribe|\bupdates\b|share my (data|information|details) with|\bnews (and |& )?(events|updates)\b|\b(job|vacancy|posting) (posting )?notifications?\b|\b(receive|get) (e ?mails?|messages|communications|information) (regarding|about|on|of) (\w+ ){0,2}(opportunit|openings?|vacanc|roles|jobs)|\bshare (your|my) (personal )?(data|information|details) with (\w+ ){0,2}(third|other|partner)/;
 
   const NEGATED = /\b(not|don t|do not|does not|decline|disagree|refuse|withdraw|object)\b/;
 
@@ -232,7 +232,7 @@
     ),
     R(
       'job.sponsorship',
-      /sponsor|visa (status|support|required|transfer|requirement)|\bh ?1 ?b\b|immigration (support|sponsorship|assistance)|require (a )?(work )?visa|\b(require|need)\b.{0,30}\b(work )?authori[sz]ation\b/,
+      /sponsor|visa (status|support|required|transfer|requirement)|\bh ?1 ?b\b|immigration (support|sponsorship|assistance)|require (a )?(work )?visa|\b(require|need)\b.{0,30}\b(work )?(authori[sz]ation|permit)\b/,
       {
         not: /adjustments?\b|accommodat|\bvisitor visa\b|\bvisa to (enter|visit|travel)\b/,
         // "Do you have the right to work in the region? … Sponsorship is not available" and "This position does not
@@ -249,7 +249,7 @@
       // "Will you in the future require authorization to work in the US?" asks whether you need sponsoring; "Will you
       // rely on a UK Graduate Route visa for your right to work…?" whether you hold a visa.
       {
-        not: /\b(require|need)\b.{0,30}\b(work )?authori[sz]ation\b|\brely on (a |an |the |any )?(\w+ ){0,3}visa\b|\b(type|kind|basis|form|category) of (your )?(right to work|work authori[sz]ation|immigration status)\b/,
+        not: /\b(require|need)\b.{0,30}\b(work )?(authori[sz]ation|permit)\b|\brely on (a |an |the |any )?(\w+ ){0,3}visa\b|\b(type|kind|basis|form|category) of (your )?(right to work|work authori[sz]ation|immigration status)\b/,
       },
     ),
     // "Are you able to work in the UK?" is about permission; "able to work on-site 5 days a week" is not.
@@ -489,7 +489,7 @@
     R('optIn', OPT_IN, {
       kinds: ['checkbox', 'checkboxes', 'select', 'combo', 'combobox', 'radio'],
       test: (desc, text) =>
-        /\b(agree|consent|allow|permit|can|may|happy|receive|opt in|sign (me )?up|subscribe|add me|contact(ed)? me|retain|like to (be|join|hear))\b/.test(
+        /\b(agree|consent|allow(ing)?|permit|can|may|happy|receive|opt in|sign (me )?up|subscribe|add me|contact(ed)? me|retain|like to (be|join|hear))\b/.test(
           text,
         ),
     }),
@@ -807,7 +807,8 @@
     R(
       'edu.completed',
       /^(have|did) you (already |now )?graduated?\b|\b(have|has) you (already |now )?(completed|finished|graduated from) (your |all your )(\w+ )?(studies|degree|course|university|education|programme|program)\b|\bconfirm (that )?you have (already )?(completed|finished|graduated)\b|\b(degree|qualification|studies|course)\b.{0,20}\b(completed|complete|achieved|awarded|finished) or (still )?(predicted|expected|ongoing|in progress|pending)\b|^(is|are|was|were) (your|the|this|that)\b.{0,40}\b(grades?|results?|class(ification)?|degree|qualification)\b.{0,20}\b(expected|predicted|anticipated|pending) or (obtained|achieved|actual|awarded|final|confirmed|completed)\b/,
-      { kinds: CHOICE },
+      // Armstrong Watson's "Do you possess either a 2:1 degree or above (achieved or predicted)…?" asks for a class.
+      { kinds: CHOICE, not: /\bor (above|higher|better)\b/ },
     ),
     R(
       'edu.enrolled',

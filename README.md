@@ -9,6 +9,7 @@ A browser extension for Chrome, Edge, Brave and Firefox that fills in job applic
 - **Fills the form** from your profile: contact details, education, work history, your CV and the usual questions (right to work, start date, “How did you hear about us?”). It works on Workday, Greenhouse, Lever, Ashby and most other job sites.
 - **Answers the rest with AI**, if you add your own API key: “Why do you want to join us?” and anything else it doesn’t know. AI answers are outlined in orange so you can check them.
 - **Writes cover letters and tailors your CV** to the job.
+- **Goes through the whole application** with _Apply for me_: every step, the AI’s answers, your letter and CV. When the site turns a step down, it reads what it says, fixes those fields and tries again, then stops at the step that submits.
 - **Signs you in to job portals**, makes a strong password for each one, and types in the codes they email you.
 - **Finds firms that don’t advertise**: small hedge funds, boutique advisers and low-profile tech companies, who to email there, and a draft of the email.
 - **Fills everyday forms too**: sign-ups and checkouts, with your saved passwords and cards.
@@ -34,17 +35,18 @@ Firefox updates JobToFill by itself. In Chrome, unzip a newer release over the s
 
 1. **Fill in your profile.** The settings page opens when you install. The **Get started** list at the top shows what to add: your name and email, your CV and your education.
 2. **Add an AI key** if you want cover letters and AI answers (see [AI](#ai-optional)).
-3. **Open a job application and press Alt+Shift+F**, or click the JobToFill button › _Fill this page_.
+3. **Open a job application and press Alt+Shift+F**, or click the JobToFill button › _Fill this page_ (or _Apply for me_ to go through every step).
 4. **Check every answer, then press Submit.**
 
 ## Everyday use
 
 | To                                    | Do this                                                     |
 | ------------------------------------- | ----------------------------------------------------------- |
-| Fill a page                           | **Alt+Shift+F**, or the JobToFill button › _Fill this page_ |
+| Fill a page, AI answers and all       | **Alt+Shift+F**, or the JobToFill button › _Fill this page_ |
+| Get the letter, CV and form in one go | JobToFill button › _Fill + letter & CV_                     |
+| Go through every step, up to _Submit_ | JobToFill button › _Apply for me_                           |
 | Undo a fill                           | _Undo_ in the popup, or in the message on the page          |
 | Write a cover letter                  | JobToFill button › _Write cover letter_                     |
-| Get the letter, CV and form in one go | JobToFill button › _Quick apply_                            |
 | Remember answers you typed            | JobToFill button › _Learn from this page_                   |
 | Put one detail into a box             | Right-click the box › _Insert from profile_                 |
 | Find firms that don’t advertise       | JobToFill button › _Discover internships_                   |

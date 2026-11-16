@@ -36,6 +36,10 @@
     options: new WeakMap(),
     several: new WeakSet(),
     peeked: new WeakSet(),
+    // field -> what a fill of the rules left in it, read once the fill had settled: a field holding anything else
+    // since was changed by someone else (the person, with clicks that fire no trusted event on the field itself).
+    leftBy: new WeakMap(),
+    undoneAt: 0,
   };
 
   // This copy of the script's own mark on the ids it hands out: one injected after the page changed doesn't reuse
@@ -780,8 +784,11 @@
      * Note what the rules' turn left a field as (decide.outcome): every way out of fillOne passes here, so no field
      * is left without one. A list's options read on the way are kept with it.
      */
+    // The fields this fill's rules filled, for what each holds once the page has settled (state.leftBy).
+    const filledNow = [];
     const mark = (field, r, d, res, label, tried) => {
       const was = JTF.decide.outcome(r, d, res);
+      if (was === 'filled') filledNow.push(field);
       // Nothing recognised in a field that holds something: the person's answer, kept.
       const held = was === 'unknown' && JTF.fill.hasValue(field);
       state.outcomes.set(field.el, {
@@ -1089,6 +1096,8 @@
       if (!added) break;
     }
     const checked = await recheck(written, { profile, settings, history });
+    // What each field the rules filled holds now, read back once the page has had its say (see putInByUs).
+    for (const f of filledNow) if (f.el.isConnected) state.leftBy.set(f.el, JTF.fill.currentValue(f));
     report.check = checked.check;
     if (checked.repaired) report.repaired = checked.repaired;
     if (checked.restored) report.restored = (report.restored || 0) + checked.restored;
@@ -1379,6 +1388,7 @@
         });
         traceStep(field, r, d.value, res, started, 'fill');
         note(d, res);
+        if (res.status === 'filled') state.leftBy.set(field.el, JTF.fill.currentValue(field));
         if (res.status === 'filled' && settings.highlight !== false) JTF.fill.highlight(res.target || field.el);
       }
     } finally {
@@ -1451,15 +1461,17 @@
         results.push({ id: a.id, status: 'gone' });
         continue;
       }
-      // Something typed in the meantime is the person's answer.
-      if (JTF.fill.hasValue(field)) {
+      // Something typed in the meantime is the person's answer. An answer the page turned down that JobToFill put
+      // there is the one a fix takes the place of.
+      const again = !!a.overwrite && JTF.fill.hasValue(field) && putInByUs(field);
+      if (JTF.fill.hasValue(field) && !again) {
         results.push({ id: a.id, status: 'skipped' });
         continue;
       }
       const v = answerValue(a);
       const started = Date.now();
       const res = await JTF.fill.apply(field, v, {
-        overwrite: false,
+        overwrite: again,
         comboboxes: settings.comboboxes !== false,
         history,
       });
@@ -1467,6 +1479,8 @@
       if (res.status === 'filled') {
         filled++;
         state.aiFilled.set(field.el, JTF.fill.currentValue(field));
+        if (a.said != null && (a.pageError || a.overwrite || a.said))
+          answered.set(field.el, { message: a.said, value: JTF.fill.currentValue(field) });
         if (settings.highlight !== false) JTF.fill.highlight(res.target || field.el, true);
         if (res.check) written.push({ field, v, check: res.check, label: U.cleanLabel(a.question, 60), key: null });
       }
@@ -1510,6 +1524,293 @@
     port.onDisconnect.addListener(stop);
     state.hold = stop;
     return true;
+  }
+
+  /* ------------------------------------------------------- check and fix */
+
+  // What the person typed or picked themselves (a trusted input or change event), with what it left there: a fix never
+  // writes over it. JobToFill's own typing is trusted too; a box still as JobToFill last left it is its own.
+  const touched = new WeakMap();
+  for (const type of ['input', 'change'])
+    document.addEventListener(
+      type,
+      (e) => {
+        const target = e.composedPath ? e.composedPath()[0] : e.target;
+        if (e.isTrusted && target && target.nodeType === 1) touched.set(target, JTF.fill.valueIn(target));
+      },
+      true,
+    );
+  const typedByYou = (el) => touched.has(el) && touched.get(el) !== JTF.fill.wrote(el);
+  // field -> { message, value }: the page's message a fix answered, and what it wrote. A page that says so only when
+  // its step is sent (Workday's server) still shows the message until then: that field waits for its verdict.
+  let answered = new WeakMap();
+  // field -> the ways of writing its value tried against the page's messages, so each round tries the next one.
+  const tried = new WeakMap();
+  // Lists whose list before them was chosen again so the page would draw their options (see problems).
+  const redrawn = new WeakSet();
+
+  /** Does the field hold what JobToFill put there (the rules or the AI), not changed since by the person? */
+  function putInByUs(field) {
+    const els = [field.el, ...(field.members || [])];
+    if (els.some(typedByYou)) return false;
+    if (state.aiFilled.has(field.el)) return state.aiFilled.get(field.el) === JTF.fill.currentValue(field);
+    if (answered.has(field.el)) return answered.get(field.el).value === JTF.fill.currentValue(field);
+    // Still what the rules left there (a later fill says "kept" for an earlier one's): anything else is someone else's.
+    return state.leftBy.has(field.el) && state.leftBy.get(field.el) === JTF.fill.currentValue(field);
+  }
+
+  /** What the page says is wrong with a field: its own box's message, or one of its members' (a group). */
+  function complaintOf(field) {
+    for (const el of [field.el, ...(field.members || [])]) {
+      const said = JTF.fill.problemOf(el);
+      if (said) return said;
+    }
+    return '';
+  }
+
+  // Words of a message that only says a box is required: nothing about what to write in it.
+  const ONLY_REQUIRED =
+    /^(error:?\s*)?(this field is required|required|the field .{1,80} is required and must have a value|please (fill in|complete) this field|marked invalid)\.?$/i;
+  const TEXT_LIKE = new Set(['text', 'textarea', 'email', 'tel', 'url', 'number', 'search', 'date', 'editor']);
+
+  /**
+   * What stands between this frame's form and being sent, field by field: required boxes still empty, and boxes the
+   * page turned down, with what it says ("Error: Phone Number must contain only numbers."). Each says who can put it
+   * right: `fill` (the rules have its answer: a fill puts it in), `rules` (its value written the way the message
+   * asks: with `payload.fix` that is done here and now), `ai` (a question the AI may answer, sent with the message and
+   * the answer refused), `waiting` (answered since the page said so: its verdict comes when the step is sent) or
+   * `yours` (what you typed, a question the AI is kept from, an upload). Plus the page's own error banners. Ids are
+   * handed out as pendingQuestions' are, so the AI's answers come back to the same fields.
+   */
+  async function problems(payload) {
+    const { profile, settings } = payload;
+    const allow = (settings && settings.aiSensitive) || null;
+    // Undo was pressed since the check began: what it put back stays put back.
+    if (payload.since && state.undoneAt > payload.since) return { items: [], errors: [], rewrote: 0, undone: true };
+    // The step was sent and turned down again: every message the page shows now is its verdict on what is there.
+    if (payload.refused) answered = new WeakMap();
+    const { fields, results, context } = scan(profile);
+    context.jobLocation = jobLocation(payload);
+    // Only a job application's questions go to the AI (never a checkout's or a sign-up page's), as with a fill's.
+    const forJob =
+      !!context.jobContext ||
+      !!JTF.flow.analyze({ fields, results }, { applicationHosts: payload.applicationHosts }).byAddress;
+    const history = [];
+    const items = [];
+    let rewrote = 0;
+    try {
+      for (let i = 0; i < fields.length && items.length < MAX_PENDING; i++) {
+        const field = fields[i];
+        const r = results[i];
+        if (JTF.flow.inCaptcha(field.el) || !JTF.dom.isVisible(field.el)) continue;
+        const empty = !JTF.fill.hasValue(field);
+        const required = JTF.dom.isRequired(field);
+        const said = complaintOf(field);
+        if (!said && !(required && empty)) continue;
+        const type = (r && r.type) || null;
+        const def = type ? JTF.fields.DEFS[type] : null;
+        // Never a password's, a card's or a bank detail's: nothing below needs it.
+        const value = empty || (def && def.secret) ? '' : U.cleanLabel(JTF.fill.currentValue(field), 300);
+        const message = said && said !== 'marked invalid' ? said : '';
+        const item = {
+          label: labelFor(field, r),
+          question: U.cleanLabel(JTF.matcher.questionText(field.desc), 200),
+          kind: field.kind,
+          type,
+          required,
+          empty,
+          message: message || (empty ? 'required' : 'turned down'),
+          value,
+          mine: !empty && putInByUs(field),
+          fix: 'yours',
+          why: '',
+        };
+        const done = answered.get(field.el);
+        // What the rules' turn left it as: a list none of whose options was your answer is the AI's to try, not theirs
+        // again ("Source" over Phenom's options, none of them "Trackr").
+        const o = state.outcomes.get(field.el);
+        const tried = o && o.type === type && !/^(kept|filled)$/.test(o.state) ? o.state : null;
+        const before = i > 0 ? fields[i - 1] : null;
+        const prevType = i > 0 && results[i - 1] ? results[i - 1].type : null;
+        // A list the one before it draws, still without options (Phenom's "Source" under "How Did You Hear About
+        // Us?": a change made elsewhere too soon after loses them): that one is chosen again, so the page draws them.
+        if (
+          payload.fix &&
+          empty &&
+          field.kind === 'select' &&
+          before &&
+          before.kind === 'select' &&
+          !redrawn.has(field.el) &&
+          JTF.fill.hasValue(before) &&
+          putInByUs(before) &&
+          !(field.desc.options || []).some((o) => !JTF.matcher.isPlaceholder(U.normalize(o.text)))
+        ) {
+          redrawn.add(field.el);
+          before.el.dispatchEvent(new Event('input', { bubbles: true }));
+          before.el.dispatchEvent(new Event('change', { bubbles: true }));
+          await new Promise((resolve) => setTimeout(resolve, 800));
+          rewrote++;
+          item.fix = 'waiting';
+          items.push(item);
+          continue;
+        }
+        if (done && !empty && done.value === JTF.fill.currentValue(field) && done.message === said) {
+          // Answered since the page said so: its verdict comes when the step is sent again.
+          item.fix = 'waiting';
+        } else if (!empty && message && ONLY_REQUIRED.test(message.trim())) {
+          // "This field is required" said of a box that holds something now: about the box as it was, not this value.
+          item.fix = 'waiting';
+        } else if (!empty && !item.mine) {
+          item.why = 'typed';
+        } else if (field.kind === 'file' || (def && def.file)) {
+          item.fix = empty ? 'fill' : 'yours';
+          item.why = empty ? '' : 'upload';
+        } else if (def && def.secret) {
+          item.why = 'secret';
+        } else {
+          // The rules first: the profile's answer, written the way the page asks, or put in where the box is empty.
+          const v = type && def ? fieldValue(field, r, profile, context, payload) : null;
+          const text = v && TEXT_LIKE.has(field.kind) ? nextWay(field, v, message, value, !!payload.fix) : '';
+          if (!empty && text) {
+            item.fix = 'rules';
+            if (payload.fix) {
+              const res = await JTF.fill.rewrite(field, text, { history });
+              traceStep(field, r, v, res, Date.now(), 'fix');
+              if (res.status === 'filled') {
+                rewrote++;
+                answered.set(field.el, { message: said, value: JTF.fill.currentValue(field) });
+                state.leftBy.set(field.el, JTF.fill.currentValue(field));
+                state.outcomes.set(field.el, { state: 'filled', type, label: item.label });
+                if (settings && settings.highlight !== false) JTF.fill.highlight(field.el);
+                item.fix = 'waiting';
+              }
+            }
+          } else if (empty && v && !(def && (def.consent || def.leave)) && !/^(nomatch|failed)$/.test(tried || ''))
+            item.fix = 'fill';
+          if (item.fix === 'yours') {
+            // The AI is asked about an empty box, or about its own answer the page turned down: never about a value
+            // the rules put in from your profile (your legal answers, a contact detail), which stays the rules' own.
+            const ownAnswer = forJob && state.aiFilled.has(field.el) && item.mine;
+            const asked =
+              forJob &&
+              (empty || ownAnswer) &&
+              JTF.decide.forAi(field.desc, r, profile, context, prevType, null, allow, tried);
+            if (asked || ownAnswer) {
+              item.fix = 'ai';
+              item.ai = aiQuestion(field, r, asked, { said, message, value, before, prevType, allow, required });
+            } else if (!empty && v && TEXT_LIKE.has(field.kind)) item.why = 'rules';
+            else item.why = whyLeft(type, def);
+          }
+        }
+        items.push(item);
+      }
+    } finally {
+      remember(history);
+    }
+    const errors = JTF.flow.pageErrors ? JTF.flow.pageErrors() : [];
+    return { items, errors, rewrote, undoable: state.history.length > 0 };
+  }
+
+  // The kinds of question JobToFill leaves to you unless you let the AI answer them (Settings › Cover letters & AI).
+  const KEPT_TYPES = /^(eeo\.|dob$|age$|compliance\.|health|adjustments)/;
+  const GRADES = /^edu\.(gpa|gpaScale|classification|classAtLeast|equivalent)$/;
+
+  /** Why a field the rules and the AI both leave is yours: a code background.js puts into words (LEFT_WHY). */
+  function whyLeft(type, def) {
+    if (def && def.consent) return 'consent';
+    if (type === 'optIn') return 'optin';
+    if (!type) return 'unknown';
+    if (KEPT_TYPES.test(type)) return 'kept';
+    // A grade is never converted from one system to another (a 2:1 is no GPA).
+    if (GRADES.test(type)) return 'grade';
+    // A detail of yours the AI never writes (an email, a salary, a degree you don't have): your profile's to give.
+    return 'missing';
+  }
+
+  /** The profile's value for a field the rules recognised, as a fill works it out (null when there is none). */
+  function fieldValue(field, r, profile, context, payload) {
+    try {
+      const extra = { secrets: null, consents: !!(payload.settings && payload.settings.consents) };
+      const followed = r.followsField ? JTF.fill.currentValue(r.followsField) : null;
+      const d = JTF.decide.field(field.desc, r, profile, context, { ctx: extra, followed });
+      return d.action === 'fill' ? d.value : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /** The next way of writing `v` that the page's message asks for and no fix has tried on this field yet. */
+  function nextWay(field, v, message, value, commit) {
+    const seen = tried.get(field.el) || new Set();
+    tried.set(field.el, seen);
+    if (commit) seen.add(value);
+    const ways = JTF.matcher.messageVariants(v, field.desc, message, value).filter((t) => !seen.has(t) && t !== value);
+    // A message that names nothing a way of writing could meet ("marked invalid"): the next way, three at most.
+    if (!ways.length || (!message && seen.size > 3)) return '';
+    // Only a way that will be written is used up: a look that doesn't fix leaves them all.
+    if (commit) seen.add(ways[0]);
+    return ways[0];
+  }
+
+  /** A field the page turned down, as a question for the AI: what it asks, what the page said, what it refused. */
+  function aiQuestion(field, r, asked, { said, message, value, before, prevType, allow, required }) {
+    const item = JTF.decide.aiItem(field.desc, asked ? asked.guess : null);
+    const id = `${RUN}-${++state.asked}`;
+    state.pending.set(id, { field, question: U.normalize(item.question) });
+    for (const key of state.pending.keys()) {
+      if (state.pending.size <= KEPT_PENDING) break;
+      state.pending.delete(key);
+    }
+    return {
+      id,
+      ...item,
+      required: required || !!message,
+      // Only a message that says something about what to write: "is required" is in `required` already.
+      pageError: message && !ONLY_REQUIRED.test(message.trim()) ? message : '',
+      rejected: value || '',
+      overwrite: !!value,
+      // What the page said, word for word, so the field waits for its verdict once answered (see `answered`).
+      said: said || '',
+      follows: before
+        ? {
+            question: U.cleanLabel(JTF.matcher.questionText(before.desc), 200),
+            answer: JTF.decide.hidesAnswer(prevType, allow) ? '' : JTF.fill.currentValue(before).slice(0, 200),
+          }
+        : null,
+    };
+  }
+
+  /**
+   * Scroll through the page once, top to bottom a screen at a time, so what it draws only on the way (a question shown
+   * once it is in view, a list that loads more as you go) is there to be read; then back to where it was. Also a form
+   * panel that scrolls on its own. { grew }: how many more fields there are after it.
+   */
+  async function sweep() {
+    const before = JTF.dom.collect(document).length;
+    const page = document.scrollingElement || document.documentElement;
+    const panes = [page];
+    for (const el of Array.from(document.querySelectorAll('main, form, section, div, [role="main"]')).slice(0, 4000)) {
+      if (panes.length >= 4) break;
+      if (
+        el.scrollHeight > el.clientHeight + 80 &&
+        el.clientHeight > 150 &&
+        /(auto|scroll)/.test(getComputedStyle(el).overflowY)
+      )
+        panes.push(el);
+    }
+    for (const pane of panes) {
+      const start = pane.scrollTop;
+      const step = Math.max(240, Math.round((pane === page ? innerHeight : pane.clientHeight) * 0.8));
+      for (let y = 0, n = 0; y < pane.scrollHeight && n < 40; y += step, n++) {
+        pane.scrollTop = y;
+        await new Promise((resolve) => setTimeout(resolve, 90));
+      }
+      pane.scrollTop = pane.scrollHeight;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      pane.scrollTop = start;
+    }
+    await settle(1500, 300);
+    return { grew: JTF.dom.collect(document).length - before };
   }
 
   /* ---------------------------------------------------------------- learn */
@@ -1708,10 +2009,14 @@
     // A multi-step application's step (Settings › "Move through multi-step applications for me"): what stands
     // between it and its next, and its own "Next" clicked when nothing does.
     stepState: (payload) =>
-      JTF.flow.stepState(accountScan(payload), { applicationHosts: payload && payload.applicationHosts }),
+      JTF.flow.stepState(accountScan(payload), {
+        applicationHosts: payload && payload.applicationHosts,
+        stale: payload && payload.stale,
+      }),
     advance: serial((label, payload) => {
       const res = JTF.flow.advance(accountScan(payload), label, {
         applicationHosts: payload && payload.applicationHosts,
+        stale: payload && payload.stale,
       });
       return { clicked: res.clicked || '', refused: res.refused || '' };
     }),
@@ -1724,6 +2029,8 @@
         items: await pendingQuestions(payload.profile, context, { peek: !!payload.ai, settings: payload.settings }),
       };
     }),
+    problems: serial(problems),
+    sweep: serial(sweep),
     hold,
     release() {
       if (state.hold) state.hold();
@@ -1760,6 +2067,7 @@
     /** Put back what every fill and AI answer changed since the last Undo, once the one under way has finished. */
     undo: serial(async () => {
       const n = await JTF.fill.undo(state.history);
+      state.undoneAt = Date.now();
       JTF.fill.clearHighlights();
       return { undone: n };
     }),

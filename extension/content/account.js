@@ -581,11 +581,15 @@
 
   /** The step's own way on: a "Next" or "Save and Continue" at the foot of its form (a bare "Continue" on a page of steps). */
   function nextControl(fields, steps) {
+    const last = fields.length ? fields[fields.length - 1].el : null;
+    // Never a button in a dialog the step's fields aren't in: "You're about to submit your application. [Cancel]
+    // [Continue]" (or a cookie banner's "Continue") opened over the step is no way on.
+    const home = last && last.closest(DIALOGS);
     const forward = controls(document).filter((c) => {
       const i = A().stepIntent(c.text);
-      return i === 'next' || (i === 'continue' && steps);
+      const box = c.el.closest(DIALOGS);
+      return (i === 'next' || (i === 'continue' && steps)) && (!box || !shown(box) || box === home);
     });
-    const last = fields.length ? fields[fields.length - 1].el : null;
     const after = (c) => !!last && !!(last.compareDocumentPosition(c.el) & Node.DOCUMENT_POSITION_FOLLOWING);
     return forward.filter(after).pop() || forward[forward.length - 1] || null;
   }
@@ -596,6 +600,9 @@
    * (required fields still empty, the terms, a CAPTCHA), errors, ready, signature (tells the next step from this one) }.
    * `opts.applicationHosts`: the hosts whose pages are an application by their address (see byAddress).
    */
+  // "* indicates a required field" is a note, not an error.
+  const REQUIRED_NOTE = /^\*?\s*(indicates|denotes) a required/i;
+
   function stepState(scan, opts) {
     const { fields, results } = scan;
     const st = progress(document);
@@ -608,9 +615,12 @@
       blockers: [],
       errors: [],
       ready: false,
+      // Dialogs shown over the step that hold none of its fields (a confirmation, a cookie banner), by their words.
+      dialogs: [],
       signature: [
         location.href,
         st ? `${st.step}/${st.total} ${st.label || ''}` : '',
+        fields.length,
         ...fields.slice(0, 12).map((f) => JTF.matcher.questionText(f.desc).slice(0, 60)),
       ].join('|'),
     };
@@ -627,8 +637,19 @@
     });
     const c = captcha(document);
     if (c && !c.solved) out.blockers.push({ kind: 'captcha', label: c.kind });
-    out.errors = messages(document, ERRORS).filter((t) => !/^\*?\s*(indicates|denotes) a required/i.test(t));
-    out.ready = !!next && !out.final && !out.blockers.length && !out.errors.length;
+    // The words of a dialog the step's own fields are asked in (an application drawn in a modal, or a confirmation
+    // with a box to tick), '' when none.
+    const asked = fields.map((f) => f.el.closest(DIALOGS)).find((d) => d && shown(d));
+    out.inDialog = asked ? U.cleanLabel(dom().textOf(asked), 120) || 'a dialog' : '';
+    out.dialogs = shownDialogs()
+      .filter((d) => !fields.some((f) => d.contains(f.el)))
+      .map((d) => U.cleanLabel(dom().textOf(d), 120))
+      .filter(Boolean);
+    out.errors = messages(document, ERRORS).filter((t) => !REQUIRED_NOTE.test(t));
+    // Messages already answered (Workday's "Errors Found" stays until the step is sent again, whatever is typed
+    // meanwhile): "Apply for me" may press again once each field they were about is put right.
+    const stale = new Set((opts && opts.stale) || []);
+    out.ready = !!next && !out.final && !out.blockers.length && !out.errors.some((t) => !stale.has(t));
     return out;
   }
 
@@ -800,6 +821,8 @@
     waiting: () => !!waiter,
     captcha,
     inCaptcha,
+    /** The page's own error messages (banners, alerts), as a step's are read. */
+    pageErrors: () => messages(document, ERRORS).filter((t) => !REQUIRED_NOTE.test(t)),
     portal: () => A().portal(location.href, hints()),
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -63,7 +63,8 @@ extension/
                        setup.js (Get started), edits.js (what the page changed, put onto the profile as stored now)
 tests/
   unit/                node:test, no browser
-  e2e/                 the real extension in Chromium (Playwright) or Firefox (Puppeteer + remote debugging)
+  e2e/                 the real extension in Chromium (Playwright) or Firefox (Puppeteer + remote debugging);
+                       mock-ai.mjs stands in for the AI provider (every prompt the extension sends, answered as a model would)
   live/                surveys of live application forms listed on Trackr (not run by npm test, see below)
   bench/               the detection benchmark: real forms (a private corpus) scored field by field (see below);
                        styles.mjs saves each form's stylesheets for reading its page again
@@ -81,7 +82,10 @@ tests/
                        virtual lists, and its links that grow a box at a time;
                        msforms.html: Microsoft Forms' question notes and date picker; eploy.html:
                        an upload in a dialog of its own; workday-steps.html: an application in four steps, its
-                       sections' own "Add" and the Review step's "Submit"; workday-questions.html: Lloyds'
+                       sections' own "Add" and the Review step's "Submit"; workday-validate.html: an application in
+                       five steps that checks each one only on "Save and Continue", as Workday's server does (digits-only
+                       phone, an unmarked required MM/YYYY date, a 150-character floor, a lingering "Errors Found"),
+                       ?lazy=1 draws a question once scrolled to, ?confirm=1 opens a submit confirmation; workday-questions.html: Lloyds'
                        application questions, each a rich-text legend over a Select that calls itself only
                        "Select One Required", its options there while its menu is open; dayforce-upload.html: two uploads
                        sharing an id; discover-home.html, discover-team.html and discover-careers.html: a small
@@ -124,7 +128,11 @@ OPENROUTER_API_KEY=sk-or-… node tests/live/survey-api.mjs --from report.json -
 node tests/live/survey.mjs --limit 20                      # the real extension in Chromium on live forms (HEADED=1 to watch)
 node tests/live/survey-sites.mjs --limit 60 --shard 0/3    # the sites with no rules: see below
 node tests/live/survey-sites.mjs --from report.json        # its summary again
+NODE_USE_ENV_PROXY=1 node tests/live/buttons.mjs --from forms.txt --md report.md
+                                                           # the popup's three buttons on live forms, AI stood in for
 ```
+
+`buttons.mjs` presses _Fill this page_, _Fill + letter & CV_ and _Apply for me_ on each live form, with `tests/e2e/mock-ai.mjs` standing in for the AI provider, and reports how each run ended, what was left and why, and how long it took. Every request off the machine that isn't a GET is aborted before it leaves (a CV upload, an autosave), so no employer ever receives the test applicant's details; presses of anything that submits and confirmation pages are flagged. Multi-step forms beyond their first step need their steps saved with the employer, so those are measured on the Workday replicas in `tests/fixtures` instead.
 
 The surveys above only reach job boards JobToFill already knows. `survey-sites.mjs` goes after the rest: the programmes on Trackr whose job page is on a site `jobpage.ats()` doesn't recognise (an employer's own careers site), up to two per site. For each it reads the job page as the letter studio does, clicks _Apply_ (only "Apply"-like links and buttons, never one in a form), and reports the controls on that page the scanner missed (Meta Careers' form, whole-page `aria-hidden`, was the first), the fields no rule recognises, and whether the job is found again from there (the wrong text taken for the job, a sign-in step that loses it). Nothing is filled or submitted. About a fifth of these sites put a bot check in front of a headless browser (Cloudflare's "Just a moment…"); those are listed, and need a person's browser.
 

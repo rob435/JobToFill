@@ -22,7 +22,7 @@
   // declarations), secrets, uploads, and a cover letter (the letter writer does those).
   // Sanctions declarations and interview slots too: left for you when your profile can't tell.
   const NOT_FOR_AI =
-    /^(name\.|email$|phone|address\.|links\.|dob$|age$|pronouns$|account\.|otp$|human$|cc\.|file\.|consent$|optIn$|referee$|page$|eeo\.|coverLetter$|job\.salary$|compliance\.sanctions$|job\.availability$)/;
+    /^(name\.|email(\.|$)|phone|address\.|links\.|dob$|age$|pronouns$|account\.|otp$|human$|cc\.|file\.|consent$|optIn$|referee$|page$|eeo\.|coverLetter$|job\.salary$|compliance\.sanctions$|job\.availability$)/;
   // Boxes the AI never writes in.
   const NO_AI_KINDS = new Set(['file', 'password', 'email', 'tel', 'url']);
   // "If other, please specify" after a diversity or password question belongs to it.
