@@ -2853,13 +2853,16 @@ async function pilotRun(tabId, run) {
       }
       if (account.lines && account.lines.length && !summary.jobContext && !/^Signed in/.test(account.lines[0]))
         return done('stopped', account.lines.join(' '));
-      // The letter and CV go into this step's uploads: it waits for them.
-      if (summary.held && pilot.letters === 'running') {
-        const at = await pilotLook(tabId, profile, hosts, run.steps, stale, signal);
-        if (at && at.progress && at.progress.total)
-          reportRun(tabId, run, { step: at.progress.step, total: at.progress.total });
-        say('letters', `waiting for your cover letter and tailored CV to go in${where()}…`);
-        await lettersReady(tabId, pilot, signal);
+      // The letter and CV go into this step's uploads: it waits for them (they may be ready already: the fill held the
+      // uploads while they were still being written).
+      if (summary.held && /^(running|done|failed)$/.test(pilot.letters)) {
+        if (pilot.letters === 'running') {
+          const at = await pilotLook(tabId, profile, hosts, run.steps, stale, signal);
+          if (at && at.progress && at.progress.total)
+            reportRun(tabId, run, { step: at.progress.step, total: at.progress.total });
+          say('letters', `waiting for your cover letter and tailored CV to go in${where()}…`);
+          await lettersReady(tabId, pilot, signal);
+        }
         if (signal.aborted) continue;
         const put =
           pilot.letters === 'done'

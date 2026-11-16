@@ -348,7 +348,12 @@ export function mockAi({ delay = 0, skipEssays = false, terse = false, doubt = f
                 return [];
               }
             }),
-        close: () => new Promise((r) => server.close(r)),
+        // The browser keeps its connections open: they are dropped, or close() would wait for them for ever.
+        close: () =>
+          new Promise((r) => {
+            server.close(r);
+            if (server.closeAllConnections) server.closeAllConnections();
+          }),
       });
     }),
   );
