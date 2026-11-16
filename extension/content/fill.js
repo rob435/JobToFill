@@ -419,8 +419,16 @@
 
   const ERROR_TEXT =
     /\b(invalid|not valid|valid (\w+ )*(number|email|date|address|url|link|format|value|phone|postcode|zip)|format|must|should|required|please (enter|provide|use|select|choose|fill)|incorrect|not allowed|too (short|long)|at least|no more than|only (digits|numbers|letters)|enter a|doesn t match|does not match)\b/;
+  // More of what an error-styled message says: "can't be blank", "Please answer this question", "Error: …".
+  const PROBLEM_TEXT =
+    /\b(error|can t be (blank|empty)|cannot be (blank|empty)|please (complete|answer)|is missing|not (a )?valid|try again)\b/;
   const ERROR_CLASS =
     /\b(error|invalid|danger|is-invalid|has-error|feedback|validation|warning)\b|--error|__error|-error\b/i;
+
+  // Workday marks a field's message by its automation id ("errorMessage", "inputAlert"), not a class.
+  const ERROR_ID = /error|alert|invalid/i;
+  const errorNode = (n) =>
+    ERROR_CLASS.test(n.getAttribute('class') || '') || ERROR_ID.test(n.getAttribute('data-automation-id') || '');
 
   /**
    * What the page says is wrong with a box, if anything: its own validity (pattern, type, length), else the error
@@ -441,9 +449,8 @@
     // Error text in the box's own row: up to where other fields start.
     for (let a = el.parentElement, i = 0; a && i < 4; a = a.parentElement, i++) {
       if (Array.from(a.querySelectorAll('input:not([type="hidden"]), select, textarea')).some((c) => c !== el)) break;
-      for (const n of a.querySelectorAll('[role="alert"], [aria-live="assertive"], [class]')) {
-        if (n.contains(el) || (n.getAttribute('role') !== 'alert' && !ERROR_CLASS.test(n.getAttribute('class'))))
-          continue;
+      for (const n of a.querySelectorAll('[role="alert"], [aria-live="assertive"], [class], [data-automation-id]')) {
+        if (n.contains(el) || (n.getAttribute('role') !== 'alert' && !errorNode(n))) continue;
         if (n.querySelector('input, select, textarea') || !dom().isVisible(n)) continue;
         said.push(dom().textOf(n));
       }
@@ -451,6 +458,49 @@
     const text = said.map((t) => JTF.util.cleanLabel(t, 160)).find((t) => ERROR_TEXT.test(JTF.util.normalize(t)));
     if (text) return text;
     return el.getAttribute('aria-invalid') === 'true' ? 'marked invalid' : '';
+  }
+
+  /**
+   * What the page says is wrong with a box, read strictly (for "Apply for me" and the check after a fill): only what a
+   * page shows as an error counts, never a box's help ("Please enter your phone number" under it). Its own validity
+   * (a pattern, a type, a length; not "required", which the check reads itself), else a message it is marked by:
+   * aria-invalid, aria-errormessage, an error-styled or alert node it points to or that stands in its row (Workday's
+   * data-automation-id="errorMessage"). '' when nothing says so.
+   */
+  function problemOf(el) {
+    if (!el || !el.isConnected) return '';
+    const v = el.validity;
+    if (v && !v.valid && !v.valueMissing && !v.customError) return el.validationMessage || 'not accepted';
+    const marked = el.getAttribute('aria-invalid') === 'true';
+    const root = el.getRootNode();
+    const byId = (id) => (root.getElementById ? root.getElementById(id) : null);
+    const said = [];
+    for (const id of (el.getAttribute('aria-errormessage') || '').split(/\s+/).filter(Boolean)) {
+      const ref = byId(id);
+      if (ref && dom().isVisible(ref)) said.push(dom().textOf(ref));
+    }
+    for (const id of (el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)) {
+      const ref = byId(id);
+      if (!ref || !dom().isVisible(ref)) continue;
+      const errorish = [ref, ...ref.querySelectorAll('[class], [role], [data-automation-id]')].some(
+        (n) => n.getAttribute('role') === 'alert' || errorNode(n),
+      );
+      if (errorish || marked) said.push(dom().textOf(ref));
+    }
+    for (let a = el.parentElement, i = 0; a && i < 4; a = a.parentElement, i++) {
+      if (Array.from(a.querySelectorAll('input:not([type="hidden"]), select, textarea')).some((c) => c !== el)) break;
+      for (const n of a.querySelectorAll('[role="alert"], [aria-live="assertive"], [class], [data-automation-id]')) {
+        if (n.contains(el) || (n.getAttribute('role') !== 'alert' && !errorNode(n))) continue;
+        if (n.querySelector('input, select, textarea') || !dom().isVisible(n)) continue;
+        said.push(dom().textOf(n));
+      }
+    }
+    if (v && v.customError && el.validationMessage) said.push(el.validationMessage);
+    const text = said
+      .map((t) => JTF.util.cleanLabel(t, 160))
+      .find((t) => ERROR_TEXT.test(JTF.util.normalize(t)) || PROBLEM_TEXT.test(JTF.util.normalize(t)));
+    if (text) return text;
+    return marked ? 'marked invalid' : '';
   }
 
   /** Checked state of a native radio/checkbox or an ARIA one (role="radio", aria-pressed buttons). */
@@ -2384,9 +2434,31 @@
     while (highlighted.length) clearOne(highlighted[0].target);
   }
 
+  const NOT_TEXT = new Set(['select', 'radio', 'checkbox', 'checkboxes', 'combo', 'combobox', 'file', 'password']);
+
+  /**
+   * Write `text` into a text box in place of what it holds: a value the page turned down, written the way its message
+   * asks ("4155550100" for "must contain only numbers"). Undoable with the fill. { status: 'filled' | 'failed' |
+   * 'skipped' }, and what the page says about it now.
+   */
+  async function rewrite(field, text, { history } = {}) {
+    const { el, kind } = field;
+    if (!el || !el.isConnected || NOT_TEXT.has(kind)) return { status: 'skipped', reason: 'not a text box' };
+    const prev = textIn(el);
+    if (prev === text) return { status: 'skipped', reason: 'same' };
+    if (history) history.push({ el, kind, prev });
+    const before = openPopups(el.ownerDocument);
+    const way = await writeText(el, text, 0, false);
+    await closePopups(el, before);
+    return way < 0 ? { status: 'failed', reason: 'not kept' } : { status: 'filled', said: complaint(el) };
+  }
+
   JTF.fill = {
     apply,
     repair,
+    rewrite,
+    complaint,
+    problemOf,
     undo,
     hasValue,
     currentValue,

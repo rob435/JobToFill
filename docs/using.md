@@ -7,6 +7,8 @@ The buttons and shortcuts, a typical application from start to finish, and setti
 | Do this                                                    | How                                                                                                 |
 | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | Fill the page                                              | **Alt+Shift+F**, the toolbar button → _Fill this page_, or right-click → _Fill this page_           |
+| Fill it, then check it                                     | Toolbar → _Fill this page_: once the AI has answered, it puts right what the page still wants       |
+| Go through every step for you                              | Toolbar → _Apply for me_: letter, CV, every step’s _Next_, fixes; stops before _Submit_             |
 | Open the popup                                             | **Alt+Shift+J**, or click the toolbar button                                                        |
 | See what was detected                                      | Toolbar → _Show detected fields_                                                                    |
 | See the page as JobToFill does                             | Toolbar → _Page map_: every field, what it’s taken for and what’s missing; click a line to go to it |
@@ -14,7 +16,7 @@ The buttons and shortcuts, a typical application from start to finish, and setti
 | Insert one value                                           | Right-click a box → _Insert from profile_                                                           |
 | New password on a sign-up form                             | Right-click the password box → _Generate strong password_ (or just fill the page)                   |
 | Undo a fill                                                | _Undo_ in the popup or in the on-page toast: every fill since the last Undo, the AI’s answers too   |
-| Letter, CV and form in one go                              | Toolbar → _Quick apply_ (see the result later under _Last quick apply_)                             |
+| Letter, CV and form in one go                              | Toolbar → _Fill + letter & CV_ (see the result later under _Last quick apply_)                      |
 | Write a cover letter                                       | Toolbar → _Write cover letter_ on the application page (set up a key under _Cover letters & AI_)    |
 | Answer the questions left                                  | Automatic with an AI key; or the popup’s _Answer them with AI_                                      |
 | Let the AI answer diversity, legal, health or ID questions | Settings › _Cover letters & AI_ › _Questions the AI may also answer_ (all off by default)           |
@@ -27,9 +29,12 @@ To change the shortcut, open `chrome://extensions/shortcuts` in Chromium browser
 
 1. **Start from the job’s posting** and click its _Apply_ button. JobToFill remembers the posting, so the cover letter and the AI answers are written for the real job.
 2. **Sign in or create the account.** Press **Alt+Shift+F** on the portal’s sign-in or sign-up page. JobToFill signs in with the login it saved for that site, or creates the account with a new strong password, and types in the code the site emails you. If a CAPTCHA appears, solve it: JobToFill carries on once you have.
-3. **Fill the application.** Press **Alt+Shift+F** again. Your CV goes into the upload first, then your contact details, education, work history and screening answers. With an AI key, the questions left empty are answered in the same go and outlined in dashed orange. (_Quick apply_ in the popup does all this, plus the cover letter and a tailored CV.)
+3. **Fill the application.** Press **Alt+Shift+F** again. Your CV goes into the upload first, then your contact details, education, work history and screening answers. With an AI key, the questions left empty are answered in the same go and outlined in dashed orange. (_Fill + letter & CV_ in the popup does all this, plus the cover letter and a tailored CV.) From the popup, _Fill this page_ also checks the page once the AI has answered: a required box still empty, or one the site turned down (“Phone Number must contain only numbers”), is put right where JobToFill can, and the popup lists what’s left for you and why.
 4. **Read what it says.** The summary on the page and the popup list what was filled, what’s _Missing from your profile_, where there was _No matching option_, and anything outlined in red to _Check_. Type those in yourself, or right-click the box › _Insert from profile_.
 5. **Next step.** On an application in steps (Workday’s _My Information_, _My Experience_, _Application Questions_…), click the step’s _Next_ and press **Alt+Shift+F** again, or let JobToFill do it: Settings › _Settings_ › “Move through multi-step applications for me”. It always stops before the step that submits.
+
+   **Or let it do the whole application:** Toolbar → _Apply for me_. It writes the cover letter and tailors your CV, fills each step (scrolling through it first, so questions drawn only once you reach them are there), has the AI answer what’s left, and presses the step’s own _Next_. When the site turns the step down, it reads what the site says beside each field, puts those fields right (your phone number as digits only, a date as MM/YYYY, a longer answer) and presses again, up to three times a step. It stops at the step that submits (“Ready to submit (step 5 of 5)…”) and never presses _Submit_. It also stops, and says why, at anything that’s yours: a CAPTCHA, a question it doesn’t answer for you, something you typed yourself that the site turned down. The popup shows where it is, with _Stop_.
+
 6. **Submit it yourself**, once you’ve read every answer.
 7. **Teach it.** If you typed answers JobToFill didn’t know, Toolbar → _Learn from this page_ saves them for next time.
 

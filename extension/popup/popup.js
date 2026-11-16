@@ -357,7 +357,8 @@ async function fill() {
   label.textContent = 'Filling…';
   try {
     tab = tab || (await tabFound);
-    renderResult(await send({ type: 'jtf:fill' }));
+    // The rules, the AI's answers, then a check of the page (the run card below says how that goes).
+    renderResult(await send({ type: 'jtf:fill', check: true }));
   } catch (err) {
     renderResult({ error: String(err.message || err) });
   } finally {
@@ -414,6 +415,79 @@ async function quickApply() {
     line.classList.add('error');
     line.textContent = r.error;
   } else await renderQuick();
+}
+
+/* ---------------------------------------------------------- apply for me */
+
+const RUN_NAMES = { fill: 'Fill this page', quick: 'Fill + letter & CV', auto: 'Apply for me' };
+const RUN_KEPT = 30 * 60e3;
+const capital = (t) => String(t || '').replace(/^./, (c) => c.toUpperCase());
+
+/**
+ * The latest run on this tab: Fill this page's check, Fill + letter & CV's, or Apply for me going through the steps.
+ * While it runs, what it is doing and Stop; then how it ended, and what is left for you and why.
+ */
+function renderRun(run) {
+  const card = $('#run');
+  const stale = run && run.state !== 'running' && Date.now() - (run.finishedAt || run.startedAt) > RUN_KEPT;
+  if (!run || stale) {
+    card.hidden = true;
+    return;
+  }
+  const running = run.state === 'running';
+  const verdict = running
+    ? null
+    : run.state === 'done'
+      ? run.kind === 'auto' && run.final
+        ? ['ok', 'Ready to submit']
+        : ['ok', 'Done']
+      : run.state === 'error'
+        ? ['bad', 'Stopped']
+        : ['warn', 'Needs you'];
+  const step = run.total ? ` · step ${run.step} of ${run.total}` : '';
+  const head = el(
+    'div',
+    { className: 'run-head' },
+    el('span', { className: running ? 'run-busy' : '', textContent: (RUN_NAMES[run.kind] || 'JobToFill') + step }),
+    el('span', { className: 'grow' }),
+    verdict ? el('span', { className: `pill ${verdict[0]}`, textContent: verdict[1] }) : null,
+    running
+      ? el('button', {
+          className: 'small',
+          type: 'button',
+          textContent: 'Stop',
+          onclick: () => send({ type: 'jtf:run-stop' }).catch(() => {}),
+        })
+      : null,
+  );
+  const message = el('p', { className: 'run-msg', textContent: capital(run.message || (running ? 'starting…' : '')) });
+  // One field the message already names needs no list under it.
+  const named = run.left && run.left.length === 1 && String(run.message || '').includes(run.left[0].question);
+  const left =
+    !running && run.left && run.left.length && !named
+      ? el(
+          'ul',
+          { className: 'run-left' },
+          ...run.left.slice(0, 6).map((x) => el('li', {}, el('b', { textContent: x.question }), ` — ${x.why}`)),
+        )
+      : null;
+  card.replaceChildren(head, message, left);
+  card.hidden = false;
+  $('#autopilot').disabled = offPage || (running && run.kind === 'auto');
+}
+
+/**
+ * Apply for me: the whole application, step by step, up to the one that submits (never that). It runs in the
+ * background; the card says where it is. Firefox's AI permission is asked straight from the click; without it (or
+ * without an AI key) it still fills what your profile answers, and says so.
+ */
+async function autopilot() {
+  const consent = requestAiConsent();
+  tab = tab || (await tabFound);
+  renderRun({ kind: 'auto', state: 'running', message: 'starting…', startedAt: Date.now() });
+  await consent;
+  const r = await send({ type: 'jtf:autopilot' });
+  if (r && r.error) renderRun({ kind: 'auto', state: 'error', message: r.error, startedAt: Date.now() });
 }
 
 function showQuickError(err) {
@@ -565,7 +639,16 @@ async function init() {
 
   offPage = !tab || !/^(https?|file):/.test(tab.url || '');
   if (offPage) {
-    for (const id of ['#fill', '#inspect', '#learn', '#pagemap', '#write-letter', '#quick-apply', '#snapshot'])
+    for (const id of [
+      '#fill',
+      '#inspect',
+      '#learn',
+      '#pagemap',
+      '#write-letter',
+      '#quick-apply',
+      '#autopilot',
+      '#snapshot',
+    ])
       $(id).disabled = true;
     $('#page-note').hidden = false;
     $('#fill').setAttribute('aria-describedby', 'page-note');
@@ -573,6 +656,9 @@ async function init() {
 
   $('#write-letter').addEventListener('click', writeLetter);
   $('#quick-apply').addEventListener('click', () => quickApply().catch((err) => showQuickError(err)));
+  $('#autopilot').addEventListener('click', () =>
+    autopilot().catch((err) => renderRun({ kind: 'auto', state: 'error', message: String(err.message || err) })),
+  );
   $('#quick-last').addEventListener('click', openLastQuick);
   const onStorage = (changes) => (changes.quickStatus || changes.quickApply) && renderQuick();
   api.storage.onChanged.addListener(onStorage);
@@ -600,11 +686,14 @@ async function init() {
   // The AI step runs on in the background: show where it is, and what it did on the last fill of this tab.
   api.runtime.onMessage.addListener((msg) => {
     if (msg && msg.type === 'jtf:ai-progress' && tab && msg.tabId === tab.id) renderAi(msg.run);
+    if (msg && msg.type === 'jtf:run-progress' && tab && msg.tabId === tab.id) renderRun(msg.run);
   });
   if (tab && tab.id != null) {
     const status = await send({ type: 'jtf:ai-status' }).catch(() => null);
     const run = status && status.run;
     if (run && (run.status === 'running' || Date.now() - (run.finishedAt || run.startedAt) < 15 * 60000)) renderAi(run);
+    const latest = await send({ type: 'jtf:run-status' }).catch(() => null);
+    renderRun(latest && latest.run);
   }
 
   await Promise.all([renderProfiles(), renderAccess(), renderQuick(), renderWatchNews()]);

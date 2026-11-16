@@ -1451,15 +1451,17 @@
         results.push({ id: a.id, status: 'gone' });
         continue;
       }
-      // Something typed in the meantime is the person's answer.
-      if (JTF.fill.hasValue(field)) {
+      // Something typed in the meantime is the person's answer. An answer the page turned down that JobToFill put
+      // there is the one a fix takes the place of.
+      const again = !!a.overwrite && JTF.fill.hasValue(field) && putInByUs(field);
+      if (JTF.fill.hasValue(field) && !again) {
         results.push({ id: a.id, status: 'skipped' });
         continue;
       }
       const v = answerValue(a);
       const started = Date.now();
       const res = await JTF.fill.apply(field, v, {
-        overwrite: false,
+        overwrite: again,
         comboboxes: settings.comboboxes !== false,
         history,
       });
@@ -1467,6 +1469,8 @@
       if (res.status === 'filled') {
         filled++;
         state.aiFilled.set(field.el, JTF.fill.currentValue(field));
+        if (a.said != null && (a.pageError || a.overwrite || a.said))
+          answered.set(field.el, { message: a.said, value: JTF.fill.currentValue(field) });
         if (settings.highlight !== false) JTF.fill.highlight(res.target || field.el, true);
         if (res.check) written.push({ field, v, check: res.check, label: U.cleanLabel(a.question, 60), key: null });
       }
@@ -1510,6 +1514,233 @@
     port.onDisconnect.addListener(stop);
     state.hold = stop;
     return true;
+  }
+
+  /* ------------------------------------------------------- check and fix */
+
+  // What the person typed or picked themselves (a trusted input or change event): a fix never writes over it.
+  const touched = new WeakSet();
+  for (const type of ['input', 'change'])
+    document.addEventListener(
+      type,
+      (e) => {
+        const target = e.composedPath ? e.composedPath()[0] : e.target;
+        if (e.isTrusted && target && target.nodeType === 1) touched.add(target);
+      },
+      true,
+    );
+  // field -> { message, value }: the page's message a fix answered, and what it wrote. A page that says so only when
+  // its step is sent (Workday's server) still shows the message until then: that field waits for its verdict.
+  let answered = new WeakMap();
+  // field -> the ways of writing its value tried against the page's messages, so each round tries the next one.
+  const tried = new WeakMap();
+
+  /** Does the field hold what JobToFill put there (the rules or the AI), not changed since by the person? */
+  function putInByUs(field) {
+    const els = [field.el, ...(field.members || [])];
+    if (els.some((el) => touched.has(el))) return false;
+    if (state.aiFilled.has(field.el)) return state.aiFilled.get(field.el) === JTF.fill.currentValue(field);
+    if (answered.has(field.el)) return answered.get(field.el).value === JTF.fill.currentValue(field);
+    const o = state.outcomes.get(field.el);
+    // What Undo would take back is what a fill wrote: the outcome of the latest fill says "kept" for an earlier one's.
+    return (!!o && o.state === 'filled') || state.history.some((h) => els.includes(h.el));
+  }
+
+  /** What the page says is wrong with a field: its own box's message, or one of its members' (a group). */
+  function complaintOf(field) {
+    for (const el of [field.el, ...(field.members || [])]) {
+      const said = JTF.fill.problemOf(el);
+      if (said) return said;
+    }
+    return '';
+  }
+
+  // Words of a message that only says a box is required: nothing about what to write in it.
+  const ONLY_REQUIRED =
+    /^(error:?\s*)?(this field is required|required|the field .{1,80} is required and must have a value|please (fill in|complete) this field|marked invalid)\.?$/i;
+  const TEXT_LIKE = new Set(['text', 'textarea', 'email', 'tel', 'url', 'number', 'search', 'date', 'editor']);
+
+  /**
+   * What stands between this frame's form and being sent, field by field: required boxes still empty, and boxes the
+   * page turned down, with what it says ("Error: Phone Number must contain only numbers."). Each says who can put it
+   * right: `fill` (the rules have its answer: a fill puts it in), `rules` (its value written the way the message
+   * asks: with `payload.fix` that is done here and now), `ai` (a question the AI may answer, sent with the message and
+   * the answer refused), `waiting` (answered since the page said so: its verdict comes when the step is sent) or
+   * `yours` (what you typed, a question the AI is kept from, an upload). Plus the page's own error banners. Ids are
+   * handed out as pendingQuestions' are, so the AI's answers come back to the same fields.
+   */
+  async function problems(payload) {
+    const { profile, settings } = payload;
+    const allow = (settings && settings.aiSensitive) || null;
+    // The step was sent and turned down again: every message the page shows now is its verdict on what is there.
+    if (payload.refused) answered = new WeakMap();
+    const { fields, results, context } = scan(profile);
+    context.jobLocation = jobLocation(payload);
+    // Only a job application's questions go to the AI (never a checkout's or a sign-up page's), as with a fill's.
+    const forJob =
+      !!context.jobContext ||
+      !!JTF.flow.analyze({ fields, results }, { applicationHosts: payload.applicationHosts }).byAddress;
+    const history = [];
+    const items = [];
+    let rewrote = 0;
+    try {
+      for (let i = 0; i < fields.length && items.length < MAX_PENDING; i++) {
+        const field = fields[i];
+        const r = results[i];
+        if (JTF.flow.inCaptcha(field.el) || !JTF.dom.isVisible(field.el)) continue;
+        const empty = !JTF.fill.hasValue(field);
+        const required = JTF.dom.isRequired(field);
+        const said = complaintOf(field);
+        if (!said && !(required && empty)) continue;
+        const type = (r && r.type) || null;
+        const def = type ? JTF.fields.DEFS[type] : null;
+        const value = empty ? '' : U.cleanLabel(JTF.fill.currentValue(field), 300);
+        const message = said && said !== 'marked invalid' ? said : '';
+        const item = {
+          label: labelFor(field, r),
+          question: U.cleanLabel(JTF.matcher.questionText(field.desc), 200),
+          kind: field.kind,
+          type,
+          required,
+          empty,
+          message: message || (empty ? 'required' : 'turned down'),
+          value,
+          mine: !empty && putInByUs(field),
+          fix: 'yours',
+          why: '',
+        };
+        const done = answered.get(field.el);
+        const before = i > 0 ? fields[i - 1] : null;
+        const prevType = i > 0 && results[i - 1] ? results[i - 1].type : null;
+        if (done && !empty && done.value === JTF.fill.currentValue(field) && done.message === said) {
+          // Answered since the page said so: its verdict comes when the step is sent again.
+          item.fix = 'waiting';
+        } else if (!empty && !item.mine) {
+          item.why = 'typed';
+        } else if (field.kind === 'file' || (def && def.file)) {
+          item.fix = empty ? 'fill' : 'yours';
+          item.why = empty ? '' : 'upload';
+        } else if (def && def.secret) {
+          item.why = 'secret';
+        } else {
+          // The rules first: the profile's answer, written the way the page asks, or put in where the box is empty.
+          const v = type && def ? fieldValue(field, r, profile, context, payload) : null;
+          const text = v && TEXT_LIKE.has(field.kind) ? nextWay(field, v, message, value) : '';
+          if (!empty && text) {
+            item.fix = 'rules';
+            if (payload.fix) {
+              const res = await JTF.fill.rewrite(field, text, { history });
+              traceStep(field, r, v, res, Date.now(), 'fix');
+              if (res.status === 'filled') {
+                rewrote++;
+                answered.set(field.el, { message: said, value: JTF.fill.currentValue(field) });
+                state.outcomes.set(field.el, { state: 'filled', type, label: item.label });
+                if (settings && settings.highlight !== false) JTF.fill.highlight(field.el);
+                item.fix = 'waiting';
+              }
+            }
+          } else if (empty && v && !(def && (def.consent || def.leave))) item.fix = 'fill';
+          if (item.fix === 'yours') {
+            const asked = forJob && JTF.decide.forAi(field.desc, r, profile, context, prevType, null, allow, null);
+            const ownAnswer = forJob && state.aiFilled.has(field.el) && item.mine;
+            if (asked || ownAnswer) {
+              item.fix = 'ai';
+              item.ai = aiQuestion(field, r, asked, { said, message, value, before, prevType, allow, required });
+            } else item.why = def && def.consent ? 'consent' : type ? 'kept' : 'unknown';
+          }
+        }
+        items.push(item);
+      }
+    } finally {
+      remember(history);
+    }
+    const errors = JTF.flow.pageErrors ? JTF.flow.pageErrors() : [];
+    return { items, errors, rewrote, undoable: state.history.length > 0 };
+  }
+
+  /** The profile's value for a field the rules recognised, as a fill works it out (null when there is none). */
+  function fieldValue(field, r, profile, context, payload) {
+    try {
+      const extra = { secrets: null, consents: !!(payload.settings && payload.settings.consents) };
+      const followed = r.followsField ? JTF.fill.currentValue(r.followsField) : null;
+      const d = JTF.decide.field(field.desc, r, profile, context, { ctx: extra, followed });
+      return d.action === 'fill' ? d.value : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /** The next way of writing `v` that the page's message asks for and no fix has tried on this field yet. */
+  function nextWay(field, v, message, value) {
+    const seen = tried.get(field.el) || new Set();
+    tried.set(field.el, seen);
+    seen.add(value);
+    const ways = JTF.matcher.messageVariants(v, field.desc, message, value).filter((t) => !seen.has(t));
+    // A message that names nothing a way of writing could meet ("marked invalid"): the next way, three at most.
+    if (!ways.length || (!message && seen.size > 3)) return '';
+    seen.add(ways[0]);
+    return ways[0];
+  }
+
+  /** A field the page turned down, as a question for the AI: what it asks, what the page said, what it refused. */
+  function aiQuestion(field, r, asked, { said, message, value, before, prevType, allow, required }) {
+    const item = JTF.decide.aiItem(field.desc, asked ? asked.guess : null);
+    const id = `${RUN}-${++state.asked}`;
+    state.pending.set(id, { field, question: U.normalize(item.question) });
+    for (const key of state.pending.keys()) {
+      if (state.pending.size <= KEPT_PENDING) break;
+      state.pending.delete(key);
+    }
+    return {
+      id,
+      ...item,
+      required: required || !!message,
+      // Only a message that says something about what to write: "is required" is in `required` already.
+      pageError: message && !ONLY_REQUIRED.test(message.trim()) ? message : '',
+      rejected: value || '',
+      overwrite: !!value,
+      // What the page said, word for word, so the field waits for its verdict once answered (see `answered`).
+      said: said || '',
+      follows: before
+        ? {
+            question: U.cleanLabel(JTF.matcher.questionText(before.desc), 200),
+            answer: JTF.decide.hidesAnswer(prevType, allow) ? '' : JTF.fill.currentValue(before).slice(0, 200),
+          }
+        : null,
+    };
+  }
+
+  /**
+   * Scroll through the page once, top to bottom a screen at a time, so what it draws only on the way (a question shown
+   * once it is in view, a list that loads more as you go) is there to be read; then back to where it was. Also a form
+   * panel that scrolls on its own. { grew }: how many more fields there are after it.
+   */
+  async function sweep() {
+    const before = JTF.dom.collect(document).length;
+    const page = document.scrollingElement || document.documentElement;
+    const panes = [page];
+    for (const el of Array.from(document.querySelectorAll('main, form, section, div, [role="main"]')).slice(0, 4000)) {
+      if (panes.length >= 4) break;
+      if (
+        el.scrollHeight > el.clientHeight + 80 &&
+        el.clientHeight > 150 &&
+        /(auto|scroll)/.test(getComputedStyle(el).overflowY)
+      )
+        panes.push(el);
+    }
+    for (const pane of panes) {
+      const start = pane.scrollTop;
+      const step = Math.max(240, Math.round((pane === page ? innerHeight : pane.clientHeight) * 0.8));
+      for (let y = 0, n = 0; y < pane.scrollHeight && n < 40; y += step, n++) {
+        pane.scrollTop = y;
+        await new Promise((resolve) => setTimeout(resolve, 90));
+      }
+      pane.scrollTop = pane.scrollHeight;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      pane.scrollTop = start;
+    }
+    await settle(1500, 300);
+    return { grew: JTF.dom.collect(document).length - before };
   }
 
   /* ---------------------------------------------------------------- learn */
@@ -1708,10 +1939,14 @@
     // A multi-step application's step (Settings › "Move through multi-step applications for me"): what stands
     // between it and its next, and its own "Next" clicked when nothing does.
     stepState: (payload) =>
-      JTF.flow.stepState(accountScan(payload), { applicationHosts: payload && payload.applicationHosts }),
+      JTF.flow.stepState(accountScan(payload), {
+        applicationHosts: payload && payload.applicationHosts,
+        stale: payload && payload.stale,
+      }),
     advance: serial((label, payload) => {
       const res = JTF.flow.advance(accountScan(payload), label, {
         applicationHosts: payload && payload.applicationHosts,
+        stale: payload && payload.stale,
       });
       return { clicked: res.clicked || '', refused: res.refused || '' };
     }),
@@ -1724,6 +1959,8 @@
         items: await pendingQuestions(payload.profile, context, { peek: !!payload.ai, settings: payload.settings }),
       };
     }),
+    problems: serial(problems),
+    sweep: serial(sweep),
     hold,
     release() {
       if (state.hold) state.hold();

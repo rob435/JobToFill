@@ -2450,8 +2450,70 @@
     return out;
   }
 
+  /** A date written to a template a page spells out ("MM/YYYY", "DD/MM/YYYY", "yyyy-mm-dd"). */
+  function fromTemplate(date, template) {
+    const day = date.day || 1;
+    return template.replace(/Y{2,4}|M{1,2}|D{1,2}/gi, (t) => {
+      const u = t.toUpperCase();
+      if (u === 'YYYY' || u === 'YYY') return String(date.year);
+      if (u === 'YY') return String(date.year).slice(2);
+      if (u === 'MM') return U.pad2(date.month);
+      if (u === 'M') return String(date.month);
+      if (u === 'DD') return U.pad2(day);
+      return String(day);
+    });
+  }
+
+  // A format a page's message spells out: "Enter a date in the format MM/YYYY", "Use DD/MM/YYYY".
+  const TEMPLATE = /\b(?:[DM]{1,2}|Y{2,4})(?:\s?[/.-]\s?(?:[DM]{1,2}|Y{2,4})){1,2}\b/i;
+
+  /**
+   * The ways of writing `v` that what a page says about its box asks for, best first, `rejected` (what it turned down)
+   * left out: "Phone Number must contain only numbers" (the digits alone), "Enter a date in the format MM/YYYY" (that
+   * date so), "Enter a LinkedIn profile address (https://www.linkedin.com/in/…)" (the full address), "Remove https://
+   * from the link" (without it), "no more than 20 characters" (one that fits). Then the box's other ways of writing it,
+   * in their order, so a message that names nothing still gets the next one tried. Never a value other than `v`.
+   */
+  function messageVariants(v, desc, message, rejected) {
+    const said = String(message || '');
+    const m = U.normalize(said);
+    const all = textVariants(v, desc || {});
+    const turned = String(rejected == null ? '' : rejected).trim();
+    const out = [];
+    const add = (s) => {
+      s = String(s == null ? '' : s).trim();
+      if (s && s !== turned && !out.includes(s)) out.push(s);
+    };
+    const template = (said.match(TEMPLATE) || [])[0];
+    if (template && /y/i.test(template) && v && v.date && v.date.year && v.date.month)
+      add(fromTemplate(v.date, template));
+    const digitsOnly =
+      /\b(only (numbers|digits|numeric)|(numbers|digits|numeric) only|numeric characters|no (spaces|letters|symbols)|without (spaces|symbols|dashes))\b/;
+    if (digitsOnly.test(m)) {
+      all.filter((s) => /^\d+$/.test(s)).forEach(add);
+      all.map((s) => s.replace(/\D/g, '')).forEach(add);
+    }
+    if (v && v.kind === 'phone' && /\b(international|country code|dialling code|dialing code|starting with)\b/.test(m))
+      all.filter((s) => /^\+/.test(s)).forEach(add);
+    if (/\b(remove|without|no) (the )?https?\b/.test(m)) all.filter((s) => !/^https?:/i.test(s)).forEach(add);
+    else if (/\b(https?|full (url|address|link)|web address|url)\b/.test(m))
+      all.filter((s) => /^https?:\/\//i.test(s)).forEach(add);
+    const host = (said.match(/\b((?:[a-z0-9-]+\.)+(?:com|org|net|io|dev|co\.uk|me))\b/i) || [])[1];
+    if (host) all.filter((s) => s.toLowerCase().includes(host.toLowerCase().replace(/^www\./, ''))).forEach(add);
+    const most = /\b(no more than|at most|maximum( of)?|up to|max) (\d+) (characters|chars|digits)\b/.exec(m);
+    if (most) all.filter((s) => s.length <= +most[4]).forEach(add);
+    const least = /\bat least (\d+) (characters|chars|digits)\b/.exec(m);
+    if (least) all.filter((s) => s.length >= +least[1]).forEach(add);
+    // Nothing the message names: the box's other ways of writing it, after the one turned down.
+    const at = all.indexOf(turned);
+    [...all.slice(at + 1), ...all.slice(0, Math.max(0, at))].forEach(add);
+    return out;
+  }
+
   const matcher = {
     textVariants,
+    messageVariants,
+    fromTemplate,
     classify,
     plan,
     asks,

@@ -132,7 +132,27 @@ test('limits: words, characters and sentences as questions write them', () => {
   assert.equal(l('In 1,000 characters or fewer, describe a project').maxChars, 1000);
   assert.equal(l('Briefly (2-4 sentences) describe why').sentences, 4);
   assert.equal(l('Why us?', { maxLength: 500 }).maxChars, 500);
-  assert.deepEqual(l('Why do you want to join Figma?'), { minWords: 0, maxWords: 0, maxChars: 0, sentences: 0 });
+  assert.deepEqual(l('Why do you want to join Figma?'), {
+    minWords: 0,
+    maxWords: 0,
+    minChars: 0,
+    maxChars: 0,
+    sentences: 0,
+  });
+  // A floor is never the ceiling: Workday's "(at least 150 characters)" once cut every answer to 150.
+  const floor = l('Why do you want to join Ada & Co? (at least 150 characters)');
+  assert.deepEqual([floor.minChars, floor.maxChars], [150, 0]);
+  assert.match(
+    A.limitText({ question: 'Why do you want to join Ada & Co? (at least 150 characters)' }, 'essay'),
+    /at least 150 characters, 80–160 words/,
+  );
+  assert.deepEqual(
+    [
+      l('Describe a challenge (minimum 100 words, at most 300 words)').minWords,
+      l('Describe a challenge (minimum 100 words, at most 300 words)').maxWords,
+    ],
+    [100, 300],
+  );
 });
 
 test('answerKind: essays, short text, choices and ticks', () => {

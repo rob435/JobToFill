@@ -596,6 +596,9 @@
    * (required fields still empty, the terms, a CAPTCHA), errors, ready, signature (tells the next step from this one) }.
    * `opts.applicationHosts`: the hosts whose pages are an application by their address (see byAddress).
    */
+  // "* indicates a required field" is a note, not an error.
+  const REQUIRED_NOTE = /^\*?\s*(indicates|denotes) a required/i;
+
   function stepState(scan, opts) {
     const { fields, results } = scan;
     const st = progress(document);
@@ -627,8 +630,11 @@
     });
     const c = captcha(document);
     if (c && !c.solved) out.blockers.push({ kind: 'captcha', label: c.kind });
-    out.errors = messages(document, ERRORS).filter((t) => !/^\*?\s*(indicates|denotes) a required/i.test(t));
-    out.ready = !!next && !out.final && !out.blockers.length && !out.errors.length;
+    out.errors = messages(document, ERRORS).filter((t) => !REQUIRED_NOTE.test(t));
+    // Messages already answered (Workday's "Errors Found" stays until the step is sent again, whatever is typed
+    // meanwhile): "Apply for me" may press again once each field they were about is put right.
+    const stale = new Set((opts && opts.stale) || []);
+    out.ready = !!next && !out.final && !out.blockers.length && !out.errors.some((t) => !stale.has(t));
     return out;
   }
 
@@ -800,6 +806,8 @@
     waiting: () => !!waiter,
     captcha,
     inCaptcha,
+    /** The page's own error messages (banners, alerts), as a step's are read. */
+    pageErrors: () => messages(document, ERRORS).filter((t) => !REQUIRED_NOTE.test(t)),
     portal: () => A().portal(location.href, hints()),
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

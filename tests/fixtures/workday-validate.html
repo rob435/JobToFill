@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Apply - Workday-style application that checks each step (Ada &amp; Co)</title>
+  <style>
+    body { font: 14px system-ui; max-width: 720px; margin: 24px auto; }
+    [data-automation-id="progressBar"] { display: flex; gap: 12px; list-style: none; padding: 0; color: #777; flex-wrap: wrap; }
+    [data-automation-id="progressBarActiveStep"] { color: #000; font-weight: 600; }
+    .field { margin: 10px 0; display: grid; gap: 4px; }
+    [role="group"] { border-top: 1px solid #ddd; margin: 12px 0; padding-top: 8px; }
+    [data-automation-id="errorBanner"] { color: #b00; border: 1px solid #b00; padding: 8px; }
+    [data-automation-id="errorMessage"] { color: #b00; font-size: 12px; }
+    [aria-invalid="true"] { outline: 2px solid #b00; }
+    .intro { min-height: 1400px; color: #555; }
+    .footer { display: flex; gap: 12px; margin-top: 20px; }
+    .wrap { position: relative; display: inline-block; }
+    [data-automation-id="click_filter"] { position: absolute; inset: 0; cursor: pointer; }
+    #state { background: #f4f4f4; padding: 8px; font-size: 12px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <!--
+    A Workday-style application in five steps that checks what was typed only when "Save and Continue" is pressed, the
+    way Workday's server does: My Information, My Experience, Application Questions, Voluntary Disclosures, Review.
+    A step that fails stays put with Workday's "Errors Found" banner (which stays until the next press), and each field
+    it turned down gets aria-invalid and its own "Error: …" message under it (gone once the field changes):
+    - Phone Number takes digits only ("415 555 0100" is turned down);
+    - Preferred Start Date isn't marked required, but is ("The field … is required and must have a value"), as MM/YYYY;
+    - LinkedIn must be a linkedin.com address;
+    - "Why do you want to join Ada & Co?" takes at least 150 characters;
+    - the data consent box must be ticked.
+    The Review step's button says "Submit": pressing it would send the application (state.submitted).
+    ?lazy=1 draws Application Questions' last question only once it is scrolled into view (below a long notice).
+  -->
+  <h1 data-automation-id="jobPostingHeader">Summer Analyst Internship 2027</h1>
+  <details data-automation-id="jobPostingDescription"><summary>Job description</summary>
+    <p>Ada &amp; Co is hiring Summer Analysts for its London operations team in 2027. As a Summer Analyst you will reconcile
+    trades, investigate breaks with traders and engineers, and build small tools in Python and SQL that make the team's
+    daily checks faster and more reliable. You will work alongside experienced analysts on real problems from your first
+    week, present what you built at the end of the summer, and learn how a trading firm keeps its books accurate.</p>
+    <p>We are looking for students graduating in 2027 or 2028 with strong analytical skills, attention to detail and clear
+    written communication. Experience with Python or SQL is helpful but not required. The internship runs for ten weeks
+    from June 2027 in London.</p>
+  </details>
+  <ol data-automation-id="progressBar"></ol>
+  <div id="errors"></div>
+  <form id="step" onsubmit="return false"></form>
+  <div class="footer">
+    <button type="button" data-automation-id="pageFooterBackButton" id="back">Back</button>
+    <span class="wrap">
+      <button type="button" data-automation-id="bottom-navigation-next-button" id="next">Save and Continue</button>
+      <div data-automation-id="click_filter" role="button" tabindex="-1" aria-label="Save and Continue" id="filter"></div>
+    </span>
+  </div>
+  <pre id="state"></pre>
+  <script>
+    const STEPS = ['My Information', 'My Experience', 'Application Questions', 'Voluntary Disclosures', 'Review'];
+    const params = new URLSearchParams(location.search);
+    const lazy = params.has('lazy');
+    const state = { step: Number(params.get('start') || 1), submitted: false, values: {}, presses: {}, refused: {}, experience: 0, education: 0, uploaded: '' };
+    const show = () => (document.getElementById('state').textContent = JSON.stringify(state, null, 1));
+    const form = document.getElementById('step');
+    const label = (id, text, required) => `<label for="${id}">${text}${required ? '<abbr title="required">*</abbr>' : ''}</label>`;
+    const field = (id, text, required, input) =>
+      `<div class="field" data-automation-id="formField-${id}">${label(id, text, required)}${input || `<input id="${id}" ${required ? 'aria-required="true"' : ''} aria-invalid="false">`}</div>`;
+    const select = (id, options, required) =>
+      `<select id="${id}" ${required ? 'aria-required="true"' : ''} aria-invalid="false"><option value="">Select One</option>${options.map((o) => `<option>${o}</option>`).join('')}</select>`;
+
+    function experienceBlock(n) {
+      return `<div role="group" aria-labelledby="we-${n}-h" data-automation-id="workExperience-${n}"><h4 id="we-${n}-h">Work Experience ${n}</h4>` +
+        field(`we-${n}-title`, 'Job Title', true) + field(`we-${n}-company`, 'Company', true) + field(`we-${n}-location`, 'Location', false) + '</div>';
+    }
+    function educationBlock(n) {
+      return `<div role="group" aria-labelledby="ed-${n}-h" data-automation-id="education-${n}"><h4 id="ed-${n}-h">Education ${n}</h4>` +
+        field(`ed-${n}-school`, 'School or University', true) +
+        field(`ed-${n}-degree`, 'Degree', true, select(`ed-${n}-degree`, ["Bachelor's Degree", "Master's Degree", 'Doctorate', 'Other'], true)) +
+        field(`ed-${n}-field`, 'Field of Study', false) + '</div>';
+    }
+    const why = 'Why do you want to join Ada &amp; Co? (at least 150 characters)';
+
+    function render() {
+      document.querySelector('[data-automation-id="progressBar"]').innerHTML = STEPS.map((name, i) =>
+        i + 1 === state.step
+          ? `<li data-automation-id="progressBarActiveStep">current step ${i + 1} of ${STEPS.length} ${name}</li>`
+          : `<li data-automation-id="progressBarInactiveStep">step ${i + 1} of ${STEPS.length} ${name}</li>`).join('');
+      document.getElementById('errors').innerHTML = '';
+      const next = state.step === STEPS.length ? 'Submit' : 'Save and Continue';
+      document.getElementById('next').textContent = next;
+      document.getElementById('filter').setAttribute('aria-label', next);
+      if (state.step === 1)
+        form.innerHTML = '<h2>My Information</h2>' + field('first', 'First Name', true) + field('last', 'Last Name', true) +
+          field('email', 'Email Address', true) +
+          field('device', 'Phone Device Type', true, select('device', ['Mobile', 'Home', 'Work'], true)) +
+          field('phone', 'Phone Number', true) +
+          field('source', 'How Did You Hear About Us?', true, select('source', ['LinkedIn', 'Job Board', 'Referral', 'Other'], true)) +
+          field('start', 'Preferred Start Date', false);
+      else if (state.step === 2) {
+        form.innerHTML = '<h2>My Experience</h2>' +
+          '<div role="group" aria-labelledby="we-h" data-automation-id="workExperienceSection"><h3 id="we-h">Work Experience</h3><div class="entries"></div><button type="button" data-automation-id="Add" data-kind="experience">Add</button></div>' +
+          '<div role="group" aria-labelledby="ed-h" data-automation-id="educationSection"><h3 id="ed-h">Education</h3><div class="entries"></div><button type="button" data-automation-id="Add" data-kind="education">Add</button></div>' +
+          field('linkedin', 'LinkedIn', false) +
+          field('resume', 'Resume/CV', true, '<input type="file" id="resume" aria-required="true" aria-invalid="false">');
+        for (const kind of ['experience', 'education']) for (let n = 1; n <= state[kind]; n++) addBlock(kind, n);
+      } else if (state.step === 3) {
+        form.innerHTML = '<h2>Application Questions</h2>' +
+          field('auth', 'Are you legally authorized to work in the United States?', true, select('auth', ['Yes', 'No'], true)) +
+          field('spons', 'Will you now or in the future require sponsorship for employment visa status?', true, select('spons', ['Yes', 'No'], true)) +
+          field('why', why, true, '<textarea id="why" aria-required="true" aria-invalid="false"></textarea>') +
+          (lazy ? '<div class="intro"><p>Please read our candidate privacy notice before you carry on. Ada &amp; Co keeps your application for 12 months.</p></div><div id="more"></div>' : relative());
+        if (lazy) {
+          const seen = new IntersectionObserver((entries) => {
+            if (!entries.some((e) => e.isIntersecting)) return;
+            seen.disconnect();
+            document.getElementById('more').innerHTML = relative();
+          });
+          seen.observe(document.getElementById('more'));
+        }
+      } else if (state.step === 4)
+        form.innerHTML = '<h2>Voluntary Disclosures</h2>' +
+          field('gender', 'Gender', true, select('gender', ['Male', 'Female', 'I do not wish to answer'], true)) +
+          field('veteran', 'Veteran Status', true, select('veteran', ['I am not a protected veteran', 'I identify as one or more of the classifications of protected veteran', 'I do not wish to answer'], true)) +
+          '<div class="field" data-automation-id="formField-consent"><label><input type="checkbox" id="consent" aria-required="true" aria-invalid="false"> I consent to Ada &amp; Co storing and processing my personal data for this application<abbr title="required">*</abbr></label></div>';
+      else form.innerHTML = '<h2>Review</h2><p>Check your application, then submit it.</p>' +
+        `<dl>${Object.entries(state.values).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
+      show();
+    }
+    const relative = () => field('relative', 'Do you have a relative who works at Ada &amp; Co?', true, select('relative', ['Yes', 'No'], true));
+
+    function addBlock(kind, n) {
+      const section = form.querySelector(`[data-kind="${kind}"]`).parentElement;
+      section.querySelector('.entries').insertAdjacentHTML('beforeend', kind === 'experience' ? experienceBlock(n) : educationBlock(n));
+      section.querySelector('[data-automation-id="Add"]').textContent = 'Add Another';
+    }
+
+    form.addEventListener('click', (e) => {
+      const add = e.target.closest('[data-automation-id="Add"]');
+      if (!add) return;
+      const kind = add.dataset.kind;
+      state[kind]++;
+      setTimeout(() => { addBlock(kind, state[kind]); show(); }, 150);
+    });
+
+    function save() {
+      for (const el of form.querySelectorAll('input, select, textarea')) {
+        if (!el.id) continue;
+        state.values[el.id] = el.type === 'file' ? (el.files[0] ? el.files[0].name : '') : el.type === 'checkbox' ? el.checked : el.value;
+      }
+      show();
+    }
+
+    /** What the server says about this step's fields: [[id, message]]. */
+    function problems() {
+      const out = [];
+      const val = (id) => { const el = document.getElementById(id); return !el ? null : el.type === 'checkbox' ? el.checked : el.type === 'file' ? el.files.length : el.value.trim(); };
+      const name = (el) => (form.querySelector(`label[for="${el.id}"]`) || el.closest('label') || {}).textContent || el.id;
+      for (const el of form.querySelectorAll('[aria-required="true"]'))
+        if (!val(el.id)) out.push([el.id, `Error: The field ${name(el).replace(/\*$/, '').trim()} is required and must have a value.`]);
+      const has = (id) => document.getElementById(id) && !out.some(([x]) => x === id);
+      if (has('phone') && !/^\d{7,15}$/.test(val('phone'))) out.push(['phone', 'Error: Phone Number must contain only numbers.']);
+      if (state.step === 1 && !val('start')) out.push(['start', 'Error: The field Preferred Start Date is required and must have a value.']);
+      else if (has('start') && !/^(0[1-9]|1[0-2])\/20\d\d$/.test(val('start'))) out.push(['start', 'Error: Enter a date in the format MM/YYYY.']);
+      if (has('linkedin') && val('linkedin') && !/^https:\/\/(www\.)?linkedin\.com\//.test(val('linkedin'))) out.push(['linkedin', 'Error: Enter a LinkedIn profile address (https://www.linkedin.com/in/…).']);
+      if (has('why') && val('why').length < 150) out.push(['why', 'Error: Enter at least 150 characters.']);
+      return out;
+    }
+
+    function flag(list) {
+      for (const el of form.querySelectorAll('[aria-invalid]')) el.setAttribute('aria-invalid', 'false');
+      for (const old of form.querySelectorAll('[data-automation-id="errorMessage"]')) old.remove();
+      for (const [id, message] of list) {
+        const el = document.getElementById(id);
+        el.setAttribute('aria-invalid', 'true');
+        el.setAttribute('aria-describedby', `${id}-error`);
+        el.closest('.field').insertAdjacentHTML('beforeend', `<div data-automation-id="errorMessage" id="${id}-error"><p>${message}</p></div>`);
+      }
+      // Workday's banner stays until the next press, whatever is typed meanwhile.
+      document.getElementById('errors').innerHTML = list.length
+        ? `<div data-automation-id="errorBanner" role="alert"><strong>Errors Found</strong> <span>${list.length} ${list.length === 1 ? 'Error' : 'Errors'}</span></div>`
+        : '';
+    }
+
+    // A field's own message goes once it changes; the banner doesn't.
+    function cleared(e) {
+      const el = e.target;
+      if (!el.id || el.getAttribute('aria-invalid') !== 'true') return;
+      el.setAttribute('aria-invalid', 'false');
+      const msg = document.getElementById(`${el.id}-error`);
+      if (msg) msg.remove();
+    }
+
+    function next() {
+      state.presses[state.step] = (state.presses[state.step] || 0) + 1;
+      if (state.step === STEPS.length) {
+        state.submitted = true;
+        show();
+        return;
+      }
+      save();
+      const list = problems();
+      flag(list);
+      if (list.length) {
+        state.refused[state.step] = (state.refused[state.step] || 0) + 1;
+        show();
+        return;
+      }
+      state.step++;
+      form.innerHTML = '';
+      setTimeout(render, 300);
+    }
+    document.getElementById('filter').addEventListener('click', next);
+    document.getElementById('back').addEventListener('click', () => { if (state.step > 1) { save(); state.step--; render(); } });
+    document.addEventListener('input', (e) => { cleared(e); save(); });
+    document.addEventListener('change', (e) => { cleared(e); save(); });
+    render();
+  </script>
+</body>
+</html>
