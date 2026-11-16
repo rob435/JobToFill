@@ -649,6 +649,20 @@
     return shown ? shown.text : '';
   }
 
+  // The checked state each radio and box had when JobToFill first looked: the page's own default. A page that writes the
+  // checked attribute as you choose (Pinpoint's Yes / No cards), or draws the box anew with it (Phenom's "Please
+  // indicate if you have worked at Brevan Howard before?"), makes every later choice look like its default too: a
+  // named box is known by its name and value, so the one drawn anew keeps the first one's default.
+  const firstDefault = new WeakMap();
+  const firstDefaultByName = new Map();
+  function pageDefault(m) {
+    const key = m.name ? `${m.type}|${m.name}|${m.value}` : null;
+    if (key && firstDefaultByName.has(key)) return firstDefaultByName.get(key);
+    if (!firstDefault.has(m)) firstDefault.set(m, !!m.defaultChecked);
+    if (key) firstDefaultByName.set(key, firstDefault.get(m));
+    return firstDefault.get(m);
+  }
+
   /** Does this control already hold something the user (or site) put there? */
   function hasValue(field) {
     const { el, kind, members } = field;
@@ -658,9 +672,9 @@
       case 'select':
         return !isUntouchedSelect(el);
       case 'radio':
-        return members.some((m) => isChecked(m) && !m.defaultChecked);
+        return members.some((m) => isChecked(m) && !pageDefault(m));
       case 'checkboxes':
-        return members.some((m) => isChecked(m) !== !!m.defaultChecked);
+        return members.some((m) => isChecked(m) !== pageDefault(m));
       case 'checkbox':
         return isChecked(el);
       case 'file':
@@ -2067,6 +2081,7 @@
           if (idx == null) return { status: 'nomatch' };
           // Already your answer (a page that writes the checked attribute makes every choice look like its default).
           if (isChecked(members[idx])) return { status: 'skipped', reason: 'has value' };
+          members.forEach(pageDefault);
           history.push({ el, kind, members, prev: members.map(isChecked) });
           setChecked(members[idx], true);
           return { status: 'filled', target: members[idx], check: { targets: [members[idx]] } };
@@ -2453,10 +2468,33 @@
     return way < 0 ? { status: 'failed', reason: 'not kept' } : { status: 'filled', said: complaint(el) };
   }
 
+  // el -> what JobToFill last left in it. Its own typing fires events the browser marks as trusted, as a person's
+  // typing is (execCommand's input, the change on blur): main.js tells the two apart by the value they left.
+  const wrote = new WeakMap();
+  /** The value a box holds, as an input or change event leaves it. */
+  const valueIn = (el) => (el.isContentEditable ? el.textContent : 'value' in el ? String(el.value) : '');
+  /** A write that notes what it left in the boxes it changed (one it left alone is not its). */
+  const noting =
+    (fn) =>
+    async (field, ...args) => {
+      const els = field && field.el ? [field.el, ...(field.members || [])] : [];
+      const before = els.map(valueIn);
+      try {
+        return await fn(field, ...args);
+      } finally {
+        els.forEach((el, i) => {
+          const now = valueIn(el);
+          if (now !== before[i]) wrote.set(el, now);
+        });
+      }
+    };
+
   JTF.fill = {
-    apply,
-    repair,
-    rewrite,
+    apply: noting(apply),
+    repair: noting(repair),
+    rewrite: noting(rewrite),
+    wrote: (el) => wrote.get(el),
+    valueIn,
     complaint,
     problemOf,
     undo,

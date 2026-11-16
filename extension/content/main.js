@@ -1518,27 +1518,31 @@
 
   /* ------------------------------------------------------- check and fix */
 
-  // What the person typed or picked themselves (a trusted input or change event): a fix never writes over it.
-  const touched = new WeakSet();
+  // What the person typed or picked themselves (a trusted input or change event), with what it left there: a fix never
+  // writes over it. JobToFill's own typing is trusted too; a box still as JobToFill last left it is its own.
+  const touched = new WeakMap();
   for (const type of ['input', 'change'])
     document.addEventListener(
       type,
       (e) => {
         const target = e.composedPath ? e.composedPath()[0] : e.target;
-        if (e.isTrusted && target && target.nodeType === 1) touched.add(target);
+        if (e.isTrusted && target && target.nodeType === 1) touched.set(target, JTF.fill.valueIn(target));
       },
       true,
     );
+  const typedByYou = (el) => touched.has(el) && touched.get(el) !== JTF.fill.wrote(el);
   // field -> { message, value }: the page's message a fix answered, and what it wrote. A page that says so only when
   // its step is sent (Workday's server) still shows the message until then: that field waits for its verdict.
   let answered = new WeakMap();
   // field -> the ways of writing its value tried against the page's messages, so each round tries the next one.
   const tried = new WeakMap();
+  // Lists whose list before them was chosen again so the page would draw their options (see problems).
+  const redrawn = new WeakSet();
 
   /** Does the field hold what JobToFill put there (the rules or the AI), not changed since by the person? */
   function putInByUs(field) {
     const els = [field.el, ...(field.members || [])];
-    if (els.some((el) => touched.has(el))) return false;
+    if (els.some(typedByYou)) return false;
     if (state.aiFilled.has(field.el)) return state.aiFilled.get(field.el) === JTF.fill.currentValue(field);
     if (answered.has(field.el)) return answered.get(field.el).value === JTF.fill.currentValue(field);
     const o = state.outcomes.get(field.el);
@@ -1610,8 +1614,34 @@
           why: '',
         };
         const done = answered.get(field.el);
+        // What the rules' turn left it as: a list none of whose options was your answer is the AI's to try, not theirs
+        // again ("Source" over Phenom's options, none of them "Trackr").
+        const o = state.outcomes.get(field.el);
+        const tried = o && o.type === type && !/^(kept|filled)$/.test(o.state) ? o.state : null;
         const before = i > 0 ? fields[i - 1] : null;
         const prevType = i > 0 && results[i - 1] ? results[i - 1].type : null;
+        // A list the one before it draws, still without options (Phenom's "Source" under "How Did You Hear About
+        // Us?": a change made elsewhere too soon after loses them): that one is chosen again, so the page draws them.
+        if (
+          payload.fix &&
+          empty &&
+          field.kind === 'select' &&
+          before &&
+          before.kind === 'select' &&
+          !redrawn.has(field.el) &&
+          JTF.fill.hasValue(before) &&
+          putInByUs(before) &&
+          !(field.desc.options || []).some((o) => !JTF.matcher.isPlaceholder(U.normalize(o.text)))
+        ) {
+          redrawn.add(field.el);
+          before.el.dispatchEvent(new Event('input', { bubbles: true }));
+          before.el.dispatchEvent(new Event('change', { bubbles: true }));
+          await new Promise((resolve) => setTimeout(resolve, 800));
+          rewrote++;
+          item.fix = 'waiting';
+          items.push(item);
+          continue;
+        }
         if (done && !empty && done.value === JTF.fill.currentValue(field) && done.message === said) {
           // Answered since the page said so: its verdict comes when the step is sent again.
           item.fix = 'waiting';
@@ -1639,14 +1669,15 @@
                 item.fix = 'waiting';
               }
             }
-          } else if (empty && v && !(def && (def.consent || def.leave))) item.fix = 'fill';
+          } else if (empty && v && !(def && (def.consent || def.leave)) && !/^(nomatch|failed)$/.test(tried || ''))
+            item.fix = 'fill';
           if (item.fix === 'yours') {
-            const asked = forJob && JTF.decide.forAi(field.desc, r, profile, context, prevType, null, allow, null);
+            const asked = forJob && JTF.decide.forAi(field.desc, r, profile, context, prevType, null, allow, tried);
             const ownAnswer = forJob && state.aiFilled.has(field.el) && item.mine;
             if (asked || ownAnswer) {
               item.fix = 'ai';
               item.ai = aiQuestion(field, r, asked, { said, message, value, before, prevType, allow, required });
-            } else item.why = def && def.consent ? 'consent' : type ? 'kept' : 'unknown';
+            } else item.why = whyLeft(type, def);
           }
         }
         items.push(item);
@@ -1656,6 +1687,22 @@
     }
     const errors = JTF.flow.pageErrors ? JTF.flow.pageErrors() : [];
     return { items, errors, rewrote, undoable: state.history.length > 0 };
+  }
+
+  // The kinds of question JobToFill leaves to you unless you let the AI answer them (Settings › Cover letters & AI).
+  const KEPT_TYPES = /^(eeo\.|dob$|age$|compliance\.|health|adjustments)/;
+  const GRADES = /^edu\.(gpa|gpaScale|classification|classAtLeast|equivalent)$/;
+
+  /** Why a field the rules and the AI both leave is yours: a code background.js puts into words (LEFT_WHY). */
+  function whyLeft(type, def) {
+    if (def && def.consent) return 'consent';
+    if (type === 'optIn') return 'optin';
+    if (!type) return 'unknown';
+    if (KEPT_TYPES.test(type)) return 'kept';
+    // A grade is never converted from one system to another (a 2:1 is no GPA).
+    if (GRADES.test(type)) return 'grade';
+    // A detail of yours the AI never writes (an email, a salary, a degree you don't have): your profile's to give.
+    return 'missing';
   }
 
   /** The profile's value for a field the rules recognised, as a fill works it out (null when there is none). */

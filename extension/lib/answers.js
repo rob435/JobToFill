@@ -159,7 +159,7 @@
    * words", "300–500 words", "max 1,000 characters", "2-4 sentences", the box's maxlength. Defaults by box.
    */
   const FLOOR =
-    /\b(?:at least|a minimum of|minimum of|minimum|min\.?|no (?:fewer|less) than)\s*(\d{1,5})\s*-?\s*(words?|characters?|chars?)\b/;
+    /\b(?:at least|a minimum of|minimum of|minimum|min\.?|no (?:fewer|less) than)\s*(\d{1,5})\s*-?\s*(words?|characters?|chars?)\b/g;
 
   function limits(item) {
     const raw = [item.question, item.help, item.placeholder]
@@ -175,10 +175,14 @@
       sentences: 0,
     };
     // "(at least 150 characters)", "a minimum of 100 words": a floor, never the ceiling.
-    let m = raw.match(FLOOR);
-    if (m) out[/^w/.test(m[2]) ? 'minWords' : 'minChars'] = +m[1];
-    const rest = m ? raw.replace(m[0], ' ') : raw;
-    m = rest.match(/(\d{2,4})\s*(?:-|–|—|to)\s*(\d{2,4})\s*words?\b/);
+    // Every floor, however many times it is said (the question's "(at least 150 characters)" and the page's message).
+    let rest = raw;
+    for (const f of raw.matchAll(FLOOR)) {
+      const key = /^w/.test(f[2]) ? 'minWords' : 'minChars';
+      out[key] = Math.max(out[key], +f[1]);
+      rest = rest.replace(f[0], ' ');
+    }
+    let m = rest.match(/(\d{2,4})\s*(?:-|–|—|to)\s*(\d{2,4})\s*words?\b/);
     if (m) {
       out.minWords = +m[1];
       out.maxWords = +m[2];

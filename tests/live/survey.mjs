@@ -28,7 +28,8 @@ const LIMIT = +args.limit || 40;
 const OUT = args.out || path.join(path.dirname(fileURLToPath(import.meta.url)), 'survey-report.json');
 const HOSTS = args.hosts ? String(args.hosts).split(',') : null;
 
-async function cvPdf() {
+/** The fictional applicant's CV as a PDF data URL, drawn from SURVEY_CV. */
+export async function cvPdf() {
   const doc = await PDFDocument.create();
   const page = doc.addPage([595, 842]);
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -55,7 +56,7 @@ async function cvPdf() {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** The application form's address on job boards that keep it on its own page. */
-function formUrl(url) {
+export function formUrl(url) {
   const u = new URL(url);
   if (/jobs\.(eu\.)?lever\.co$/.test(u.hostname) && !/\/apply\/?$/.test(u.pathname))
     u.pathname = u.pathname.replace(/\/$/, '') + '/apply';
@@ -63,12 +64,15 @@ function formUrl(url) {
     u.pathname = u.pathname.replace(/\/$/, '') + '/application';
   else if (/apply\.workable\.com$/.test(u.hostname) && /\/j\/[^/]+\/?$/.test(u.pathname))
     u.pathname = u.pathname.replace(/\/?$/, '/apply/');
+  // Breezy's posting links to its form with "Apply To Position": …/p/<id>-<slug>/apply.
+  else if (/\.breezy\.hr$/.test(u.hostname) && /^\/p\/[^/]+\/?$/.test(u.pathname))
+    u.pathname = u.pathname.replace(/\/?$/, '/apply');
   else return url;
   return u.href;
 }
 
 /** Count the visible form controls in every frame. */
-async function controlCount(page) {
+export async function controlCount(page) {
   let n = 0;
   for (const f of page.frames()) {
     n += await f
@@ -82,16 +86,18 @@ async function controlCount(page) {
 }
 
 /** Click an "Apply" link or button (never one that submits a form). */
-async function clickApply(page) {
+export async function clickApply(page) {
   for (const f of page.frames()) {
     const handle = await f
       .evaluateHandle(() => {
         const RE =
-          /^\s*(apply|apply now|apply for this (job|role|position)|apply here|apply online|start (your )?application|i('|’)?m interested|continue to application|bewerben|postuler)\s*$/i;
+          /^\s*(apply|apply now|apply (for|to) this (job|role|position)|apply to position|apply here|apply online|start (your )?application|i('|’)?m interested|continue to application|bewerben|postuler)\s*$/i;
         const nodes = [...document.querySelectorAll('a[href], button, [role=button]')].filter(
           (e) =>
             e.getClientRects().length &&
-            RE.test(e.textContent || e.getAttribute('aria-label') || '') &&
+            (RE.test(e.textContent || e.getAttribute('aria-label') || '') ||
+              // Phenom's link reads "Apply Now 2027 Summer Internship Program – …" (the job's title for screen readers).
+              (e.localName === 'a' && /^\s*apply now\b/i.test(e.textContent || ''))) &&
             !(e.localName === 'button' && e.type === 'submit' && e.form && e.form.querySelector('input[type=file]')),
         );
         return nodes.find((e) => e.localName === 'a') || nodes[0] || null;
@@ -111,7 +117,8 @@ async function clickApply(page) {
   return null;
 }
 
-async function reachForm(page, url) {
+/** Open a posting and follow its Apply link (twice at most) until a form is on the page; returns that page. */
+export async function reachForm(page, url) {
   await page.goto(formUrl(url), { waitUntil: 'domcontentloaded', timeout: 45000 });
   await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
   await sleep(1500);
@@ -174,7 +181,8 @@ function surveyFrames(h, tabId, profile) {
   );
 }
 
-async function tabIdOf(h, page) {
+/** The extension's id for the tab a Playwright page is in (its address, else the active tab). */
+export async function tabIdOf(h, page) {
   const url = page.url();
   return h.bg(async (u) => {
     const tabs = await globalThis.JTF.api.tabs.query({});

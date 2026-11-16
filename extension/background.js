@@ -400,7 +400,8 @@ async function fillFrames(tabId, opts, payload, letter, aiReady) {
     });
   summary.notes.push(...lines);
   // Fill this page: once the AI's answers are in, the page is checked and what it still wants put right (checkAfter).
-  if (opts.check && !summary.error && !flowLines.length && !stepLines.length && summary.detected && summary.jobContext)
+  const application = frames.some((f) => f.jobContext);
+  if (opts.check && !summary.error && !flowLines.length && !stepLines.length && summary.detected && application)
     summary.checking = !!checkAfter(tabId, opts.quick ? 'quick' : 'fill', {
       settle,
       hosts: stepHosts(payload, frames),
@@ -2155,8 +2156,8 @@ async function quickFill(tabId, letterId, options) {
   await store.saveLetter({ id: letterId, tabId, attachedAt: Date.now(), url: tab.url });
   // Apply for me is going through the application: it puts them in, on the step that has their uploads.
   const pilot = pilots.get(tabId);
-  if (pilot) {
-    Object.assign(pilot, { letters: 'done', cv: !!(options && options.cv) });
+  if (pilot || pilotsStopped.delete(tabId)) {
+    if (pilot) Object.assign(pilot, { letters: 'done', cv: !!(options && options.cv) });
     return { filled: 0, detected: 0, letter: true, cv: !!(options && options.cv), deferred: true };
   }
   const first = await takeQuickFirst(tabId);
@@ -2244,8 +2245,8 @@ function quickDoneText(summary, first, { withCv, run }) {
  */
 async function quickRelease(tabId, message) {
   const pilot = pilots.get(tabId);
-  if (pilot) {
-    Object.assign(pilot, { letters: 'failed', reason: message || 'Quick apply stopped' });
+  if (pilot || pilotsStopped.delete(tabId)) {
+    if (pilot) Object.assign(pilot, { letters: 'failed', reason: message || 'Quick apply stopped' });
     return { attached: false };
   }
   await takeQuickFirst(tabId);
@@ -2287,6 +2288,9 @@ const runs = new Map();
 const runKey = (tabId) => `run:${tabId}`;
 // tabId -> Apply for me's state while it runs there: { letters: off | running | done | failed, cv, reason }.
 const pilots = new Map();
+// Tabs where Apply for me was stopped while its letter and CV were still being written: when they arrive they are kept
+// (Last quick apply), and nothing more is filled or pressed on a page the person took back.
+const pilotsStopped = new Set();
 
 const PILOT_STEPS = 15; // steps pressed through at most
 const PILOT_TRIES = 3; // presses of one step the page may turn down before it stops
@@ -2364,6 +2368,11 @@ const LEFT_WHY = {
   ai: 'the AI couldn’t answer it from your profile and CV',
   fill: 'your profile has no answer the page takes',
   rules: 'none of the ways of writing your answer was taken',
+  waiting: 'JobToFill wrote it the way the page asks, but the page still says so: check it',
+  optin: 'an opt-in (talent pool, keeping your data, marketing): always yours',
+  grade: 'grades are never converted from one system to another: write it as the form asks',
+  missing: 'your profile has nothing for it: add it in Settings, or type it in',
+  noai: 'yours to answer: no AI answers questions here (Settings › Cover letters & AI)',
 };
 
 /** The field a problem is about, as a person reads it. */
@@ -2384,6 +2393,15 @@ async function checkAndFix(tabId, { hosts = [], ai = false, run = null, refused 
       () => [],
     );
   const asked = new Set();
+  // Why the AI left a question (the fill's run, then the check's own): "diversity question: yours…", "not in the
+  // material". Keyed by the question's words.
+  const reasons = new Map();
+  const keyOf = (q) => util.normalize(q).slice(0, 120);
+  const noteSkipped = (out) => {
+    for (const x of (out && out.skipped) || [])
+      if (x.question && x.reason) reasons.set(keyOf(x.question), { reason: x.reason, withheld: !!x.withheld });
+  };
+  noteSkipped(aiRuns.get(tabId));
   let fixed = 0;
   for (let round = 0; round < CHECK_ROUNDS; round++) {
     if (run && run.controller.signal.aborted) break;
@@ -2413,6 +2431,7 @@ async function checkAndFix(tabId, { hosts = [], ai = false, run = null, refused 
         toAi.map((it) => ({ ...it.ai, frameId: it.frameId })),
         { fix: true },
       );
+      noteSkipped(out);
       fixed += (out && out.filled) || 0;
       if (run) run.ai += (out && out.filled) || 0;
     }
@@ -2420,14 +2439,27 @@ async function checkAndFix(tabId, { hosts = [], ai = false, run = null, refused 
   const frames = await look(false, false);
   const items = frames.flatMap((f) => (f.items || []).map((it) => ({ ...it, frameId: f.frameId })));
   const errors = [...new Set(frames.flatMap((f) => f.errors || []))];
-  const left = items
-    .filter((it) => it.fix !== 'waiting')
-    .map((it) => ({
+  const said = (it) => reasons.get(keyOf(it.question || '')) || reasons.get(keyOf((it.ai && it.ai.question) || ''));
+  const leftOf = (it) => {
+    const why = it.fix === 'ai' && !it.why && said(it);
+    return {
       question: problemName(it),
       message: it.message,
-      why: LEFT_WHY[it.why] || LEFT_WHY[it.fix] || LEFT_WHY.unknown,
-    }));
-  return { fixed, items, errors, left };
+      why: why
+        ? why.withheld
+          ? why.reason
+          : `${LEFT_WHY.ai} (“${util.cleanLabel(why.reason, 80)}”)`
+        : LEFT_WHY[it.why] || LEFT_WHY[it.fix] || LEFT_WHY.unknown,
+    };
+  };
+  // With no AI to ask, a question the AI would have answered is yours: not one "the AI couldn't answer".
+  const left = items
+    .filter((it) => it.fix !== 'waiting')
+    .map((it) => (it.fix === 'ai' && !ai && !it.why ? { ...leftOf(it), why: LEFT_WHY.noai } : leftOf(it)));
+  // Written again the way the page asks, and the page still says the same: its verdict, or one it gives only when the
+  // step is sent. Apply for me presses to find out; a check with no press to follow lists them.
+  const waiting = items.filter((it) => it.fix === 'waiting').map(leftOf);
+  return { fixed, items, errors, left, waiting };
 }
 
 /** A list of fields, as a sentence: “A”, “B” and 2 more. */
@@ -2462,15 +2494,16 @@ function checkAfter(tabId, kind, { settle, hosts, ai }) {
       run,
       fill: () => fillTab(tabId, { pilot: true, ai: false, applicationHosts: hosts }),
     });
-    const lines = checkLines(check);
+    const left = [...check.left, ...check.waiting];
+    const lines = checkLines({ left });
     const fixed = check.fixed ? `Put right ${plural(check.fixed, 'field')} the page still wanted. ` : '';
-    const message = check.left.length ? `${fixed}${lines.join(' ')}` : `${fixed}Everything the page asks for is in.`;
+    const message = left.length ? `${fixed}${lines.join(' ')}` : `${fixed}Everything the page asks for is in.`;
     const { settings } = await store.getActive();
-    if (settings.toast !== false && (check.fixed || check.left.length))
+    if (settings.toast !== false && (check.fixed || left.length))
       await showToast(tabId, `Checked the page. ${message}`.trim(), { duration: 15000 }).catch(() => {});
-    return finishRun(tabId, run, check.left.length ? 'stopped' : 'done', message, {
+    return finishRun(tabId, run, left.length ? 'stopped' : 'done', message, {
       fixed: run.fixed + check.fixed,
-      left: check.left,
+      left,
       problems: check.items,
     });
   })().catch((err) => finishRun(tabId, run, 'error', String((err && err.message) || err)));
@@ -2484,6 +2517,7 @@ async function autopilot(tabId) {
   const prior = runs.get(tabId);
   if (prior && prior.kind === 'auto' && prior.state === 'running')
     return { error: 'Apply for me is already running on this page.' };
+  pilotsStopped.delete(tabId);
   const run = startRun(tabId, 'auto');
   run.done = pilotRun(tabId, run).catch((err) => finishRun(tabId, run, 'error', String((err && err.message) || err)));
   return { ok: true };
@@ -2546,7 +2580,7 @@ async function lettersReady(tabId, pilot, signal) {
     }
     await sleep(1000);
   }
-  if (pilot.letters === 'running') {
+  if (pilot.letters === 'running' && !signal.aborted) {
     pilot.letters = 'failed';
     pilot.reason = 'they took too long';
   }
@@ -2568,6 +2602,8 @@ async function pilotRun(tabId, run) {
     if (pilot.letters === 'running') {
       const status = await store.getQuickStatus().catch(() => null);
       if (status && status.state === 'error') Object.assign(pilot, { letters: 'failed', reason: status.message });
+      else if (signal.aborted)
+        notes.push('Your cover letter and tailored CV are still being written: they’ll be under Last quick apply.');
       else
         notes.push('Your cover letter and tailored CV are still being written: they go in by themselves when ready.');
     }
@@ -2582,12 +2618,18 @@ async function pilotRun(tabId, run) {
   };
 
   const ready = await aiAvailable(settings, { force: true });
-  if (ready.ok) {
+  // The letter and CV are started on the first page that isn't a sign-in (whose text is no job to write for).
+  const startLetters = async () => {
+    if (!ready.ok || pilot.letters !== 'off') return;
+    const [page] = await callFrames(tabId, 'accountState', [{ profile }], [0]).catch(() => []);
+    if (page && /^(login|signup|verify|chooser)$/.test(page.kind || '')) return;
+    pilot.letters = 'asked';
     say('letters', 'writing your cover letter and tailoring your CV…');
     const q = await quickStart(tabId, { pilot: true }).catch((err) => ({ error: String((err && err.message) || err) }));
     if (q.error) notes.push(`No cover letter or tailored CV: ${q.error}`);
     else pilot.letters = 'running';
-  } else
+  };
+  if (!ready.ok)
     notes.push(
       ready.reason === 'setup'
         ? 'No AI is set up (Settings › Cover letters & AI), so JobToFill filled what your profile answers and wrote no cover letter.'
@@ -2605,8 +2647,20 @@ async function pilotRun(tabId, run) {
       if (Date.now() - started > PILOT_TOTAL) return done('stopped', 'stopped after 25 minutes: carry on yourself.');
       // The page that keeps this worker awake is a new one after each step (and the AI's runs let go of it).
       await callFrames(tabId, 'hold', [PILOT_TOTAL], [0]).catch(() => {});
+      await startLetters();
       say('reading', `reading the page${where()}…`);
       await callFrames(tabId, 'sweep').catch(() => {});
+      // A job's description with no application on it (Brevan Howard's posting, whose only form is "Sign up to receive
+      // job alerts"): nothing there is the application's, so nothing is filled.
+      if (!run.steps) {
+        const tab = await api.tabs.get(tabId).catch(() => null);
+        const described = jobpage.ats((tab && tab.url) || '').stage === 'description';
+        if (described && !(await pilotLook(tabId, profile, hosts, 0, [])))
+          return done(
+            'stopped',
+            'this is the job’s description, not its application: press its “Apply” button, then press Apply for me on the form.',
+          );
+      }
       say('filling', `filling in your details${where()}…`);
       const summary = await fillTab(tabId, {
         pilot: true,
@@ -2639,7 +2693,10 @@ async function pilotRun(tabId, run) {
         return done('stopped', account.lines.join(' '));
       // The letter and CV go into this step's uploads: it waits for them.
       if (summary.held && pilot.letters === 'running') {
-        say('letters', 'waiting for your cover letter and tailored CV to go in…');
+        const at = await pilotLook(tabId, profile, hosts, run.steps, stale);
+        if (at && at.progress && at.progress.total)
+          reportRun(tabId, run, { step: at.progress.step, total: at.progress.total });
+        say('letters', `waiting for your cover letter and tailored CV to go in${where()}…`);
         await lettersReady(tabId, pilot, signal);
         if (signal.aborted) continue;
         const put =
@@ -2775,6 +2832,7 @@ async function pilotRun(tabId, run) {
     }
   } finally {
     pilots.delete(tabId);
+    if (signal.aborted && pilot.letters === 'running') pilotsStopped.add(tabId);
     callFrames(tabId, 'release', [], [0]).catch(() => {});
   }
 }
@@ -3626,7 +3684,8 @@ const sum = (frames, key) => frames.reduce((n, f) => n + (f[key] || 0), 0);
 const HANDLERS = {
   // From the popup and settings page.
   // Fill this page: the rules, the AI's answers, then the check (see checkAfter).
-  'jtf:fill': (msg) => fillTab(msg.tabId, { toast: !!msg.toast, flow: true, check: msg.check !== false }),
+  'jtf:fill': (msg) =>
+    fillTab(msg.tabId, { toast: !!msg.toast, flow: true, check: msg.check !== false, forceAi: !!msg.ai }),
   'jtf:autopilot': (msg) => autopilot(msg.tabId),
   'jtf:run-status': async (msg) => ({ run: await runStatus(msg.tabId) }),
   'jtf:run-stop': (msg) => {

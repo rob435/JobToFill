@@ -349,7 +349,12 @@ function consentLine(n) {
   );
 }
 
+// An AI key is set up (read when the popup opens): Fill this page then asks Firefox's permission for it from the click.
+let aiSetUp = false;
+
 async function fill() {
+  // Straight from the click, before any wait: Firefox only asks for a permission then.
+  const consent = aiSetUp ? requestAiConsent() : Promise.resolve(false);
   const button = $('#fill');
   const label = button.firstElementChild;
   button.disabled = true;
@@ -357,8 +362,10 @@ async function fill() {
   label.textContent = 'Filling…';
   try {
     tab = tab || (await tabFound);
-    // The rules, the AI's answers, then a check of the page (the run card below says how that goes).
-    renderResult(await send({ type: 'jtf:fill', check: true }));
+    // The rules, the AI's answers (whatever "Answer new questions with AI" says: this button is the one that answers
+    // everything), then a check of the page (the run card below says how that goes).
+    await consent;
+    renderResult(await send({ type: 'jtf:fill', check: true, ai: true }));
   } catch (err) {
     renderResult({ error: String(err.message || err) });
   } finally {
@@ -680,6 +687,7 @@ async function init() {
     await renderProfiles();
   });
 
+  aiSetUp = !ai.problem(await store.aiConfig().catch(() => ({})));
   // After a re-add, the background found the old backup file and is waiting for a restore.
   $('#restore').hidden = !(await store.getBackupInfo()).paused;
 

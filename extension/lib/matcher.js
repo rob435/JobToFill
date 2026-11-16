@@ -2501,7 +2501,7 @@
     const host = (said.match(/\b((?:[a-z0-9-]+\.)+(?:com|org|net|io|dev|co\.uk|me))\b/i) || [])[1];
     if (host) all.filter((s) => s.toLowerCase().includes(host.toLowerCase().replace(/^www\./, ''))).forEach(add);
     const most = /\b(no more than|at most|maximum( of)?|up to|max) (\d+) (characters|chars|digits)\b/.exec(m);
-    if (most) all.filter((s) => s.length <= +most[4]).forEach(add);
+    if (most) all.filter((s) => s.length <= +most[3]).forEach(add);
     const least = /\bat least (\d+) (characters|chars|digits)\b/.exec(m);
     if (least) all.filter((s) => s.length >= +least[1]).forEach(add);
     // Nothing the message names: the box's other ways of writing it, after the one turned down.

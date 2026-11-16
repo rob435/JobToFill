@@ -525,6 +525,19 @@
     }
     const legend = group && group.querySelector(':scope > legend');
     if (legend) labels.push(legend);
+    // A group asked by a label or heading in the box around it, not a legend of its own (Pinpoint's <label
+    // class="external-form__label"><span class="external-form__label--required">Have you been dismissed…</span>), in a
+    // fieldset that is the whole section ("3. Questions"). Only what is shown: Breezy's hidden "A response is
+    // required" is the message it shows once the form is sent, not a mark.
+    const set = new Set(members);
+    if ((field.kind === 'radio' || field.kind === 'checkboxes') && !(group && foreignControls(group, set) === 0)) {
+      const start = members.length > 1 ? commonAncestor(members) : el.parentElement;
+      for (let a = start, i = 0; a && i < 4 && foreignControls(a, set) === 0; a = a.parentElement, i++)
+        for (const c of a.children)
+          if (/^(label|legend|h[1-6]|p|span|div)$/.test(c.localName) && !members.some((m) => c.contains(m)))
+            if (!(c.control && set.has(c.control)) && !c.querySelector(CONTROL_SELECTOR) && isVisible(c))
+              labels.push(c);
+    }
     return labels.some(
       (l) =>
         REQUIRED_TEXT.test(l.textContent || '') ||
@@ -783,7 +796,16 @@
       const notes = [];
       for (let block = node.previousElementSibling, k = 0; block && k < 3; block = block.previousElementSibling, k++) {
         if (block.matches(CONTROL_SELECTOR) || block.querySelector(CONTROL_SELECTOR)) return null;
-        const heading = block.matches(HEADING) ? block : block.querySelector(HEADING);
+        // A title line in plain text before its notes (Rippling's <p>Right to Work in the UK</p>, then "Why are we
+        // asking this?" and its paragraphs): the first short line of the block.
+        const lead = block.firstElementChild && block.firstElementChild.firstElementChild;
+        const title =
+          !block.matches(HEADING) && !block.querySelector(HEADING) && lead && block.children.length > 1
+            ? textOf(block.firstElementChild)
+            : '';
+        const heading = block.matches(HEADING)
+          ? block
+          : block.querySelector(HEADING) || (title && title.length <= 120 ? block.firstElementChild : null);
         if (!heading) {
           notes.unshift(textOf(block));
           continue;
