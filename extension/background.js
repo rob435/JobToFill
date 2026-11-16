@@ -405,7 +405,8 @@ async function fillFrames(tabId, opts, payload, letter, aiReady) {
     summary.checking = !!checkAfter(tabId, opts.quick ? 'quick' : 'fill', {
       settle,
       hosts: stepHosts(payload, frames),
-      ai: aiReady.ok,
+      // Quick apply's second fill leaves the AI to the run its first started: the check may still ask it.
+      ai: aiReady.ok || (!!opts.quick && (await aiAvailable(settings)).ok),
     });
   // The click (or the wait for a CAPTCHA) comes after the toast that announces it.
   if (account && account.act) await account.act().catch(() => {});
