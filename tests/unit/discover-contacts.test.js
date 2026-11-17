@@ -625,3 +625,80 @@ test('discover contacts: a site that doesn’t answer is unreachable', async () 
   assert.deepEqual(res.best, []);
   assert.ok(D.get, 'discover.js is what fetches');
 });
+
+test('discover contacts: mailboxes as the dry run of 23 firms found them', () => {
+  const kinds = {
+    // Marshall Wace's Human Capital team; Man Group's HR shared services.
+    'HC@mwam.com': 'recruiting',
+    'humancapital@acme.com': 'recruiting',
+    'hrso@man.com': 'recruiting',
+    // The firm's own name is its front desk; an office's enquiries; a department's services.
+    'mwam@mwam.com': 'general',
+    'pl.enquiries@man.com': 'general',
+    'clientservices@odey.com': 'other',
+    // Jane Street's mailbox for checking a recruiter is real isn't for applying.
+    'recruiting-security@janestreet.com': 'other',
+    'jobs@janestreet.com': 'recruiting',
+    "james.o'donnell@man.com": 'person',
+  };
+  for (const [address, kind] of Object.entries(kinds)) assert.equal(C.kindOf(address), kind, address);
+});
+
+test('discover contacts: an apostrophe in an address, a heading closed with another tag, a name alone in a paragraph', () => {
+  const own = { domain: 'man.com', name: 'Man Group' };
+  const html = `<a href="mailto:james.o'donnell@man.com">James O'Donnell</a> <a href='mailto:jane.smith@man.com'>Jane</a>`;
+  assert.deepEqual(
+    C.emailsIn(html, own).map((e) => e.address),
+    ["james.o'donnell@man.com", 'jane.smith@man.com'],
+  );
+  // HBK writes "<h2>Brian Palabrica</h3>".
+  const hbk = `<div><h2>Brian Palabrica</h3><p>Head of Recruitment</p></div><div><h2>Keila Selders</h3><p>Head of Human Resources</p></div>`;
+  assert.deepEqual(
+    C.peopleIn(hbk, { domain: 'hbk.com', name: 'HBK' }).map((p) => [p.name, p.title, p.role]),
+    [
+      ['Brian Palabrica', 'Head of Recruitment', 'recruiting'],
+      ['Keila Selders', 'Head of Human Resources', 'recruiting'],
+    ],
+  );
+  // Apollo Research's names sit in a styled paragraph.
+  const apollo = `<div><p class="text-size-large">Marius Hobbhahn</p><p>CEO and Co-founder</p><a href="https://www.linkedin.com/in/mh">LinkedIn</a></div>`;
+  assert.deepEqual(
+    C.peopleIn(apollo, { domain: 'apolloresearch.ai', name: 'Apollo Research' }).map((p) => [p.name, p.role]),
+    [['Marius Hobbhahn', 'leadership']],
+  );
+  // An address under a menu heading is no one: Lansdowne's "Battersea Bridge" over "Our People".
+  assert.deepEqual(C.peopleIn(`<h3>Battersea Bridge</h3><p>Our People</p><img alt="Battersea Bridge">`, {}), []);
+});
+
+test('discover contacts: named people with no address are kept, student recruiters first', () => {
+  const page = (body) => ({ url: 'https://acme.com/team', html: `<html><title>Acme</title>${PAD}${body}</html>` });
+  const r = C.contacts({ name: 'Acme Capital', domain: 'acme.com', employees: 40 }, [
+    page(
+      `<div><h3>Tom Lee</h3><p>Head of Talent Acquisition</p><img alt="Tom Lee"></div>` +
+        `<div><h3>Amy Chan</h3><p>Emerging Talent Partner</p><img alt="Amy Chan"></div>` +
+        `<div><h3>Raj Patel</h3><p>Founding Partner</p></div>`,
+    ),
+  ]);
+  assert.deepEqual(
+    r.named.map((p) => p.name),
+    ['Amy Chan', 'Tom Lee', 'Raj Patel'].filter((n) => r.named.some((p) => p.name === n)),
+  );
+  assert.ok(r.named.some((p) => p.name === 'Tom Lee'));
+  assert.ok(
+    r.named.some((p) => p.name === 'Raj Patel'),
+    'a small firm’s partner',
+  );
+  // With a pattern, the student recruiter comes before the head of talent.
+  const withPattern = C.contacts({ name: 'Acme Capital', domain: 'acme.com', employees: 40 }, [
+    page(
+      `<div><h3>Tom Lee</h3><p>Head of Talent Acquisition</p><img alt="Tom Lee"></div>` +
+        `<div><h3>Amy Chan</h3><p>Emerging Talent Partner</p><img alt="Amy Chan"></div>` +
+        `<p>Press: <a href="mailto:bob.jones@acme.com">Bob Jones</a>, <a href="mailto:sue.wu@acme.com">Sue Wu</a></p>`,
+    ),
+  ]);
+  const people = withPattern.best.filter((b) => b.name);
+  assert.deepEqual(
+    people.slice(0, 2).map((b) => b.address),
+    ['amy.chan@acme.com', 'tom.lee@acme.com'],
+  );
+});

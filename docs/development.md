@@ -32,8 +32,11 @@ extension/
     discover-contacts.js  who to email at a firm: mailboxes, people and titles on its team and contact pages, the address pattern
     discover-sources.js   live sources: Hacker News "Who is hiring" posts, Simplify's internship lists (to leave out)
     discover-outreach.js  the speculative email the AI drafts and the checks it must pass; the AI reading a careers page, verified
+    discover-research.js  the web research: people, addresses and format a search returns, each held to the sources; the addresses made from them
+    discover-finder.js    address checks: MX through DNS over HTTPS, and Hunter.io with your key (domain search, finder, mailbox check)
     ai.js              chat client: Claude (Anthropic's Messages API, cached) and OpenAI-compatible (OpenRouter,
-                       DeepSeek, custom); the providers' suggested models, JSON, retries, fallback, errors
+                       DeepSeek, custom); the providers' suggested models, JSON, retries, fallback, errors; a reply
+                       that searches the web first (Claude's web search, OpenRouter's web plugin), with its sources
     letter.js          cover letter and CV prompts, and the checks every draft must pass
     cvtex.js           your CV as LaTeX: read into a model the tailoring edits, and written back as .tex
     answers.js         AI answers to the questions a fill leaves empty: what may be sent, limits, prompt, checks
@@ -41,7 +44,7 @@ extension/
     pagemap.js         page maps: the frames' maps merged into one page, and its text outline within a budget
     doctext.js         text from PDF and Word files (your CV, example letters), no dependencies
     otp.js             verification emails: the code or link in a message, and whether it is from the site asking
-    nylas.js           your recent email through Nylas (read-only), for verification codes
+    nylas.js           your email through Nylas: reads codes; saves or sends an outreach email when you press it
     pdfdoc.js          PDF writer: TeX-style line breaking, embedded fonts, the letter and CV layouts
   fonts/               Latin Modern (GUST font licence) as TrueType subsets, and English hyphenation patterns
   offscreen/           Chromium only: reads job pages' HTML for the background (its service worker has no DOMParser)

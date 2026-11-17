@@ -59,7 +59,9 @@ A question left on “— don’t fill —” is left for you to answer each tim
 
 The section also lists the AI’s answers per application and your last 25 letters, with their PDFs.
 
-**Discover’s own model.** Toolbar › _Discover internships_ › _AI model for this page_ chooses the provider and model Discover uses for its own AI calls (more ideas, reading a careers page, drafting an email), separately from the one above: _Same as Settings_ by default, or any provider you’ve added a key for and any of its models. _Quick_ asks the model for one round of ideas; _Thorough_ asks from several angles and reads more. The choice is saved with your settings.
+**Discover’s own model.** Toolbar › _Discover internships_ › _AI model for this page_ chooses the provider and model Discover uses for its own AI calls (more ideas, reading a careers page, searching the web for people to write to, drafting an email), separately from the one above: _Same as Settings_ by default, or any provider you’ve added a key for and any of its models. _Quick_ asks the model for one round of ideas; _Thorough_ asks from several angles and reads more. The choice is saved with your settings. _Find people_ searches the web, which only Claude (Anthropic’s web search, $10 per 1,000 searches on top of the tokens) and OpenRouter (its web plugin) can do; DeepSeek and custom providers can’t.
+
+**Email finder (optional).** Under the same box, _Hunter.io API key_ takes a free key from [hunter.io/api-keys](https://hunter.io/api-keys) (50 credits a month). With it, _Find people_ also asks Hunter which addresses it has seen on the web for the firm’s domain (people in HR, leadership, management and IT, five at most per firm, with the pages it saw them on), the domain’s address format, and checks up to three addresses made from a format with the firm’s mail server. Saving the key shows what’s left of the month’s allowance. The key is kept like the AI keys (this browser, and your backup file unless _Keep my API keys in the backup file_ is off).
 
 **Questions the AI may also answer.** These kinds of question are held back from the AI (legal and health ones unless you’ve written answer guidance) until you switch them on. Each is off by default; “All of them” switches every one on.
 
@@ -75,9 +77,11 @@ The section also lists the AI’s answers per application and your last 25 lette
 
 Connect once: sign up at [dashboard-v3.nylas.com](https://dashboard-v3.nylas.com) (free) and create an app; under _Grants › Add test grant_, sign in to the email you apply with; under _API Keys › Generate new key_, make a key and paste it into _Nylas API key_; click **Connect**, then **Test**.
 
+The same inbox sends Discover’s outreach emails (_Send_, your CV attached) and saves them to your drafts (_Save to my drafts_), one email at a time when you press the button. That needs the connection to allow writing mail: for Gmail the `https://www.googleapis.com/auth/gmail.compose` scope (drafts and sending), for Outlook `Mail.ReadWrite` and `Mail.Send`. **Test** says whether yours does. If it is read-only, add the scope to your Nylas app’s Google connector (_Connectors › Google › Scopes_), then add the grant again (Google only grants new scopes when you sign in again); a Nylas sandbox app can’t change its connector’s scopes, so make a new app if yours is one. Google’s own “testing” apps expire their sign-in after seven days, so you may have to add the grant again each week.
+
 | Setting                        | Default       | What it does                                                                                                          |
 | ------------------------------ | ------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Nylas API key                  | None          | Read-only access to your newest emails, through Nylas, for the codes                                                  |
+| Nylas API key                  | None          | Your newest emails, through Nylas, for the codes; and Discover’s Send and Save to my drafts, when you press them      |
 | Data region                    | United States | Or Europe, wherever your Nylas app lives (a key from the other region is tried there too)                             |
 | Inbox                          | The only one  | Shown when your Nylas app has more than one inbox connected                                                           |
 | Fill codes by themselves       | On            | A page asking for “the code we emailed you” gets it typed in. Off: only when you fill the page or right-click the box |

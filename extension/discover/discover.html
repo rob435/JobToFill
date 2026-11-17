@@ -112,6 +112,16 @@
                   </select>
                 </label>
               </div>
+              <label class="field wide"
+                ><span>Hunter.io API key (optional)</span>
+                <input id="hunter-key" type="password" autocomplete="off" spellcheck="false" placeholder="Finds and checks addresses" />
+                <small
+                  >With a free key from <a href="https://hunter.io/api-keys" target="_blank" rel="noopener">hunter.io</a> (50 credits a
+                  month), <strong>Find people</strong> also asks Hunter for the addresses it has seen on the web for the firm’s domain, its
+                  address format, and checks a made-up address with the firm’s mail server before you send.</small
+                >
+                <span id="hunter-saved" class="muted small" aria-live="polite"></span>
+              </label>
               <span id="ai-saved" class="muted small" aria-live="polite"></span>
             </div>
           </details>
@@ -173,7 +183,7 @@
           </div>
           <p class="muted small">
             Every firm you drafted an email to or wrote to. Set the status as replies come in, and keep notes (“Spoke to Jane, call back in
-            January”). JobToFill never sends anything: emails go from your own email app.
+            January”). An email sent from here through your connected inbox turns to Replied by itself when they answer.
           </p>
           <div id="outreach-empty" class="empty">
             <p class="muted">Nothing yet. Check a firm’s careers and contacts, then press <strong>Draft an email</strong>.</p>
@@ -211,6 +221,9 @@
     <script src="../lib/discover-contacts.js"></script>
     <script src="../lib/discover-sources.js"></script>
     <script src="../lib/discover-outreach.js"></script>
+    <script src="../lib/discover-research.js"></script>
+    <script src="../lib/discover-finder.js"></script>
+    <script src="../lib/nylas.js"></script>
     <script type="module" src="discover.js"></script>
   </body>
 </html>

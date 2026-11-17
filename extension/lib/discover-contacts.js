@@ -47,10 +47,12 @@
     'careers career recruiting recruitment recruit jobs job talent hr people campus graduates',
     'graduate grads internships internship interns intern students student earlycareers apply',
     'applications application hiring join joinus work resourcing humanresources candidates cv cvs',
-    'hrteam peopleteam peopleops',
+    'hrteam peopleteam peopleops hc humancapital peopleandculture earlytalent emergingtalent',
   ]);
   const RECRUITING_STEM =
-    /recruit|career|talent|internship|interns?$|graduat|campus|hiring|resourcing|candidate|student|humanresource|^(join|work)(us|withus|forus|theteam|ourteam)$/;
+    /recruit|career|talent|internship|interns?$|graduat|campus|hiring|resourcing|candidate|student|humanresource|humancapital|^hr[a-z]{0,4}$|^(join|work)(us|withus|forus|theteam|ourteam)$/;
+  // Words that make a mailbox a guard against fraud or a legal one, whatever else it says.
+  const GUARD = words(['security fraud scam scams phishing compliance legal privacy abuse']);
   // An office's mailbox: "info@", "london@", "info.uk@".
   const GENERAL = words([
     'info information international contact contactus hello hi enquiries enquiry inquiries inquiry office offices',
@@ -68,7 +70,7 @@
     'bounce bounces example test email name yourname firstname lastname firstnamelastname firstlast',
     'user username you your me someone operations ops trading research it tech data service services',
     'orders booking bookings membership members subscriptions editor editorial communications comms',
-    'pr whistleblowing ethics procurement suppliers licensing copyright dmca root',
+    'pr whistleblowing ethics procurement suppliers licensing copyright dmca root fraud scam scams phishing',
     'workday greenhouse taleo icims workable successfactors smartrecruiters bamboohr teamtailor personio jobvite',
   ]);
   // A mailbox no one reads, wherever it sits in the address: "jobs-noreply@", "careers-no-reply@", "talent.alerts@".
@@ -102,19 +104,37 @@
     const local = String(address || '')
       .toLowerCase()
       .split('@')[0]
-      .split('+')[0];
+      .split('+')[0]
+      .replace(/'/g, '');
     const tokens = local
       .replace(/\d+/g, ' ')
       .split(/[\s._-]+/)
       .filter(Boolean);
     const joined = tokens.join('');
     if (!joined || UNREAD.test(joined) || OTHER.has(joined)) return 'other';
+    // Jane Street's "recruiting-security@" is for checking a recruiter is real, not for applying.
+    if (tokens.some((t) => GUARD.has(t))) return 'other';
+    // "mwam@mwam.com": the firm's own name is its front desk.
+    const host = String(address || '')
+      .toLowerCase()
+      .split('@')[1];
+    if (host && joined === host.split('.')[0].replace(/-/g, '')) return 'general';
     // "internships2027", "campus.recruiting", "uk-careers", "workwithus".
     if (RECRUITING.has(joined) || tokens.some((t) => RECRUITING.has(t)) || RECRUITING_STEM.test(joined))
       return 'recruiting';
     if (tokens.some((t) => OTHER.has(t))) return 'other';
     if (GENERAL.has(joined) || GENERAL_STEM.test(joined) || tokens.every((t) => GENERAL.has(t) || REGION.has(t)))
       return 'general';
+    // Man Group's "pl.enquiries@" is an office's mailbox, not Pl Enquiries.
+    // ("internal.enquiries@" stays a department's: only short office codes go with an enquiries word.)
+    if (
+      tokens.length > 1 &&
+      tokens.some((t) => GENERAL_STEM.test(t)) &&
+      tokens.every((t) => GENERAL_STEM.test(t) || t.length <= 3)
+    )
+      return 'general';
+    // One word made of two that departments are named with: Odey's "clientservices@".
+    if (/^[a-z]{6,}(services|support|relations|operations|desk|admin|team)$/.test(joined)) return 'other';
     // "internal@", "partners@", "new.business@": a department, not a name ("jack.london@" is one).
     if (wordy(tokens, OFFICE)) return 'other';
     // "jane.smith", "jsmith", "j.smith", "jane": a word that could be a name, or two with one separator.
@@ -180,8 +200,9 @@
 
   /* ------------------------------------------------------------- addresses */
 
-  const ADDRESS = /[a-z0-9][a-z0-9._%+-]*@[a-z0-9-]+(?:\.[a-z0-9-]+)+/gi;
-  const SHAPE = /^[a-z0-9](?:[a-z0-9._%+-]{0,62}[a-z0-9_])?@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/;
+  // A local part may hold an apostrophe: Man Group's "james.o'donnell@man.com".
+  const ADDRESS = /[a-z0-9][a-z0-9._%+'-]*@[a-z0-9-]+(?:\.[a-z0-9-]+)+/gi;
+  const SHAPE = /^[a-z0-9](?:[a-z0-9._%+'-]{0,62}[a-z0-9_])?@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/;
   // "logo@2x.png" and the like, and the addresses of templates, trackers and examples.
   const FILE_END = /\.(png|jpe?g|gif|svg|webp|avif|ico|css|js|mjs|json|xml|pdf|zip|mp4|webm|woff2?|ttf)$/;
   const JUNK_DOMAIN =
@@ -191,6 +212,7 @@
   function clean(raw) {
     let a = String(raw || '')
       .replace(/^mailto:/i, '')
+      .replace(/[’‘]/g, "'")
       .split('?')[0]
       .trim()
       .toLowerCase();
@@ -199,7 +221,8 @@
     } catch (err) {
       // Left as it was.
     }
-    if (!SHAPE.test(a) || /\.\./.test(a) || FILE_END.test(a) || JUNK_DOMAIN.test(a.split('@')[1])) return '';
+    if (!SHAPE.test(a) || /\.\.|'\.|\.'|^'|'@/.test(a) || FILE_END.test(a) || JUNK_DOMAIN.test(a.split('@')[1]))
+      return '';
     return a;
   }
 
@@ -255,6 +278,11 @@
             : `${local.replace(/\s+dot\s+/gi, '.')}@${host.replace(/\s+dot\s+/gi, '.')}`,
       );
   }
+
+  // A mailto: link, its address quoted either way (an apostrophe inside double quotes is part of it:
+  // "mailto:james.o'donnell@man.com") or bare: [, attributes, address ("), address ('), address (bare), link text].
+  const MAILTO_LINK =
+    /<a\b([^>]*?\bhref\s*=\s*(?:"\s*mailto:([^"\s>]+)"|'\s*mailto:([^'\s>]+)'|mailto:([^"'\s>]+))[^>]*)>([\s\S]*?)<\/a\s*>/gi;
 
   /** The page's JSON-LD flattened: [{ type, name, title, email, links }] for each Person and anything with an email. */
   function jsonLd(html) {
@@ -315,9 +343,10 @@
     };
     for (const p of jsonLd(raw)) if (p.email) add(p.email, 'jsonld', /\bPerson\b/.test(p.type) ? p.name : '');
     const shown = visible(raw);
-    for (const m of shown.matchAll(/<a\b[^>]*href\s*=\s*["']?\s*mailto:([^"'\s>]+)[^>]*>([\s\S]*?)<\/a\s*>/gi))
-      add(decodeHtml(m[1]).replace(INVISIBLE, ''), 'mailto', plain(m[2]));
-    for (const m of decodeHtml(shown).matchAll(/mailto:([^"'\s<>?]+)/gi)) add(m[1].replace(INVISIBLE, ''), 'mailto');
+    for (const m of shown.matchAll(MAILTO_LINK))
+      add(decodeHtml(m[2] || m[3] || m[4]).replace(INVISIBLE, ''), 'mailto', plain(m[5]));
+    for (const m of decodeHtml(shown).matchAll(/mailto:([a-z0-9._%+-]+(?:'[a-z0-9._%+-]+)*@[^"'\s<>?]+)/gi))
+      add(m[1].replace(INVISIBLE, ''), 'mailto');
     for (const m of raw.matchAll(/(?:data-cfemail\s*=\s*["']?|email-protection#)([\da-f]{8,})/gi))
       add(D().cfEmail(m[1]), 'cloudflare');
     const text = plain(shown);
@@ -349,7 +378,7 @@
     'clients investor relations documents reports report performance expertise sectors sector',
     'industries platform products product study studies street road square avenue house place court',
     'floor building tower row way gardens wharf new york hong kong san los south east america united',
-    'kingdom states london',
+    'kingdom states london battersea bridge embankment quay mews terrace crescent',
   ]);
   const PARTICLE = /^(van|von|de|der|den|du|da|di|la|le|del|della|dos|das|bin|al|ter)$/i;
   const NAME_WORD = /^\p{Lu}[\p{Ll}'’]+(?:\p{Lu}[\p{Ll}'’]+)?(?:-\p{Lu}[\p{Ll}'’]+)*$/u;
@@ -412,6 +441,8 @@
     const list = s.split(' ');
     if (list.length > 8 || (name && ` ${asciiName(s)} `.includes(` ${asciiName(name)} `))) return false;
     const content = list.map((w) => w.replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, '')).filter((w) => !JOINER.test(w));
+    // A menu or heading's words ("Our People", "Meet the team") aren't anyone's title.
+    if (content.every((w) => NOT_NAME.has(w.toLowerCase()))) return false;
     return content.filter((w) => /^[\p{Lu}\d]/u.test(w) || ROLE.test(w)).length * 2 >= content.length;
   }
 
@@ -448,9 +479,9 @@
   function ownAddress(card, near, name, own) {
     const spelt = emailsIn(card, own).find((e) => e.kind === 'person' && namesMatch(e.address, name));
     if (spelt) return spelt.address;
-    for (const m of near.matchAll(/<a\b([^>]*?\bhref\s*=\s*["']?\s*mailto:([^"'\s>]+)[^>]*)>([\s\S]*?)<\/a\s*>/gi)) {
-      const address = clean(decodeHtml(m[2]).replace(INVISIBLE, ''));
-      const label = [plain(m[3]), attr(m[1], 'aria-label'), attr(m[1], 'title')].join(' ');
+    for (const m of near.matchAll(MAILTO_LINK)) {
+      const address = clean(decodeHtml(m[2] || m[3] || m[4]).replace(INVISIBLE, ''));
+      const label = [plain(m[5]), attr(m[1], 'aria-label'), attr(m[1], 'title')].join(' ');
       if (!address || kindOf(address) !== 'person' || !wanted(address, 'person', own)) continue;
       if (namesPerson(label, name)) return address;
     }
@@ -487,7 +518,12 @@
         if (isName(name)) found.push({ start: m.index, end: m.index + m[0].length, name, key: asciiName(name), photo });
       }
     };
-    take(/<(h[2-6]|strong|b)\b[^>]*>([\s\S]{1,300}?)<\/\1\s*>/gi, (m) => m[2]);
+    take(/<(strong|b)\b[^>]*>([\s\S]{1,300}?)<\/\1\s*>/gi, (m) => m[2]);
+    // A heading may close with another heading's tag: HBK writes "<h2>Brian Palabrica</h3>".
+    take(/<(h[2-6])\b[^>]*>([\s\S]{1,300}?)<\/h[1-6]\s*>/gi, (m) => m[2]);
+    // A name alone in a paragraph, link or block (Apollo Research's "<p class="text-size-large">", Winton's links):
+    // it still needs a title in its card, and a photo, LinkedIn, address or a recruiter's or partner's title.
+    take(/<(p|a|div|span)\b[^>]*>\s*([^<>]{4,60}?)\s*<\/\1\s*>/gi, (m) => m[2]);
     take(
       /<([a-z][\w-]*)\b[^>]*?\b(?:class|id)\s*=\s*["'][^"']*?(?:name|member|person|profile|bio|staff|title)[^"']*["'][^>]*>([\s\S]{1,300}?)<\/\1\s*>/gi,
       (m) => m[2],
@@ -527,7 +563,18 @@
 
   /* ------------------------------------------------------------- patterns */
 
-  const PATTERNS = ['first.last', 'first', 'flast', 'firstl', 'first_last', 'f.last', 'last', 'first-last'];
+  const PATTERNS = [
+    'first.last',
+    'first',
+    'flast',
+    'firstl',
+    'first_last',
+    'f.last',
+    'last',
+    'first-last',
+    'firstlast',
+    'lastf',
+  ];
 
   /** First and last name as an address spells them: "Jane A. van der Berg" → { first: 'jane', last: 'vanderberg' }. */
   function nameParts(name) {
@@ -549,15 +596,19 @@
       case 'f.last': return `${f[0]}.${l}`;
       case 'last': return l;
       case 'first-last': return `${f}-${l}`;
+      case 'firstlast': return f + l;
+      case 'lastf': return l + f[0];
       default: return '';
     }
   }
 
+  // Without apostrophes, as asciiName spells names: "o'donnell" is "odonnell".
   const localOf = (address) =>
     String(address || '')
       .toLowerCase()
       .split('@')[0]
-      .split('+')[0];
+      .split('+')[0]
+      .replace(/'/g, '');
 
   /** Could this address be this person's, in any of the patterns ("jsmith" for Jane Smith)? */
   function namesMatch(address, name) {
@@ -641,7 +692,7 @@
     // "Machine Learning" is a section, and machine.learning@ no one's.
     if ((p !== 'first' && parts.words < 2) || wordy(asciiName(name).split(' '))) return '';
     // An initial isn't a first name: "J. Smith" can't be first.last.
-    if (/^(first\.last|first|firstl|first_last|first-last)$/.test(p) && parts.first.length < 2) return '';
+    if (/^(first\.last|first|firstl|first_last|first-last|firstlast)$/.test(p) && parts.first.length < 2) return '';
     const local = build(p, parts);
     return local ? `${local}@${d}` : '';
   }
@@ -779,7 +830,12 @@
         page: p.page || '',
       };
     };
-    const recruiters = peopleList.filter((p) => p.role === 'recruiting');
+    // Emerging talent and early careers before the rest of recruiting (Man Group's "Emerging Talent Partner").
+    const forStudents = (p) =>
+      /emerging|early careers?|graduate|campus|intern|university|student|entry/i.test(p.title || '') ? 0 : 1;
+    const recruiters = peopleList
+      .filter((p) => p.role === 'recruiting')
+      .sort((a, b) => forStudents(a) - forStudents(b));
     for (const p of recruiters) if (p.email) add(listed(p));
     for (const p of recruiters) if (!p.email) add(guessed(p));
     const general = emailList
@@ -805,7 +861,15 @@
       for (const p of leaders) if (p.email) add(listed(p));
       for (const p of leaders) if (!p.email) add(guessed(p));
     }
-    return { emails: emailList, people: peopleList, pattern, best };
+    // People worth writing to whom no address reaches yet (no listed one, no pattern): named, for the card and for a
+    // format the web research or Hunter finds later.
+    const small = !firm || firm.employees == null || firm.employees <= 150;
+    const named = peopleList
+      .filter(
+        (p) => (p.role === 'recruiting' || (small && p.role === 'leadership')) && !best.some((b) => b.name === p.name),
+      )
+      .sort((a, b) => ROLE_RANK[a.role] - ROLE_RANK[b.role] || forStudents(a) - forStudents(b));
+    return { emails: emailList, people: peopleList, pattern, best, named };
   }
 
   /* ----------------------------------------------------------------- fetch */
@@ -935,6 +999,22 @@
       if (!x.r.ok || x.r.blocked) failed(x.t.url, x.r);
       else if (x.t.careers || landed(x.r)) keep(x.r, x.t.careers, x.t.kind);
     }
+    // Team and contact pages linked from the other pages read (Lansdowne's /our-people is linked from its careers and
+    // about pages, not its home page), before any path is guessed.
+    const further = [];
+    for (const g of got)
+      if (g.isFirm && (!home || g.url !== home.url))
+        for (const l of d.links(g.html, g.url)) {
+          const kind = linkKind(l, own);
+          if (kind && kind !== 'about page' && !answered.has(key(l.url)) && !tried.has(l.url.toLowerCase()))
+            if (!further.some((f) => key(f.url) === key(l.url))) further.push({ url: l.url, kind });
+        }
+    for (const t of further.slice(0, 3)) {
+      if (budget <= 0) break;
+      const r = await load(t.url);
+      if (!r.ok || r.blocked) failed(t.url, r);
+      else if (!answered.has(key(r.url)) && landed(r)) keep(r, false, t.kind);
+    }
     // The usual paths, until two of them answer: a menu built by script hides its links from a fetch. A kind of page
     // already read isn't guessed again (a linked /company/contact makes /contact a waste of a fetch).
     const origin = homeOk ? new URL(home.url).origin : site ? new URL(site).origin : '';
@@ -960,6 +1040,7 @@
 
   const discoverContacts = {
     CONTACT_PATHS,
+    PATTERNS,
     kindOf,
     emailsIn,
     peopleIn,
@@ -968,6 +1049,17 @@
     linkKind,
     contacts,
     findContacts,
+    // For lib/discover-research.js, which holds what the web says about people to the same rules.
+    asciiName,
+    tidyName,
+    isName,
+    roleOf,
+    namesMatch,
+    samePerson,
+    ownDomain,
+    clean,
+    plain,
+    visible,
   };
   JTF.discoverContacts = discoverContacts;
   if (typeof module === 'object' && module.exports) module.exports = discoverContacts;

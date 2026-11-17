@@ -1381,3 +1381,62 @@ test('discover: a tech firm checks out by its careers page; a finance firm still
   );
   assert.equal(bare.why, 'no Wikipedia article or careers page found');
 });
+
+test('discover: a job board’s own type says it is a student role when the title doesn’t', () => {
+  const gh = D.parseBoard(
+    { ats: 'greenhouse', slug: 'janestreet' },
+    {
+      json: {
+        jobs: [
+          {
+            title: 'Software Engineer',
+            absolute_url: 'https://boards.greenhouse.io/janestreet/jobs/1',
+            location: { name: 'London' },
+            metadata: [{ name: 'Employment Type', value: 'Summer Internship' }],
+          },
+          {
+            title: 'Quantitative Trader',
+            absolute_url: 'https://boards.greenhouse.io/janestreet/jobs/2',
+            metadata: [{ name: 'Employment Type', value: 'New Grad' }],
+          },
+          {
+            title: 'Senior Software Engineer',
+            absolute_url: 'https://boards.greenhouse.io/janestreet/jobs/3',
+            metadata: [{ name: 'Employment Type', value: 'Summer Internship' }],
+          },
+          { title: 'Software Engineer', absolute_url: 'https://boards.greenhouse.io/janestreet/jobs/4', metadata: [] },
+        ],
+      },
+    },
+  );
+  assert.deepEqual(gh.map(D.jobKind), ['internship', 'graduate', null, null]);
+  const lever = D.parseBoard(
+    { ats: 'lever', slug: 'acme' },
+    {
+      json: [
+        {
+          text: 'Platform Engineer',
+          hostedUrl: 'https://jobs.lever.co/acme/1',
+          categories: { commitment: 'Internship' },
+        },
+      ],
+    },
+  );
+  assert.equal(D.jobKind(lever[0]), 'internship');
+  const ashby = D.parseBoard(
+    { ats: 'ashby', slug: 'acme' },
+    { json: { jobs: [{ title: 'ML Engineer', jobUrl: 'https://jobs.ashbyhq.com/acme/1', employmentType: 'Intern' }] } },
+  );
+  assert.equal(D.jobKind(ashby[0]), 'internship');
+  assert.equal(D.roleKind('Software Engineer, Junior / Graduate'), 'graduate');
+});
+
+test('discover: a fund’s “opportunities” is no careers page', () => {
+  const html =
+    '<a href="/what-we-do/credit-opportunities/">TT Credit Opportunities</a><a href="/careers/">Careers</a>' +
+    '<a href="/job-opportunities">Opportunities</a>';
+  assert.deepEqual(
+    D.careerLinks(html, 'https://www.ttint.com/', ['ttint.com']).map((l) => l.url),
+    ['https://www.ttint.com/careers/', 'https://www.ttint.com/job-opportunities'],
+  );
+});

@@ -145,6 +145,7 @@ test('store: the Discover cache keeps the lists whole and checks per firm, the n
     listed: null,
     careers: {},
     contacts: {},
+    research: {},
   });
   const hn = { posts: [{ id: 1 }], threads: [{ id: 9, title: 'Ask HN: Who is hiring? (November 2026)' }], at: 5 };
   const listed = { names: ['jane street'], domains: ['janestreet.com'], at: 6 };
@@ -157,6 +158,8 @@ test('store: the Discover cache keeps the lists whole and checks per firm, the n
   assert.deepEqual(cache.listed, listed);
   assert.deepEqual(Object.keys(cache.contacts).sort(), ['a', 'b'], 'merged per firm');
   assert.deepEqual(Object.keys(cache.careers), ['a']);
+  await store.setDiscoverCache({ research: { a: { at: 4, result: { people: [] } } } });
+  assert.deepEqual((await store.getDiscoverCache()).research, { a: { at: 4, result: { people: [] } } });
   const lots = {};
   for (let i = 0; i < 305; i++) lots['x' + i] = { at: 100 + i, result: {} };
   await store.setDiscoverCache({ contacts: lots });
