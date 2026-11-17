@@ -516,6 +516,21 @@ async function checkTop() {
   }
 }
 
+/** Find people at the top 10 firms not yet searched, two at a time (each checks its firm first if need be). */
+async function researchTop() {
+  const list = visible()
+    .slice(0, 10)
+    .filter((r) => !state.research[r.firm.id]);
+  const consent = canSearch() ? requestAiConsent() : null;
+  const button = $('#research-top');
+  button.disabled = true;
+  try {
+    await D.pool(list, 2, (r) => researchFirm(r.firm, consent));
+  } finally {
+    button.disabled = false;
+  }
+}
+
 const hasOpen = (result) => !!result && (result.status === 'roles' || result.status === 'programme');
 
 /** Is there a careers page the rules made nothing of, for the AI to read? Not while the firm is being checked again. */
@@ -1343,7 +1358,9 @@ function researchView(firm) {
       : r
         ? el('p', {
             className: 'muted',
-            textContent: 'No address format confirmed: names without an address are listed above.',
+            textContent: (r.disputed || []).length
+              ? `No address format confirmed: the directories disagree (${r.disputed.join(' or ')}).`
+              : 'No address format confirmed: names without an address are listed above.',
           })
         : null,
     r && r.hunter && r.hunter.error ? el('p', { className: 'warn-text', textContent: r.hunter.error }) : null,
@@ -2409,6 +2426,8 @@ function syncAi() {
   $('#use-ai').disabled = !ready;
   $('#ai-wrap').title = ready ? '' : NO_AI;
   $('#check-top').title = thorough() ? THOROUGH_READ : '';
+  $('#research-top').hidden = !canResearch();
+  $('#research-top').title = RESEARCH_NOTE;
   if (state.results.length) renderResults();
 }
 
@@ -2421,7 +2440,7 @@ function buildFinderBox() {
   input.addEventListener('change', async () => {
     state.finderKeys = await store.setFinderKey('hunter', input.value);
     saved.textContent = input.value.trim() ? 'Checking the key…' : 'Removed.';
-    if (state.results.length) renderResults();
+    syncAi();
     if (!input.value.trim()) return;
     try {
       const a = await F.hunter.account(state.finderKeys.hunter, { fetch: fetchFn });
@@ -2481,6 +2500,7 @@ async function start() {
   $('#only-open').addEventListener('change', renderResults);
   $('#sort-way').addEventListener('change', renderResults);
   $('#check-top').addEventListener('click', checkTop);
+  $('#research-top').addEventListener('click', researchTop);
   $('#results-export').addEventListener('click', exportResults);
   $('#outreach-export').addEventListener('click', exportOutreach);
   for (const t of TABS) $(`#tab-${t}`).addEventListener('click', () => showTab(t));
@@ -2524,6 +2544,8 @@ async function start() {
       .catch(() => ''),
   ]);
   buildFinderBox();
+  // What a Hunter key alone makes possible (Find people) shows once the keys are read.
+  syncAi();
   checkReplies().catch(() => null);
   const tab = location.hash.slice(1);
   showTab(TABS.includes(tab) ? tab : 'find');

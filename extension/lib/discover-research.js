@@ -174,9 +174,14 @@
         .pop()
         .replace(/\s+$/, '');
       const words = before.split(/\s+/).filter(Boolean);
-      // A directory gives each format's share: "FirstLast@egercap.co.uk JohnDoe@egercap.co.uk 78%".
-      const tail = t.slice(i, i + d.length + 60).match(/^\S+(?:\s+\S+@\S+)?\s+(\d{1,3}(?:\.\d+)?)\s*%/);
-      const share = tail ? Number(tail[1]) : 0;
+      // A directory gives each format's share: LeadIQ's "FirstLast@egercap.co.uk JohnDoe@egercap.co.uk 78%",
+      // Prospeo's "(e.g., johndoe@hoskingpartners.com), used 81% of the time": the first percentage before the next
+      // format (one example address may come between).
+      const next = t.slice(i + d.length + 1, i + d.length + 110);
+      const ats = [...next.matchAll(/@/g)].map((m) => m.index);
+      const upTo = next.slice(0, ats.length > 1 ? ats[1] : next.length);
+      const pct = upTo.match(/(\d{1,3}(?:\.\d+)?)\s*%/);
+      const share = pct ? Number(pct[1]) : 0;
       let shape = '';
       for (let k = Math.min(6, words.length); k > 0 && !shape; k--) shape = shapeOf(words.slice(-k).join(' '));
       if (shape) {
@@ -632,7 +637,7 @@
    */
   async function addresses(web, { firm, contacts = {}, domain, hunterKey = '', fetch: fetchFn } = {}) {
     const F = JTF.discoverFinder;
-    const out = { people: [], mailboxes: [], formats: [], format: null, hunter: null, mx: null };
+    const out = { people: [], mailboxes: [], formats: [], format: null, hunter: null, mx: null, disputed: [] };
     let found = null;
     if (hunterKey && domain) {
       try {
@@ -659,12 +664,21 @@
     // "78%" beats its "22%"); a minority format on a domain with a majority one is left out.
     const siteDomains = (contacts.emails || []).map((e) => String(e.address || '').split('@')[1]).filter(Boolean);
     // A format a directory says few of its addresses follow (TT International's f.last@ at 3.4%) is no basis either.
-    const webFormats = ((web && web.formats) || []).filter(
+    const all = (web && web.formats) || [];
+    // Two directories that each say most addresses follow a different format (CMC Markets: Prospeo's first.last at
+    // 74.9%, LeadIQ's f.last at 79%) settle nothing: neither is used, unless addresses printed on the web decide it.
+    const disputed = (f) =>
+      f.source !== 'addresses' &&
+      f.share >= 50 &&
+      all.some(
+        (g) => g !== f && g.domain === f.domain && g.pattern !== f.pattern && g.share >= 50 && g.source !== 'addresses',
+      );
+    out.disputed = [...new Set(all.filter(disputed).map((f) => `${f.pattern}@${f.domain}`))];
+    const webFormats = all.filter(
       (f) =>
         !(f.share > 0 && f.share < 25) &&
-        !(web.formats || []).some(
-          (g) => g !== f && g.domain === f.domain && (g.share || 0) > Math.max(50, f.share || 0),
-        ),
+        !disputed(f) &&
+        !all.some((g) => g !== f && g.domain === f.domain && (g.share || 0) > Math.max(50, f.share || 0)),
     );
     webFormats.sort(
       (a, b) =>

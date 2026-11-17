@@ -409,6 +409,16 @@ test('research: a directory’s example addresses are formats, and the format mo
     { pattern: 'f.last', example: '', share: 22 },
   ]);
   assert.deepEqual(['FirstLast', 'FLast', 'FirstL', 'JohnDoe'].map(R.shapeOf), ['firstlast', 'flast', 'firstl', '']);
+  // Prospeo and RocketReach say the share after the example.
+  assert.deepEqual(
+    R.formatsIn(
+      'The most common is {first name}{last name} (e.g., johndoe@hoskingpartners.com), used 81% of the time.',
+      'hoskingpartners.com',
+    ),
+    [{ pattern: 'firstlast', example: 'johndoe@hoskingpartners.com', share: 81 }],
+  );
+  const rr = 'format is [first].[last] (ex. jane.doe@hbk.com), which is being used by 85% of HBK employees.';
+  assert.equal(R.formatsIn(rr, 'hbk.com')[0].share, 85);
   const firm = { name: 'Egerton Capital', domain: 'egertoncapital.com', site: 'https://www.egertoncapital.com' };
   const search = async () => ({
     json: {
@@ -495,4 +505,39 @@ test('research: people the firm’s own site names get an address from a confirm
     found.people[0].why,
     /Head of Recruitment, on hbk\.com; address from the format first\.last@ \(stated on rocketreach\.co, 85% of its addresses\)/,
   );
+});
+
+test('research: two directories that disagree on the format settle nothing', async () => {
+  const firm = { name: 'CMC Markets', domain: 'cmcmarkets.com' };
+  const web = {
+    people: [
+      {
+        name: 'Meghan Squirrell',
+        title: 'Group Head of Talent Acquisition',
+        group: 'recruiting',
+        url: 'https://www.cmcmarkets.com/group/careers',
+      },
+    ],
+    emails: [],
+    formats: [
+      {
+        pattern: 'first.last',
+        domain: 'cmcmarkets.com',
+        url: 'https://prospeo.io/c/cmc',
+        source: 'stated',
+        share: 74.9,
+      },
+      { pattern: 'f.last', domain: 'cmcmarkets.com', url: 'https://leadiq.com/c/cmc', source: 'stated', share: 79 },
+    ],
+  };
+  const fetchFn = mockFetch({
+    'https://dns.google/resolve?name=cmcmarkets.com&type=MX': JSON.stringify({
+      Status: 0,
+      Answer: [{ type: 15, data: '10 mx.' }],
+    }),
+  });
+  const found = await R.addresses(web, { firm, contacts: {}, domain: 'cmcmarkets.com', fetch: fetchFn });
+  assert.equal(found.format, null);
+  assert.deepEqual(found.disputed, ['first.last@cmcmarkets.com', 'f.last@cmcmarkets.com']);
+  assert.equal(found.people[0].address, undefined, 'no address made from a disputed format');
 });
