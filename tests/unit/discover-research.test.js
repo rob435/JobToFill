@@ -541,3 +541,38 @@ test('research: two directories that disagree on the format settle nothing', asy
   assert.deepEqual(found.disputed, ['first.last@cmcmarkets.com', 'f.last@cmcmarkets.com']);
   assert.equal(found.people[0].address, undefined, 'no address made from a disputed format');
 });
+
+test('research: a site on file that now redirects to its new owner, who turns robots away, has moved there', async () => {
+  const firm = { name: 'Ares Systematic Credit', domain: 'bluecove.com', site: 'https://www.bluecove.com' };
+  const search = async () => ({
+    json: {
+      website: '',
+      website_note: 'BlueCove was acquired by Ares Management and renamed Ares Systematic Credit',
+      people: [],
+    },
+    sources: [],
+    searches: 1,
+  });
+  const fetchFn = async (url) => {
+    if (url === 'https://www.bluecove.com')
+      return {
+        ok: false,
+        status: 403,
+        url: 'https://www.aresmgmt.com/our-business/credit',
+        text: async () => 'Forbidden',
+      };
+    return { ok: false, status: 404, url, text: async () => '' };
+  };
+  const r = await R.research(search, { firm, found: { status: 'unreachable' }, fetch: fetchFn });
+  assert.deepEqual(
+    [r.website.url, r.website.confirmed, r.website.name],
+    ['https://www.aresmgmt.com', true, 'Ares Management'],
+  );
+  // A redirect to a domain the note doesn't name proves nothing.
+  const other = await R.research(async () => ({ json: { website_note: 'Acquired by Blackstone' }, sources: [] }), {
+    firm,
+    found: { status: 'unreachable' },
+    fetch: fetchFn,
+  });
+  assert.equal(other.website.confirmed, false);
+});

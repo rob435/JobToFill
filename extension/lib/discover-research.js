@@ -484,6 +484,25 @@
         log.push({ url: home.url || claimed, outcome: 'web research: the firm’s site now' });
       } else dropped.push({ what: claimed, why: home.ok ? 'the page doesn’t name the firm' : 'didn’t load' });
     }
+    // The site on file may send its visitors to the firm's new owner (BlueCove's bluecove.com to Ares Management's
+    // aresmgmt.com): a redirect to another domain whose page names the firm, or the new name the model gave, is where
+    // the firm is now.
+    if (!website.confirmed && f.site && ['unreachable', 'none', 'blocked'].includes((found && found.status) || '')) {
+      const r2 = await D().get(fetchFn, f.site, { retries: 0, timeout: 15000 });
+      const moved = !!r2.url && D().domainOf(r2.url) !== D().domainOf(f.site);
+      // A new owner's site that turns robots away (aresmgmt.com answers 403) can't be read, but the redirect is a fact:
+      // it counts when the new name the model gave is the new domain's ("Ares Management", aresmgmt.com).
+      const owner = ascii(newName(website.note)).split(' ')[0] || '';
+      const blockedButNamed =
+        moved && [401, 403].includes(r2.status) && owner.length >= 3 && D().domainOf(r2.url).startsWith(owner);
+      const readable = moved && r2.ok && !r2.blocked;
+      if (blockedButNamed || (readable && (D().pageIsFirm(r2.text, f) || noteNames(r2.text, f, website.note)))) {
+        website.url = D().siteOf(r2.url) || r2.url;
+        website.confirmed = true;
+        if (!(readable && D().pageIsFirm(r2.text, f)) && newName(website.note)) website.name = newName(website.note);
+        log.push({ url: r2.url, outcome: 'web research: the site on file now redirects here' });
+      }
+    }
     const domain = String(f.domain || '').toLowerCase() || D().domainOf(f.site || '');
     // The domains its people's addresses may be on: its site's, its new site's, and the one its own pages' addresses
     // use (Egerton Capital's site is egertoncapital.com, its mail egercap.co.uk).
