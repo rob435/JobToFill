@@ -576,3 +576,91 @@ test('research: a site on file that now redirects to its new owner, who turns ro
   });
   assert.equal(other.website.confirmed, false);
 });
+
+test('research: a short form of a first name, printed where the person is named in full, is their address', async () => {
+  const firm = { name: 'Meticulous', domain: 'meticulous.ai', site: 'https://www.meticulous.ai' };
+  const text = 'Gabriel Spencer-Harper, Founder of Meticulous. I’m Gabe. Just email gabe@meticulous.ai';
+  const search = async () => ({
+    json: {
+      people: [
+        { name: 'Gabriel Spencer-Harper', title: 'Founder', url: 'https://www.ycombinator.com/companies/meticulous' },
+      ],
+    },
+    sources: [
+      {
+        url: 'https://www.ycombinator.com/companies/meticulous',
+        title: 'Meticulous | Y Combinator',
+        text,
+        kind: 'page',
+      },
+    ],
+  });
+  const r = await R.research(search, { firm, fetch: mockFetch({}) });
+  assert.equal(r.people[0].address, 'gabe@meticulous.ai');
+  // Not when the source doesn't name them, nor for someone the short form doesn't fit.
+  const other = await R.research(
+    async () => ({
+      json: { people: [{ name: 'Gabriel Spencer-Harper', title: 'Founder', url: 'https://a.example/team' }] },
+      sources: [
+        {
+          url: 'https://a.example/team',
+          title: 'Team | Meticulous',
+          text: 'Gabriel Spencer-Harper, Founder',
+          kind: 'page',
+        },
+        { url: 'https://b.example/post', title: 'Meticulous launch', text: 'Email gabe@meticulous.ai', kind: 'page' },
+      ],
+    }),
+    { firm, fetch: mockFetch({}) },
+  );
+  assert.equal(other.people[0].address, undefined);
+});
+
+test('research: an address printed on the firm’s own page backs the directory format it agrees with', async () => {
+  const firm = { name: 'CarbonChain', domain: 'carbonchain.com', site: 'https://carbonchain.com' };
+  const search = async () => ({
+    json: {
+      people: [
+        { name: 'Roheet Shah', title: 'COO', url: 'https://www.carbonchain.com/legal/data-processing-addendum' },
+        { name: 'Adam Hearne', title: 'Chief Executive Officer', url: 'https://www.carbonchain.com/about' },
+      ],
+    },
+    sources: [
+      {
+        url: 'https://www.carbonchain.com/legal/data-processing-addendum',
+        title: 'Data Processing Addendum | CarbonChain',
+        text: 'Data protection enquiries can be addressed to Roheet Shah, COO roheet@carbonchain.com',
+        kind: 'page',
+      },
+      {
+        url: 'https://www.carbonchain.com/about',
+        title: 'About | CarbonChain',
+        text: 'Adam Hearne Chief Executive Officer',
+        kind: 'page',
+      },
+      {
+        url: 'https://prospeo.io/c/carbonchain',
+        title: 'CarbonChain email format',
+        text: 'The most common is {first name} (e.g., john@carbonchain.com), used 48.5% of the time.',
+        kind: 'cited',
+      },
+    ],
+  });
+  const web = await R.research(search, { firm, fetch: mockFetch({}) });
+  const fetchFn = mockFetch({
+    'https://dns.google/resolve?name=carbonchain.com&type=MX': JSON.stringify({
+      Status: 0,
+      Answer: [{ type: 15, data: '1 mx.' }],
+    }),
+  });
+  const found = await R.addresses(web, { firm, contacts: {}, domain: 'carbonchain.com', fetch: fetchFn });
+  assert.equal(found.format.pattern, 'first');
+  assert.match(found.format.why, /^addresses printed on /);
+  assert.deepEqual(
+    found.people.map((p) => [p.name, p.address, p.how]),
+    [
+      ['Roheet Shah', 'roheet@carbonchain.com', 'listed'],
+      ['Adam Hearne', 'adam@carbonchain.com', 'format'],
+    ],
+  );
+});

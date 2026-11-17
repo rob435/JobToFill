@@ -244,8 +244,8 @@
     const out = [];
     for (const s of [...(sources || []), ...(pages || []).map((p) => ({ ...p, kind: 'page' }))]) {
       if (!s || !s.url) continue;
-      const text = str(s.text);
-      const title = str(s.title);
+      const text = str(s.text).replace(/&(amp|#38|nbsp|#160);/g, (m, e) => (e === 'amp' || e === '#38' ? '&' : ' '));
+      const title = C().plain(str(s.title));
       if (!text && !title) continue;
       const had = out.find((o) => o.url === s.url && o.text === text && o.title === title);
       if (had) continue;
@@ -305,6 +305,12 @@
    * it. → { name, title, url, quote, kind } or { why }.
    */
   function confirmPerson(person, evidence, firm) {
+    // Titles and names as a page's markup gave them: "Co-Founder &amp; CEO".
+    person = {
+      ...(person || {}),
+      name: C().plain(str(person && person.name)),
+      title: C().plain(str(person && person.title)),
+    };
     const name = C().tidyName(str(person && person.name));
     if (!C().isName(name)) return { why: 'not a person’s name' };
     const forms = nameForms(name);
@@ -350,6 +356,24 @@
       return `${start ? '…' : ''}${t.slice(start, mid + 130).trim()}${mid + 130 < t.length ? '…' : ''}`;
     }
     return t.slice(0, 200);
+  }
+
+  /**
+   * Is this printed address a short form of the person's first name ("gabe" for Gabriel, "chris" for Christopher), in
+   * a source that also names them in full? Only for an address that no other person found could be.
+   */
+  function shortFormOf(email, person, evidence) {
+    const local = String(email.address || '')
+      .split('@')[0]
+      .toLowerCase();
+    const first = ascii(person.name).split(' ')[0] || '';
+    if (!/^[a-z]{3,}$/.test(local) || !first || local === first) return false;
+    const short =
+      first.startsWith(local) ||
+      (local.length >= 4 && first.startsWith(local.slice(0, 3)) && local.length < first.length);
+    if (!short) return false;
+    const forms = nameForms(person.name);
+    return evidence.some((item) => item.url === email.url && forms.some((f) => item.said.includes(f)));
   }
 
   /* ---------------------------------------------------------------- prompt */
@@ -527,6 +551,13 @@
       if (page) pages.push(page);
     }
     const evidence = evidenceOf(sources, pages);
+    // The same name under another ending, as the sources show it in addresses (Curacel's site is curacel.co, its mail
+    // curacel.ai).
+    const label = (domains[0] || '').split('.')[0];
+    if (label.length >= 4)
+      for (const item of evidence)
+        for (const m of `${item.title} ${item.text}`.toLowerCase().matchAll(/@([a-z0-9-]+(?:\.[a-z0-9-]+)+)/g))
+          if (m[1].split('.')[0] === label && !domains.includes(m[1]) && domains.length < 5) domains.push(m[1]);
     // A firm that moved goes by its new name and domain too: GLG's people are "Man Group" on LinkedIn.
     const renamed = website.confirmed ? newName(website.note) : '';
     const firmLike = {
@@ -572,9 +603,12 @@
     }
     for (const e of printed.values()) emails.push({ address: e.address, kind: e.kind, url: e.url, quote: e.quote });
 
-    // A person's own printed address: one that spells their name.
+    // A person's own printed address: one that spells their name, or a short form of their first name printed in a
+    // source that names them in full (Meticulous's "I'm Gabe ... email gabe@meticulous.ai" for Gabriel Spencer-Harper).
     for (const p of people) {
-      const own = emails.find((e) => e.kind === 'person' && C().namesMatch(e.address, p.name));
+      const own =
+        emails.find((e) => e.kind === 'person' && C().namesMatch(e.address, p.name)) ||
+        emails.find((e) => e.kind === 'person' && shortFormOf(e, p, evidence));
       if (own) Object.assign(p, { address: own.address, addressFrom: own.url });
     }
 
@@ -593,7 +627,11 @@
         personal,
         people.map((p) => p.name),
       );
-      if (shown.pattern && !formats.some((y) => y.pattern === shown.pattern && y.domain === shown.domain))
+      // Printed addresses that spell people's names are the strongest word on the format: a directory that says the
+      // same (CarbonChain's roheet@ beside Prospeo's {first name}) is backed by them, whatever share it gives.
+      const same = formats.find((y) => y.pattern === shown.pattern && y.domain === shown.domain);
+      if (same) Object.assign(same, { source: 'addresses', examples: shown.examples, example: shown.sample });
+      else if (shown.pattern)
         formats.unshift({
           pattern: shown.pattern,
           domain: shown.domain,
@@ -699,9 +737,10 @@
     out.disputed = [...new Set(all.filter(disputed).map((f) => `${f.pattern}@${f.domain}`))];
     const webFormats = all.filter(
       (f) =>
-        !(f.share > 0 && f.share < 25) &&
-        !disputed(f) &&
-        !all.some((g) => g !== f && g.domain === f.domain && (g.share || 0) > Math.max(50, f.share || 0)),
+        f.source === 'addresses' ||
+        (!(f.share > 0 && f.share < 25) &&
+          !disputed(f) &&
+          !all.some((g) => g !== f && g.domain === f.domain && (g.share || 0) > Math.max(50, f.share || 0))),
     );
     webFormats.sort(
       (a, b) =>
