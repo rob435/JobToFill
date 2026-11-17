@@ -605,9 +605,16 @@ function contactsOf(firm) {
   const out = [];
   const add = (x, extra) => {
     const address = addressOf(x);
-    if (!address || !/@/.test(address) || out.some((o) => o.address.toLowerCase() === address.toLowerCase())) return;
+    if (!address || !/@/.test(address)) return;
     const o = typeof x === 'object' ? x : {};
-    out.push({ name: o.name || '', title: o.title || '', kind: o.kind || '', why: o.why || '', ...extra, address });
+    const next = { name: o.name || '', title: o.title || '', kind: o.kind || '', why: o.why || '', ...extra, address };
+    const had = out.find((y) => y.address.toLowerCase() === address.toLowerCase());
+    if (!had) return out.push(next);
+    // Found twice (the site's pattern guessed it; the web research made it from the same format and found its domain
+    // takes mail): the surer finding stands, and the name and title fill in.
+    const level = (y) => LEVEL_RANK[y.level || (y.guessed ? 'guessed' : 'listed')] ?? 3;
+    if (level(next) < level(had))
+      Object.assign(had, { ...next, name: had.name || next.name, title: had.title || next.title });
   };
   for (const b of (c.result && c.result.best) || [])
     add(b, { guessed: !!b.guessed, source: 'check', role: b.role || '', level: b.guessed ? 'guessed' : 'listed' });
