@@ -379,6 +379,8 @@
     'industries platform products product study studies street road square avenue house place court',
     'floor building tower row way gardens wharf new york hong kong san los south east america united',
     'kingdom states london battersea bridge embankment quay mews terrace crescent',
+    'logo logos badge badges icon icons panel panels portal login accreditation certified award awards microsoft',
+    'google amazon sponsor sponsors testimonial testimonials',
   ]);
   const PARTICLE = /^(van|von|de|der|den|du|da|di|la|le|del|della|dos|das|bin|al|ter)$/i;
   const NAME_WORD = /^\p{Lu}[\p{Ll}'’]+(?:\p{Lu}[\p{Ll}'’]+)?(?:-\p{Lu}[\p{Ll}'’]+)*$/u;
@@ -444,6 +446,43 @@
     // A menu or heading's words ("Our People", "Meet the team") aren't anyone's title.
     if (content.every((w) => NOT_NAME.has(w.toLowerCase()))) return false;
     return content.filter((w) => /^[\p{Lu}\d]/u.test(w) || ROLE.test(w)).length * 2 >= content.length;
+  }
+
+  // Words a title's organisation part may be made of without being another organisation ("Partner, Credit",
+  // "Head of Talent - Hedge Funds", "Head of Operations, UK").
+  const DEPARTMENT = new Set([
+    ...COMMON,
+    ...REGION,
+    ...GENERAL,
+    ...NOT_NAME,
+    ...words([
+      'hedge equities quant quantitative emea apac americas long short only strategy multi dm em ucits sicav oeic icav',
+    ]),
+  ]);
+
+  /**
+   * The other organisation a title names, or '': a customer's or an investor's quote on a firm's site ("CEO -
+   * Spinnaker", "Partner at Y Combinator", "Chief Customer Officer, Gen H") is someone else's, whatever the page.
+   * firmName: the firm's own name, which a title may name ("Partner, Man Group").
+   */
+  function elsewhere(title, firmName) {
+    const t = plain(title).replace(/[.,;:]+$/, '');
+    const own = asciiName(firmName || '');
+    const core = own.split(' ').filter((w) => w.length > 2 && !NOT_NAME.has(w));
+    const isOrg = (part) => {
+      const p = String(part || '').trim();
+      if (!/^\p{Lu}/u.test(p) || ROLE.test(p)) return false;
+      const list = asciiName(p)
+        .split(' ')
+        .filter((w) => w.length > 1);
+      if (!list.length || list.every((w) => DEPARTMENT.has(w))) return false;
+      return !(own && (` ${own} `.includes(` ${list.join(' ')} `) || list.some((w) => core.includes(w))));
+    };
+    const at = t.match(/\b(?:at|@)\s+(\p{Lu}[\p{L}\d&.'’-]*(?:\s+(?:\p{Lu}|&)[\p{L}\d&.'’-]*){0,4})/u);
+    if (at && isOrg(at[1])) return at[1];
+    // "CEO - Spinnaker", "Head of Operations - Harvey John, UK", "Co-Founder, Odiin Group".
+    const parts = t.split(/\s[-–—|]\s|,\s*/).slice(1);
+    return parts.find(isOrg) || '';
   }
 
   /** Add a person, or fill in what an earlier mention of them lacked. */
@@ -550,6 +589,8 @@
         .slice(0, 4);
       const title = lines.find((l) => isTitle(l, c.name));
       if (!title || wordy(asciiName(c.name).split(' '))) continue;
+      // A customer's or an investor's quote: "Steve Cox, CEO - Spinnaker" on Devyce's site is Spinnaker's.
+      if (elsewhere(title, own.name)) continue;
       const card = body.slice(c.end, Math.min(stop, c.end + 800));
       const email = ownAddress(card, near, c.name, own);
       const linkedin = (decodeHtml(card).match(LINKEDIN) || [''])[0];
@@ -1053,6 +1094,7 @@
     asciiName,
     tidyName,
     isName,
+    elsewhere,
     roleOf,
     namesMatch,
     samePerson,

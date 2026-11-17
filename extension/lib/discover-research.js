@@ -322,6 +322,10 @@
     }
     if (!best) return { why: 'no source names them with the firm' };
     const { item, title } = best;
+    // "Partner at Y Combinator" on a startup's page is an investor, not one of its people.
+    const other = C().elsewhere(title || str(person.title), firm.name);
+    if (other && !(firm.aliases || []).some((a) => ascii(a).includes(ascii(other))))
+      return { why: `works at ${other}` };
     return {
       name,
       title: title.slice(0, 120),

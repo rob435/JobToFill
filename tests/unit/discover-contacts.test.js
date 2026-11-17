@@ -702,3 +702,26 @@ test('discover contacts: named people with no address are kept, student recruite
     ['amy.chan@acme.com', 'tom.lee@acme.com'],
   );
 });
+
+test('discover contacts: a customer’s or an investor’s quote on the site is no one at the firm', () => {
+  const html =
+    '<div><h3>Steve Cox</h3><p>CEO - Spinnaker</p><img alt="Steve Cox"></div>' +
+    '<div><h3>Jared Friedman</h3><p>Partner at Y Combinator</p><img alt="Jared Friedman"></div>' +
+    '<div><h3>Hal Sarjant</h3><p>Chief Customer Officer, Gen H</p><img alt="Hal Sarjant"></div>' +
+    '<div><h3>Ed Jones</h3><p>Chief Technology Officer</p><img alt="Ed Jones"></div>' +
+    '<div><img alt="Control Panels"><p>Partner Portal</p></div>';
+  assert.deepEqual(
+    C.peopleIn(html, { domain: 'devyce.com', name: 'Devyce' }).map((p) => p.name),
+    ['Ed Jones'],
+  );
+  // The firm's own name, a department or a place after the title is still the firm.
+  for (const [title, firm] of [
+    ['Global Head of Talent Acquisition, Man Group', 'Man Group'],
+    ['Partner, Co-Head of Investment Grade', 'TwentyFour'],
+    ['Head of Operations, UK', 'Acme'],
+    ['Partner & Co-Portfolio Manager, DM UCITS', 'Lansdowne'],
+    ['CEO, Trigger.dev', 'Trigger.dev'],
+  ])
+    assert.equal(C.elsewhere(title, firm), '', title);
+  assert.equal(C.elsewhere('Head of Operations - Harvey John, UK', 'Devyce'), 'Harvey John');
+});
