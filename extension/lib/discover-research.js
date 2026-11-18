@@ -189,10 +189,17 @@
         continue;
       }
       const local = (words[words.length - 1] || '').toLowerCase().replace(/^[^a-z0-9]+/, '');
+      let known = false;
       for (const [first, last] of EXAMPLE_NAMES) {
         const hit = C().PATTERNS.find((p) => build(p, first, last) === local);
         if (hit) add(hit, `${local}@${d}`, share);
+        known = known || !!hit;
       }
+      // A share for a format no address here can be built in (Prospeo's "{first initial} (e.g., j@trigger.dev), used
+      // 71.4%") still says the others are the minority.
+      // (Only for a directory's example: a person's "j.smith@… 95%" is a confidence, not a share.)
+      if (!known && share && (/^[a-z]$/.test(local) || placeholder(`${local}@${d}`)))
+        add('unknown', `${local}@${d}`, share);
     }
     // "format is [first].[last] (ex. …)", "format: first initial + last name", in a text that names this domain (and no
     // other one's addresses: a page about Man Group's format says nothing of glgpartners.com's).
@@ -223,6 +230,10 @@
     }
   }
 
+  // A subdomain a firm sends bulk mail from (its newsletters, its sign-up emails), not where its people's mail is.
+  const SENDING =
+    /^(mail|email|e|em|mg|mailer|mailing|mails|news|newsletters?|send|sender|updates|marketing|notify|notifications|campaigns?|mkt|crm|bounces?|reply|go)\.[a-z0-9-]+\./;
+
   /** Is this a format's example rather than someone's address: "jane.doe@", "jdoe@", "f.last@", "firstname@"? */
   function placeholder(address) {
     const local = String(address || '')
@@ -231,6 +242,8 @@
     if (shapeOf(local)) return true;
     const bare = local.replace(/[._-]/g, '');
     if (/^(first|last|f|l|fm|m|name|firstname|lastname|middle|mi)+$/.test(bare)) return true;
+    // Prospeo's "{last name}.{last name} | doe.doe@lingotto.com": any run of the example names and their initials.
+    if (/(doe|smith)/.test(bare) && /^(jane|john|doe|smith|j|d|s)+$/.test(bare)) return true;
     return EXAMPLE_NAMES.some(([a, b]) => C().PATTERNS.some((p) => build(p, a, b) === local));
   }
 
@@ -331,7 +344,9 @@
     // "Partner at Y Combinator" on a startup's page is an investor, not one of its people.
     const other = C().elsewhere(title || str(person.title), firm.name);
     if (other && !(firm.aliases || []).some((a) => ascii(a).includes(ascii(other))))
-      return { why: `works at ${other}` };
+      return {
+        why: /^(former|ex\b|previously)/i.test(title || str(person.title)) ? 'a past role' : `works at ${other}`,
+      };
     return {
       name,
       title: title.slice(0, 120),
@@ -556,8 +571,11 @@
     const label = (domains[0] || '').split('.')[0];
     if (label.length >= 4)
       for (const item of evidence)
-        for (const m of `${item.title} ${item.text}`.toLowerCase().matchAll(/@([a-z0-9-]+(?:\.[a-z0-9-]+)+)/g))
-          if (m[1].split('.')[0] === label && !domains.includes(m[1]) && domains.length < 5) domains.push(m[1]);
+        for (const m of `${item.title} ${item.text}`.matchAll(/@([a-z0-9-]+(?:\.[a-z0-9-]+)+)/gi)) {
+          // LeadIQ runs words together: "First@mytos.bioMost common" is mytos.bio.
+          const d = m[1].replace(/([a-z\d])[A-Z][a-z]*$/, '$1').toLowerCase();
+          if (d.split('.')[0] === label && !domains.includes(d) && domains.length < 5) domains.push(d);
+        }
     // A firm that moved goes by its new name and domain too: GLG's people are "Man Group" on LinkedIn.
     const renamed = website.confirmed ? newName(website.note) : '';
     const firmLike = {
@@ -618,10 +636,13 @@
       for (const item of evidence)
         for (const x of formatsIn(`${item.title} ${item.text}`, d)) {
           const had = formats.find((y) => y.pattern === x.pattern && y.domain === d);
-          if (had) had.share = Math.max(had.share || 0, x.share || 0);
-          else formats.push({ ...x, domain: d, url: item.url, source: 'stated' });
+          // The higher share keeps its own source: Anima's 96.2% is Prospeo's, not LeadIQ's.
+          if (had && (x.share || 0) > (had.share || 0)) Object.assign(had, { share: x.share, url: item.url });
+          else if (!had) formats.push({ ...x, domain: d, url: item.url, source: 'stated' });
         }
-    const personal = emails.filter((e) => e.kind === 'person');
+    // Not a sending subdomain's: Trigger.dev's founders write their newsletters from "matt@mail.trigger.dev", while
+    // its staff's mail is on trigger.dev.
+    const personal = emails.filter((e) => e.kind === 'person' && !SENDING.test(e.address.split('@')[1]));
     if (personal.length) {
       const shown = C().patternOf(
         personal,
@@ -630,13 +651,16 @@
       // Printed addresses that spell people's names are the strongest word on the format: a directory that says the
       // same (CarbonChain's roheet@ beside Prospeo's {first name}) is backed by them, whatever share it gives.
       const same = formats.find((y) => y.pattern === shown.pattern && y.domain === shown.domain);
-      if (same) Object.assign(same, { source: 'addresses', examples: shown.examples, example: shown.sample });
+      // Named for the page that prints them, not the directory that states the format.
+      const where = (personal.find((e) => e.address === shown.sample) || {}).url || '';
+      if (same)
+        Object.assign(same, { source: 'addresses', examples: shown.examples, example: shown.sample, url: where });
       else if (shown.pattern)
         formats.unshift({
           pattern: shown.pattern,
           domain: shown.domain,
           example: shown.sample,
-          url: '',
+          url: where,
           source: 'addresses',
           examples: shown.examples,
         });
@@ -728,19 +752,33 @@
     const all = (web && web.formats) || [];
     // Two directories that each say most addresses follow a different format (CMC Markets: Prospeo's first.last at
     // 74.9%, LeadIQ's f.last at 79%) settle nothing: neither is used, unless addresses printed on the web decide it.
+    // Nor does a tie: Prospeo's f.last and first.last at 44.2% each for Lingotto.
+    const close = (a, b) => (a >= 50 && b >= 50) || (a >= 25 && b >= 25 && Math.abs(a - b) < 10);
     const disputed = (f) =>
       f.source !== 'addresses' &&
-      f.share >= 50 &&
       all.some(
-        (g) => g !== f && g.domain === f.domain && g.pattern !== f.pattern && g.share >= 50 && g.source !== 'addresses',
+        (g) =>
+          g !== f &&
+          g.domain === f.domain &&
+          g.pattern !== f.pattern &&
+          g.source !== 'addresses' &&
+          close(f.share || 0, g.share || 0),
       );
-    out.disputed = [...new Set(all.filter(disputed).map((f) => `${f.pattern}@${f.domain}`))];
+    out.disputed = [
+      ...new Set(
+        all
+          .filter(disputed)
+          .filter((f) => f.pattern !== 'unknown')
+          .map((f) => `${f.pattern}@${f.domain}`),
+      ),
+    ];
     const webFormats = all.filter(
       (f) =>
-        f.source === 'addresses' ||
-        (!(f.share > 0 && f.share < 25) &&
-          !disputed(f) &&
-          !all.some((g) => g !== f && g.domain === f.domain && (g.share || 0) > Math.max(50, f.share || 0))),
+        f.pattern !== 'unknown' &&
+        (f.source === 'addresses' ||
+          (!(f.share > 0 && f.share < 25) &&
+            !disputed(f) &&
+            !all.some((g) => g !== f && g.domain === f.domain && (g.share || 0) > Math.max(50, f.share || 0)))),
     );
     webFormats.sort(
       (a, b) =>

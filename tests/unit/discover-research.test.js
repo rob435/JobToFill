@@ -664,3 +664,115 @@ test('research: an address printed on the firm’s own page backs the directory 
     ],
   );
 });
+
+test('research: a directory’s placeholder is no one’s address, and a tie between two formats settles nothing', async () => {
+  const firm = { name: 'Lingotto', domain: 'lingotto.com', site: 'https://www.lingotto.com' };
+  const search = async () => ({
+    json: {
+      people: [
+        { name: 'James Anderson', title: 'Managing Partner', url: 'https://www.lingotto.com/managing-partners' },
+      ],
+    },
+    sources: [
+      {
+        url: 'https://www.lingotto.com/managing-partners',
+        title: 'Managing Partners | Lingotto',
+        text: 'James Anderson Managing Partner',
+        kind: 'page',
+      },
+      {
+        url: 'https://www.lingotto.com/contact',
+        title: 'Contact | Lingotto',
+        text: 'Please contact our investor relations team. Send us a message: LingottoIR@Lingotto.com',
+        kind: 'page',
+      },
+      {
+        url: 'https://prospeo.io/c/lingotto-email-format',
+        title: 'Lingotto Email Formats',
+        text:
+          'Lingotto uses 3 email formats. | {first initial}.{last name} | j.doe@lingotto.com | 44.2% | | ' +
+          '{first name}.{last name} | john.doe@lingotto.com | 44.2% | | {last name}.{last name} | doe.doe@lingotto.com | 11.6% |',
+        kind: 'page',
+      },
+    ],
+  });
+  const web = await R.research(search, { firm, fetch: mockFetch({}) });
+  assert.deepEqual(web.emails, [], 'doe.doe@ is Prospeo’s example, and LingottoIR@ its investor relations');
+  assert.ok(web.formats.every((f) => f.source === 'stated'));
+  const fetchFn = mockFetch({
+    'https://dns.google/resolve?name=lingotto.com&type=MX': JSON.stringify({
+      Status: 0,
+      Answer: [{ type: 15, data: '1 mx.' }],
+    }),
+  });
+  const found = await R.addresses(web, { firm, contacts: {}, domain: 'lingotto.com', fetch: fetchFn });
+  assert.equal(found.format, null);
+  assert.deepEqual(found.disputed, ['f.last@lingotto.com', 'first.last@lingotto.com']);
+});
+
+test('research: a format two directories give keeps the source of the higher share', async () => {
+  const firm = { name: 'Anima', domain: 'animahealth.com', site: 'https://www.animahealth.com' };
+  const search = async () => ({
+    json: {},
+    sources: [
+      {
+        url: 'https://prospeo.io/c/anima-email-format',
+        title: 'Anima Email Formats',
+        text: 'The most common is {first name} (e.g., john@animahealth.com), used 96.2% of the time.',
+        kind: 'page',
+      },
+      {
+        url: 'https://leadiq.com/c/anima/603d',
+        title: 'Anima | LeadIQ',
+        // LeadIQ runs its words together: "…animahealth.comMost common" is no domain.
+        text: 'Anima Email Formats Example Percentage First@animahealth.comMost common John@animahealth.com 100%',
+        kind: 'page',
+      },
+    ],
+  });
+  const web = await R.research(search, { firm, fetch: mockFetch({}) });
+  assert.deepEqual(
+    web.formats.map((f) => [f.pattern, f.share, f.url]),
+    [['first', 100, 'https://leadiq.com/c/anima/603d']],
+  );
+});
+
+test('research: a sending subdomain shows no format, nor does a directory’s minority', async () => {
+  const firm = { name: 'Trigger.dev', domain: 'trigger.dev', site: 'https://trigger.dev' };
+  const search = async () => ({
+    json: {
+      people: [{ name: 'Eric Allam', title: 'CTO', url: 'https://trigger.dev/blog/oidc' }],
+    },
+    sources: [
+      { url: 'https://trigger.dev/blog/oidc', title: 'OIDC | Trigger.dev', text: 'By Eric Allam, CTO', kind: 'page' },
+      {
+        url: 'https://www.sequenzy.com/email-examples/brands/trigger-dev/emails/quick-question',
+        title: 'Trigger.dev emails',
+        text: 'From Matt at Trigger.dev <matt@mail.trigger.dev> and Eric <eric@mail.trigger.dev>',
+        kind: 'page',
+      },
+      {
+        url: 'https://prospeo.io/c/trigger-dev-email-format',
+        title: 'Trigger.dev email format',
+        text:
+          'The most common is {first initial} (e.g., j@trigger.dev), used 71.4% of the time. The other format is ' +
+          'first name, such as john@trigger.dev, at 28.6%.',
+        kind: 'cited',
+      },
+    ],
+  });
+  const web = await R.research(search, { firm, fetch: mockFetch({}) });
+  assert.deepEqual(
+    web.people.map((p) => p.name),
+    ['Eric Allam'],
+  );
+  assert.ok(!web.formats.some((f) => f.domain === 'mail.trigger.dev'), 'mail.trigger.dev is for newsletters');
+  const fetchFn = mockFetch({
+    'https://dns.google/resolve?name=trigger.dev&type=MX': JSON.stringify({
+      Status: 0,
+      Answer: [{ type: 15, data: '1 aspmx.l.google.com.' }],
+    }),
+  });
+  const found = await R.addresses(web, { firm, contacts: {}, domain: 'trigger.dev', fetch: fetchFn });
+  assert.equal(found.format, null, 'first@ at 28.6% is the minority, whatever the 71.4% is');
+});

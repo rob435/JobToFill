@@ -113,6 +113,13 @@ test('discover contacts: what an address is for', () => {
     'talent-notifications@acme.com': 'other',
     'mailer-daemon@acme.com': 'other',
     'jobalerts@acme.com': 'other',
+    // Mailbox words run together, or after the firm's own name: Lingotto's "LingottoIR@" is investor relations.
+    'LingottoIR@lingotto.com': 'other',
+    'pressoffice@acme.com': 'other',
+    'mwamhr@mwam.com': 'recruiting',
+    'acmeinfo@acme.com': 'general',
+    'irene@acme.com': 'person',
+    'usha@acme.com': 'person',
   };
   for (const [address, kind] of Object.entries(kinds)) assert.equal(C.kindOf(address), kind, address);
 });
@@ -724,4 +731,52 @@ test('discover contacts: a customer’s or an investor’s quote on the site is 
   ])
     assert.equal(C.elsewhere(title, firm), '', title);
   assert.equal(C.elsewhere('Head of Operations - Harvey John, UK', 'Devyce'), 'Harvey John');
+});
+
+test('discover contacts: a quote’s author is no one to write to, a team page’s people still are', () => {
+  // Humaans' home page: a customer's Head of People under her quote, the customer's logo beside it.
+  const humaans =
+    '<div class="Card"><h3 class="Title Quote">“We wanted to do things well from the start. Choosing Humaans has made ' +
+    'it so much easier to scale.”</h3><p class="QuoteAuthor"><span>Beatriz Lourenço</span>' +
+    '<span class="QuoteTitle">Head of People</span></p><img alt="poolside logo"></div>';
+  // Chenavari's careers slider: staff quoted, years ago.
+  const slider =
+    '<div class="qodef-e-content"><p class="qodef-e-text">“Chenavari is a really collaborative place to work”</p>' +
+    '<div class="qodef-e-author"><h5 class="qodef-e-author-name">Sandrine Streeter</h5>' +
+    '<h6 class="qodef-e-author-job">HR Manager</h6></div></div>';
+  // A plain quotation, then the name: "“…” — Jane Smith, Head of Talent".
+  const plain =
+    '<p>“Working here has been the best decision of my career so far.”</p><p>— Jane Smith</p><p>Head of Talent</p>';
+  for (const [html, name] of [
+    [humaans, 'Humaans'],
+    [slider, 'Chenavari'],
+    [plain, 'Acme'],
+  ])
+    assert.deepEqual(C.peopleIn(html, { domain: 'acme.com', name }), [], name);
+  const team =
+    '<div class="member"><img alt="Ada Lovelace"><h3>Ada Lovelace</h3><p>Head of Talent</p></div>' +
+    '<div class="member"><img alt="Alan Turing"><h3>Alan Turing</h3><p>Partner</p></div>';
+  assert.deepEqual(
+    C.peopleIn(team, { domain: 'acme.com', name: 'Acme' }).map((p) => p.name),
+    ['Ada Lovelace', 'Alan Turing'],
+  );
+  // Framer keeps the quotation in an attribute, the paragraph has no quote marks (Saturn's home page).
+  const framer =
+    '<div data-framer-name="“Saturn has completely transformed the way we operate.”"><p>We had paraplanners ' +
+    'attending client meetings to take notes.</p></div><div><h5>Tracey Corbett</h5></div><div><p>Head of Technology</p></div>';
+  assert.deepEqual(C.peopleIn(framer, { domain: 'saturnos.com', name: 'Saturn' }), []);
+  // An investor's card (Humaans' backers), however the title reads.
+  const backers =
+    '<div class="Investor"><img alt="Jane Doherty"></div><div><div class="Name">Jane Doherty</div>' +
+    '<div class="Sub">Head of Talent</div></div>';
+  assert.deepEqual(C.peopleIn(backers, { domain: 'humaans.io', name: 'Humaans' }), []);
+  // A job board's field label isn't a name: StoneX's "Job Type" over "New Graduate & Early Talent".
+  assert.equal(C.isName('Job Type'), false);
+  // Backers known by where they were or what they founded: "Former Workday CTO", "Slack Founder", "Stripe COO".
+  assert.equal(C.elsewhere('Former Workday CTO', 'Humaans'), 'Workday CTO');
+  assert.equal(C.elsewhere('Ex-Google', 'Acme'), 'Google');
+  assert.equal(C.elsewhere('Slack Founder', 'Humaans'), 'Slack');
+  assert.equal(C.elsewhere('Stripe COO', 'Humaans'), 'Stripe');
+  for (const title of ['Founding CTO', 'Group CEO', 'Humaans Founder', 'Co-Founder'])
+    assert.equal(C.elsewhere(title, 'Humaans'), '', title);
 });

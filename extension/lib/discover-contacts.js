@@ -99,6 +99,21 @@
     return long.length > 0 && common.length * 2 > long.length;
   }
 
+  /**
+   * A local part run together from mailbox words and the firm's own name ("pressoffice", Lingotto's "lingottoir",
+   * "mwamhr"): its pieces, or null when it isn't (every piece two letters at least, so no name splits into them).
+   */
+  function mailboxWords(joined, label) {
+    const known = (w) =>
+      w.length >= 2 && (w === label || RECRUITING.has(w) || GENERAL.has(w) || OTHER.has(w) || REGION.has(w));
+    const best = [[]];
+    for (let i = 1; i <= joined.length; i++)
+      for (let j = 0; j < i && !best[i]; j++)
+        if (best[j] && known(joined.slice(j, i))) best[i] = [...best[j], joined.slice(j, i)];
+    const pieces = best[joined.length];
+    return pieces && pieces.length > 1 ? pieces : null;
+  }
+
   /** What an address is for, from its local part: a recruiting or general mailbox, a person, or neither. */
   function kindOf(address) {
     const local = String(address || '')
@@ -135,6 +150,12 @@
       return 'general';
     // One word made of two that departments are named with: Odey's "clientservices@".
     if (/^[a-z]{6,}(services|support|relations|operations|desk|admin|team)$/.test(joined)) return 'other';
+    // The firm's name and a mailbox's: Lingotto's "LingottoIR@" is its investor relations team, not Lingottoir.
+    const pieces = mailboxWords(joined, host ? host.split('.')[0].replace(/-/g, '') : '');
+    if (pieces) {
+      if (pieces.some((t) => RECRUITING.has(t))) return 'recruiting';
+      return pieces.some((t) => OTHER.has(t)) ? 'other' : 'general';
+    }
     // "internal@", "partners@", "new.business@": a department, not a name ("jack.london@" is one).
     if (wordy(tokens, OFFICE)) return 'other';
     // "jane.smith", "jsmith", "j.smith", "jane": a word that could be a name, or two with one separator.
@@ -381,6 +402,8 @@
     'kingdom states london battersea bridge embankment quay mews terrace crescent',
     'logo logos badge badges icon icons panel panels portal login accreditation certified award awards microsoft',
     'google amazon sponsor sponsors testimonial testimonials',
+    // A job board's field labels: StoneX's "Job Type" over "New Graduate & Early Talent".
+    'job type types category categories department departments level status salary contract schedule shift posted',
   ]);
   const PARTICLE = /^(van|von|de|der|den|du|da|di|la|le|del|della|dos|das|bin|al|ter)$/i;
   const NAME_WORD = /^\p{Lu}[\p{Ll}'’]+(?:\p{Lu}[\p{Ll}'’]+)?(?:-\p{Lu}[\p{Ll}'’]+)*$/u;
@@ -460,6 +483,10 @@
     ]),
   ]);
 
+  // Words before a founder's or chief's title that aren't another firm's name ("Founding CTO", "Group CEO").
+  const LEAD_WORD =
+    /^(founding|group|global|deputy|interim|acting|executive|senior|joint|company|managing|serial|technical|lead|chief|vice|co|general|regional|country|uk|us|eu|emea|apac|europe|americas|asia|london)$/i;
+
   /**
    * The other organisation a title names, or '': a customer's or an investor's quote on a firm's site ("CEO -
    * Spinnaker", "Partner at Y Combinator", "Chief Customer Officer, Gen H") is someone else's, whatever the page.
@@ -467,6 +494,9 @@
    */
   function elsewhere(title, firmName) {
     const t = plain(title).replace(/[.,;:]+$/, '');
+    // "Former Workday CTO", "Ex-Google": an investor or adviser, known by where they were (Humaans' backers).
+    const past = t.match(/^(?:former(?:ly)?|ex-|ex\s|previously)\s*(.+)$/i);
+    if (past) return past[1];
     const own = asciiName(firmName || '');
     const core = own.split(' ').filter((w) => w.length > 2 && !NOT_NAME.has(w));
     const isOrg = (part) => {
@@ -478,6 +508,11 @@
       if (!list.length || list.every((w) => DEPARTMENT.has(w))) return false;
       return !(own && (` ${own} `.includes(` ${list.join(' ')} `) || list.some((w) => core.includes(w))));
     };
+    // "Slack Founder", "Stripe COO": another firm's founder or chief, its name first.
+    const lead = t.match(
+      /^(\p{Lu}[\p{L}\d.&'’-]*)\s+(?:co-?founder|founder|ceo|coo|cto|cfo|cro|cmo|cpo|cio|president|chair(?:man|woman)?)$/iu,
+    );
+    if (lead && !LEAD_WORD.test(lead[1]) && isOrg(lead[1])) return lead[1];
     const at = t.match(/\b(?:at|@)\s+(\p{Lu}[\p{L}\d&.'’-]*(?:\s+(?:\p{Lu}|&)[\p{L}\d&.'’-]*){0,4})/u);
     if (at && isOrg(at[1])) return at[1];
     // "CEO - Spinnaker", "Head of Operations - Harvey John, UK", "Co-Founder, Odiin Group".
@@ -525,6 +560,28 @@
       if (namesPerson(label, name)) return address;
     }
     return '';
+  }
+
+  const OUTSIDER_CLASS =
+    /\b(?:class|id)\s*=\s*["'][^"']*(?:testimonial|quote|author|investor|backer|customer)[^"']*["']/i;
+
+  /**
+   * Is the name at this point a quote's author or a backer: in a quote's or an investor's card, just after a quotation
+   * ("“…” — Jane"), or after a quotation the page keeps in an attribute (Framer's data-framer-name="“Saturn has…”")
+   * since the last person before them (from).
+   */
+  function quoteAuthor(body, start, from = 0) {
+    const tag = body.slice(start, body.indexOf('>', start) + 1);
+    if (OUTSIDER_CLASS.test(tag) || OUTSIDER_CLASS.test(body.slice(Math.max(0, start - 150), start))) return true;
+    const last =
+      body
+        .slice(Math.max(0, start - 600), start)
+        .split(/<[^>]*>/)
+        .map((s) => plain(s).replace(/[\s–—-]+$/, ''))
+        .filter(Boolean)
+        .pop() || '';
+    if (last.length >= 30 && /^["“‘«]|["”’»]$/.test(last)) return true;
+    return /“[^”<>]{30,}”/.test(body.slice(Math.max(from, start - 2000), start));
   }
 
   /**
@@ -577,7 +634,14 @@
       true,
     );
     found.sort((a, b) => a.start - b.start);
+    // A quote's author is no one to write to: a customer (the "Head of People" under a quote on Humaans' home page is
+    // poolside's), an investor, or someone on a careers page's slider (Chenavari's, years old).
+    const before = (c) => found.filter((n) => n.end <= c.start && n.key !== c.key).pop();
+    const quoted = new Set(
+      found.filter((c) => quoteAuthor(body, c.start, (before(c) || { end: 0 }).end)).map((c) => c.key),
+    );
     for (const [i, c] of found.entries()) {
+      if (quoted.has(c.key)) continue;
       // A card runs until the next person's name (≈ 400 characters at most for the title).
       const next = found.slice(i + 1).find((n) => n.start >= c.end && n.key !== c.key);
       const stop = next ? next.start : body.length;
