@@ -529,7 +529,9 @@
   ]);
   /** The words of `text` that say what it is about: four letters or more, not plain, not in `except` (a Set). */
   const telling = (text, except) =>
-    U.tokens(text).filter((t) => t.length >= 4 && /\p{L}/u.test(t) && !COMMON.has(t) && !PLAIN.has(t) && !except.has(t));
+    U.tokens(text).filter(
+      (t) => t.length >= 4 && /\p{L}/u.test(t) && !COMMON.has(t) && !PLAIN.has(t) && !except.has(t),
+    );
 
   /**
    * Does the first paragraph take up the hook: a telling word of its quote, or of the institution shared, that isn't
@@ -578,7 +580,9 @@
     add(
       n >= size.min && n <= size.max,
       `${n} words`,
-      n < size.min ? `Too short: ${n} words; write ${size.aim}` : `Too long: ${n} words; cut it to ${size.most} or fewer`,
+      n < size.min
+        ? `Too short: ${n} words; write ${size.aim}`
+        : `Too long: ${n} words; cut it to ${size.most} or fewer`,
     );
     const count = paragraphs.length;
     add(
@@ -646,7 +650,9 @@
       add(
         sw >= 3 && sw <= 12 && subjectNames,
         `Subject names ${what}`,
-        sw < 3 || sw > 12 ? `Write a subject of 3–12 words (it has ${sw}) naming ${what}` : `Name ${what} in the subject`,
+        sw < 3 || sw > 12
+          ? `Write a subject of 3–12 words (it has ${sw}) naming ${what}`
+          : `Name ${what} in the subject`,
       );
     }
     const foreign = [...new Set([...emailsIn(all), ...phonesIn(all)])].filter((x) => !ownDetail(x, ctx));
@@ -784,7 +790,8 @@
     };
   }
 
-  const NO_FLATTERY = 'No flattery: never “I have long admired”, “prestigious”, “esteemed”, “I am writing to express my interest”.';
+  const NO_FLATTERY =
+    'No flattery: never “I have long admired”, “prestigious”, “esteemed”, “I am writing to express my interest”.';
 
   function draftSystem(o) {
     const { ask, example } = askLines(o);
@@ -1117,7 +1124,8 @@
   /** The moment `n` working days (Monday to Friday, by the UTC calendar) after `t` have gone by. */
   function workingDaysAfter(t, n) {
     let at = t;
-    for (let left = n; left > 0; ) {
+    let left = n;
+    while (left > 0) {
       at += DAY;
       if (new Date(at).getUTCDay() % 6) left--;
     }
@@ -1151,20 +1159,22 @@
   // the city that says ("Greenwich, CT" is New York's, "Menlo Park" Los Angeles').
   // prettier-ignore
   const COUNTRY_ZONES = {
-    GB: 'Europe/London', UK: 'Europe/London', IE: 'Europe/Dublin', CA: 'America/Toronto', HK: 'Asia/Hong_Kong',
-    SG: 'Asia/Singapore', CH: 'Europe/Zurich', DE: 'Europe/Berlin', FR: 'Europe/Paris', NL: 'Europe/Amsterdam',
-    IL: 'Asia/Jerusalem', LU: 'Europe/Luxembourg', JE: 'Europe/Jersey', GG: 'Europe/Guernsey', MC: 'Europe/Monaco',
-    BE: 'Europe/Brussels', AT: 'Europe/Vienna', IT: 'Europe/Rome', DK: 'Europe/Copenhagen', NO: 'Europe/Oslo',
-    SE: 'Europe/Stockholm', FI: 'Europe/Helsinki', JP: 'Asia/Tokyo', IN: 'Asia/Kolkata', AE: 'Asia/Dubai',
+    GB: 'Europe/London', IE: 'Europe/Dublin', CA: 'America/Toronto', HK: 'Asia/Hong_Kong', SG: 'Asia/Singapore',
+    CH: 'Europe/Zurich', DE: 'Europe/Berlin', FR: 'Europe/Paris', NL: 'Europe/Amsterdam', IL: 'Asia/Jerusalem',
+    LU: 'Europe/Luxembourg', JE: 'Europe/Jersey', GG: 'Europe/Guernsey', MC: 'Europe/Monaco', BE: 'Europe/Brussels',
+    AT: 'Europe/Vienna', IT: 'Europe/Rome', DK: 'Europe/Copenhagen', NO: 'Europe/Oslo', SE: 'Europe/Stockholm',
+    FI: 'Europe/Helsinki', JP: 'Asia/Tokyo', IN: 'Asia/Kolkata', AE: 'Asia/Dubai',
   };
+  // [country, zone, city names as U.normalize() spells them]
   // prettier-ignore
   const CITY_ZONES = [
-    ['US', 'America/New_York', /\b(new york|nyc|manhattan|brooklyn|greenwich|stamford|boston|jersey city|princeton|philadelphia|miami)\b/],
-    ['US', 'America/Chicago', /\b(chicago|texas|austin|dallas|houston)\b/],
-    ['US', 'America/Los_Angeles', /\b(san francisco|bay area|menlo park|palo alto|mountain view|seattle|los angeles)\b/],
-    ['CA', 'America/Toronto', /\b(toronto|montreal)\b/],
-    ['CA', 'America/Vancouver', /\bvancouver\b/],
-  ];
+    ['US', 'America/New_York',
+      'new york|nyc|manhattan|brooklyn|greenwich|stamford|boston|jersey city|princeton|philadelphia|miami'],
+    ['US', 'America/Chicago', 'chicago|texas|austin|dallas|houston'],
+    ['US', 'America/Los_Angeles', 'san francisco|bay area|menlo park|palo alto|mountain view|seattle|los angeles'],
+    ['CA', 'America/Toronto', 'toronto|montreal'],
+    ['CA', 'America/Vancouver', 'vancouver'],
+  ].map(([country, zone, names]) => [country, zone, new RegExp(`\\b(${names})\\b`)]);
   // Working hours, there: an email that would land inside them goes now.
   const OPENS = 8;
   const CLOSES = 17;
@@ -1210,7 +1220,7 @@
     return Date.UTC(w.y, w.m - 1, w.d, w.h, w.min, w.s) - Math.floor(t / 1000) * 1000;
   }
 
-  /** The UTC time of a wall-clock time in `zone`, the offset read again at the answer so a clock change between counts. */
+  /** The UTC time of a wall-clock time in `zone`: the offset is read again at the answer, so a clock change counts. */
   function utcOf(y, m, d, h, min, zone) {
     const guess = Date.UTC(y, m - 1, d, h, min);
     return guess - offset(guess - offset(guess, zone), zone);
@@ -1231,8 +1241,9 @@
     if (!zone) return { at: null, zone: null, local: '' };
     const t = +now;
     const said = (x) => {
-      const w = wall(x, zone);
-      return `${WEEKDAYS[new Date(Date.UTC(w.y, w.m - 1, w.d)).getUTCDay()].slice(0, 3)} ${pad(w.h)}:${pad(w.min)} in ${place}`;
+      const c = wall(x, zone);
+      const name = WEEKDAYS[new Date(Date.UTC(c.y, c.m - 1, c.d)).getUTCDay()].slice(0, 3);
+      return `${name} ${pad(c.h)}:${pad(c.min)} in ${place}`;
     };
     const w = wall(t, zone);
     const day = (k) => new Date(Date.UTC(w.y, w.m - 1, w.d + k));

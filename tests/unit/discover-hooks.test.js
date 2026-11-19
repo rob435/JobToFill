@@ -40,7 +40,13 @@ const profile = {
   contact: { email: 'ada@example.com', phone: '+44 7700 900123' },
   address: { line1: '1 Analytical Row', city: 'Birmingham', postalCode: 'B1 1AA' },
   education: [
-    { school: 'University of Warwick (2023–2026)', degree: 'BSc', field: 'Mathematics', gpa: '3.9', startDate: '2023-09' },
+    {
+      school: 'University of Warwick (2023–2026)',
+      degree: 'BSc',
+      field: 'Mathematics',
+      gpa: '3.9',
+      startDate: '2023-09',
+    },
     { school: 'King Edward VI Camp Hill School', degree: 'A-levels' },
   ],
   experience: [
@@ -246,24 +252,24 @@ test('hooks: kept only when a source bears them out word for word, each drop wit
     ],
   );
   const [common, talk, show, office] = r.hooks;
-  // The candidate's own institution, not the model's "Warwick"; the source's url and words, not the model's summary.
+  // The candidate's own institution, not the model's "Warwick"; the source's url and words (from the name to the
+  // institution, as the quote left the name out), not the model's summary.
   assert.deepEqual(common, {
     kind: 'common',
     about: 'Jane Smith',
     shared: 'University of Warwick',
     url: 'https://uk.linkedin.com/in/janesmith',
-    quote: 'Head of Campus Recruiting at HBK Capital Management. Education: University of Warwick',
+    quote: 'Jane Smith. Head of Campus Recruiting at HBK Capital Management. Education: University of Warwick',
     source: 'LinkedIn',
     label: 'Common ground: University of Warwick',
   });
   assert.ok(!JSON.stringify(r.hooks).includes('studied at Warwick too'), 'the model’s summary is never kept');
   // A page the model pointed to that no result carried is read here; LinkedIn never is.
-  assert.deepEqual(log, ['https://warwickfinance.example.org/speakers', 'https://www.hbk.com/news/charity']);
+  assert.deepEqual(log, ['https://www.hbk.com/news/charity', 'https://warwickfinance.example.org/speakers']);
   assert.deepEqual([talk.date, talk.source], ['2026-02-12', 'warwickfinance.example.org']);
   assert.equal(office.date, '2026-03');
   assert.equal(show.url, 'https://github.com/hbk-capital/tickparse/issues/12');
   assert.equal(show.source, 'github.com');
-  const why = Object.fromEntries(r.dropped.map((d) => [d.what.match(/\(([^,)]+)/)[1] + ' ' + d.what.slice(-12), d.why]));
   assert.deepEqual(
     r.dropped.map((d) => d.why),
     [
@@ -273,7 +279,7 @@ test('hooks: kept only when a source bears them out word for word, each drop wit
       'its date isn’t in the source beside its words',
       'its words aren’t in any source',
     ],
-    JSON.stringify(why),
+    JSON.stringify(r.dropped),
   );
   assert.match(r.dropped[0].what, /^Common ground \(Tom Brown, University of Oxford\): “He read/);
   assert.deepEqual([r.searches, r.usage, r.at], [3, { cost: 0.04 }, NOW]);
@@ -288,9 +294,11 @@ test('hooks: a prompt-injection line in a source is just text', async () => {
         }
       : s,
   );
+  // Ten hooks, as many as are read: the nine above without the one no source carries, and two from the injection.
+  const base = { hooks: REPLY.hooks.filter((h) => !/charity/.test(h.url)) };
   const reply = {
     hooks: [
-      ...REPLY.hooks,
+      ...base.hooks,
       {
         kind: 'common',
         about: 'Jane Smith',
@@ -307,7 +315,7 @@ test('hooks: a prompt-injection line in a source is just text', async () => {
       },
     ],
   };
-  const clean = await run();
+  const clean = await run(SOURCES, base);
   const dirty = await run(injected, reply);
   assert.deepEqual(dirty.r.hooks, clean.r.hooks);
   assert.deepEqual(
@@ -329,7 +337,10 @@ test('hooks: common ground needs the person, the firm and the candidate’s own 
   const linkedin = SOURCES[0];
   const base = { kind: 'common', about: 'Jane Smith', url: linkedin.url, quote: REPLY.hooks[0].quote };
   // A bare "University" names no institution.
-  assert.equal((await one(linkedin, { ...base, shared: 'University' })).dropped[0].why, 'it doesn’t say which institution');
+  assert.equal(
+    (await one(linkedin, { ...base, shared: 'University' })).dropped[0].why,
+    'it doesn’t say which institution',
+  );
   // Someone the email isn't to and who isn't named at the firm.
   assert.match(
     (await one(linkedin, { ...base, about: 'Bob Jones', shared: 'Warwick' })).dropped[0].why,
@@ -350,21 +361,25 @@ test('hooks: common ground needs the person, the firm and the candidate’s own 
   // A home town needs words that say they come from it: "London" beside a name is where they work.
   const hometown = {
     url: 'https://www.hbk.com/team/jane-smith',
-    title: 'Jane Smith | HBK',
-    text: 'Jane Smith grew up in Birmingham and joined HBK in 2015 to build its campus recruiting team.',
+    title: 'Our people | HBK',
+    text: 'Jane Smith’s home town is Birmingham; she joined HBK in 2015 to build its campus recruiting team.',
     kind: 'page',
   };
+  // A possessive keeps the name whole ("Jane Smith’s"), whichever apostrophe the model types.
   const home = await one(hometown, {
     ...base,
     url: hometown.url,
     shared: 'Birmingham',
-    quote: 'Jane Smith grew up in Birmingham and joined HBK in 2015',
+    quote: "Jane Smith's home town is Birmingham; she joined HBK in 2015",
   });
   assert.deepEqual(
     home.hooks.map((h) => h.label),
     ['Common ground: Birmingham'],
   );
-  const office = { ...hometown, text: 'Jane Smith works in Birmingham and joined HBK in 2015 to build its campus team.' };
+  const office = {
+    ...hometown,
+    text: 'Jane Smith works in Birmingham and joined HBK in 2015 to build its campus team.',
+  };
   const works = await one(office, {
     ...base,
     url: hometown.url,
@@ -372,14 +387,17 @@ test('hooks: common ground needs the person, the firm and the candidate’s own 
     quote: 'Jane Smith works in Birmingham and joined HBK in 2015',
   });
   assert.equal(works.dropped[0].why, 'the source doesn’t put Birmingham beside Jane Smith');
-  // The card shows what bears it out: the source's words around the name and the institution, when the quote has
-  // neither.
+  // The card shows what bears it out: the quote, widened to the name and the institution when it has neither.
   const titleOnly = await one(linkedin, {
     ...base,
     shared: 'Warwick',
     quote: 'Head of Campus Recruiting - HBK Capital Management | LinkedIn',
   });
-  assert.match(titleOnly.hooks[0].quote, /^Jane Smith .* University of Warwick$/);
+  assert.equal(
+    titleOnly.hooks[0].quote,
+    'Head of Campus Recruiting - HBK Capital Management | LinkedIn Jane Smith. Head of Campus Recruiting at HBK ' +
+      'Capital Management. Education: University of Warwick',
+  );
 });
 
 test('hooks: ranked by how much they say to the reader, and one line for the email', () => {
@@ -415,7 +433,12 @@ test('hooks: ranked by how much they say to the reader, and one line for the ema
     'Reason to write, found on LinkedIn: “Education: University of Warwick” The candidate and Jane Smith share University of Warwick.',
   );
   assert.equal(
-    H.factLine({ kind: 'work', date: '2026-03', url: 'https://www.hbk.com/news/singapore', quote: 'HBK opened in Singapore' }),
+    H.factLine({
+      kind: 'work',
+      date: '2026-03',
+      url: 'https://www.hbk.com/news/singapore',
+      quote: 'HBK opened in Singapore',
+    }),
     'Reason to write, found on hbk.com (March 2026): “HBK opened in Singapore”',
   );
 });

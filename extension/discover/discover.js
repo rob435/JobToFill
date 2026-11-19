@@ -2400,18 +2400,23 @@ const settingOf = (key, fallback) => {
 };
 const askChoice = () => settingOf('ask', 'internship');
 
-/** The queue as kept between visits: what each item was doing is forgotten, its draft and outcome kept. */
-function saveQueue() {
+/**
+ * The queue as kept between visits: what each item was doing is forgotten, its draft and outcome kept. Written at
+ * once after a send or a skip; typing (`soon`) waits for a pause.
+ */
+function saveQueue(soon) {
   clearTimeout(saveQueue.timer);
-  saveQueue.timer = setTimeout(() => {
+  const write = () => {
     const items = review.items.map((i) => ({
       ...i,
       status: ['preparing', 'sending'].includes(i.status) ? (i.body ? 'ready' : 'waiting') : i.status,
       step: '',
       armed: false,
     }));
-    store.setDiscoverCache({ queue: { items, at: review.at } }).catch(() => null);
-  }, 300);
+    return store.setDiscoverCache({ queue: { items, at: review.at } }).catch(() => null);
+  };
+  if (soon) saveQueue.timer = setTimeout(write, 400);
+  else write();
 }
 
 /** The queue's count on its tab: emails ready to read. */
@@ -2611,6 +2616,7 @@ async function writeDraft(item) {
     status: 'ready',
     to: contact.address,
     draftedFor: { address: contact.address, hook: item.hook, ask },
+    role: r.kind === 'role' ? role : '',
     subject: r.subject || '',
     body: r.body || '',
     result: { ok: r.ok, checks: r.checks },
@@ -2815,6 +2821,7 @@ async function deliver(item) {
         reason: hook ? hook.label : '',
         reasonKind: hook ? hook.kind : 'none',
         ask: (item.draftedFor && item.draftedFor.ask) || askChoice(),
+        role: item.role || '',
         messageId: r.id,
         threadId: r.threadId,
         ...(when.at ? { sentAt: when.at, sendAt: when.at, scheduleId: r.scheduleId || '' } : {}),
@@ -2965,7 +2972,10 @@ function reviewKeys(e) {
     primaryAction(item);
     return;
   }
-  const typing = e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"]');
+  // Keys are letters while the cursor is in a box; a tick box or a choice above the queue just had the last click.
+  const typing =
+    e.target.closest &&
+    e.target.closest('textarea, select, [contenteditable="true"], input:not([type="checkbox"]):not([type="radio"])');
   if (typing) {
     if (e.key === 'Escape') e.target.blur();
     return;
@@ -3291,14 +3301,14 @@ function itemView(item) {
       type: 'text',
       value: item.subject,
       attrs: { 'aria-label': 'Subject' },
-      oninput: (e) => ((item.subject = e.target.value), saveQueue()),
+      oninput: (e) => ((item.subject = e.target.value), saveQueue(true)),
     }),
     el('textarea', {
       className: 'body',
       value: item.body,
       rows: Math.min(22, Math.max(12, item.body.split('\n').length + 2)),
       attrs: { 'aria-label': 'Email' },
-      oninput: (e) => ((item.body = e.target.value), fitBox(e.target), saveQueue()),
+      oninput: (e) => ((item.body = e.target.value), fitBox(e.target), saveQueue(true)),
     }),
     el(
       'p',
@@ -3545,6 +3555,14 @@ async function loadReview() {
     review.items = cache.queue.items.filter((i) => i && i.id && i.firm);
     review.at = Math.min(cache.queue.at || 0, review.items.length);
   }
+  // An email the Outreach tab has as sent (from the drawer, or a page closed as it went) isn't offered again.
+  for (const i of review.items) {
+    const rec = state.outreach[i.firm.id];
+    if (i.type === 'first' && rec && rec.status !== 'drafted' && !FINISHED.has(i.status)) {
+      i.status = 'sent';
+      i.outcome = i.outcome || 'Already written to: see the Outreach tab.';
+    }
+  }
   const d = (state.settings && state.settings.discoverAi) || {};
   for (const r of document.querySelectorAll('input[name="ask"]')) r.checked = r.value === (d.ask || 'internship');
   $('#their-morning').checked = d.theirMorning !== false;
@@ -3757,6 +3775,7 @@ async function start() {
   });
   document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && flushNotes());
   addEventListener('pagehide', flushNotes);
+  addEventListener('pagehide', () => review.items.length && saveQueue());
   $('#discover-effort').addEventListener('change', () => saveAi({ effort: $('#discover-effort').value }));
   state.config = await store.discoverAiConfig();
   await buildAiBox();

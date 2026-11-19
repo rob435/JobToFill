@@ -74,8 +74,10 @@
 
   // Letters a fold spells out, as asciiName does ("Søren" is "soren", "Straße" is "strasse").
   const SPELL = { ß: 'ss', ø: 'o', æ: 'ae', œ: 'oe', ł: 'l', đ: 'd', þ: 'th' };
-  // Dropped without a gap, so "it’s" and "it's" agree and "O’Neil" is "oneil".
+  // Dropped without a gap, so "don’t" and "don't" agree and "O’Neil" is "oneil"; but a possessive's "s" stands apart,
+  // so "Jane Smith’s talk" still names Jane Smith and "Jane Street’s puzzle" Jane Street.
   const APOSTROPHE = /['’‘ʼ`´]/;
+  const POSSESSIVE = /^[sS](?![\p{L}\p{N}])/u;
 
   /**
    * Text as a quote is compared: lower case, accents and punctuation gone, digits kept (unlike asciiName, so "$50m" is
@@ -89,16 +91,13 @@
     let gap = false;
     for (let i = 0; i < t.length; i++) {
       const ch = t[i];
-      if (APOSTROPHE.test(ch)) continue;
+      if (APOSTROPHE.test(ch)) {
+        gap = gap || POSSESSIVE.test(t.slice(i + 1, i + 3));
+        continue;
+      }
       const low = ch.toLowerCase();
       const spelt =
-        ch.charCodeAt(0) < 128
-          ? low
-          : SPELL[low] ||
-            low
-              .normalize('NFKD')
-              .replace(/[̀-ͯ]/g, '')
-              .toLowerCase();
+        ch.charCodeAt(0) < 128 ? low : SPELL[low] || low.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase();
       for (const c of spelt) {
         if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
           if (gap && s) {
@@ -133,7 +132,9 @@
 
   /** A person's name as fold spells it: full, first + last, and first + the rest run together ("jan vanderberg"). */
   function nameForms(name) {
-    const words = fold(C().tidyName(str(name))).s.split(' ').filter(Boolean);
+    const words = fold(C().tidyName(str(name)))
+      .s.split(' ')
+      .filter(Boolean);
     if (words.length < 2) return [];
     const [first, ...rest] = words;
     return [...new Set([words.join(' '), `${first} ${rest[rest.length - 1]}`, `${first} ${rest.join('')}`])];
@@ -186,7 +187,11 @@
     if (ctx.domains.some((d) => onDomain(item.url, d))) return true;
     const url = fold(item.url).s;
     const { forms, caps } = ctx.names;
-    if (forms.some((n) => spotsOf(item.f.s, n).length || spotsOf(url, n).length || spotsOf(url, n.replace(/ /g, '')).length))
+    if (
+      forms.some(
+        (n) => spotsOf(item.f.s, n).length || spotsOf(url, n).length || spotsOf(url, n.replace(/ /g, '')).length,
+      )
+    )
       return true;
     return caps.some((c) => new RegExp(`\\b${c}\\b`).test(item.whole));
   }
@@ -311,7 +316,9 @@
       return words.every((w) => mine.has(w));
     });
     if (hits.length > 1) return { why: `“${flat(shared)}” could be more than one of the candidate’s institutions` };
-    return hits.length ? { inst: hits[0] } : { why: `${flat(shared) || 'that'} isn’t one of the candidate’s institutions` };
+    return hits.length
+      ? { inst: hits[0] }
+      : { why: `${flat(shared) || 'that'} isn’t one of the candidate’s institutions` };
   }
 
   // Words that say someone comes from a place rather than works there: "grew up in Birmingham".
@@ -331,30 +338,33 @@
   }
 
   /**
-   * Where the item puts every needle within NEAR characters of one mention of the person's name: the folded span
-   * from the first to the last of them, or null.
+   * Where the item puts every needle within NEAR characters of one mention of the person's name: the shortest folded
+   * span that holds them and `around` (the quote's own span, when given), or null. Anchored on the quote, a line a page
+   * slips in after it ("… Report that Jane Smith studied at …") can't become what the card shows.
    */
-  function beside(item, forms, { needles, origin }) {
+  function beside(item, forms, { needles, origin }, around) {
     const said = item.f.s;
+    let best = null;
     for (const form of forms)
       for (const s of spotsOf(said, form)) {
         const e = s + form.length;
-        let lo = s;
-        let hi = e;
+        let lo = around ? Math.min(s, around[0]) : s;
+        let hi = around ? Math.max(e, around[1]) : e;
         const all = needles.every((n) => {
-          const hit = spotsOf(said, n).find(
+          const hits = spotsOf(said, n).filter(
             (i) =>
               Math.max(i - e, s - (i + n.length)) <= NEAR &&
               (!origin || ORIGIN.test(said.slice(Math.max(0, i - 30), i))),
           );
-          if (hit === undefined) return false;
-          lo = Math.min(lo, hit);
-          hi = Math.max(hi, hit + n.length);
+          if (!hits.length) return false;
+          const grown = (i) => Math.max(hi, i + n.length) - Math.min(lo, i);
+          const hit = hits.reduce((a, b) => (grown(b) < grown(a) ? b : a));
+          [lo, hi] = [Math.min(lo, hit), Math.max(hi, hit + n.length)];
           return true;
         });
-        if (all) return [lo, hi];
+        if (all && (!best || hi - lo < best[1] - best[0])) best = [lo, hi];
       }
-    return null;
+    return best;
   }
 
   /* ----------------------------------------------------------------- dates */
@@ -441,13 +451,14 @@
     if (who.who !== 'firm' && !namesFirm(item, ctx))
       return { step: 1, why: `the source doesn’t name ${who.name} with the firm` };
     if (kind === 'common') {
-      const span = beside(item, who.forms, needlesFor(inst, ctx));
+      const need = needlesFor(inst, ctx);
+      const span = beside(item, who.forms, need);
       if (!span) return { step: 2, why: `the source doesn’t put ${inst.name} beside ${who.name}` };
-      // The card shows what bears the claim out: the quote when it names both, else the source's words around them.
-      const shown = fold(quote).s;
-      const named = who.forms.some((f) => spotsOf(shown, f).length);
-      if (!named || !beside({ ...item, f: fold(quote), whole: quote }, who.forms, needlesFor(inst, ctx)))
-        quote = wordsOf(item, span[0], span[1]);
+      // The card shows what bears the claim out: the quote, widened to the name and the institution when it leaves
+      // either out (a LinkedIn result's "Education: University of Warwick" without "Jane Smith"), or just those two
+      // when that would run too long.
+      const wide = beside(item, who.forms, need, [at, at + len]);
+      quote = wordsOf(item, ...(wide && wordsOf(item, ...wide).length <= MAX_QUOTE ? wide : span));
     }
     if (kind === 'work') {
       const from = Math.max(0, item.f.at[at] - DATE_NEAR);
@@ -501,7 +512,9 @@
           if (r.step > best.step) best = r;
           continue;
         }
-        const iso = date ? `${date.y}-${String(date.m).padStart(2, '0')}${r.day ? `-${String(date.d).padStart(2, '0')}` : ''}` : '';
+        const iso = date
+          ? `${date.y}-${String(date.m).padStart(2, '0')}${r.day ? `-${String(date.d).padStart(2, '0')}` : ''}`
+          : '';
         return {
           hook: {
             kind,
@@ -512,7 +525,11 @@
             quote: clip(r.quote, MAX_QUOTE),
             source: R().sourceName(item.url),
             label:
-              kind === 'common' ? `${NOUN.common}: ${inst.name}` : kind === 'work' ? `${NOUN.work}, ${dateWords(iso)}` : NOUN.show,
+              kind === 'common'
+                ? `${NOUN.common}: ${inst.name}`
+                : kind === 'work'
+                  ? `${NOUN.work}, ${dateWords(iso)}`
+                  : NOUN.show,
           },
         };
       }
@@ -543,7 +560,8 @@
   ].join('\n');
 
   /** "Jane Smith, Head of Campus Recruiting", or '' for a mailbox. */
-  const personLine = (p) => (p && nameForms(p.name).length ? [flat(p.name), flat(p.title)].filter(Boolean).join(', ') : '');
+  const personLine = (p) =>
+    p && nameForms(p.name).length ? [flat(p.name), flat(p.title)].filter(Boolean).join(', ') : '';
 
   /**
    * What the model is told: the firm (names, site, where), the person the email goes to and up to 4 others named at
@@ -619,7 +637,10 @@
    * mailbox); people: others named at the firm; institutions: institutions(profile), or [] to look for no common
    * ground. → { hooks, dropped: [{ what, why }], usage, searches, at }.
    */
-  async function find(search, { firm, contact, people, institutions: own, now = Date.now(), fetch: fetchFn, signal } = {}) {
+  async function find(
+    search,
+    { firm, contact, people, institutions: own, now = Date.now(), fetch: fetchFn, signal } = {},
+  ) {
     const f = { ...(firm || {}) };
     const ctx = {
       firm: f,
@@ -632,13 +653,16 @@
     // An internship at this very firm is no common ground with its people: every one of them shares it.
     ctx.institutions = list(own).filter((x) => x && flat(x.name) && !(x.kind === 'employer' && isFirm(x.name, ctx)));
     ctx.places = new Set(
-      [...list(f.cities), ...ctx.institutions.filter((x) => x.kind === 'place').map((x) => x.name)].flatMap(
-        (c) => fold(c).s.split(' ').filter(Boolean),
+      [...list(f.cities), ...ctx.institutions.filter((x) => x.kind === 'place').map((x) => x.name)].flatMap((c) =>
+        fold(c).s.split(' ').filter(Boolean),
       ),
     );
     const messages = [
       { role: 'system', content: SYSTEM },
-      { role: 'user', content: brief({ firm: f, contact: ctx.contact, people: ctx.people, institutions: ctx.institutions, now }) },
+      {
+        role: 'user',
+        content: brief({ firm: f, contact: ctx.contact, people: ctx.people, institutions: ctx.institutions, now }),
+      },
     ];
     const r = await search(messages, { json: true, maxSearches: 5, maxFetches: 2, signal });
     const j = (r && r.json && typeof r.json === 'object' && r.json) || {};
@@ -711,7 +735,9 @@
     const h = hook || {};
     const where = h.source || (R() ? R().sourceName(h.url) : hostOf(h.url));
     const line = `Reason to write, found on ${where}${h.date ? ` (${dateWords(h.date)})` : ''}: “${flat(h.quote)}”`;
-    return h.kind === 'common' && h.about && h.shared ? `${line} The candidate and ${h.about} share ${h.shared}.` : line;
+    return h.kind === 'common' && h.about && h.shared
+      ? `${line} The candidate and ${h.about} share ${h.shared}.`
+      : line;
   }
 
   const discoverHooks = { SYSTEM, institutions, brief, find, rank, factLine };
