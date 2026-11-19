@@ -1030,14 +1030,26 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
     });
   });
   const sent = [];
+  const cancelled = [];
   await h.context.route('https://api.us.nylas.com/**', async (route) => {
     const url = new URL(route.request().url());
     if (/\/messages\/send$/.test(url.pathname)) {
-      sent.push(JSON.parse(route.request().postData()));
+      const message = JSON.parse(route.request().postData());
+      sent.push(message);
+      // A scheduled send is accepted with a schedule id and no message yet, as Nylas answers it.
+      const data = message.send_at
+        ? { schedule_id: `s-${sent.length}`, send_at: message.send_at }
+        : { id: `m-${sent.length}`, thread_id: 't-1' };
       return route.fulfill({
+        status: message.send_at ? 202 : 200,
         contentType: 'application/json',
-        body: JSON.stringify({ data: { id: `m-${sent.length}`, thread_id: 't-1' } }),
+        body: JSON.stringify({ data }),
       });
+    }
+    const schedule = url.pathname.match(/\/messages\/schedules\/([^/]+)$/);
+    if (schedule && route.request().method() === 'DELETE') {
+      cancelled.push(schedule[1]);
+      return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ data: {} }) });
     }
     if (/\/grants\/g-1$/.test(url.pathname))
       return route.fulfill({
@@ -1204,6 +1216,59 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
   assert.deepEqual(sent[1].attachments || [], []);
   await until(h.bg, async (i) => !!(await globalThis.JTF.store.getOutreach())[i].followedUpAt, id, 5000);
   assert.equal(await page.isVisible('#follow-due'), false);
+
+  // On a Saturday, with Arrive at 8:10 their time on: the email waits at Nylas for Monday morning in the firm's city,
+  // and Take it back deletes it there.
+  const saturday = Date.parse('2026-11-21T12:00:00Z');
+  // The firm's check is dated that day, so it's still fresh then.
+  await h.bg(
+    async ([i, f, at]) => {
+      const { store } = globalThis.JTF;
+      await store.removeOutreach(i);
+      await store.setDiscoverCache({
+        queue: { items: [], at: 0 },
+        careers: { [i]: { at, result: f.result } },
+        contacts: { [i]: { at, result: f.contacts } },
+      });
+    },
+    [id, found, saturday],
+  );
+  await page.clock.setFixedTime(saturday);
+  await page.reload();
+  await ready();
+  await page.check('#their-morning');
+  await until(h.bg, async () => (await globalThis.JTF.store.getSettings()).discoverAi.theirMorning, null, 5000);
+  await page.click('#tab-find');
+  await page.selectOption('#place', 'any');
+  await page.selectOption('#size', 'any');
+  await page.click('#search');
+  await page.click(`${card} button.write-go`);
+  await page.waitForSelector(box);
+  assert.equal(await page.textContent('#review-card .send-go'), 'Send · arrives in their morning');
+  assert.match(
+    await page.textContent('#review-card'),
+    /arrives Mon 08:10 in \w[\w ]*, as it’s outside their working day now/,
+  );
+  await send();
+  await until(
+    async () => sent.length === 3,
+    () => true,
+    null,
+    10000,
+  );
+  assert.ok(sent[2].send_at * 1000 > Date.parse('2026-11-23T00:00:00Z'), 'Monday');
+  const take = '#review-view .toast button:text-is("Take it back")';
+  await page.waitForSelector(take);
+  assert.match(
+    await page.textContent('#review-view .toast'),
+    /Arrives Mon 08:10 in [\s\S]*Until then it waits at Nylas\./,
+  );
+  const waiting = await h.bg(async (i) => (await globalThis.JTF.store.getOutreach())[i], id);
+  assert.deepEqual([waiting.status, waiting.scheduleId, waiting.messageId], ['sent', 's-3', '']);
+  await page.click(take);
+  await until(h.bg, async (i) => (await globalThis.JTF.store.getOutreach())[i].status === 'drafted', id, 5000);
+  assert.deepEqual(cancelled, ['s-3']);
+  await page.waitForSelector(box);
 
   await h.context.unroute('https://ai.test/**');
   await h.context.unroute('https://api.us.nylas.com/**');

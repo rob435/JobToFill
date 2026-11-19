@@ -2,7 +2,8 @@
  * JobToFill — your email through Nylas (https://www.nylas.com), with your own API key and the grant (connected
  * inbox) you choose, on the Nylas v3 API. For verification codes it only reads: the last few messages, never moving
  * or marking anything. Discover's outreach can also save an email you wrote to your mailbox's drafts or send it,
- * your CV attached, but only when you press that button for that one email.
+ * your CV attached, but only when you press that button for that one email. A send can wait for a time (Nylas holds
+ * it until then and it can be taken back until 10 seconds before), and a follow-up goes into the first email's thread.
  */
 (function (root) {
   'use strict';
@@ -33,7 +34,7 @@
   // What Nylas (or Google and Microsoft behind it) says when the inbox was connected to read mail only.
   const SCOPE = /scope|permission|insufficient|not authori[sz]ed|forbidden|access_denied/i;
 
-  function explain(status, body, writing) {
+  function explain(status, body, writing, path) {
     const detail = String((body && body.error && (body.error.message || body.error.type)) || '').slice(0, 200);
     // A key that reads mail but can't send it: the inbox was connected with read-only access.
     if (writing && (status === 403 || (status === 400 && SCOPE.test(detail))) && SCOPE.test(detail || 'forbidden'))
@@ -41,8 +42,20 @@
         'Your inbox is connected to Nylas for reading only. Connect it again with permission to send and draft mail (Settings › Email codes).',
         { status, code: 'scope' },
       );
+    // A time Nylas won't hold an email for: "send_at must be at least 1 minute in the future".
+    if (writing && status === 400 && /send_?at|send time|schedul/i.test(detail))
+      return new NylasError(
+        'Nylas wouldn’t schedule this email: it sends at a time from one minute to 30 days ahead. Send it now, or choose another time.',
+        { status, code: 'schedule' },
+      );
     if (status === 401 || status === 403)
       return new NylasError('Nylas rejected the API key (or it belongs to the other region).', { status, code: 'key' });
+    // A schedule Nylas no longer has: the email went (its record lasts 72 hours after), or it was taken back already.
+    if (status === 404 && /\/messages\/schedules\//.test(path || '') && !/grant/i.test(detail))
+      return new NylasError('Nylas no longer has that email waiting: it has gone already, or was taken back.', {
+        status,
+        code: 'gone',
+      });
     if (status === 404)
       return new NylasError('Nylas doesn’t know that inbox (grant). Connect again.', { status, code: 'grant' });
     if (status === 429)
@@ -97,7 +110,7 @@
     } catch (err) {
       data = null;
     }
-    if (!res.ok) throw explain(res.status, data, method !== 'GET');
+    if (!res.ok) throw explain(res.status, data, method !== 'GET', path);
     return data || {};
   }
 
@@ -150,6 +163,12 @@
   // Nylas takes a JSON request up to 3 MB; anything bigger goes as multipart/form-data (up to 25 MB).
   const JSON_LIMIT = 3 * 1024 * 1024;
   const SEND_TIMEOUT = 60000;
+  // Nylas holds a scheduled email from one minute to 30 days ahead. Under two minutes away (a card made ready on
+  // Sunday night and sent at "08:09" on Monday) it goes now: Nylas would refuse it, and its moment has come.
+  const MIN_LEAD = 2 * 60 * 1000;
+  const MAX_AHEAD = 30 * 24 * 3600 * 1000;
+  // Nylas can take a scheduled email back until 10 seconds before it goes.
+  const CANCEL_BY = 10 * 1000;
 
   const escapeHtml = (s) =>
     String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -186,8 +205,9 @@
 
   /**
    * The message as Nylas takes it: { subject, body (HTML), to: [{ email, name }], attachments: [{ filename,
-   * content_type, content (base64), size }] }. email: { to (an address, or [{ email, name }]), name, subject, text,
-   * attachments: [{ name, dataUrl } | { name, type, base64 }] }.
+   * content_type, content (base64), size }], reply_to_message_id? }. email: { to (an address, or [{ email, name }]),
+   * name, subject, text, attachments: [{ name, dataUrl } | { name, type, base64 }], replyTo? (the Nylas id of the
+   * message this answers: Nylas adds In-Reply-To and References, so a follow-up lands in the first email's thread) }.
    */
   function messageOf(email) {
     const e = email || {};
@@ -206,7 +226,14 @@
         size: bytesOf(data.base64),
       };
     });
-    return { subject: String(e.subject || ''), body: htmlOf(e.text), to, attachments };
+    const replyTo = String(e.replyTo || '').trim();
+    return {
+      subject: String(e.subject || ''),
+      body: htmlOf(e.text),
+      to,
+      attachments,
+      ...(replyTo ? { reply_to_message_id: replyTo } : {}),
+    };
   }
 
   /** The message as multipart/form-data: the JSON as "message", each attachment as a file of its own. */
@@ -223,24 +250,111 @@
     return form;
   }
 
-  /** POST a message to `path`, as JSON or, past Nylas's JSON limit, as multipart. */
-  async function write(config, path, email, fetchImpl) {
+  /** POST a message (with `extra` fields) to `path`, as JSON or, past Nylas's JSON limit, as multipart: its `data`. */
+  async function write(config, path, email, fetchImpl, extra) {
     if (!config || !config.grantId) throw new NylasError('Choose which inbox to use first.', { code: 'setup' });
-    const message = messageOf(email);
+    const message = { ...messageOf(email), ...extra };
     const size = JSON.stringify(message).length;
     const opts = { method: 'POST', timeout: SEND_TIMEOUT };
     if (size < JSON_LIMIT) opts.body = message;
     else opts.form = formOf(message);
     const data = await request(config, `/v3/grants/${encodeURIComponent(config.grantId)}${path}`, opts, fetchImpl);
-    const d = (data && data.data) || {};
-    return { id: d.id || '', threadId: d.thread_id || '', date: d.date || 0 };
+    return (data && data.data) || {};
   }
 
-  /** Save the email in the connected mailbox's drafts (Gmail's Drafts folder): { id, threadId }. */
-  const saveDraft = (config, email, { fetch: fetchImpl } = {}) => write(config, '/drafts', email, fetchImpl);
+  /** A message or draft as Nylas gave it back: { id, threadId, date } (date in seconds, as Nylas gives it). */
+  const made = (d) => ({ id: d.id || '', threadId: d.thread_id || '', date: d.date || 0 });
 
-  /** Send the email from the connected mailbox; it lands in Sent like one written there: { id, threadId, date }. */
-  const send = (config, email, { fetch: fetchImpl } = {}) => write(config, '/messages/send', email, fetchImpl);
+  /** Save the email in the connected mailbox's drafts (Gmail's Drafts folder): { id, threadId }. Drafts can't wait. */
+  const saveDraft = async (config, email, { fetch: fetchImpl } = {}) =>
+    made(await write(config, '/drafts', email, fetchImpl));
+
+  /** `email.sendAt` (ms) as Nylas's `send_at` (Unix seconds); null to send now, a time too close or already past. */
+  function sendAtOf(sendAt, now) {
+    if (sendAt == null || sendAt === '') return null;
+    const at = Number(sendAt);
+    if (!Number.isFinite(at)) throw new NylasError('Couldn’t read when to send this email.', { code: 'schedule' });
+    if (at - now < MIN_LEAD) return null;
+    if (at - now > MAX_AHEAD)
+      throw new NylasError('Nylas holds an email for at most 30 days. Choose an earlier time, or send it now.', {
+        code: 'schedule',
+      });
+    return Math.ceil(at / 1000);
+  }
+
+  /**
+   * Send the email from the connected mailbox; it lands in Sent like one written there: { id, threadId, date }. With
+   * `email.sendAt` (ms) Nylas holds it and sends it then: { id: '', threadId: '', date: 0, scheduleId, sendAt (ms) }:
+   * the message has no id until it goes (sentMessage() finds it then), and cancelScheduled() takes it back. A time
+   * under two minutes away or past sends now, so a result without `scheduleId` has gone.
+   */
+  async function send(config, email, { fetch: fetchImpl, now = Date.now() } = {}) {
+    const at = sendAtOf(email && email.sendAt, now);
+    const d = await write(config, '/messages/send', email, fetchImpl, at ? { send_at: at } : {});
+    if (!at) return made(d);
+    return { ...made(d), scheduleId: String(d.schedule_id || ''), sendAt: (Number(d.send_at) || at) * 1000 };
+  }
+
+  /**
+   * Take back an email Nylas is holding to send later (the page's Undo): it's deleted unsent. Given `sendAt` (ms), a
+   * try within 10 seconds of it says it's too late rather than racing the send. → { scheduleId, cancelled: true }
+   */
+  async function cancelScheduled(config, scheduleId, { sendAt, now = Date.now(), fetch: fetchImpl } = {}) {
+    if (!config || !config.grantId) throw new NylasError('Choose which inbox to use first.', { code: 'setup' });
+    const id = String(scheduleId || '').trim();
+    if (!id) throw new NylasError('There’s no scheduled email to take back.', { code: 'setup' });
+    if (sendAt && now > Number(sendAt) - CANCEL_BY)
+      throw new NylasError('It’s too late to take that email back: it’s going now.', { code: 'late' });
+    const path = `/v3/grants/${encodeURIComponent(config.grantId)}/messages/schedules/${encodeURIComponent(id)}`;
+    await request(config, path, { method: 'DELETE' }, fetchImpl);
+    return { scheduleId: id, cancelled: true };
+  }
+
+  /**
+   * Where a scheduled email is: { scheduleId, status ('pending', 'success' or 'failed', as Nylas says), description,
+   * closedAt (ms it went or failed, or 0) }. Nylas's docs show the object bare; other v3 replies wrap it in `data`.
+   */
+  async function scheduled(config, scheduleId, { fetch: fetchImpl } = {}) {
+    if (!config || !config.grantId) throw new NylasError('Choose which inbox to use first.', { code: 'setup' });
+    const id = String(scheduleId || '').trim();
+    // Without an id the path would be the list of every schedule.
+    if (!id) throw new NylasError('There’s no scheduled email to look up.', { code: 'setup' });
+    const path = `/v3/grants/${encodeURIComponent(config.grantId)}/messages/schedules/${encodeURIComponent(id)}`;
+    const data = await get(config, path, {}, fetchImpl);
+    const d = data.data && typeof data.data === 'object' && !Array.isArray(data.data) ? data.data : data;
+    const st = d.status && typeof d.status === 'object' ? d.status : d;
+    return {
+      scheduleId: String(d.schedule_id || scheduleId || ''),
+      status: String(st.code || (typeof d.status === 'string' ? d.status : '')),
+      description: String(st.description || ''),
+      closedAt: (Number(d.close_time) || 0) * 1000,
+    };
+  }
+
+  /**
+   * The message a scheduled email became once it went, to follow up in its thread and watch it for replies: the
+   * earliest from the person to `to` with exactly `subject`, dated from a minute before `after` (ms, its send time).
+   * → { id, threadId, date } or null while it hasn't gone.
+   */
+  async function sentMessage(config, { to, subject, after, me, fetch: fetchImpl } = {}) {
+    const want = String(subject || '').trim();
+    const addr = String(to || '')
+      .trim()
+      .toLowerCase();
+    if (!config || !config.grantId || !want || !addr) return null;
+    const data = await get(
+      config,
+      `/v3/grants/${encodeURIComponent(config.grantId)}/messages`,
+      { subject: want, limit: 20, received_after: after ? Math.floor(after / 1000) - 60 : null },
+      fetchImpl,
+    );
+    const mine = String(me || config.email || '').toLowerCase();
+    const has = (list, email) => (list || []).some((r) => String((r && r.email) || '').toLowerCase() === email);
+    const hit = (data.data || [])
+      .filter((m) => String(m.subject || '').trim() === want && has(m.to, addr) && (!mine || has(m.from, mine)))
+      .sort((a, b) => (a.date || 0) - (b.date || 0))[0];
+    return hit ? made(hit) : null;
+  }
 
   /**
    * Replies to an email that went out: messages in its thread received after it, from anyone but the sender.
@@ -284,7 +398,21 @@
     return { draft, send: sendOk, scopes, provider: g.provider || '' };
   }
 
-  const nylas = { REGIONS, problem, grants, messages, htmlOf, messageOf, saveDraft, send, replies, abilities };
+  const nylas = {
+    REGIONS,
+    problem,
+    grants,
+    messages,
+    htmlOf,
+    messageOf,
+    saveDraft,
+    send,
+    cancelScheduled,
+    scheduled,
+    sentMessage,
+    replies,
+    abilities,
+  };
   JTF.nylas = nylas;
   if (typeof module === 'object' && module.exports) module.exports = nylas;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

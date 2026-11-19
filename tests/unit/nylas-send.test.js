@@ -122,3 +122,268 @@ test('nylas: what the grant lets it do, and replies in a thread from someone els
   assert.equal(u.searchParams.get('thread_id'), 't-3');
   assert.equal(u.searchParams.get('received_after'), '1763400000');
 });
+
+// Sunday 21:00 in London; the email is to arrive at 08:10 on Monday (UTC in November).
+const SUNDAY = Date.UTC(2026, 10, 22, 21, 0);
+const MONDAY = Date.UTC(2026, 10, 23, 8, 10);
+const jane = {
+  to: [{ email: 'jane.smith@hbk.com', name: 'Jane Smith' }],
+  subject: 'Summer internship, HBK',
+  text: 'Dear Jane,',
+};
+
+test('nylas: a follow-up names the message it answers, so it lands in the same thread (drafts too)', async () => {
+  const log = [];
+  const fetchFn = fake({ data: { data: { id: 'm-10', thread_id: 't-3', date: 1795421500 } } }, log);
+  const follow = { ...jane, subject: 'Re: Summer internship, HBK', replyTo: ' m-9 ' };
+  assert.deepEqual(await nylas.send(config, follow, { fetch: fetchFn, now: SUNDAY }), {
+    id: 'm-10',
+    threadId: 't-3',
+    date: 1795421500,
+  });
+  assert.deepEqual(JSON.parse(log[0].init.body), {
+    subject: 'Re: Summer internship, HBK',
+    body: '<p>Dear Jane,</p>',
+    to: [{ email: 'jane.smith@hbk.com', name: 'Jane Smith' }],
+    attachments: [],
+    reply_to_message_id: 'm-9',
+  });
+  // A draft takes the reply but never a send time (Nylas's Create Draft has no send_at).
+  await nylas.saveDraft(config, { ...follow, sendAt: MONDAY }, { fetch: fetchFn });
+  assert.equal(log[1].url, 'https://api.eu.nylas.com/v3/grants/g-1/drafts');
+  assert.deepEqual(Object.keys(JSON.parse(log[1].init.body)), [
+    'subject',
+    'body',
+    'to',
+    'attachments',
+    'reply_to_message_id',
+  ]);
+  // A first email names nothing.
+  await nylas.send(config, jane, { fetch: fetchFn });
+  assert.equal('reply_to_message_id' in JSON.parse(log[2].init.body), false);
+});
+
+test('nylas: a scheduled send carries send_at in seconds and gives back the schedule to undo', async () => {
+  const log = [];
+  const fetchFn = fake(
+    {
+      status: 202,
+      data: {
+        request_id: 'r-1',
+        data: { grant_id: 'g-1', subject: jane.subject, send_at: 1795421400, schedule_id: 'sch-8cd5' },
+      },
+    },
+    log,
+  );
+  assert.deepEqual(await nylas.send(config, { ...jane, sendAt: MONDAY }, { fetch: fetchFn, now: SUNDAY }), {
+    id: '',
+    threadId: '',
+    date: 0,
+    scheduleId: 'sch-8cd5',
+    sendAt: MONDAY,
+  });
+  assert.equal(log[0].url, 'https://api.eu.nylas.com/v3/grants/g-1/messages/send');
+  assert.deepEqual(JSON.parse(log[0].init.body), {
+    subject: 'Summer internship, HBK',
+    body: '<p>Dear Jane,</p>',
+    to: [{ email: 'jane.smith@hbk.com', name: 'Jane Smith' }],
+    attachments: [],
+    send_at: 1795421400,
+  });
+  // A follow-up can wait too: a part of a second rounds up, never early.
+  await nylas.send(config, { ...jane, replyTo: 'm-9', sendAt: MONDAY + 400 }, { fetch: fetchFn, now: SUNDAY });
+  const second = JSON.parse(log[1].init.body);
+  assert.deepEqual([second.send_at, second.reply_to_message_id], [1795421401, 'm-9']);
+});
+
+test('nylas: a send time too close or past goes now; one too far or unreadable is refused before asking', async () => {
+  const log = [];
+  const fetchFn = fake({ data: { data: { id: 'm-11', thread_id: 't-4', date: 1795421460 } } }, log);
+  // The card was made ready on Sunday night and sent at 08:09 on Monday: Nylas wants a minute's lead, so now.
+  const late = await nylas.send(config, { ...jane, sendAt: MONDAY }, { fetch: fetchFn, now: MONDAY - 60000 });
+  assert.deepEqual(late, { id: 'm-11', threadId: 't-4', date: 1795421460 });
+  await nylas.send(config, { ...jane, sendAt: MONDAY }, { fetch: fetchFn, now: MONDAY + 3600000 });
+  await nylas.send(config, { ...jane, sendAt: null }, { fetch: fetchFn, now: SUNDAY });
+  assert.equal(log.length, 3);
+  assert.ok(log.every((l) => !('send_at' in JSON.parse(l.init.body))));
+  const far = { ...jane, sendAt: SUNDAY + 31 * 24 * 3600000 };
+  await assert.rejects(nylas.send(config, far, { fetch: fetchFn, now: SUNDAY }), (e) => e.code === 'schedule');
+  await assert.rejects(
+    nylas.send(config, { ...jane, sendAt: 'Monday' }, { fetch: fetchFn, now: SUNDAY }),
+    (e) => e.code === 'schedule',
+  );
+  assert.equal(log.length, 3);
+});
+
+test('nylas: a large attachment with a send time and a thread goes as multipart, both in the message part', async () => {
+  const log = [];
+  const big = 'data:application/pdf;base64,' + Buffer.alloc(3355443, 7).toString('base64');
+  const email = { ...jane, replyTo: 'm-9', sendAt: MONDAY, attachments: [{ name: 'cv.pdf', dataUrl: big }] };
+  const r = await nylas.send(config, email, {
+    fetch: fake({ status: 202, data: { data: { schedule_id: 'sch-2' } } }, log),
+    now: SUNDAY,
+  });
+  assert.deepEqual([r.scheduleId, r.sendAt], ['sch-2', MONDAY]);
+  const form = log[0].init.body;
+  assert.ok(form instanceof FormData);
+  assert.deepEqual(JSON.parse(form.get('message')), {
+    subject: 'Summer internship, HBK',
+    body: '<p>Dear Jane,</p>',
+    to: [{ email: 'jane.smith@hbk.com', name: 'Jane Smith' }],
+    reply_to_message_id: 'm-9',
+    send_at: 1795421400,
+  });
+  assert.equal(form.get('file0').size, 3355443);
+  assert.equal(log[0].init.headers['Content-Type'], undefined);
+});
+
+test('nylas: a schedule Nylas refuses says so in plain words', async () => {
+  const refused = fake(
+    {
+      status: 400,
+      data: { error: { type: 'invalid_request_error', message: 'send_at must be at least 1 minute in the future' } },
+    },
+    [],
+  );
+  await assert.rejects(nylas.send(config, { ...jane, sendAt: MONDAY }, { fetch: refused, now: SUNDAY }), (e) => {
+    assert.equal(e.name, 'NylasError');
+    assert.equal(e.code, 'schedule');
+    assert.equal(e.status, 400);
+    assert.match(e.message, /wouldn’t schedule this email: it sends at a time from one minute to 30 days ahead/);
+    return true;
+  });
+  // Other refusals keep their own explanation.
+  const other = fake({ status: 400, data: { error: { message: 'to: invalid address' } } }, []);
+  await assert.rejects(
+    nylas.send(config, jane, { fetch: other }),
+    (e) => e.code === null && /invalid address/.test(e.message),
+  );
+});
+
+test('nylas: Undo takes a scheduled email back, until 10 seconds before it goes', async () => {
+  const log = [];
+  const ok = fake(
+    { status: 202, data: { request_id: 'r-2', data: { message: 'requested cancelation for workflow' } } },
+    log,
+  );
+  assert.deepEqual(await nylas.cancelScheduled(config, 'sch-8cd5', { fetch: ok, sendAt: MONDAY, now: SUNDAY }), {
+    scheduleId: 'sch-8cd5',
+    cancelled: true,
+  });
+  assert.equal(log[0].url, 'https://api.eu.nylas.com/v3/grants/g-1/messages/schedules/sch-8cd5');
+  assert.equal(log[0].init.method, 'DELETE');
+  assert.equal(log[0].init.body, undefined);
+  assert.equal(log[0].init.headers.Authorization, 'Bearer nyk_x');
+  await nylas.cancelScheduled(config, 'sch-8cd5', { fetch: ok, sendAt: MONDAY, now: MONDAY - 10000 });
+  await assert.rejects(
+    nylas.cancelScheduled(config, 'sch-8cd5', { fetch: ok, sendAt: MONDAY, now: MONDAY - 9000 }),
+    (e) => e.code === 'late' && /too late/.test(e.message),
+  );
+  await assert.rejects(nylas.cancelScheduled(config, '', { fetch: ok }), (e) => e.code === 'setup');
+  await assert.rejects(nylas.cancelScheduled({ apiKey: 'k' }, 'sch-8cd5', { fetch: ok }), (e) => e.code === 'setup');
+  assert.equal(log.length, 2);
+  // Gone already (sent, or taken back before) is not a lost inbox; a lost inbox still says so.
+  const gone = fake({ status: 404, data: { error: { type: 'not_found_error', message: 'schedule not found' } } }, []);
+  await assert.rejects(nylas.cancelScheduled(config, 'sch-8cd5', { fetch: gone }), (e) => e.code === 'gone');
+  const noGrant = fake({ status: 404, data: { error: { type: 'not_found_error', message: 'grant not found' } } }, []);
+  await assert.rejects(nylas.cancelScheduled(config, 'sch-8cd5', { fetch: noGrant }), (e) => e.code === 'grant');
+  const readOnly = fake({ status: 403, data: { error: { message: 'Insufficient scopes for this request' } } }, []);
+  await assert.rejects(nylas.cancelScheduled(config, 'sch-8cd5', { fetch: readOnly }), (e) => e.code === 'scope');
+});
+
+test('nylas: where a scheduled email is, bare as the docs show it or wrapped in data', async () => {
+  const log = [];
+  const bare = fake(
+    { data: { schedule_id: 'sch-1', status: { code: 'pending', description: 'schedule send awaiting send at time' } } },
+    log,
+  );
+  assert.deepEqual(await nylas.scheduled(config, 'sch-1', { fetch: bare }), {
+    scheduleId: 'sch-1',
+    status: 'pending',
+    description: 'schedule send awaiting send at time',
+    closedAt: 0,
+  });
+  assert.equal(log[0].url, 'https://api.eu.nylas.com/v3/grants/g-1/messages/schedules/sch-1');
+  assert.equal(log[0].init.method, 'GET');
+  const wrapped = fake(
+    {
+      data: {
+        request_id: 'r',
+        data: { schedule_id: 'sch-2', status: { code: 'failed', description: 'send failed' }, close_time: 1795421401 },
+      },
+    },
+    [],
+  );
+  assert.deepEqual(await nylas.scheduled(config, 'sch-2', { fetch: wrapped }), {
+    scheduleId: 'sch-2',
+    status: 'failed',
+    description: 'send failed',
+    closedAt: 1795421401000,
+  });
+  await assert.rejects(nylas.scheduled(config, ' ', { fetch: bare }), (e) => e.code === 'setup');
+  const gone = fake({ status: 404, data: { error: { message: 'schedule not found' } } }, []);
+  await assert.rejects(nylas.scheduled(config, 'sch-3', { fetch: gone }), (e) => e.code === 'gone');
+});
+
+test('nylas: the message a scheduled email became, found by recipient and exact subject once it went', async () => {
+  const log = [];
+  const list = fake(
+    {
+      data: {
+        data: [
+          // Its follow-up, a reply and an older email to someone else all share words of the subject.
+          {
+            id: 'f',
+            thread_id: 't-1',
+            date: 1795421900,
+            subject: 'Re: Summer internship, HBK',
+            from: [{ email: 'ada@example.org' }],
+            to: [{ email: 'jane.smith@hbk.com' }],
+          },
+          {
+            id: 'r',
+            thread_id: 't-1',
+            date: 1795421700,
+            subject: 'Summer internship, HBK',
+            from: [{ email: 'jane.smith@hbk.com' }],
+            to: [{ email: 'ada@example.org' }],
+          },
+          {
+            id: 'o',
+            thread_id: 't-0',
+            date: 1795421410,
+            subject: 'Summer internship, HBK',
+            from: [{ email: 'ada@example.org' }],
+            to: [{ email: 'careers@hbk.com' }],
+          },
+          {
+            id: 'm',
+            thread_id: 't-1',
+            date: 1795421402,
+            subject: 'Summer internship, HBK',
+            from: [{ email: 'Ada@Example.org' }],
+            to: [{ name: 'Jane Smith', email: 'Jane.Smith@hbk.com' }],
+          },
+        ],
+      },
+    },
+    log,
+  );
+  const found = await nylas.sentMessage(config, {
+    to: 'jane.smith@hbk.com',
+    subject: jane.subject,
+    after: MONDAY,
+    fetch: list,
+  });
+  assert.deepEqual(found, { id: 'm', threadId: 't-1', date: 1795421402 });
+  const u = new URL(log[0].url);
+  assert.equal(u.pathname, '/v3/grants/g-1/messages');
+  assert.equal(u.searchParams.get('subject'), 'Summer internship, HBK');
+  assert.equal(u.searchParams.get('received_after'), '1795421340');
+  const none = fake({ data: { data: [] } }, []);
+  assert.equal(
+    await nylas.sentMessage(config, { to: 'jane.smith@hbk.com', subject: jane.subject, after: MONDAY, fetch: none }),
+    null,
+  );
+  assert.equal(await nylas.sentMessage(config, { to: '', subject: jane.subject, fetch: none }), null);
+});

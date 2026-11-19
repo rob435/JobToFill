@@ -1845,6 +1845,18 @@ function sendView(firm, d) {
 async function checkReplies() {
   const nylas = state.nylas;
   if (!nylas || !nylas.grantId) return;
+  // An email scheduled for their morning that has gone since: its message and thread, from the Sent folder.
+  const gone = Object.entries(state.outreach).filter(
+    ([, r]) => r.status === 'sent' && r.scheduleId && !r.messageId && r.sendAt && r.sendAt <= Date.now(),
+  );
+  for (const [id, rec] of gone) {
+    const m = await N.sentMessage(nylas, { to: rec.to, subject: rec.subject, after: rec.sendAt, fetch: fetchFn }).catch(
+      () => null,
+    );
+    if (!m) continue;
+    const next = await store.setOutreach(id, { messageId: m.id, threadId: m.threadId });
+    if (next) state.outreach[id] = next;
+  }
   const waiting = Object.entries(state.outreach).filter(([, r]) => r.status === 'sent' && r.threadId);
   for (const [id, rec] of waiting) {
     const list = await N.replies(nylas, {
@@ -2803,9 +2815,11 @@ async function deliver(item) {
       ...(when.at ? { sendAt: when.at } : {}),
     };
     const r = await N.send(nylas, email, { fetch: fetchFn });
-    item.status = when.at ? 'scheduled' : 'sent';
-    item.outcome = when.at
-      ? `Arrives ${when.local}${cv ? `, ${cv.name} attached` : ''}.`
+    // Nylas sends one due within two minutes straight away: only a schedule id says it waits.
+    const later = !!r.scheduleId;
+    item.status = later ? 'scheduled' : 'sent';
+    item.outcome = later
+      ? `Arrives ${when.local}${cv ? `, ${cv.name} attached` : ''}. Until then it waits at Nylas.`
       : `Sent${cv ? `, ${cv.name} attached` : ''}. It’s in your Sent folder.`;
     const hook = item.hook >= 0 ? item.hooks[item.hook] : null;
     if (follow) await setOutreach(firm, { followedUpAt: Date.now(), followUps: ((rec && rec.followUps) || 0) + 1 });
@@ -2822,15 +2836,38 @@ async function deliver(item) {
         reasonKind: hook ? hook.kind : 'none',
         ask: (item.draftedFor && item.draftedFor.ask) || askChoice(),
         role: item.role || '',
-        messageId: r.id,
-        threadId: r.threadId,
-        ...(when.at ? { sentAt: when.at, sendAt: when.at, scheduleId: r.scheduleId || '' } : {}),
+        // A scheduled email has no message id until it goes: checkReplies() finds it in Sent then.
+        messageId: r.id || '',
+        threadId: r.threadId || '',
+        ...(later ? { sentAt: r.sendAt || when.at, sendAt: r.sendAt || when.at, scheduleId: r.scheduleId } : {}),
       });
-    review.toast = { text: `${follow ? 'Follow-up' : 'Email'} to ${firm.name}: ${item.outcome}` };
+    review.toast = {
+      text: `${follow ? 'Follow-up' : 'Email'} to ${firm.name}: ${item.outcome}`,
+      ...(later && !follow ? { takeBack: item.id } : {}),
+    };
   } catch (err) {
     item.status = 'ready';
     item.error = `Not sent: ${errorText(err)}`;
     review.toast = { text: `Couldn’t send to ${firm.name}: ${errorText(err)}`, show: item.id, error: true };
+  }
+  renderReview(true);
+  saveQueue();
+}
+
+/** A first email waiting for their morning, taken back: Nylas deletes it, and it's back to read and send again. */
+async function takeBack(item) {
+  const rec = state.outreach[item.firm.id];
+  if (!rec || !rec.scheduleId) return;
+  try {
+    const nylas = await store.getNylas();
+    await N.cancelScheduled(nylas, rec.scheduleId, { sendAt: rec.sendAt, fetch: fetchFn });
+    await setOutreach(item.firm, { status: 'drafted', sentAt: null, sendAt: null, scheduleId: '' });
+    item.status = 'ready';
+    item.outcome = '';
+    review.at = review.items.indexOf(item);
+    review.toast = { text: 'Taken back: it won’t be sent.' };
+  } catch (err) {
+    review.toast = { text: `Couldn’t take it back: ${errorText(err)}`, error: true };
   }
   renderReview(true);
   saveQueue();
@@ -3274,6 +3311,14 @@ function itemView(item) {
         item.status === 'sending' && review.pending && review.pending.item === item
           ? el('button', { className: 'big', type: 'button', textContent: 'Undo', onclick: undoSend })
           : null,
+        item.status === 'scheduled' && item.type === 'first'
+          ? el('button', {
+              className: 'big',
+              type: 'button',
+              textContent: 'Take it back',
+              onclick: () => takeBack(item),
+            })
+          : null,
         item.status === 'skipped'
           ? el('button', {
               className: 'big',
@@ -3481,6 +3526,17 @@ function toastView() {
     el('span', { textContent: t.text }),
     t.undo && review.pending
       ? el('button', { className: 'link', type: 'button', textContent: 'Undo (U)', onclick: undoSend })
+      : null,
+    t.takeBack
+      ? el('button', {
+          className: 'link',
+          type: 'button',
+          textContent: 'Take it back',
+          onclick: () => {
+            const item = review.items.find((i) => i.id === t.takeBack);
+            if (item) takeBack(item);
+          },
+        })
       : null,
     t.show
       ? el('button', {
