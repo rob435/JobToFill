@@ -8,10 +8,13 @@ const { store } = JTF;
 
 test.beforeEach(() => installChrome());
 
+// The review queue's own choices, as they start: ask for an internship, no common ground, arrive in their morning.
+const QUEUE = { ask: 'internship', commonGround: false, theirMorning: true };
+
 test('store: Discover’s AI follows Settings until a provider with a key is chosen there', async () => {
   await store.setAiKey('sk-or-1', 'openrouter');
   await store.saveAiSettings({ provider: 'openrouter', model: 'deepseek/deepseek-v4.1-flash' });
-  assert.deepEqual((await store.getSettings()).discoverAi, { provider: '', model: '', effort: 'quick' });
+  assert.deepEqual((await store.getSettings()).discoverAi, { provider: '', model: '', effort: 'quick', ...QUEUE });
   let config = await store.discoverAiConfig();
   assert.deepEqual(
     [config.source, config.effort, config.provider, config.model, config.apiKey],
@@ -46,11 +49,33 @@ test('store: Discover’s AI follows Settings until a provider with a key is cho
 
   // Another provider forgets the model chosen for the last one; '' goes back to Settings; junk is refused.
   await store.saveDiscoverAi({ provider: 'deepseek' });
-  assert.deepEqual((await store.getSettings()).discoverAi, { provider: 'deepseek', model: '', effort: 'thorough' });
+  assert.deepEqual((await store.getSettings()).discoverAi, {
+    provider: 'deepseek',
+    model: '',
+    effort: 'thorough',
+    ...QUEUE,
+  });
   assert.equal((await store.discoverAiConfig()).source, 'settings', 'no DeepSeek key');
   await store.saveDiscoverAi({ provider: 'mystery', effort: 'max' });
-  assert.deepEqual((await store.getSettings()).discoverAi, { provider: '', model: '', effort: 'quick' });
-  assert.deepEqual(store.DEFAULT_SETTINGS.discoverAi, { provider: '', model: '', effort: 'quick' });
+  assert.deepEqual((await store.getSettings()).discoverAi, { provider: '', model: '', effort: 'quick', ...QUEUE });
+  assert.deepEqual(store.DEFAULT_SETTINGS.discoverAi, { provider: '', model: '', effort: 'quick', ...QUEUE });
+
+  // The queue's choices are kept; junk falls back to the defaults, and common ground is on only when set to true.
+  await store.saveDiscoverAi({ ask: 'project', commonGround: true, theirMorning: false });
+  assert.deepEqual(
+    [(await store.getSettings()).discoverAi.ask, (await store.discoverAiConfig()).effort],
+    ['project', 'quick'],
+  );
+  assert.equal((await store.getSettings()).discoverAi.commonGround, true);
+  await store.saveDiscoverAi({ ask: 'beg', commonGround: 'yes', theirMorning: 0 });
+  assert.deepEqual((await store.getSettings()).discoverAi, {
+    provider: '',
+    model: '',
+    effort: 'quick',
+    ask: 'internship',
+    commonGround: false,
+    theirMorning: true,
+  });
 });
 
 test('store: outreach records are created, merged, removed and kept to the newest 500', async () => {
@@ -146,6 +171,8 @@ test('store: the Discover cache keeps the lists whole and checks per firm, the n
     careers: {},
     contacts: {},
     research: {},
+    hooks: {},
+    queue: null,
   });
   const hn = { posts: [{ id: 1 }], threads: [{ id: 9, title: 'Ask HN: Who is hiring? (November 2026)' }], at: 5 };
   const listed = { names: ['jane street'], domains: ['janestreet.com'], at: 6 };
@@ -160,6 +187,15 @@ test('store: the Discover cache keeps the lists whole and checks per firm, the n
   assert.deepEqual(Object.keys(cache.careers), ['a']);
   await store.setDiscoverCache({ research: { a: { at: 4, result: { people: [] } } } });
   assert.deepEqual((await store.getDiscoverCache()).research, { a: { at: 4, result: { people: [] } } });
+  // Reasons to write are kept per firm too; the review queue is kept whole, and an empty one clears it.
+  await store.setDiscoverCache({
+    hooks: { a: { at: 5, result: { hooks: [] } } },
+    queue: { items: [{ id: 'a' }], at: 7 },
+  });
+  cache = await store.getDiscoverCache();
+  assert.deepEqual([cache.hooks.a.at, cache.queue], [5, { items: [{ id: 'a' }], at: 7 }]);
+  await store.setDiscoverCache({ queue: { items: 'junk' } });
+  assert.equal((await store.getDiscoverCache()).queue, null);
   const lots = {};
   for (let i = 0; i < 305; i++) lots['x' + i] = { at: 100 + i, result: {} };
   await store.setDiscoverCache({ contacts: lots });

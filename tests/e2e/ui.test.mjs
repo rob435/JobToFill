@@ -976,6 +976,258 @@ test('Discover: Find people searches the web, keeps what the results show, and S
   await page.close();
 });
 
+test('Discover: Review prepares a firm’s email by itself, shows it with big buttons and keys, sends it after five seconds, and offers a follow-up', async () => {
+  await h.bg(() =>
+    globalThis.JTF.store.setDiscoverCache({
+      trackr: { names: [], domains: [], at: Date.now(), answered: 1 },
+      listed: { names: [], domains: [], roles: [], at: Date.now(), answered: 1, asked: 1 },
+    }),
+  );
+  const page = await openExt('discover/discover.html');
+  const ready = () =>
+    page.waitForFunction(() => /firms in the registry/.test(document.querySelector('#registry-info').textContent));
+  await ready();
+  await page.selectOption('#place', 'any');
+  await page.selectOption('#size', 'any');
+  await page.click('#search');
+  await page.waitForSelector('#results .firm');
+  const id = await page.$eval('#results .firm', (li) => li.dataset.id);
+  const card = `#results .firm[data-id="${id}"]`;
+  // The first firm's site was checked already (the fixtures, as above), so preparing it needs no network.
+  const found = await page.evaluate(
+    async ([home, base]) => {
+      const { discover: D, discoverContacts: C } = globalThis.JTF;
+      const fetchFn = (u, init) => {
+        const url = new URL(u);
+        if (/(^|\.)quiet\.example$/.test(url.hostname) && url.pathname === '/') return fetch(home, init);
+        if (/^discover-(home|team|careers)\.html$/.test(url.pathname.slice(1)) && u.startsWith(base))
+          return fetch(u, init);
+        return Promise.resolve(new Response('Not found', { status: 404 }));
+      };
+      const firm = {
+        id: 'x',
+        name: 'Quiet Capital',
+        aliases: [],
+        domain: 'quiet.example',
+        site: 'https://quiet.example',
+      };
+      const result = await D.careers({ ...firm, cities: ['London'], tags: [] }, { fetch: fetchFn, guess: false });
+      const contacts = await C.findContacts(firm, { fetch: fetchFn, pages: result.pages });
+      return { result, contacts };
+    },
+    [h.url('discover-home.html'), h.url('')],
+  );
+  const asked = [];
+  await h.context.route('https://ai.test/**', (route) => {
+    asked.push(JSON.parse(route.request().postData() || '{}'));
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        model: 'mock',
+        choices: [{ message: { content: JSON.stringify(DRAFT) }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 10, completion_tokens: 10 },
+      }),
+    });
+  });
+  const sent = [];
+  await h.context.route('https://api.us.nylas.com/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (/\/messages\/send$/.test(url.pathname)) {
+      sent.push(JSON.parse(route.request().postData()));
+      return route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: { id: `m-${sent.length}`, thread_id: 't-1' } }),
+      });
+    }
+    if (/\/grants\/g-1$/.test(url.pathname))
+      return route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: { id: 'g-1', provider: 'google', scope: ['https://www.googleapis.com/auth/gmail.compose'] },
+        }),
+      });
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: [] }) });
+  });
+  const before = await h.bg(
+    async ([firmId, f]) => {
+      const { store } = globalThis.JTF;
+      await store.setDiscoverCache({
+        careers: { [firmId]: { at: Date.now(), result: f.result } },
+        contacts: { [firmId]: { at: Date.now(), result: f.contacts } },
+      });
+      const { profile } = await store.getActive();
+      const was = { ai: (await store.getSettings()).ai, personal: { ...profile.personal } };
+      profile.personal.firstName = 'Ada';
+      profile.personal.lastName = 'Lovelace';
+      await store.saveProfile(profile);
+      await store.saveKit(profile.id, {
+        notes: 'Built a reconciliation tool in Python that checks 40,000 trades a night.',
+      });
+      await store.setDoc(profile.id, 'resume', {
+        name: 'Ada Lovelace CV.pdf',
+        type: 'application/pdf',
+        dataUrl: 'data:application/pdf;base64,' + btoa('%PDF-1.4 e2e'),
+      });
+      await store.setAiKey('test-key', 'custom');
+      await store.saveAiSettings({ provider: 'custom', baseUrl: 'https://ai.test/v1', model: 'mock' });
+      await store.setNylas({ apiKey: 'nyk_e2e', region: 'us', grantId: 'g-1', email: 'ada@example.org' });
+      return was;
+    },
+    [id, found],
+  );
+  await page.reload();
+  await ready();
+  await page.selectOption('#place', 'any');
+  await page.selectOption('#size', 'any');
+  await page.click('#search');
+  await page.waitForSelector(`${card} .contacts`);
+  assert.match(await page.textContent('#write-top'), /^Write to the top 10$/);
+
+  // One press: the firm is checked (cached), its email drafted, and Review shows it with the big buttons.
+  await page.click(`${card} button.write-go`);
+  const box = '#review-card textarea.body';
+  await page.waitForSelector(`#review-view:not([hidden]) ${box}`);
+  assert.equal(await page.getAttribute('#tab-review', 'aria-selected'), 'true');
+  assert.equal(
+    (await page.textContent('#review-card h2')).trim(),
+    (await page.textContent(`${card} .firm-name`)).trim(),
+  );
+  assert.match(await page.textContent('#review-progress'), /1 of 1/);
+  assert.match(await page.inputValue(box), /^Dear .+ recruiting team,\n\nI am a final-year/);
+  assert.match(await page.textContent('#review-card .to-line'), /internships@quiet\.example/);
+  assert.match(await page.textContent('#review-card .reason'), /opens with what the firm does/, 'no web search here');
+  assert.equal(await page.isVisible('#review-keys'), true);
+  assert.equal(await page.textContent(`${card} button.write-go`), 'In Review');
+  // Arriving in their morning depends on the hour: off here, so it sends now.
+  await page.uncheck('#their-morning');
+  await until(
+    h.bg,
+    async () => (await globalThis.JTF.store.getSettings()).discoverAi.theirMorning === false,
+    null,
+    5000,
+  );
+  assert.match(await page.textContent('#review-card .send-go'), /^Send$/);
+
+  // C: someone else, greeted by name; the email was written for the mailbox, so Send asks twice until R writes it again.
+  for (let i = 0; i < 6 && !/jane\.doe@/.test(await page.textContent('#review-card .to-line')); i++)
+    await page.keyboard.press('c');
+  assert.match(
+    await page.textContent('#review-card .to-line'),
+    /Jane Doe, Head of Talent[\s\S]*jane\.doe@quiet\.example/,
+  );
+  assert.match(await page.inputValue(box), /^Dear Jane,\n\n/);
+  await page.keyboard.press('Control+Enter');
+  await page.waitForSelector('#review-card .send-go.armed');
+  assert.match(await page.textContent('#review-card .doubts'), /You changed who it goes to/);
+  assert.equal(sent.length, 0);
+  const drafts = asked.length;
+  await page.keyboard.press('r');
+  await until(
+    async () => asked.length > drafts && !(await page.$('#review-card .steps')),
+    () => true,
+    null,
+    10000,
+  );
+  await page.waitForSelector(box);
+  assert.match(await page.inputValue(box), /^Dear Jane,\n\n/);
+  assert.equal(await page.$('#review-card .send-go.armed'), null);
+
+  /** Ctrl+Enter, and again if the email has a doubt to accept (a check the stand-in's draft failed). */
+  const send = async () => {
+    await page.keyboard.press('Control+Enter');
+    await page.waitForFunction(
+      () => document.querySelector('#review-card .send-go.armed') || /Sending to/.test(document.body.textContent),
+    );
+    if (await page.$('#review-card .send-go.armed')) await page.keyboard.press('Control+Enter');
+    await page.waitForSelector('#review-view .toast');
+  };
+  // Sent in five seconds unless Undo: U takes it back, and nothing went.
+  await send();
+  assert.match(await page.textContent('#review-view .toast'), /^Sending to jane\.doe@quiet\.example…Undo/);
+  await page.keyboard.press('u');
+  await page.waitForSelector(box);
+  assert.match(await page.textContent('#review-view .toast'), /Not sent\./);
+  await page.waitForTimeout(5500);
+  assert.equal(sent.length, 0, 'undone');
+
+  await send();
+  await until(
+    async () => sent.length === 1,
+    () => true,
+    null,
+    10000,
+  );
+  assert.deepEqual(sent[0].to, [{ email: 'jane.doe@quiet.example', name: 'Jane Doe' }]);
+  assert.match(sent[0].body, /^<p>Dear Jane,<\/p>/);
+  assert.equal(sent[0].attachments[0].filename, 'Ada Lovelace CV.pdf');
+  assert.equal(sent[0].send_at, undefined, 'sent now');
+  const record = await until(
+    h.bg,
+    async (i) => {
+      const r = (await globalThis.JTF.store.getOutreach())[i];
+      return r && r.status === 'sent' && r;
+    },
+    id,
+    5000,
+  );
+  assert.deepEqual(
+    [record.to, record.via, record.messageId, record.threadId],
+    ['jane.doe@quiet.example', 'nylas', 'm-1', 't-1'],
+  );
+  assert.match(record.body, /^Dear Jane,\n\nI am a final-year/);
+  await page.waitForFunction(() => /All read/.test(document.querySelector('#review-card').textContent));
+  assert.match(await page.textContent('#review-card'), /1 sent/);
+
+  // A week on without a reply: the queue offers a follow-up, written for the same thread, with no attachment.
+  await h.bg((i) => globalThis.JTF.store.setOutreach(i, { sentAt: Date.now() - 9 * 864e5 }), id);
+  await page.reload();
+  await ready();
+  await page.click('#tab-review');
+  await page.waitForSelector('#follow-due:not([hidden])');
+  assert.match(
+    await page.textContent('#follow-due'),
+    /^1 email sent from here has had no reply for five working days\./,
+  );
+  assert.match(await page.textContent('#review-card'), /All read[\s\S]*1 sent/, 'the queue as it was left');
+  await page.click('#follow-due button');
+  await page.waitForSelector(box);
+  assert.match(await page.inputValue('#review-card input.subject'), /^Re: /);
+  assert.match(await page.textContent('#review-card .review-head'), /Follow-up/);
+  await send();
+  await until(
+    async () => sent.length === 2,
+    () => true,
+    null,
+    10000,
+  );
+  assert.equal(sent[1].reply_to_message_id, 'm-1', 'in the same thread');
+  assert.deepEqual(sent[1].attachments || [], []);
+  await until(h.bg, async (i) => !!(await globalThis.JTF.store.getOutreach())[i].followedUpAt, id, 5000);
+  assert.equal(await page.isVisible('#follow-due'), false);
+
+  await h.context.unroute('https://ai.test/**');
+  await h.context.unroute('https://api.us.nylas.com/**');
+  await h.bg(
+    async ([i, was]) => {
+      const { store } = globalThis.JTF;
+      await store.removeOutreach(i);
+      await store.setDiscoverCache({ queue: { items: [], at: 0 } });
+      await store.saveDiscoverAi({ theirMorning: true });
+      await store.setAiKey('', 'custom');
+      await store.saveSettings({ ai: was.ai });
+      await store.setNylas(null);
+      const { profile } = await store.getActive();
+      profile.personal = was.personal;
+      await store.saveProfile(profile);
+      await store.removeDoc(profile.id, 'resume');
+      await store.saveKit(profile.id, { notes: '' });
+    },
+    [id, before],
+  );
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
 test('settings: what Learn from this page saves while the page is open stays, through edits made there', async () => {
   const page = await openExt('options/options.html#personal');
   await page.waitForSelector('input[name="contact.phone"]');

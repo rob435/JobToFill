@@ -86,6 +86,30 @@ function scripted(replies) {
 }
 
 const failed = (r) => r.checks.filter((c) => !c.ok).map((c) => c.what);
+const sha = (s) => require('node:crypto').createHash('sha256').update(s).digest('hex');
+
+test('outreach: without a hook or an ask, draft()’s messages are byte for byte what they were', async () => {
+  // Recorded before hooks and asks existed: both calls (the draft, then the fixes after an empty reply), so the
+  // system prompt, the user message and every check's feedback are held. A change here is a change to measure.
+  const run = async (input) => {
+    const seen = [];
+    const chat = async (messages) => {
+      seen.push(messages.map((m) => m.content).join('\n-----\n'));
+      return { json: {} };
+    };
+    await O.draft(chat, input);
+    assert.equal(seen.length, 2);
+    return sha(seen.join('\n=====\n'));
+  };
+  const GB = 'd37db65dc2eddbcbd90d16ac21ee305ce8c9f0f9a4108e0659466c04f68eabda';
+  const US = '647d541505ab88c75afea0f4d8bf4bb00a797b17cf295645cdc0ee4c297a992b';
+  const us = { ...firm, country: 'US' };
+  for (const extra of [{}, { ask: 'internship', hook: null }, { ask: 'anything', hook: {} }]) {
+    assert.equal(await run({ firm, found, contact: jane, profile, kit, cvText, kind: 'speculative', today, ...extra }), GB);
+    const role = { firm: us, found, contact: jane, profile, kit, cvText, kind: 'role', today };
+    assert.equal(await run({ ...role, instruction: 'mention my chess', ...extra }), US);
+  }
+});
 
 test('outreach: material() gives the CV and profile, never the disclosures or the date of birth', () => {
   const m = O.material({ profile, kit, cvText });

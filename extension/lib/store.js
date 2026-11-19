@@ -30,10 +30,14 @@
  *                 roles), hn (this month's Hacker News "Who is
  *                 hiring" posts, discoverSources.hnHiring), careers: { [firmId]: { at, result } } (careers checks) and
  *                 contacts: { [firmId]: { at, result } } (discoverContacts.findContacts) and research: { [firmId]: { at, result } }
- *                 (discoverResearch.research and the address checks) }; never in a backup
+ *                 (discoverResearch.research and the address checks) and hooks: { [firmId]: { at, result } }
+ *                 (discoverHooks.find: reasons to write) and queue: { items, at } (the review queue: the firms an email
+ *                 is being prepared for, with the drafts) }; never in a backup
  *   outreach      emails to firms, written on the Discover page: { [firmId]: { firm: { id, name, domain, site },
  *                 status: 'drafted'|'sent'|'replied'|'closed', to, subject, notes, contact: { name, title, email,
- *                 guessed }, way, at (first saved), sentAt, updatedAt } }; in backups
+ *                 guessed }, way, at (first saved), sentAt, updatedAt, and for one sent from the review queue body
+ *                 (the email as sent), reason (the label of the reason it opened with), sendAt (when a scheduled email
+ *                 goes), followedUpAt } }; in backups
  */
 (function (root) {
   'use strict';
@@ -77,7 +81,14 @@
     setupDismissed: false,
     // The AI the Discover page uses: provider '' is the one under Settings › Cover letters & AI; effort 'quick' asks
     // for one round of ideas, 'thorough' for several angles and has pages read (discoverAiConfig).
-    discoverAi: { provider: '', model: '', effort: 'quick' },
+    discoverAi: {
+      provider: '',
+      model: '',
+      effort: 'quick',
+      ask: 'internship',
+      commonGround: false,
+      theirMorning: true,
+    },
   };
 
   // answerNotes: the candidate's own rules for answers ("I have never applied to any of these firms").
@@ -114,13 +125,21 @@
     };
   }
 
-  /** The Discover page's AI choice over its defaults: { provider ('' = as Settings), model, effort }. */
+  /**
+   * The Discover page's AI choice over its defaults: { provider ('' = as Settings), model, effort, and the review
+   * queue's ask ('internship' | 'call' | 'project'), commonGround (send the names of the person's university, school and
+   * employers to the AI's web search; off unless switched on) and theirMorning (a sent email arrives at 8:10 their
+   * time when it's outside their working day; on) }.
+   */
   function discoverAiSettings(settings) {
     const saved = (settings && settings.discoverAi) || {};
     return {
       provider: typeof saved.provider === 'string' ? saved.provider : '',
       model: typeof saved.model === 'string' ? saved.model : '',
       effort: saved.effort === 'thorough' ? 'thorough' : 'quick',
+      ask: ['call', 'project'].includes(saved.ask) ? saved.ask : 'internship',
+      commonGround: saved.commonGround === true,
+      theirMorning: saved.theirMorning !== false,
     };
   }
 
@@ -842,6 +861,8 @@
       careers: cache.careers || {},
       contacts: cache.contacts || {},
       research: cache.research || {},
+      hooks: cache.hooks || {},
+      queue: cache.queue && Array.isArray(cache.queue.items) ? cache.queue : null,
     });
   }
 
@@ -856,15 +877,19 @@
     careers,
     contacts,
     research,
+    hooks,
+    queue,
   }) {
     const cache = await getDiscoverCache();
     if (trackr) cache.trackr = trackr;
     if (hn) cache.hn = hn;
     if (listed) cache.listed = listedOf(listed);
+    if (queue) cache.queue = Array.isArray(queue.items) ? { items: queue.items, at: Number(queue.at) || 0 } : null;
     for (const [key, add] of [
       ['careers', careers],
       ['contacts', contacts],
       ['research', research],
+      ['hooks', hooks],
     ]) {
       if (!add) continue;
       cache[key] = Object.assign(cache[key], add);
