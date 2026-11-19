@@ -2582,9 +2582,18 @@ const DONE = {
  */
 function reconcileQueue() {
   const changed = [];
+  let copied = false;
   for (const i of review.items) {
     const rec = state.outreach[i.firm.id];
     if (i.status === 'scheduled') {
+      // Its schedule kept on the item too (one queued by an older version gets it here), so a record removed on the
+      // Outreach tab doesn't lose it.
+      const t = rec && (i.type === 'first' ? rec.sendAt : rec.followedUpAt);
+      const id = rec && i.type === 'first' ? rec.scheduleId || '' : i.scheduleId || '';
+      if (t && (t !== i.sendAt || id !== (i.scheduleId || ''))) {
+        Object.assign(i, { sendAt: t, scheduleId: id });
+        copied = true;
+      }
       const at = goesAt(i);
       // Taken back is Drafted with no schedule left: one set to Drafted by hand is still waiting at Nylas, so it
       // stays as it is, with Take it back, until it goes; so does one whose record was removed (the item keeps its
@@ -2608,7 +2617,7 @@ function reconcileQueue() {
     finishElsewhere(i, why);
     changed.push(i);
   }
-  if (changed.length) saveQueue();
+  if (changed.length || copied) saveQueue();
   whenDue();
   return changed;
 }
