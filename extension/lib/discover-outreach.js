@@ -291,6 +291,37 @@
     return common ? `${line} The candidate and ${flat(hook.about)} share ${flat(hook.shared)}.` : line;
   }
 
+  /** A person's name as words, without "Dr" or "Ms": "Dr Jane Smith" → ['jane', 'smith']. */
+  const nameWords = (n) => U.normalize(flat(n).replace(HONORIFIC, '')).split(' ').filter(Boolean);
+  /** Do two written names name the same person: the same first and last word? */
+  function samePerson(a, b) {
+    const x = nameWords(a);
+    const y = nameWords(b);
+    return x.length > 0 && y.length > 0 && x[0] === y[0] && x[x.length - 1] === y[y.length - 1];
+  }
+
+  /**
+   * Whom a hook is about, as the email must credit it: { kind: 'recipient' | 'person' | 'firm', name }, or null when it
+   * doesn't say. discoverHooks gives the firm by its registered name, but "Acme" is "Acme Capital LLP" too
+   * (discover.sameFirm(), when it is loaded).
+   */
+  function hookSubject(hook, contact, aliases) {
+    const about = flat(hook && hook.about);
+    if (!about) return null;
+    const sameFirm = D() && D().sameFirm;
+    if (aliases.some((a) => (squash(a) && squash(a) === squash(about)) || (sameFirm && sameFirm(a, about))))
+      return { kind: 'firm', name: displayName(about) || about };
+    if (contact && samePerson(about, contact.name)) return { kind: 'recipient', name: about };
+    return { kind: 'person', name: about };
+  }
+
+  // What the FIRM FACTS say of whom a hook is about, so the model can "say who" (Bob Jones's piece is not Jane's).
+  const ABOUT = {
+    recipient: 'the person you’re writing to',
+    person: 'someone else at the firm, not the person you’re writing to',
+    firm: 'the firm, not the person you’re writing to',
+  };
+
   /**
    * The firm as the model may describe it: its name, what it does, its kind, where it is, its size and standing,
    * the student roles and programme sentences its careers pages show (page text 1,500 characters in all), the roles
@@ -366,7 +397,13 @@
     const who = addressee(contact);
     if (who) lines.push('', `Writing to: ${who}`);
     const reason = usableHook(hook);
-    if (reason) lines.push('', 'Reason to write (checked; open with it):', hookLine(reason));
+    if (reason) {
+      lines.push('', 'Reason to write (checked; open with it):', hookLine(reason));
+      // factLine() names the person only for common ground: a work hook's quote ("We think gilt yields will fall…")
+      // needn't say whose it is.
+      const whom = hookSubject(reason, contact, aliases);
+      if (whom) lines.push(`About: ${whom.name} (${ABOUT[whom.kind]})`);
+    }
 
     const text = lines.join('\n');
     const names = [
@@ -534,24 +571,65 @@
     );
 
   /**
-   * Does the first paragraph take up the hook: a telling word of its quote, or of the institution shared, that isn't
-   * the firm's name or the person's? "I saw that you also studied at Leeds" does; "Acme Capital trades bonds" doesn't.
-   * True when the quote has no telling word to look for.
+   * Does the first paragraph take up the hook: the institution shared, or a telling word of its quote that only the
+   * hook brings (not the firm's or the person's name, nor what the rest of FIRM FACTS already says: "fund", "London")?
+   * "I saw that you also studied at Leeds" does; "Acme Capital is a macro fund in London" doesn't, even when the quote
+   * is about a London fund. When the rest of the facts say everything the quote does, any telling word of it counts;
+   * true when the quote has none.
    */
   function opensWith(first, hook, ctx) {
+    const shared = hook.kind === 'common' ? str(hook.shared) : '';
+    if (shared && holds(loose(first), shared)) return true;
     const names = new Set(U.tokens([...ctx.aliases, hook.about].join(' ')));
-    const want = new Set(telling(`${hook.quote} ${hook.kind === 'common' ? str(hook.shared) : ''}`, names));
+    const known = new Set([...names, ...U.tokens(ctx.plainFacts)]);
+    const said = `${hook.quote} ${shared}`;
+    let want = new Set(telling(said, known));
+    if (!want.size) want = new Set(telling(said, names));
     return !want.size || telling(first, names).some((t) => want.has(t));
   }
 
+  // Words that credit the reader with something ("your piece on…", "you also studied…"): wrong when the hook is
+  // someone else's or the firm's.
+  const CREDITS =
+    /\byour\s+(?:\p{L}+\s+)?(?:piece|article|post|blog|talk|paper|interview|podcast|essay|book|newsletter|thesis|research|degree|presentation|comments?|op-ed|writing)\b|\byou\s+(?:\p{L}+\s+)?(?:studied|wrote|published|said|spoke|presented|joined|graduated|founded|built|launched|posted|shared|led|started|opened|moved)\b/iu;
+
   /**
-   * Does a follow-up say something new: a telling word from the candidate's material that neither the first email nor
-   * the firm facts had ("Excel" when the first email named Python and SQL)?
+   * Does the first paragraph say whose the hook is when it isn't the reader's: names the person (in full or by
+   * surname) or the firm, and doesn't give it to "you"? "I saw that your colleague Bob Jones also studied at Leeds"
+   * does; "I saw that you also studied at Leeds" (to Jane) doesn't.
+   */
+  function saysWhose(first, whom, ctx) {
+    if (CREDITS.test(first)) return false;
+    if (whom.kind === 'firm') return namesFirm(first, ctx.aliases);
+    const words = nameWords(whom.name);
+    const p = loose(first);
+    return holds(p, whom.name) || (words.length > 1 && holds(p, words[words.length - 1]));
+  }
+
+  // The material's own section labels (letter.materials() writes "Skills:", "Notes from the candidate:"): a heading,
+  // not something the candidate did.
+  const LABEL =
+    /^[ \t]*(?:name|contact|lives in|education|experience|skills|languages|summary|notes from the candidate|extra details from the candidate|links|cv):[ \t]*/gim;
+  // Words a CV and a nudge both have without saying anything new: its headings and filler ("my skills", "more details").
+  // prettier-ignore
+  const VAGUE = new Set([
+    'name', 'contact', 'details', 'detail', 'lives', 'education', 'skills', 'skill', 'languages', 'summary', 'notes',
+    'note', 'candidate', 'extra', 'links', 'link', 'projects', 'interests', 'achievements', 'activities', 'profile',
+    'references', 'personal', 'statement', 'technical', 'degree', 'grade', 'grades', 'classification', 'keen', 'learn',
+    'chance', 'welcome', 'tell', 'share', 'discuss', 'background', 'knowledge', 'ability', 'abilities', 'strong',
+    'good', 'great', 'excellent', 'motivated', 'enthusiastic', 'driven', 'eager', 'curious', 'career', 'future',
+    'help', 'contribute', 'available', 'match',
+  ]);
+
+  /**
+   * Does a follow-up say something new: a telling word from the candidate's material (past its section labels) that
+   * neither the first email nor the firm facts had, and that names something ("Excel" when the first email named
+   * Python and SQL; not "my skills")?
    */
   function addsSomething(body, ctx) {
     const old = new Set(U.tokens(`${ctx.first}\n${ctx.facts}`));
-    const mine = new Set(U.tokens(ctx.material));
-    return telling(body, old).some((t) => mine.has(t));
+    const mine = new Set(U.tokens(String(ctx.material || '').replace(LABEL, '')));
+    return telling(body, old).some((t) => mine.has(t) && !VAGUE.has(t));
   }
 
   /** Is this address or number the candidate's own? Phones compare on their last nine digits (+44 7700… = 07700…). */
@@ -564,8 +642,9 @@
   /**
    * Check a cleaned draft ({ subject, paragraphs, raw }) against ctx: { aliases, firmName, facts, sources, greeting,
    * closing, signature, role, emails, phones, today }, and what a kind of email adds: size (EMAIL_SIZE by default),
-   * askNumbers (the ask's own "15"), hook (the first paragraph takes it up), reply (the subject is the thread's, not
-   * the model's), stock (more phrases to avoid), first and material (a follow-up says something new).
+   * askPhrase (the ask's own "15-minute call", whose number stands), hook with plainFacts and hookAbout (the first
+   * paragraph takes it up and says whose it is; the quote's names and numbers stand there only), reply (the subject is
+   * the thread's, not the model's), stock (more phrases to avoid), first and material (a follow-up says something new).
    * [{ ok, what, severe }]: what says what passed or what to fix.
    */
   function checkEmail(email, ctx) {
@@ -620,22 +699,41 @@
       `Replace stock phrases and flattery with plain, specific wording: ${stock.map(quote).join(', ')}`,
     );
 
-    const allowed = new Set(L().numbers([ctx.sources, ctx.facts].join('\n')));
-    // The summer being asked about ("summer 2027") is a date, not a fact to check; nor is the ask's own "15 minutes".
+    // A hook's quote is about the firm or its people: its names and numbers stand in the subject and the paragraph that
+    // opens with it, never in what the email says about the candidate ("…and took her MSc at Imperial in 2019").
+    const [lead = '', ...later] = paragraphs;
+    const rest = ctx.hook && ctx.plainFacts != null ? ctx.plainFacts : ctx.facts;
+    // The summer being asked about ("summer 2027") is a date, not a fact to check.
     const year = new Date(ctx.today).getFullYear();
-    for (let y = year; y <= year + 2; y++) allowed.add(String(y));
-    for (const x of ctx.askNumbers || []) allowed.add(x);
-    const invented = [...new Set(all.match(/\d+(?:[.,:]\d+)*/g) || [])].filter((x) => {
-      const v = L().numbers(x)[0];
-      return !allowed.has(v) && !allowed.has(v.replace(/\.0+$/, ''));
-    });
+    const allowed = (facts) => {
+      const out = new Set(L().numbers([ctx.sources, facts].join('\n')));
+      for (let y = year; y <= year + 2; y++) out.add(String(y));
+      return out;
+    };
+    // Nor is the ask's own "15-minute call": that phrase is taken out first, so a 15 anywhere else is still checked.
+    const numbersIn = (text, ok) => {
+      const said = ctx.askPhrase ? text.replace(ctx.askPhrase, ' ') : text;
+      return [...new Set(said.match(/\d+(?:[.,:]\d+)*/g) || [])].filter((x) => {
+        const v = L().numbers(x)[0];
+        return !ok.has(v) && !ok.has(v.replace(/\.0+$/, ''));
+      });
+    };
+    const invented = [
+      ...new Set([
+        ...numbersIn([email.subject, lead].join('\n'), allowed(ctx.facts)),
+        ...numbersIn(later.join('\n\n'), allowed(rest)),
+      ]),
+    ];
     add(
       !invented.length,
       'Every number is from your material or the firm’s pages',
       `These numbers aren’t in the candidate’s material or the firm facts, so leave them out: ${invented.join(', ')}`,
       true,
     );
-    const unknown = unsupportedNames(body, [ctx.sources, ctx.facts, ctx.greeting, ctx.signature].join('\n'));
+    const corpus = (facts) => [ctx.sources, facts, ctx.greeting, ctx.signature].join('\n');
+    const unknown = [
+      ...new Set([...unsupportedNames(lead, corpus(ctx.facts)), ...unsupportedNames(later.join('\n\n'), corpus(rest))]),
+    ];
     add(
       !unknown.length,
       'Every name is from your material or the firm’s pages',
@@ -669,12 +767,22 @@
         `Name the role you’re asking about as the firm writes it: ${quote(ctx.role)}`,
         true,
       );
-    if (ctx.hook)
+    if (ctx.hook) {
       add(
-        opensWith(paragraphs[0] || '', ctx.hook, ctx),
+        opensWith(lead, ctx.hook, ctx),
         'Opens with the reason to write',
         `Open with the reason to write from FIRM FACTS, in the candidate’s own words: ${quote(L().clip(flat(ctx.hook.quote), 120))}`,
       );
+      // Someone else's piece or university given to the reader is a false statement about them.
+      const whom = ctx.hookAbout;
+      if (whom && whom.kind !== 'recipient')
+        add(
+          saysWhose(lead, whom, ctx),
+          `Says whose it is: ${whom.name}`,
+          `Say whose it is: the reason to write is about ${whom.name}, not the person you’re writing to; name ${whom.kind === 'firm' ? 'the firm' : 'them'}, and don’t write “you” or “your” for it`,
+          true,
+        );
+    }
     if (ctx.first)
       add(
         addsSomething(body, ctx),
@@ -763,9 +871,12 @@
   const ASKS = ['internship', 'call', 'project'];
   /** The ask an email makes: 'internship' (the default), 'call' or 'project'. */
   const askOf = (a) => (ASKS.includes(a) ? a : 'internship');
-  // The numbers an ask brings itself ("a 15-minute call"; "within a fortnight" as "2 weeks" or "14 days"), which the
-  // number check takes for that ask only.
-  const ASK_NUMBERS = { internship: [], call: ['15'], project: ['2', '14'] };
+  // The phrases an ask brings itself, numbers and all ("a 15-minute call"; "within a fortnight" as "2 weeks" or "14
+  // days"): the number check passes them for that ask, and only them (a "team of 15" is still checked).
+  const ASK_PHRASES = {
+    call: /\b(?:15|fifteen)[-\s\u2010-\u2015]*min(?:ute)?s?\b/gi,
+    project: /\b(?:2|two)[-\s\u2010-\u2015]*weeks?\b|\b(?:14|fourteen)[-\s\u2010-\u2015]*days?\b/gi,
+  };
   const NO_PROGRAMME = 'Don’t say the firm runs a programme unless FIRM FACTS says so.';
 
   /** Paragraph 3 of a draft by its ask, and a subject to show the model: { ask, example }. */
@@ -796,7 +907,7 @@
   function draftSystem(o) {
     const { ask, example } = askLines(o);
     const why = o.hook
-      ? `1. Why you’re writing: open with the reason to write in FIRM FACTS, in one or two plain sentences in the candidate’s own voice (“I saw that you also studied at Warwick”, “I read your piece on …”), with its own facts and never claiming more than its quote says; if it is about someone other than the person you’re writing to, say who. Then, in a sentence, why it matters to the candidate. Mention common ground once, lightly. ${NO_FLATTERY}`
+      ? `1. Why you’re writing: open with the reason to write in FIRM FACTS, in one or two plain sentences in the candidate’s own voice (“I saw that you also studied at Warwick”, “I read your piece on …”), with its own facts and never claiming more than its quote says; if it is about someone other than the person you’re writing to (FIRM FACTS says whom it is about), say who, and don’t write “you” or “your” for it. The quote is about them, never about the candidate: its names and numbers belong in this paragraph only. Then, in a sentence, why it matters to the candidate. Mention common ground once, lightly. ${NO_FLATTERY}`
       : `1. Why this firm: one concrete fact from FIRM FACTS (what it does, where it is, a programme it runs) and, in a sentence, why that interests the candidate. ${NO_FLATTERY}`;
     return [
       `You write short speculative emails for ${o.name || 'a student'} to a small firm about work experience, in ${o.lang === 'en-US' ? 'American' : 'British'} English.`,
@@ -979,7 +1090,12 @@
     const kind = role ? 'role' : 'speculative';
     const { mat, lang } = w;
     const sources = mat.text + (said ? `\n\nThe candidate also says: ${said}` : '');
-    const ctx = { ...w.ctx, facts: facts.text, sources, role, askNumbers: ASK_NUMBERS[ask], hook };
+    const ctx = { ...w.ctx, facts: facts.text, sources, role, askPhrase: ASK_PHRASES[ask], hook };
+    if (hook) {
+      // The facts without the hook's section: what the hook alone brings, and what may be said past the opening.
+      ctx.plainFacts = firmFacts({ firm, found, contact, role }).text;
+      ctx.hookAbout = hookSubject(hook, contact, ctx.aliases);
+    }
     const user = [
       `TODAY: ${L().formatDate(ctx.today, lang)}`,
       '',
@@ -1004,12 +1120,21 @@
 
   const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-  /** The day an email went, as a sentence gives it: "Thursday 12 November" (its year only when it isn't this one). */
-  function sentOn(t, lang, today) {
-    const d = new Date(t);
-    const full = L().formatDate(d, lang);
-    const date = d.getFullYear() === new Date(today).getFullYear() ? full.replace(/,? \d{4}$/, '') : full;
-    return `${WEEKDAYS[d.getDay()]}${lang === 'en-US' ? ',' : ''} ${date}`;
+  /**
+   * The day an email went, as a sentence gives it: "Thursday 12 November" (its year only when it isn't this one). By
+   * the calendar in `zone` (the firm's) when it is known: sent at 08:10 on Monday in Tokyo, it is Monday's email
+   * there, though it was still Sunday in London. Else by the calendar here.
+   */
+  function sentOn(t, lang, today, zone) {
+    const day = (x) => {
+      if (zone) return wall(x, zone);
+      const d = new Date(x);
+      return { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() };
+    };
+    const c = day(t);
+    const full = L().formatDate(new Date(c.y, c.m - 1, c.d, 12), lang);
+    const date = c.y === day(+new Date(today)).y ? full.replace(/,? \d{4}$/, '') : full;
+    return `${WEEKDAYS[new Date(Date.UTC(c.y, c.m - 1, c.d)).getUTCDay()]}${lang === 'en-US' ? ',' : ''} ${date}`;
   }
 
   /** What the first email asked, in a line (`about`), and the same ask again for paragraph 2 (`again`). */
@@ -1077,7 +1202,7 @@
     const role = flat(rec.role) || null;
     const facts = firmFacts({ firm, contact, role });
     const sentAt = Number(rec.sentAt);
-    const sent = Number.isFinite(sentAt) && sentAt > 0 ? sentOn(sentAt, lang, w.ctx.today) : '';
+    const sent = Number.isFinite(sentAt) && sentAt > 0 ? sentOn(sentAt, lang, w.ctx.today, zoneOf(firm).zone) : '';
     const was = flat(rec.subject);
     const body = str(rec.body);
     const earlier = [
@@ -1090,7 +1215,7 @@
       // The first email's own words (and the day it went) are fair to repeat: they were checked when it was written.
       sources: `${mat.text}\n\n${earlier}`,
       role,
-      askNumbers: ASK_NUMBERS[ask],
+      askPhrase: ASK_PHRASES[ask],
       size: FOLLOW_SIZE,
       reply: true,
       stock: FOLLOW_STOCK,
@@ -1121,9 +1246,13 @@
 
   const DAY = 864e5;
 
-  /** The moment `n` working days (Monday to Friday, by the UTC calendar) after `t` have gone by. */
+  /**
+   * The moment `n` working days (Monday to Friday, by the UTC calendar) after `t` have gone by. An email sent at the
+   * weekend starts counting on the Monday, 00:00: none of Monday had passed when it went.
+   */
   function workingDaysAfter(t, n) {
     let at = t;
+    while (!(new Date(at).getUTCDay() % 6)) at = Math.floor(at / DAY) * DAY + DAY;
     let left = n;
     while (left > 0) {
       at += DAY;
@@ -1150,7 +1279,8 @@
       const dueSince = workingDaysAfter(sentAt, waits);
       if (dueSince <= +now) out.push({ id, rec, dueSince });
     }
-    return out.sort((a, b) => a.dueSince - b.dueSince);
+    // Two emails sent the same weekend come due together: the older still goes first.
+    return out.sort((a, b) => a.dueSince - b.dueSince || Number(a.rec.sentAt) - Number(b.rec.sentAt));
   }
 
   /* ------------------------------------------------------------- send time */
@@ -1227,12 +1357,15 @@
   }
 
   const pad = (n) => String(n).padStart(2, '0');
-  /** Monday to Friday? (A calendar date in UTC: its weekday is the same everywhere.) */
-  const weekday = (date) => date.getUTCDay() % 6 !== 0;
+  // Where the weekend isn't Saturday and Sunday: Israel works Sunday to Thursday.
+  const WEEKENDS = { 'Asia/Jerusalem': [5, 6] };
+  /** A working day in `zone`? (A calendar date in UTC: its weekday is the same everywhere.) */
+  const workday = (date, zone) => !(WEEKENDS[zone] || [0, 6]).includes(date.getUTCDay());
 
   /**
-   * When to send to `firm` so the email arrives at 08:10 on a weekday, its time: `at` null to send now (a weekday
-   * between 08:00 and 17:00 there), else the next such morning in UTC ms, worked out with Intl so clock changes count.
+   * When to send to `firm` so the email arrives at 08:10 on a working day, its time (Monday to Friday; Sunday to
+   * Thursday in Israel): `at` null to send now (a working day between 08:00 and 17:00 there), else the next such
+   * morning in UTC ms, worked out with Intl so clock changes count.
    * local: when it arrives, as the page says it ("Mon 08:10 in London", or now: "Tue 10:42 in London"). A firm whose
    * zone isn't known (a US firm without a city we know) → { at: null, zone: null, local: '' }.
    */
@@ -1249,9 +1382,9 @@
     const day = (k) => new Date(Date.UTC(w.y, w.m - 1, w.d + k));
     const mins = w.h * 60 + w.min;
     const opens = Math.min(OPENS, hour) * 60;
-    if (weekday(day(0)) && mins >= opens && mins < CLOSES * 60) return { at: null, zone, local: said(t) };
-    let k = weekday(day(0)) && mins < hour * 60 + minute ? 0 : 1;
-    while (!weekday(day(k))) k++;
+    if (workday(day(0), zone) && mins >= opens && mins < CLOSES * 60) return { at: null, zone, local: said(t) };
+    let k = workday(day(0), zone) && mins < hour * 60 + minute ? 0 : 1;
+    while (!workday(day(k), zone)) k++;
     const d = day(k);
     const at = utcOf(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), hour, minute, zone);
     return { at, zone, local: said(at) };

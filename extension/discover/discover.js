@@ -2882,9 +2882,12 @@ async function saveItem(item) {
     const nylas = await store.getNylas();
     if (!nylas || !nylas.grantId) throw new Error('Connect your inbox first (Settings › Email codes).');
     const cv = item.type === 'follow' ? null : await cvFile();
+    const rec = state.outreach[item.firm.id];
     const r = await N.saveDraft(
       nylas,
       {
+        // A follow-up saved as a draft is still a reply in the first email's thread.
+        ...(item.type === 'follow' && rec && rec.messageId ? { replyTo: rec.messageId } : {}),
         to: [{ email: item.to }],
         subject: item.subject,
         text: item.body,

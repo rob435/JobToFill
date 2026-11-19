@@ -3,7 +3,8 @@
  * inbox) you choose, on the Nylas v3 API. For verification codes it only reads: the last few messages, never moving
  * or marking anything. Discover's outreach can also save an email you wrote to your mailbox's drafts or send it,
  * your CV attached, but only when you press that button for that one email. A send can wait for a time (Nylas holds
- * it until then and it can be taken back until 10 seconds before), and a follow-up goes into the first email's thread.
+ * it until then; taking it back, until a minute before, has Nylas delete it unsent), and a follow-up goes into the
+ * first email's thread. Once a waiting email's time has passed it's looked up by its subject, to learn its thread.
  */
 (function (root) {
   'use strict';
@@ -34,24 +35,41 @@
   // What Nylas (or Google and Microsoft behind it) says when the inbox was connected to read mail only.
   const SCOPE = /scope|permission|insufficient|not authori[sz]ed|forbidden|access_denied/i;
 
-  function explain(status, body, writing, path) {
+  function explain(status, body, method, path) {
     const detail = String((body && body.error && (body.error.message || body.error.type)) || '').slice(0, 200);
+    const at = path || '';
     // A key that reads mail but can't send it: the inbox was connected with read-only access.
-    if (writing && (status === 403 || (status === 400 && SCOPE.test(detail))) && SCOPE.test(detail || 'forbidden'))
+    if (
+      method !== 'GET' &&
+      (status === 403 || (status === 400 && SCOPE.test(detail))) &&
+      SCOPE.test(detail || 'forbidden')
+    )
       return new NylasError(
         'Your inbox is connected to Nylas for reading only. Connect it again with permission to send and draft mail (Settings › Email codes).',
         { status, code: 'scope' },
       );
-    // A time Nylas won't hold an email for: "send_at must be at least 1 minute in the future".
-    if (writing && status === 400 && /send_?at|send time|schedul/i.test(detail))
+    // A time Nylas won't hold an email for, on a send only: "send_at must be at least 1 minute in the future".
+    if (
+      method === 'POST' &&
+      /\/messages\/send$/.test(at) &&
+      status === 400 &&
+      /send_?at|send time|schedul/i.test(detail)
+    )
       return new NylasError(
         'Nylas wouldn’t schedule this email: it sends at a time from one minute to 30 days ahead. Send it now, or choose another time.',
         { status, code: 'schedule' },
       );
+    // A take-back Nylas refused ("… less than 10 seconds before send_at", an id it can't read): the email may still
+    // go, so the words must never invite sending it again.
+    if (method === 'DELETE' && /\/messages\/schedules\//.test(at) && status === 400)
+      return new NylasError(
+        'Nylas couldn’t take that email back, so it may still go at its time. Look in your Sent folder before sending it again.',
+        { status, code: 'late' },
+      );
     if (status === 401 || status === 403)
       return new NylasError('Nylas rejected the API key (or it belongs to the other region).', { status, code: 'key' });
     // A schedule Nylas no longer has: the email went (its record lasts 72 hours after), or it was taken back already.
-    if (status === 404 && /\/messages\/schedules\//.test(path || '') && !/grant/i.test(detail))
+    if (status === 404 && /\/messages\/schedules\//.test(at) && !/grant/i.test(detail))
       return new NylasError('Nylas no longer has that email waiting: it has gone already, or was taken back.', {
         status,
         code: 'gone',
@@ -110,7 +128,7 @@
     } catch (err) {
       data = null;
     }
-    if (!res.ok) throw explain(res.status, data, method !== 'GET', path);
+    if (!res.ok) throw explain(res.status, data, method, path);
     return data || {};
   }
 
@@ -167,8 +185,10 @@
   // Sunday night and sent at "08:09" on Monday) it goes now: Nylas would refuse it, and its moment has come.
   const MIN_LEAD = 2 * 60 * 1000;
   const MAX_AHEAD = 30 * 24 * 3600 * 1000;
-  // Nylas can take a scheduled email back until 10 seconds before it goes.
-  const CANCEL_BY = 10 * 1000;
+  // Nylas takes a scheduled email back only if the request reaches it 10 seconds before it goes, and closer than that
+  // its 202 promises nothing. A minute leaves room for a slow request (up to 20 s) and a laptop clock a little off, so
+  // "Taken back" is never said of an email that then goes (and a second Send would email them twice).
+  const CANCEL_BY = 60 * 1000;
 
   const escapeHtml = (s) =>
     String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -292,19 +312,27 @@
     const at = sendAtOf(email && email.sendAt, now);
     const d = await write(config, '/messages/send', email, fetchImpl, at ? { send_at: at } : {});
     if (!at) return made(d);
-    return { ...made(d), scheduleId: String(d.schedule_id || ''), sendAt: (Number(d.send_at) || at) * 1000 };
+    // Any id or thread in the 202 is Nylas's for a message the mailbox doesn't have yet, never the one in Sent later.
+    const sendAt = (Number(d.send_at) || at) * 1000;
+    return { id: '', threadId: '', date: 0, scheduleId: String(d.schedule_id || ''), sendAt };
   }
 
   /**
    * Take back an email Nylas is holding to send later (the page's Undo): it's deleted unsent. Given `sendAt` (ms), a
-   * try within 10 seconds of it says it's too late rather than racing the send. → { scheduleId, cancelled: true }
+   * try within a minute of it says it's too late rather than racing the send. → { scheduleId, cancelled: true }
    */
   async function cancelScheduled(config, scheduleId, { sendAt, now = Date.now(), fetch: fetchImpl } = {}) {
     if (!config || !config.grantId) throw new NylasError('Choose which inbox to use first.', { code: 'setup' });
     const id = String(scheduleId || '').trim();
     if (!id) throw new NylasError('There’s no scheduled email to take back.', { code: 'setup' });
-    if (sendAt && now > Number(sendAt) - CANCEL_BY)
-      throw new NylasError('It’s too late to take that email back: it’s going now.', { code: 'late' });
+    const due = Number(sendAt);
+    if (sendAt && now > due - CANCEL_BY)
+      throw new NylasError(
+        now >= due
+          ? 'That email has gone already, so it can’t be taken back.'
+          : 'It’s too late to take that email back: it goes in under a minute.',
+        { code: 'late' },
+      );
     const path = `/v3/grants/${encodeURIComponent(config.grantId)}/messages/schedules/${encodeURIComponent(id)}`;
     await request(config, path, { method: 'DELETE' }, fetchImpl);
     return { scheduleId: id, cancelled: true };

@@ -165,12 +165,21 @@ test('nylas: a follow-up names the message it answers, so it lands in the same t
 
 test('nylas: a scheduled send carries send_at in seconds and gives back the schedule to undo', async () => {
   const log = [];
+  // The reference's 202 is a whole message object: its id and thread are Nylas's own, never the one in Sent later.
   const fetchFn = fake(
     {
       status: 202,
       data: {
         request_id: 'r-1',
-        data: { grant_id: 'g-1', subject: jane.subject, send_at: 1795421400, schedule_id: 'sch-8cd5' },
+        data: {
+          object: 'message',
+          id: 'tmp-1',
+          thread_id: 'tmp-t',
+          grant_id: 'g-1',
+          subject: jane.subject,
+          send_at: 1795421400,
+          schedule_id: 'sch-8cd5',
+        },
       },
     },
     log,
@@ -260,7 +269,7 @@ test('nylas: a schedule Nylas refuses says so in plain words', async () => {
   );
 });
 
-test('nylas: Undo takes a scheduled email back, until 10 seconds before it goes', async () => {
+test('nylas: Undo takes a scheduled email back, until a minute before it goes', async () => {
   const log = [];
   const ok = fake(
     { status: 202, data: { request_id: 'r-2', data: { message: 'requested cancelation for workflow' } } },
@@ -274,10 +283,17 @@ test('nylas: Undo takes a scheduled email back, until 10 seconds before it goes'
   assert.equal(log[0].init.method, 'DELETE');
   assert.equal(log[0].init.body, undefined);
   assert.equal(log[0].init.headers.Authorization, 'Bearer nyk_x');
-  await nylas.cancelScheduled(config, 'sch-8cd5', { fetch: ok, sendAt: MONDAY, now: MONDAY - 10000 });
+  await nylas.cancelScheduled(config, 'sch-8cd5', { fetch: ok, sendAt: MONDAY, now: MONDAY - 60000 });
+  // Nylas's own cut-off counts when the request arrives, so 10.2 s on this clock is a race: refused without asking.
+  for (const now of [MONDAY - 59000, MONDAY - 10200])
+    await assert.rejects(
+      nylas.cancelScheduled(config, 'sch-8cd5', { fetch: ok, sendAt: MONDAY, now }),
+      (e) => e.code === 'late' && /too late to take that email back: it goes in under a minute/.test(e.message),
+    );
+  // The next day the card may still offer it: that one has gone.
   await assert.rejects(
-    nylas.cancelScheduled(config, 'sch-8cd5', { fetch: ok, sendAt: MONDAY, now: MONDAY - 9000 }),
-    (e) => e.code === 'late' && /too late/.test(e.message),
+    nylas.cancelScheduled(config, 'sch-8cd5', { fetch: ok, sendAt: MONDAY, now: MONDAY + 26 * 3600000 }),
+    (e) => e.code === 'late' && /has gone already/.test(e.message),
   );
   await assert.rejects(nylas.cancelScheduled(config, '', { fetch: ok }), (e) => e.code === 'setup');
   await assert.rejects(nylas.cancelScheduled({ apiKey: 'k' }, 'sch-8cd5', { fetch: ok }), (e) => e.code === 'setup');
@@ -289,6 +305,30 @@ test('nylas: Undo takes a scheduled email back, until 10 seconds before it goes'
   await assert.rejects(nylas.cancelScheduled(config, 'sch-8cd5', { fetch: noGrant }), (e) => e.code === 'grant');
   const readOnly = fake({ status: 403, data: { error: { message: 'Insufficient scopes for this request' } } }, []);
   await assert.rejects(nylas.cancelScheduled(config, 'sch-8cd5', { fetch: readOnly }), (e) => e.code === 'scope');
+});
+
+test('nylas: a take-back Nylas refuses never reads as a refused send, which would invite a second email', async () => {
+  const log = [];
+  for (const message of ['schedule cannot be cancelled less than 10 seconds before send_at', 'invalid schedule id']) {
+    const refused = fake({ status: 400, data: { error: { type: 'invalid_request_error', message } } }, log);
+    await assert.rejects(
+      nylas.cancelScheduled(config, 'sch-1', { fetch: refused, sendAt: MONDAY, now: SUNDAY }),
+      (e) => {
+        assert.equal(e.code, 'late');
+        assert.equal(e.status, 400);
+        assert.match(e.message, /couldn’t take that email back, so it may still go/);
+        assert.doesNotMatch(e.message, /wouldn’t schedule|Send it now/);
+        return true;
+      },
+    );
+  }
+  assert.deepEqual(
+    log.map((l) => l.init.method),
+    ['DELETE', 'DELETE'],
+  );
+  // A draft's refusal that happens to name a schedule isn't a send time Nylas turned down either.
+  const draft = fake({ status: 400, data: { error: { message: 'drafts cannot be scheduled here' } } }, []);
+  await assert.rejects(nylas.saveDraft(config, jane, { fetch: draft }), (e) => e.code === null);
 });
 
 test('nylas: where a scheduled email is, bare as the docs show it or wrapped in data', async () => {
