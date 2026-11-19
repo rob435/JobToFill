@@ -1793,7 +1793,7 @@ function sendView(firm, d) {
       if (!a.draft || !a.send) rerender(firm.id);
     });
   const rec = state.outreach[firm.id];
-  const sent = rec && rec.status !== 'drafted' && rec.via === 'nylas' && rec.messageId;
+  const sent = rec && rec.status !== 'drafted' && rec.via === 'nylas' && (rec.messageId || rec.scheduleId);
   return el(
     'div',
     { className: 'send' },
@@ -1872,6 +1872,7 @@ async function checkReplies() {
     if (next) state.outreach[id] = next;
   }
   if (waiting.length) renderOutreach();
+  if (reconcileQueue()) renderReview(true);
 }
 
 /** The draft's checks: what failed, each on its own line, and the ones that passed as one count. */
@@ -2383,22 +2384,30 @@ async function markSeen() {
 
 // The review queue: firms an email is prepared for in the background (the careers check, the people, a reason to write
 // and the draft, two firms at a time), then shown one at a time with big buttons, so writing to ten firms is reading ten
-// emails and pressing Send ten times. Nothing is sent unless Send is pressed for that email, and a sent one can be taken
-// back for five seconds.
+// emails and pressing Send ten times. Nothing is sent unless Send is pressed for that email: a press in the first moment
+// a card shows is taken for the card before, a held key counts once, and each sent email can be taken back for five
+// seconds (leaving the page in that time takes it back too).
 const review = {
   items: [], // [{ id, firm, type: 'first' | 'follow', status, step, error, hooks, hook, to, subject, body, result, … }]
-  at: 0, // the item shown
+  at: 0, // the item shown (items.length: the summary)
   busy: 0, // items being prepared
-  consent: null, // the AI consent asked for on the click that filled the queue (Firefox)
-  pending: null, // { item, timer, run }: a send waiting out its five seconds
-  toast: null, // { text, undo?, show? }
+  consent: null, // the AI consent asked for on the click that started the work (Firefox)
+  pending: new Map(), // item id → { item, timer }: sends waiting out their five seconds, oldest first
+  toast: null, // { text, show?, takeBack?, error? }
   drawn: '', // what the card was last drawn from, so typing in it isn't undone by a redraw
+  shownKey: '', // the item and status the card shows, and since when: a press then is for the card before
+  shownAt: 0,
+  cleared: [], // firm ids cleared from the queue, so Write to the next 10 doesn't bring them back
 };
 const PREPARE_AT_ONCE = 2;
 const UNDO_MS = 5000;
+const FRESH_MS = 600; // a Send this soon after a card shows (or a doubt is raised) was meant for what was there before
 const HOOK_AGE = 7 * 24 * 3600e3; // reasons to write are looked for again after a week
 const TOP = 10;
-const FINISHED = new Set(['sent', 'scheduled', 'saved', 'skipped']);
+// Statuses: waiting, preparing, ready, none (no one to write to), failed, sending (its five seconds), delivering (at
+// Nylas), and the finished ones.
+const FINISHED = new Set(['sent', 'scheduled', 'saved', 'skipped', 'watched']);
+const MOVING = new Set(['sending', 'delivering']);
 const STEPS = [
   ['check', 'Reading its careers pages and team pages'],
   ['people', 'Searching the web for the people to write to'],
@@ -2411,21 +2420,30 @@ const settingOf = (key, fallback) => {
   return key in d ? d[key] : fallback;
 };
 const askChoice = () => settingOf('ask', 'internship');
+const shown = () => review.items[review.at] || null;
+/** Draw the queue, the card again only when it shows this item (an async step finishing elsewhere keeps the cursor). */
+const redraw = (item) => renderReview(shown() === item);
 
 /**
- * The queue as kept between visits: what each item was doing is forgotten, its draft and outcome kept. Written at
- * once after a send or a skip; typing (`soon`) waits for a pause.
+ * The queue as kept between visits: what each item was doing is forgotten, its draft and outcome kept. An email still
+ * in its five seconds wasn't sent and says so; one handed to Nylas is looked for in Sent when the page opens again.
+ * Written at once after a send or a skip; typing (`soon`) waits for a pause.
  */
 function saveQueue(soon) {
   clearTimeout(saveQueue.timer);
   const write = () => {
-    const items = review.items.map((i) => ({
-      ...i,
-      status: ['preparing', 'sending'].includes(i.status) ? (i.body ? 'ready' : 'waiting') : i.status,
-      step: '',
-      armed: false,
-    }));
-    return store.setDiscoverCache({ queue: { items, at: review.at } }).catch(() => null);
+    const items = review.items.map((i) => {
+      const kept = { ...i, step: '', armed: false };
+      if (i.status === 'preparing') kept.status = i.body ? 'ready' : 'waiting';
+      if (i.status === 'sending')
+        Object.assign(kept, {
+          status: 'ready',
+          error: 'Not sent: the page was closed before its five seconds were up.',
+        });
+      if (kept.status === 'waiting') kept.held = true;
+      return kept;
+    });
+    return store.setDiscoverCache({ queue: { items, at: review.at, cleared: review.cleared } }).catch(() => null);
   };
   if (soon) saveQueue.timer = setTimeout(write, 400);
   else write();
@@ -2437,67 +2455,119 @@ function reviewCount() {
   $('#review-count').textContent = ready ? String(ready) : '';
 }
 
+/** No AI key: said where the person is looking (the toast on Review, the status line on Find firms). */
+function noAi() {
+  if ($('#review-view').hidden) return status(NO_AI, true);
+  review.toast = { text: NO_AI, error: true };
+  renderReview();
+}
+
+/**
+ * Why an item is done already, from the firm's outreach record ('' when it isn't): a first email to a firm written to
+ * since (from the drawer, another tab, Outreach), a follow-up to one that has had a reply or a follow-up.
+ */
+function alreadyDone(item, rec) {
+  if (item.type === 'follow') {
+    if (!rec) return 'The email it follows up is no longer in your outreach list.';
+    if (rec.status === 'replied') return 'They replied: see the Outreach tab.';
+    if (rec.status !== 'sent') return 'No longer waiting for a reply: see the Outreach tab.';
+    return rec.followedUpAt ? 'Followed up already.' : '';
+  }
+  return rec && rec.status !== 'drafted' ? 'Already written to: see the Outreach tab.' : '';
+}
+
+/**
+ * The queue squared with the outreach records: an item written to elsewhere is finished, and an email scheduled for
+ * their morning whose time has passed has gone.
+ */
+function reconcileQueue() {
+  let changed = false;
+  for (const i of review.items) {
+    const rec = state.outreach[i.firm.id];
+    if (i.status === 'scheduled' && i.type === 'first') {
+      if (rec && rec.status === 'drafted') {
+        Object.assign(i, { status: 'ready', outcome: '' });
+        changed = true;
+      } else if (!rec || !rec.sendAt || rec.sendAt <= Date.now()) {
+        Object.assign(i, { status: 'sent', outcome: rec && rec.sendAt ? `Sent ${day(rec.sendAt)}.` : 'Sent.' });
+        changed = true;
+      }
+      continue;
+    }
+    if (FINISHED.has(i.status) || MOVING.has(i.status) || i.status === 'preparing') continue;
+    const why = alreadyDone(i, rec);
+    if (why) {
+      Object.assign(i, { status: 'sent', outcome: why });
+      changed = true;
+    }
+  }
+  if (changed) saveQueue();
+  return changed;
+}
+
 /**
  * Put firms in the queue (one already in it is shown instead; one already written to is left out, and said so) and
  * start preparing them. Called from a click, so Firefox's AI consent can be asked for here.
  */
 function writeTo(firms) {
-  if (!aiReady()) {
-    status(NO_AI, true);
-    return;
-  }
+  if (!aiReady()) return noAi();
   review.consent = requestAiConsent();
   const added = [];
   const written = [];
   for (const firm of firms) {
-    const rec = state.outreach[firm.id];
     if (review.items.some((i) => i.id === firm.id)) continue;
-    if (rec && rec.status !== 'drafted') {
+    if (alreadyDone({ type: 'first' }, state.outreach[firm.id])) {
       written.push(firm.name);
       continue;
     }
     added.push({ id: firm.id, firm, type: 'first', status: 'waiting', step: '', hooks: [], hook: 0 });
   }
   review.items.push(...added);
+  review.cleared = review.cleared.filter((id) => !added.some((i) => i.id === id));
   const first = added[0] ? added[0].id : firms.length === 1 ? firms[0].id : '';
   const index = review.items.findIndex((i) => i.id === first);
   if (index >= 0) review.at = index;
-  review.toast = written.length
-    ? {
-        text: `Already written to ${written.slice(0, 3).join(', ')}${written.length > 3 ? '…' : ''}: see the Outreach tab.`,
-      }
-    : null;
-  pump();
+  if (written.length)
+    review.toast = {
+      text: `Already written to ${written.slice(0, 3).join(', ')}${written.length > 3 ? '…' : ''}: see the Outreach tab.`,
+    };
+  pump(added[0]);
   saveQueue();
   showTab('review');
-  renderReview();
+  renderReview(true);
   if (state.results.length) renderResults();
 }
 
-/** The next firms of the results to write to: not in the queue, not written to. */
+/** The next firms of the results to write to: not in the queue or cleared from it, not written to or saved as a draft. */
 function nextToWrite(n = TOP) {
   return visible()
     .map((r) => r.firm)
-    .filter(
-      (f) =>
+    .filter((f) => {
+      const rec = state.outreach[f.id];
+      return (
         !review.items.some((i) => i.id === f.id) &&
-        !(state.outreach[f.id] && state.outreach[f.id].status !== 'drafted'),
-    )
+        !review.cleared.includes(f.id) &&
+        !alreadyDone({ type: 'first' }, rec) &&
+        !(rec && rec.draftId)
+      );
+    })
     .slice(0, n);
 }
 
 /** Carry on preparing what the page left waiting when it was closed (asked for: each one is an AI call or few). */
-function resumeQueue() {
-  if (!aiReady()) return status(NO_AI, true);
+function resumeQueue(first) {
+  if (!aiReady()) return noAi();
   review.consent = requestAiConsent();
-  pump();
+  for (const i of review.items) i.held = false;
+  pump(first);
   renderReview(true);
 }
 
-/** Start preparing waiting items, two at a time, in queue order. */
-function pump() {
+/** Start preparing waiting items, two at a time: `first` (the one just asked for) first, then in queue order. */
+function pump(first) {
   while (review.busy < PREPARE_AT_ONCE) {
-    const item = review.items.find((i) => i.status === 'waiting');
+    const ok = (i) => i && i.status === 'waiting' && !i.held;
+    const item = ok(first) ? first : review.items.find(ok);
     if (!item) break;
     review.busy++;
     prepare(item).finally(() => {
@@ -2513,16 +2583,20 @@ async function settled(set, id) {
   while (set.has(id)) await new Promise((resolve) => setTimeout(resolve, 400));
 }
 
-/** One item made ready: the firm checked, its people found, a reason to write looked for, the email drafted. */
+/**
+ * One item made ready: the firm checked, its people found, a reason to write looked for, the email drafted. Skipped
+ * meanwhile, it stops where it is.
+ */
 async function prepare(item) {
   item.status = 'preparing';
   item.error = '';
   const step = (s) => {
     item.step = s;
-    renderReview();
+    redraw(item);
   };
+  const going = () => item.status === 'preparing';
   try {
-    if (review.consent && !(await review.consent))
+    if (!(await (review.consent || requestAiConsent())))
       throw new Error('Firefox didn’t allow sending the firm’s name and your material to your AI provider.');
     state.config = await store.discoverAiConfig();
     if (ai.problem(state.config)) throw new Error(`${ai.problem(state.config)} (Settings › Cover letters & AI)`);
@@ -2536,38 +2610,50 @@ async function prepare(item) {
     await checkFirm(firm);
     // A check or search the firm's card started is waited for, not started again.
     await settled(state.running, firm.id);
+    if (!going()) return;
     if (canResearch() && !(state.research[firm.id] && state.research[firm.id].result)) {
       step('people');
       await researchFirm(firm, null);
     }
     await settled(state.researching, firm.id);
+    if (!going()) return;
     const people = contactsOf(firm);
+    const searchError = (state.research[firm.id] || {}).error;
+    if (!people.length && searchError) throw new Error(`Couldn’t search the web for people: ${searchError}`);
     if (!people.length) {
       item.status = 'none';
       return;
     }
     const sure = people.find((p) => !p.guessed && !['guessed', 'unconfirmed'].includes(p.level));
-    const chosen = people.find((p) => sameAddress(p.address, item.to)) || sure || people[0];
-    item.to = chosen.address;
+    choose(item, people.find((p) => sameAddress(p.address, item.to)) || sure || people[0]);
     if (canSearch() && H()) {
       step('hooks');
+      const chosen = people.find((p) => sameAddress(p.address, item.to));
       item.hooks = await reasonsFor(firm, chosen, people).catch((err) => {
         item.hookError = errorText(err);
         return [];
       });
       item.hook = item.hooks.length ? 0 : -1;
     } else item.hook = -1;
+    if (!going()) return;
     step('draft');
     await writeDraft(item);
   } catch (err) {
+    if (!going()) return;
     item.status = 'failed';
     item.error = errorText(err);
   } finally {
-    if (item.status === 'preparing') item.status = item.body ? 'ready' : 'failed';
+    if (going()) item.status = item.body ? 'ready' : 'failed';
     item.step = '';
-    renderReview();
+    redraw(item);
     saveQueue();
   }
+}
+
+/** Who the item writes to, and how sure their address is, kept for when the firm's contacts change. */
+function choose(item, p) {
+  item.to = p.address;
+  item.toLevel = p.level || (p.guessed ? 'guessed' : 'listed');
 }
 
 /**
@@ -2578,13 +2664,14 @@ async function prepare(item) {
 async function reasonsFor(firm, contact, people) {
   const common = settingOf('commonGround', false) === true;
   const named = people.filter((p) => p.name);
-  const ref = (p) => ({ name: p.name, title: p.title || '', address: p.address });
+  const ref = (p) => ({ name: p.name, title: p.title || '', address: p.address, kind: p.kind || '' });
+  const to = contact && contact.name ? ref(contact) : null;
   let cached = state.hooks[firm.id];
   if (!cached || Date.now() - cached.at > HOOK_AGE || cached.common !== common) {
     const { profile } = await store.getActive();
     const result = await H().find((messages, options) => ai.search(state.config, { messages, ...options }), {
       firm: nowAt(firm),
-      contact: contact.name ? ref(contact) : null,
+      contact: to,
       people: named
         .filter((p) => p !== contact)
         .slice(0, 4)
@@ -2595,7 +2682,7 @@ async function reasonsFor(firm, contact, people) {
     cached = state.hooks[firm.id] = { at: Date.now(), common, result };
     await store.setDiscoverCache({ hooks: { [firm.id]: cached } });
   }
-  return H().rank((cached.result && cached.result.hooks) || [], { contact: contact.name ? ref(contact) : null });
+  return H().rank((cached.result && cached.result.hooks) || [], { contact: to });
 }
 
 /** The item's email written (again) for whoever it goes to, with the reason chosen and the ask chosen. */
@@ -2624,9 +2711,8 @@ async function writeDraft(item) {
     ...(hook ? { hook } : {}),
     ...(ask !== 'internship' ? { ask } : {}),
   });
+  choose(item, contact);
   Object.assign(item, {
-    status: 'ready',
-    to: contact.address,
     draftedFor: { address: contact.address, hook: item.hook, ask },
     role: r.kind === 'role' ? role : '',
     subject: r.subject || '',
@@ -2636,7 +2722,10 @@ async function writeDraft(item) {
     thin: !O.material({ profile, kit, cvText }).ok,
     error: '',
   });
-  const old = state.outreach[firm.id];
+  // Skipped while it was being written, it stays skipped (with the draft, for Write to them after all).
+  if (item.status === 'preparing') item.status = 'ready';
+  // The stored record, not this page's copy: another tab or the drawer may have sent to this firm meanwhile.
+  const old = (await store.getOutreach())[firm.id];
   if (!old || old.status === 'drafted')
     await setOutreach(firm, {
       status: 'drafted',
@@ -2650,7 +2739,8 @@ async function writeDraft(item) {
 /** A follow-up, in the same thread, to an email sent from here that has had no reply. */
 async function writeFollowUp(item) {
   const rec = state.outreach[item.firm.id];
-  if (!rec) throw new Error('The email it follows up is no longer in your outreach list.');
+  const why = alreadyDone(item, rec);
+  if (why) throw new Error(why);
   const { profile } = await store.getActive();
   const kit = await store.getKit(profile.id);
   const cvText = await readCv(profile, kit);
@@ -2665,7 +2755,6 @@ async function writeFollowUp(item) {
     today: Date.now(),
   });
   Object.assign(item, {
-    status: 'ready',
     to: rec.to,
     subject: r.subject || '',
     body: r.body || '',
@@ -2673,18 +2762,23 @@ async function writeFollowUp(item) {
     usage: usageLine(state.config, r.usage),
     error: '',
   });
+  if (item.status === 'preparing') item.status = 'ready';
 }
 
 /** Emails sent from here five working days ago without a reply or a follow-up: put in the queue on request. */
 function followUpsDue() {
   if (!O.dueFollowUps) return [];
-  return O.dueFollowUps(state.outreach, Date.now()).filter((d) => !review.items.some((i) => i.id === `${d.id}:follow`));
+  return O.dueFollowUps(state.outreach, Date.now()).filter(
+    (d) => !review.items.some((i) => i.id === `${d.id}:follow` && !FINISHED.has(i.status)),
+  );
 }
 
 function queueFollowUps() {
-  if (!aiReady()) return status(NO_AI, true);
+  if (!aiReady()) return noAi();
   review.consent = requestAiConsent();
   const due = followUpsDue();
+  // A follow-up skipped before is offered afresh.
+  review.items = review.items.filter((i) => !due.some((d) => i.id === `${d.id}:follow`));
   const items = due.map(({ id, rec }) => ({
     id: `${id}:follow`,
     firm: state.firms.find((f) => f.id === id) || { ...rec.firm, id },
@@ -2698,21 +2792,20 @@ function queueFollowUps() {
   // Follow-ups first: they're the ones waiting longest.
   review.items.splice(0, 0, ...items);
   review.at = 0;
-  pump();
+  pump(items[0]);
   saveQueue();
-  renderReview();
+  renderReview(true);
 }
 
 /* review: actions */
-
-const shown = () => review.items[review.at] || null;
 
 /** Show the next item that needs reading (after this one, then from the top), or the summary when none does. */
 function advance() {
   const n = review.items.length;
   for (let k = 1; k <= n; k++) {
     const i = (review.at + k) % n;
-    if (!FINISHED.has(review.items[i].status) && review.items[i].status !== 'sending') {
+    const s = review.items[i].status;
+    if (!FINISHED.has(s) && !MOVING.has(s)) {
       review.at = i;
       return renderReview(true);
     }
@@ -2726,13 +2819,31 @@ function move(by) {
   renderReview(true);
 }
 
-/** What makes a send worth a second press: an address made from a format, or a draft that failed a check. */
+/** Go to an item (Undo, Show it, Read them). */
+function showItem(item) {
+  const i = review.items.indexOf(item);
+  if (i < 0) return;
+  review.at = i;
+  renderReview(true);
+}
+
+/** The press is for this card only when the card has been showing for a moment (a double or held press isn't). */
+const freshCard = () => Date.now() - review.shownAt < FRESH_MS;
+
+/**
+ * What makes a send worth a second press: an address made from a format (or no longer among the firm's contacts), a
+ * draft that failed a check, a draft written for another person, reason or ask, or a CV the email mentions but that
+ * isn't uploaded.
+ */
 function doubtsOf(item) {
-  const p = contactsOf(item.firm).find((x) => sameAddress(x.address, item.to));
+  const first = item.type === 'first';
+  const p = first ? contactsOf(item.firm).find((x) => sameAddress(x.address, item.to)) : null;
+  const level = p ? p.level || (p.guessed ? 'guessed' : 'listed') : item.toLevel;
   return [
-    p && (p.guessed || ['likely', 'guessed', 'unconfirmed'].includes(p.level))
+    first && ['likely', 'guessed', 'unconfirmed'].includes(level)
       ? `${item.to} is made from the firm’s address format, not seen written anywhere: it may bounce.`
       : '',
+    first && !p ? `${item.to} is no longer among the firm’s contacts found: check it before sending.` : '',
     item.result && item.result.ok === false
       ? 'Some of the draft’s checks failed (listed above): read it through first.'
       : '',
@@ -2741,6 +2852,9 @@ function doubtsOf(item) {
       item.draftedFor.hook !== item.hook ||
       item.draftedFor.ask !== askChoice())
       ? 'You changed who it goes to, the reason or the ask since it was written: press Write it again first, or send it as it is.'
+      : '',
+    first && !state.cvName && /\bCV\b|résumé|resume|attached/i.test(item.body)
+      ? 'The email says your CV is attached, but none is uploaded (Settings › Resume & files): it goes without one.'
       : '',
   ].filter(Boolean);
 }
@@ -2751,63 +2865,105 @@ function arrival(item) {
   return O.sendTime(item.firm, Date.now()) || { at: null, local: '' };
 }
 
-/** Send: a doubtful email takes a second press; then it goes in five seconds unless Undo is pressed. */
+/**
+ * Send: a doubtful email takes a second press, a moment after the first; then it goes in five seconds unless Undo is
+ * pressed. One written to meanwhile (another tab, the drawer) isn't sent again.
+ */
 function sendItem(item) {
-  if (!item || item.status !== 'ready') return;
+  if (!item || item.status !== 'ready' || shown() !== item || freshCard()) return;
+  const why = alreadyDone(item, state.outreach[item.firm.id]);
+  if (why) {
+    Object.assign(item, { status: 'sent', outcome: why });
+    review.toast = { text: `${item.firm.name}: ${why}` };
+    saveQueue();
+    return advance();
+  }
   if (doubtsOf(item).length && !item.armed) {
     item.armed = true;
+    item.armedAt = Date.now();
     return renderReview(true);
   }
-  if (review.pending) flushPending();
+  if (item.armed && Date.now() - item.armedAt < FRESH_MS) return;
   item.armed = false;
   item.status = 'sending';
-  const run = () => deliver(item);
-  review.pending = {
+  item.error = '';
+  review.pending.set(item.id, {
     item,
-    run,
     timer: setTimeout(() => {
-      review.pending = null;
-      run();
+      review.pending.delete(item.id);
+      deliver(item);
     }, UNDO_MS),
-  };
-  review.toast = { text: `Sending to ${item.to}…`, undo: true };
+  });
+  saveQueue();
   advance();
 }
 
-/** Send a waiting email now (another Send was pressed, or the page is being left). */
-function flushPending() {
-  const p = review.pending;
-  if (!p) return;
+/** Undo: an email still in its five seconds (the latest, by default) goes back to being read, and is shown. */
+function undoSend(id) {
+  const all = [...review.pending.values()];
+  const p = id ? review.pending.get(id) : all[all.length - 1];
+  if (!p) {
+    if (review.items.some((i) => i.status === 'delivering')) {
+      review.toast = { text: 'Too late to undo: it’s with your inbox now.' };
+      renderReview();
+    }
+    return;
+  }
   clearTimeout(p.timer);
-  review.pending = null;
-  p.run();
-}
-
-/** Undo: the email waiting out its five seconds goes back to being read. */
-function undoSend() {
-  const p = review.pending;
-  if (!p) return;
-  clearTimeout(p.timer);
-  review.pending = null;
+  review.pending.delete(p.item.id);
   p.item.status = 'ready';
-  review.at = review.items.indexOf(p.item);
-  review.toast = { text: 'Not sent.' };
-  renderReview(true);
+  review.toast = { text: `Not sent to ${p.item.to}.` };
+  saveQueue();
+  showItem(p.item);
 }
 
-/** The email sent from the connected inbox (CV attached to a first email; a follow-up goes in the same thread). */
+/** The fields an outreach record keeps of an email sent from Review (and what "What gets replies" counts). */
+function sentFields(item, p) {
+  const used = item.draftedFor ? item.draftedFor.hook : item.hook;
+  const hook = used >= 0 ? (item.hooks || [])[used] : null;
+  return {
+    to: item.to,
+    subject: item.subject,
+    body: item.body,
+    contact: contactRef(p && p.address ? p : { address: item.to }),
+    way: wayText(item.firm),
+    reason: hook ? hook.label : '',
+    reasonKind: hook ? hook.kind : 'none',
+    ask: (item.draftedFor && item.draftedFor.ask) || askChoice(),
+    role: item.role || '',
+    followedUpAt: null,
+    followUps: 0,
+  };
+}
+
+/**
+ * The email sent from the connected inbox (CV attached to a first email; a follow-up goes in the same thread), after
+ * one more look at the stored record. It's marked as with Nylas first, so a page closed meanwhile looks for it in Sent
+ * when it opens again rather than offering it twice.
+ */
 async function deliver(item) {
   const firm = item.firm;
-  const rec = state.outreach[firm.id];
   const follow = item.type === 'follow';
+  Object.assign(item, { status: 'delivering', deliverFrom: Date.now() });
+  saveQueue();
+  redraw(item);
   try {
+    const rec = (await store.getOutreach())[firm.id];
+    state.outreach[firm.id] = rec || state.outreach[firm.id];
+    const why = alreadyDone(item, rec);
+    if (why) {
+      Object.assign(item, { status: 'sent', outcome: why });
+      review.toast = { text: `${firm.name}: ${why} Not sent again.` };
+      return;
+    }
     const nylas = await store.getNylas();
     if (!nylas || !nylas.grantId) throw new Error('Connect your inbox first (Settings › Email codes).');
     const cv = follow ? null : await cvFile();
     const when = arrival(item);
-    const p = contactsOf(firm).find((x) => sameAddress(x.address, item.to)) || (rec && rec.contact) || {};
+    const p = contactsOf(firm).find((x) => sameAddress(x.address, item.to)) || {};
+    const name = p.name || (follow && rec && rec.contact && rec.contact.name) || '';
     const email = {
-      to: [{ email: item.to, ...(p.name ? { name: p.name } : {}) }],
+      to: [{ email: item.to, ...(name ? { name } : {}) }],
       subject: item.subject,
       text: item.body,
       attachments: cv ? [{ name: cv.name, dataUrl: cv.dataUrl }] : [],
@@ -2817,29 +2973,24 @@ async function deliver(item) {
     const r = await N.send(nylas, email, { fetch: fetchFn });
     // Nylas sends one due within two minutes straight away: only a schedule id says it waits.
     const later = !!r.scheduleId;
+    const at = later ? r.sendAt || when.at : Date.now();
     item.status = later ? 'scheduled' : 'sent';
     item.outcome = later
       ? `Arrives ${when.local}${cv ? `, ${cv.name} attached` : ''}. Until then it waits at Nylas.`
       : `Sent${cv ? `, ${cv.name} attached` : ''}. It’s in your Sent folder.`;
-    const hook = item.hook >= 0 ? item.hooks[item.hook] : null;
-    if (follow) await setOutreach(firm, { followedUpAt: Date.now(), followUps: ((rec && rec.followUps) || 0) + 1 });
+    if (follow) await setOutreach(firm, { followedUpAt: at, followUps: ((rec && rec.followUps) || 0) + 1 });
     else
       await setOutreach(firm, {
         status: 'sent',
-        to: item.to,
-        subject: item.subject,
-        body: item.body,
-        contact: contactRef(p.address ? p : { address: item.to }),
-        way: wayText(firm),
+        ...sentFields(item, p),
         via: 'nylas',
-        reason: hook ? hook.label : '',
-        reasonKind: hook ? hook.kind : 'none',
-        ask: (item.draftedFor && item.draftedFor.ask) || askChoice(),
-        role: item.role || '',
-        // A scheduled email has no message id until it goes: checkReplies() finds it in Sent then.
+        // A scheduled email has no message id until it goes: checkReplies() finds it in Sent then. One sent again
+        // (after a bounce) starts its five working days again.
         messageId: r.id || '',
         threadId: r.threadId || '',
-        ...(later ? { sentAt: r.sendAt || when.at, sendAt: r.sendAt || when.at, scheduleId: r.scheduleId } : {}),
+        sentAt: at,
+        sendAt: later ? at : null,
+        scheduleId: later ? r.scheduleId : '',
       });
     review.toast = {
       text: `${follow ? 'Follow-up' : 'Email'} to ${firm.name}: ${item.outcome}`,
@@ -2849,9 +3000,56 @@ async function deliver(item) {
     item.status = 'ready';
     item.error = `Not sent: ${errorText(err)}`;
     review.toast = { text: `Couldn’t send to ${firm.name}: ${errorText(err)}`, show: item.id, error: true };
+    // Nothing else to read: show it straight away.
+    if (!shown()) review.at = review.items.indexOf(item);
+  } finally {
+    redraw(item);
+    saveQueue();
   }
-  renderReview(true);
+}
+
+/**
+ * Items the page was handing to Nylas when it closed: sent if Sent has them (and recorded), else back to read with a
+ * word to look in Sent first.
+ */
+async function reconcileDelivering() {
+  const stuck = review.items.filter((i) => i.status === 'delivering');
+  if (!stuck.length) return;
+  const nylas = state.nylas;
+  for (const i of stuck) {
+    const m =
+      nylas && nylas.grantId && N.sentMessage
+        ? await N.sentMessage(nylas, { to: i.to, subject: i.subject, after: i.deliverFrom || 0, fetch: fetchFn }).catch(
+            () => null,
+          )
+        : null;
+    if (!m) {
+      Object.assign(i, {
+        status: 'ready',
+        error:
+          'The page closed while this was being sent, and it isn’t in your Sent folder yet: look there before sending it again.',
+      });
+      continue;
+    }
+    const at = m.date ? m.date * 1000 : i.deliverFrom || Date.now();
+    Object.assign(i, { status: 'sent', outcome: 'Sent (the page closed as it went).' });
+    const rec = state.outreach[i.firm.id];
+    if (i.type === 'follow')
+      await setOutreach(i.firm, { followedUpAt: at, followUps: ((rec && rec.followUps) || 0) + 1 });
+    else if (!alreadyDone(i, rec))
+      await setOutreach(i.firm, {
+        status: 'sent',
+        ...sentFields(i, {}),
+        via: 'nylas',
+        messageId: m.id,
+        threadId: m.threadId,
+        sentAt: at,
+        sendAt: null,
+        scheduleId: '',
+      });
+  }
   saveQueue();
+  renderReview(true);
 }
 
 /** A first email waiting for their morning, taken back: Nylas deletes it, and it's back to read and send again. */
@@ -2864,30 +3062,38 @@ async function takeBack(item) {
     await setOutreach(item.firm, { status: 'drafted', sentAt: null, sendAt: null, scheduleId: '' });
     item.status = 'ready';
     item.outcome = '';
-    review.at = review.items.indexOf(item);
-    review.toast = { text: 'Taken back: it won’t be sent.' };
+    review.toast = { text: `Taken back: the email to ${item.firm.name} won’t be sent.`, show: item.id };
+    // Nothing else to read: show it straight away.
+    if (!shown()) review.at = review.items.indexOf(item);
   } catch (err) {
     review.toast = { text: `Couldn’t take it back: ${errorText(err)}`, error: true };
   }
-  renderReview(true);
+  redraw(item);
   saveQueue();
 }
 
-/** Save to the connected inbox's drafts, to send from there. */
+/** Can a scheduled email still be taken back (Nylas needs a minute's notice)? */
+const canTakeBack = (item) => {
+  const rec = state.outreach[item.firm.id];
+  return item.type === 'first' && !!rec && !!rec.scheduleId && rec.sendAt - Date.now() > 60e3;
+};
+
+/** Save to the connected inbox's drafts, to send from there (a follow-up in the first email's thread). */
 async function saveItem(item) {
-  if (!item || item.status !== 'ready') return;
-  item.status = 'sending';
-  renderReview(true);
+  if (!item || item.status !== 'ready' || freshCard()) return;
+  item.status = 'delivering';
+  item.deliverFrom = 0; // a draft: nothing to look for in Sent
+  redraw(item);
   try {
     const nylas = await store.getNylas();
     if (!nylas || !nylas.grantId) throw new Error('Connect your inbox first (Settings › Email codes).');
-    const cv = item.type === 'follow' ? null : await cvFile();
+    const follow = item.type === 'follow';
+    const cv = follow ? null : await cvFile();
     const rec = state.outreach[item.firm.id];
     const r = await N.saveDraft(
       nylas,
       {
-        // A follow-up saved as a draft is still a reply in the first email's thread.
-        ...(item.type === 'follow' && rec && rec.messageId ? { replyTo: rec.messageId } : {}),
+        ...(follow && rec && rec.messageId ? { replyTo: rec.messageId } : {}),
         to: [{ email: item.to }],
         subject: item.subject,
         text: item.body,
@@ -2897,7 +3103,8 @@ async function saveItem(item) {
     );
     item.status = 'saved';
     item.outcome = `Saved to your drafts${cv ? `, ${cv.name} attached` : ''}.`;
-    if (item.type !== 'follow')
+    if (follow) await setOutreach(item.firm, { followedUpAt: Date.now(), followUpDraftId: r.id });
+    else
       await setOutreach(item.firm, {
         status: 'drafted',
         to: item.to,
@@ -2905,64 +3112,97 @@ async function saveItem(item) {
         draftId: r.id,
         via: 'nylas',
       });
-    advance();
+    // On only if it's still the card shown: the person may have moved on while it saved.
+    if (shown() === item) advance();
+    else renderReview();
   } catch (err) {
     item.status = 'ready';
     item.error = `Not saved: ${errorText(err)}`;
-    renderReview(true);
+    redraw(item);
   }
   saveQueue();
 }
 
 /** Without an inbox connected: the person sent it from their own email program and says so. */
 async function markSent(item) {
+  if (!item || item.status !== 'ready' || freshCard()) return;
   item.status = 'sent';
   item.outcome = 'Marked as sent.';
   if (item.type === 'follow') await setOutreach(item.firm, { followedUpAt: Date.now() });
   else
     await setOutreach(item.firm, {
       status: 'sent',
-      to: item.to,
-      subject: item.subject,
-      body: item.body,
+      ...sentFields(
+        item,
+        contactsOf(item.firm).find((x) => sameAddress(x.address, item.to)),
+      ),
       via: 'mailto',
+      sentAt: Date.now(),
+      sendAt: null,
+      scheduleId: '',
     });
-  advance();
+  if (shown() === item) advance();
   saveQueue();
 }
 
+/** Skip: a firm waiting, being prepared, ready or that needs you; never one sent or on its way. */
 function skipItem(item) {
-  if (!item || ['sending'].includes(item.status)) return;
+  if (!item || !['waiting', 'preparing', 'ready', 'none', 'failed'].includes(item.status)) return;
   item.status = 'skipped';
+  item.armed = false;
   advance();
   saveQueue();
 }
 
-/** Back from skipped: read it after all (or prepare it, if it never was). */
+/** Back from skipped: read it after all (or prepare it, if it never was), unless it was written to meanwhile. */
 function unskip(item) {
+  const why = alreadyDone(item, state.outreach[item.firm.id]);
+  if (why) {
+    Object.assign(item, { status: 'sent', outcome: why });
+    return renderReview(true);
+  }
   item.status = item.body ? 'ready' : 'waiting';
-  pump();
+  item.held = false;
+  if (item.status === 'waiting') {
+    if (!aiReady()) return noAi();
+    review.consent = requestAiConsent();
+    pump(item);
+  }
   renderReview(true);
   saveQueue();
 }
 
-/** Write it again for whoever it now goes to, with the reason and ask now chosen. */
+/** Try again after a failure, from the click (so Firefox can ask). */
+function retry(item) {
+  if (!aiReady()) return noAi();
+  review.consent = requestAiConsent();
+  Object.assign(item, { status: 'waiting', held: false, error: '' });
+  pump(item);
+  renderReview(true);
+}
+
+/** Write it again for whoever it now goes to, with the reason and ask now chosen (asked from the click or key). */
 async function redraft(item) {
   if (!item || !['ready', 'failed'].includes(item.status)) return;
+  if (!aiReady()) return noAi();
+  const consent = requestAiConsent();
   item.status = 'preparing';
   item.step = 'draft';
   item.armed = false;
-  renderReview(true);
+  redraw(item);
   try {
+    if (!(await consent)) throw new Error('Firefox didn’t allow sending your material to your AI provider.');
     state.config = await store.discoverAiConfig();
     if (item.type === 'follow') await writeFollowUp(item);
     else await writeDraft(item);
   } catch (err) {
-    item.status = item.body ? 'ready' : 'failed';
-    item.error = errorText(err);
+    if (item.status === 'preparing') {
+      item.status = item.body ? 'ready' : 'failed';
+      item.error = errorText(err);
+    }
   }
   item.step = '';
-  renderReview(true);
+  redraw(item);
   saveQueue();
 }
 
@@ -2973,7 +3213,7 @@ function otherContact(item) {
   if (people.length < 2) return;
   const i = people.findIndex((p) => sameAddress(p.address, item.to));
   const p = people[(i + 1) % people.length];
-  item.to = p.address;
+  choose(item, p);
   item.body = withGreeting(item.body, greetingFor(p, item.firm));
   item.armed = false;
   renderReview(true);
@@ -2989,12 +3229,18 @@ function otherHook(item) {
   saveQueue();
 }
 
+/** Can this page send or save through Nylas, or only open the email program (no inbox, or one for codes only)? */
+function mailOnly() {
+  const n = state.nylas;
+  if (!n || !n.grantId) return true;
+  const a = review.abilities;
+  return !!a && !a.send && !a.draft;
+}
+
 /** What Ctrl+Enter does: send, or save to drafts when the inbox can't send, or open the email program. */
 async function primaryAction(item) {
-  if (!item) return;
-  if (item.status !== 'ready') return;
-  const n = state.nylas;
-  if (!n || !n.grantId) {
+  if (!item || item.status !== 'ready' || freshCard()) return;
+  if (mailOnly()) {
     const a = document.querySelector('#review-card .open-mail');
     if (a) a.click();
     return;
@@ -3006,6 +3252,11 @@ async function primaryAction(item) {
 
 function reviewKeys(e) {
   if ($('#review-view').hidden) return;
+  // A held key is one press: it never sends the next card or says yes to a doubt.
+  if (e.repeat) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') e.preventDefault();
+    return;
+  }
   const item = shown();
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
     e.preventDefault();
@@ -3089,13 +3340,14 @@ function toView(item) {
   const p = people.find((x) => sameAddress(x.address, item.to));
   const rec = state.outreach[item.firm.id];
   const name = p ? whoLabel(p) : (rec && rec.contact && rec.contact.name) || '';
+  const level = p || (item.type === 'first' && item.toLevel ? { level: item.toLevel } : null);
   return el(
     'div',
     { className: 'to-line' },
     el('span', { className: 'muted', textContent: 'To' }),
     el('strong', { textContent: name || item.to }),
     name ? el('span', { className: 'address', textContent: item.to }) : null,
-    p ? levelPill(p) : null,
+    level ? levelPill(level) : null,
     p && p.url ? link(p.url, sourceName(p.url), { className: 'small' }) : null,
     people.length > 1
       ? el('button', {
@@ -3119,7 +3371,7 @@ function reviewHead(item) {
     el(
       'div',
       {},
-      el('h2', { textContent: firm.name }),
+      el('h2', { textContent: firm.name, tabIndex: -1 }),
       el('p', {
         className: 'muted small',
         textContent: [meta(firm), firm.about ? clip(firm.about, 140) : ''].filter(Boolean).join(' · '),
@@ -3135,9 +3387,11 @@ function reviewHead(item) {
   );
 }
 
+/** The email as the email program gets it, from what's in the boxes now. */
+const mailtoOf = (item) => O.mailto({ to: item.to, subject: item.subject, body: item.body });
+
 /** The big buttons: Send (or Save to drafts, or Open in your email app) and the rest. */
 function reviewActions(item) {
-  const n = state.nylas;
   const skip = el('button', {
     className: 'big',
     type: 'button',
@@ -3152,20 +3406,33 @@ function reviewActions(item) {
     title: 'R',
     onclick: () => redraft(item),
   });
-  if (!n || !n.grantId) {
-    const m = O.mailto({ to: item.to, subject: item.subject, body: item.body });
-    const open = el('a', {
-      className: 'button primary big open-mail',
-      href: m.href,
-      textContent: 'Open in your email app',
-    });
+  if (mailOnly()) {
+    const copied = el('span', { className: 'small muted', attrs: { 'aria-live': 'polite' } });
     return el(
       'div',
       { className: 'review-actions' },
-      open,
+      el('a', {
+        className: 'button primary big open-mail',
+        href: mailtoOf(item).href,
+        textContent: 'Open in your email app',
+        title: 'Ctrl+Enter',
+        // The link is made when it's clicked, so edits made since are in it.
+        onclick: (e) => (e.currentTarget.href = mailtoOf(item).href),
+      }),
+      el('button', {
+        className: 'big',
+        type: 'button',
+        textContent: 'Copy',
+        onclick: () =>
+          navigator.clipboard
+            .writeText(`${item.subject}\n\n${item.body}`)
+            .then(() => (copied.textContent = 'Copied.'))
+            .catch(() => (copied.textContent = 'Couldn’t copy: select the text and copy it.')),
+      }),
       el('button', { className: 'big', type: 'button', textContent: 'Mark as sent', onclick: () => markSent(item) }),
       skip,
       again,
+      copied,
     );
   }
   const can = review.abilities || { send: true, draft: true };
@@ -3188,22 +3455,42 @@ function reviewActions(item) {
   return el('div', { className: 'review-actions' }, send, save, skip, again);
 }
 
-/** One line under the buttons: from where, when it arrives, what's attached. */
+/** One line under the buttons: from where, when it arrives, what's attached (or why only the email program will do). */
 function sendNote(item) {
   const n = state.nylas;
-  if (!n || !n.grantId)
+  const settings = el('button', {
+    className: 'link',
+    type: 'button',
+    textContent: 'Settings › Email codes',
+    onclick: () => api.tabs.create({ url: api.runtime.getURL('options/options.html#email') }),
+  });
+  if (mailOnly()) {
+    const long = el('p', {
+      className: 'small warn-text truncated',
+      hidden: !mailtoOf(item).truncated,
+      textContent: 'Too long for your email app’s link: the end is cut off there, so use Copy for the whole text.',
+    });
     return el(
-      'p',
-      { className: 'small muted' },
-      'To send from here with your CV attached, connect your inbox under ',
-      el('button', {
-        className: 'link',
-        type: 'button',
-        textContent: 'Settings › Email codes',
-        onclick: () => api.tabs.create({ url: api.runtime.getURL('options/options.html#email') }),
-      }),
-      '. Without it, your email program opens with the email written; attach your CV there.',
+      'div',
+      {},
+      n && n.grantId
+        ? el(
+            'p',
+            { className: 'small warn-text' },
+            'Your inbox is connected to Nylas for reading codes only. To send or save drafts from here, connect it again with permission to send and draft mail (',
+            settings,
+            ').',
+          )
+        : el(
+            'p',
+            { className: 'small muted' },
+            'To send from here with your CV attached, connect your inbox under ',
+            settings,
+            '. Without it, your email program opens with the email written; attach your CV there.',
+          ),
+      long,
     );
+  }
   const when = arrival(item);
   const cv =
     item.type === 'follow'
@@ -3217,12 +3504,21 @@ function sendNote(item) {
   });
 }
 
+/** After typing: the saved queue, the box's height and, without an inbox, the long-link warning. */
+function edited(item, box) {
+  if (box.tagName === 'TEXTAREA') fitBox(box);
+  const long = $('#review-card .truncated');
+  if (long) long.hidden = !mailtoOf(item).truncated;
+  saveQueue(true);
+}
+
 /** The card for an item, by how far it has got. */
 function itemView(item) {
   const head = reviewHead(item);
   if (item.status === 'waiting' || item.status === 'preparing') {
     const order = item.type === 'follow' ? [['draft', 'Writing the follow-up']] : STEPS;
     const at = order.findIndex(([k]) => k === item.step);
+    const held = item.status === 'waiting' && (item.held || !review.busy);
     return el(
       'div',
       { className: 'review-body' },
@@ -3237,32 +3533,39 @@ function itemView(item) {
           }),
         ),
       ),
-      item.status === 'waiting' && !review.busy
-        ? el(
-            'div',
-            { className: 'review-actions' },
-            el('button', {
+      el(
+        'div',
+        { className: 'review-actions' },
+        held
+          ? el('button', {
               className: 'primary big',
               type: 'button',
               textContent: 'Prepare it',
-              onclick: resumeQueue,
-            }),
-            el('button', { className: 'big', type: 'button', textContent: 'Skip', onclick: () => skipItem(item) }),
-          )
-        : null,
+              onclick: () => resumeQueue(item),
+            })
+          : null,
+        el('button', {
+          className: 'big',
+          type: 'button',
+          textContent: item.status === 'preparing' ? 'Stop and skip' : 'Skip',
+          onclick: () => skipItem(item),
+        }),
+      ),
       el('p', {
         className: 'muted small',
-        textContent:
-          item.status === 'waiting'
-            ? review.busy
-              ? 'Waiting its turn: two firms are prepared at a time.'
-              : 'Not prepared yet: the page was closed before its turn.'
+        textContent: held
+          ? 'Not prepared yet: the page was closed before its turn.'
+          : item.status === 'waiting'
+            ? 'Waiting its turn: two firms are prepared at a time.'
             : 'This takes about a minute. The next firm is being prepared meanwhile.',
       }),
     );
   }
   if (item.status === 'none' || item.status === 'failed') {
     const watched = state.watch.some((w) => w.id === item.firm.id);
+    const noSearch = !canResearch()
+      ? ' No web search ran: finding people beyond its site needs Claude or OpenRouter, or a Hunter key.'
+      : '';
     return el(
       'div',
       { className: 'review-body' },
@@ -3272,7 +3575,7 @@ function itemView(item) {
         textContent:
           item.status === 'failed'
             ? item.error
-            : 'No one to write to was found: no recruiting mailbox, no named person with an address, and no address format to make one from.',
+            : `No one to write to was found: no recruiting mailbox, no named person with an address, and no address format to make one from.${noSearch}`,
       }),
       el(
         'div',
@@ -3282,39 +3585,48 @@ function itemView(item) {
               className: 'primary big',
               type: 'button',
               textContent: 'Try again',
-              onclick: () => ((item.status = 'waiting'), pump(), renderReview(true)),
+              onclick: () => retry(item),
             })
           : el('button', {
               className: 'primary big',
               type: 'button',
               disabled: watched,
               textContent: watched ? 'Watching' : 'Watch it for new roles',
-              onclick: () => watchFirm(item.firm).then(() => advance()),
+              onclick: () =>
+                watchFirm(item.firm).then(() => {
+                  item.status = 'watched';
+                  saveQueue();
+                  if (shown() === item) advance();
+                  else renderReview();
+                }),
             }),
         el('button', { className: 'big', type: 'button', textContent: 'Skip', onclick: () => skipItem(item) }),
       ),
     );
   }
-  if (FINISHED.has(item.status) || item.status === 'sending') {
+  if (FINISHED.has(item.status) || MOVING.has(item.status)) {
+    const pending = review.pending.get(item.id);
     const text = {
-      sending: 'Sending…',
+      sending: 'Sending in a few seconds…',
+      delivering: item.deliverFrom ? 'Sending…' : 'Saving to your drafts…',
       sent: item.outcome || 'Sent.',
       scheduled: item.outcome || 'Scheduled.',
       saved: item.outcome || 'Saved to your drafts.',
       skipped: 'Skipped.',
+      watched: 'Watched: new roles show on the Watchlist tab.',
     }[item.status];
     return el(
       'div',
       { className: 'review-body' },
       head,
-      el('p', { className: item.status === 'skipped' ? 'muted' : 'ok-text', textContent: text }),
+      el('p', { className: ['skipped', 'watched'].includes(item.status) ? 'muted' : 'ok-text', textContent: text }),
       el(
         'div',
         { className: 'review-actions' },
-        item.status === 'sending' && review.pending && review.pending.item === item
-          ? el('button', { className: 'big', type: 'button', textContent: 'Undo', onclick: undoSend })
+        pending
+          ? el('button', { className: 'big', type: 'button', textContent: 'Undo', onclick: () => undoSend(item.id) })
           : null,
-        item.status === 'scheduled' && item.type === 'first'
+        item.status === 'scheduled' && canTakeBack(item)
           ? el('button', {
               className: 'big',
               type: 'button',
@@ -3349,14 +3661,14 @@ function itemView(item) {
       type: 'text',
       value: item.subject,
       attrs: { 'aria-label': 'Subject' },
-      oninput: (e) => ((item.subject = e.target.value), saveQueue(true)),
+      oninput: (e) => ((item.subject = e.target.value), edited(item, e.target)),
     }),
     el('textarea', {
       className: 'body',
       value: item.body,
       rows: Math.min(22, Math.max(12, item.body.split('\n').length + 2)),
       attrs: { 'aria-label': 'Email' },
-      oninput: (e) => ((item.body = e.target.value), fitBox(e.target), saveQueue(true)),
+      oninput: (e) => ((item.body = e.target.value), edited(item, e.target)),
     }),
     el(
       'p',
@@ -3411,27 +3723,53 @@ function replyStats() {
   return [`Replies so far: ${rate(sent)}`, ...by('reasonKind', REASON_KINDS), ...by('ask', ASK_KINDS)].join(' · ');
 }
 
-/** Nothing left to read: what happened, and the next ten. */
+/** How the queue stands: { ready, working (being prepared), held (not prepared yet), needYou, done }. */
+function tally() {
+  const count = (f) => review.items.filter(f).length;
+  return {
+    ready: count((i) => i.status === 'ready'),
+    working: count((i) => i.status === 'preparing' || (i.status === 'waiting' && !i.held)),
+    held: count((i) => i.status === 'waiting' && i.held),
+    needYou: count((i) => i.status === 'none' || i.status === 'failed'),
+    moving: count((i) => MOVING.has(i.status)),
+    done: count((i) => FINISHED.has(i.status)),
+  };
+}
+
+/** Past the last card: what's left to do first (read, prepare, look at), then what happened and the next ten. */
 function summaryView() {
   const count = (s) => review.items.filter((i) => i.status === s).length;
-  const working = review.items.filter((i) => ['waiting', 'preparing'].includes(i.status)).length;
+  const t = tally();
   const next = nextToWrite();
+  const firstOf = (f) => review.items.find(f);
   const parts = [
     count('sent') && `${count('sent')} sent`,
     count('scheduled') && `${count('scheduled')} arriving in their morning`,
     count('saved') && `${count('saved')} saved to drafts`,
     count('skipped') && `${count('skipped')} skipped`,
+    count('watched') && `${count('watched')} watched`,
   ].filter(Boolean);
+  const [heading, action] = !review.items.length
+    ? ['Nothing to review yet', null]
+    : t.ready
+      ? [
+          `${plural(t.ready, 'email')} still to read`,
+          ['Read them', () => showItem(firstOf((i) => i.status === 'ready'))],
+        ]
+      : t.working
+        ? ['The rest are being prepared', null]
+        : t.held
+          ? [`${plural(t.held, 'firm')} not prepared yet`, ['Prepare them', () => resumeQueue()]]
+          : t.needYou
+            ? [
+                `${plural(t.needYou, 'firm')} need${t.needYou === 1 ? 's' : ''} you`,
+                ['Show them', () => showItem(firstOf((i) => i.status === 'none' || i.status === 'failed'))],
+              ]
+            : ['All read', null];
   return el(
     'div',
     { className: 'review-body summary' },
-    el('h2', {
-      textContent: !review.items.length
-        ? 'Nothing to review yet'
-        : working
-          ? 'The rest are being prepared'
-          : 'All read',
-    }),
+    el('h2', { textContent: heading, tabIndex: -1 }),
     el('p', {
       className: 'muted',
       textContent: !review.items.length
@@ -3442,15 +3780,18 @@ function summaryView() {
     el(
       'div',
       { className: 'review-actions' },
+      action
+        ? el('button', { className: 'primary big', type: 'button', textContent: action[0], onclick: action[1] })
+        : null,
       next.length
         ? el('button', {
-            className: 'primary big',
+            className: action ? 'big' : 'primary big',
             type: 'button',
-            textContent: `Write to the next ${next.length}`,
+            textContent: `Write to the next ${next.length === TOP ? TOP : plural(next.length, 'firm')}`,
             onclick: () => writeTo(next),
           })
         : el('button', {
-            className: 'primary big',
+            className: action ? 'big' : 'primary big',
             type: 'button',
             textContent: 'Find firms',
             onclick: () => showTab('find'),
@@ -3461,10 +3802,13 @@ function summaryView() {
             type: 'button',
             textContent: 'Clear the finished ones',
             onclick: () => {
-              review.items = review.items.filter((i) => !FINISHED.has(i.status));
-              review.at = 0;
+              // An email still waiting for their morning stays, so it can be taken back.
+              const gone = review.items.filter((i) => FINISHED.has(i.status) && !canTakeBack(i));
+              review.cleared = [...new Set([...review.cleared, ...gone.map((i) => i.firm.id)])].slice(-2000);
+              review.items = review.items.filter((i) => !gone.includes(i));
+              review.at = -1;
               saveQueue();
-              renderReview(true);
+              advance();
             },
           })
         : null,
@@ -3472,15 +3816,12 @@ function summaryView() {
   );
 }
 
-/** Firm 3 of 10, with how many are ready, being prepared and done, as a bar. */
+/** Firm 3 of 10, with how many are ready, being prepared, not prepared, need you and done, as a bar. */
 function progressView() {
   const n = review.items.length;
   if (!n) return [];
-  const count = (f) => review.items.filter(f).length;
-  const done = count((i) => FINISHED.has(i.status));
-  const ready = count((i) => i.status === 'ready');
-  const working = count((i) => ['waiting', 'preparing'].includes(i.status));
-  const bar = el('div', { className: 'bar' }, el('span', { style: `width:${Math.round((done / n) * 100)}%` }));
+  const t = tally();
+  const bar = el('div', { className: 'bar' }, el('span', { style: `width:${Math.round((t.done / n) * 100)}%` }));
   return [
     el(
       'div',
@@ -3488,68 +3829,89 @@ function progressView() {
       el('strong', { textContent: review.at < n ? `${review.at + 1} of ${n}` : `${n} firms` }),
       el('span', {
         className: 'muted small',
-        textContent: [ready && `${ready} ready to read`, working && `${working} being prepared`, done && `${done} done`]
+        textContent: [
+          t.ready && `${t.ready} ready to read`,
+          t.working && `${t.working} being prepared`,
+          t.held && `${t.held} not prepared yet`,
+          t.needYou && `${t.needYou} need${t.needYou === 1 ? 's' : ''} you`,
+          t.moving && `${t.moving} sending`,
+          t.done && `${t.done} done`,
+        ]
           .filter(Boolean)
           .join(' · '),
       }),
       el('span', { className: 'grow' }),
-      el('button', {
-        className: 'ghost',
-        type: 'button',
-        textContent: '←',
-        title: 'Back (←)',
-        disabled: review.at <= 0,
-        onclick: () => move(-1),
-      }),
-      el('button', {
-        className: 'ghost',
-        type: 'button',
-        textContent: '→',
-        title: 'Next (→)',
-        disabled: review.at >= n,
-        onclick: () => move(1),
-      }),
+      el(
+        'span',
+        { className: 'nav' },
+        el('button', {
+          className: 'ghost',
+          type: 'button',
+          textContent: '←',
+          title: 'Back (←)',
+          attrs: { 'aria-label': 'Back' },
+          disabled: review.at <= 0,
+          onclick: () => move(-1),
+        }),
+        el('button', {
+          className: 'ghost',
+          type: 'button',
+          textContent: '→',
+          title: 'Next (→)',
+          attrs: { 'aria-label': 'Next' },
+          disabled: review.at >= n,
+          onclick: () => move(1),
+        }),
+      ),
     ),
     bar,
   ];
 }
 
-/** The toast: what just happened, with Undo while an email waits out its five seconds; it goes after eight. */
+/**
+ * The toast: while emails wait out their five seconds, the latest of them with Undo (and how many more); otherwise what
+ * just happened, gone after eight seconds.
+ */
 function toastView() {
+  const waiting = [...review.pending.values()];
+  if (waiting.length) {
+    const last = waiting[waiting.length - 1].item;
+    const more = waiting.length > 1 ? ` (and ${plural(waiting.length - 1, 'other')})` : '';
+    return el(
+      'div',
+      { className: 'toast', attrs: { role: 'status' } },
+      el('span', { textContent: `Sending to ${last.to}${more}…` }),
+      el('button', { className: 'link', type: 'button', textContent: 'Undo (U)', onclick: () => undoSend() }),
+    );
+  }
   const t = review.toast;
   if (!t) return null;
-  if (!t.timer && !(t.undo && review.pending))
+  if (!t.timer)
     t.timer = setTimeout(() => {
       if (review.toast === t) review.toast = null;
       renderReview();
     }, 8000);
+  const target = (id) => review.items.find((i) => i.id === id);
   return el(
     'div',
-    { className: 'toast' + (t.error ? ' error' : ''), attrs: { role: 'status' } },
+    { className: 'toast' + (t.error ? ' error' : ''), attrs: { role: t.error ? 'alert' : 'status' } },
     el('span', { textContent: t.text }),
-    t.undo && review.pending
-      ? el('button', { className: 'link', type: 'button', textContent: 'Undo (U)', onclick: undoSend })
-      : null,
-    t.takeBack
+    t.takeBack && target(t.takeBack) && canTakeBack(target(t.takeBack))
       ? el('button', {
           className: 'link',
           type: 'button',
           textContent: 'Take it back',
-          onclick: () => {
-            const item = review.items.find((i) => i.id === t.takeBack);
-            if (item) takeBack(item);
-          },
+          onclick: () => takeBack(target(t.takeBack)),
         })
       : null,
-    t.show
+    t.show && target(t.show) && shown() !== target(t.show)
       ? el('button', {
           className: 'link',
           type: 'button',
           textContent: 'Show it',
           onclick: () => {
-            review.at = review.items.findIndex((i) => i.id === t.show);
             review.toast = null;
-            renderReview(true);
+            showItem(target(t.show));
           },
         })
       : null,
@@ -3558,7 +3920,8 @@ function toastView() {
 
 /**
  * Draw the queue: progress, the card shown, the follow-ups due and the toast. The card is drawn again only when what
- * it shows changed (force), so typing in it, or a check finishing for another firm, never loses the cursor.
+ * it shows changed (force), so typing in it, or a check finishing for another firm, never loses the cursor. A new card
+ * gets the focus on its heading and is scrolled to, and a Send pressed in its first moment doesn't count.
  */
 function renderReview(force) {
   reviewCount();
@@ -3593,6 +3956,19 @@ function renderReview(force) {
   $('#review-card').replaceChildren(item ? itemView(item) : summaryView());
   const body = $('#review-card textarea.body');
   if (body) fitBox(body);
+  // Another firm, or this one now ready to read: what's under the pointer and the keys changed.
+  const shownKey = item ? `${item.id}|${item.status}` : 'summary';
+  if (shownKey !== review.shownKey) {
+    const moved = !item || !review.shownKey.startsWith(`${item.id}|`);
+    review.shownKey = shownKey;
+    review.shownAt = Date.now();
+    if (moved && !$('#review-view').hidden) {
+      const heading = $('#review-card h2');
+      if (heading) heading.focus({ preventScroll: true });
+      const top = $('#review-progress').getBoundingClientRect().top;
+      if (top < 0 || top > innerHeight - 100) $('#review-view').scrollIntoView({ block: 'start' });
+    }
+  }
   if (state.nylas && state.nylas.grantId && !review.abilities)
     inboxAbilities().then((a) => {
       review.abilities = a;
@@ -3600,33 +3976,36 @@ function renderReview(force) {
     });
 }
 
-/** The email box as tall as the email, so the whole of it reads without scrolling the box. */
+/** The email box as tall as the email, so the whole of it reads without scrolling the box (not while hidden). */
 function fitBox(box) {
+  if (!box.offsetParent) return;
   box.style.height = 'auto';
   box.style.height = `${box.scrollHeight + 4}px`;
 }
 
-/** The queue as it was left, and the choices above it. */
+/** The queue as it was left (squared with the outreach records), and the choices above it. */
 async function loadReview() {
   const cache = await store.getDiscoverCache();
   state.hooks = cache.hooks || {};
   if (cache.queue) {
     review.items = cache.queue.items.filter((i) => i && i.id && i.firm);
     review.at = Math.min(cache.queue.at || 0, review.items.length);
+    review.cleared = cache.queue.cleared || [];
   }
-  // An email the Outreach tab has as sent (from the drawer, or a page closed as it went) isn't offered again.
-  for (const i of review.items) {
-    const rec = state.outreach[i.firm.id];
-    if (i.type === 'first' && rec && rec.status !== 'drafted' && !FINISHED.has(i.status)) {
-      i.status = 'sent';
-      i.outcome = i.outcome || 'Already written to: see the Outreach tab.';
-    }
-  }
+  reconcileQueue();
   const d = (state.settings && state.settings.discoverAi) || {};
   for (const r of document.querySelectorAll('input[name="ask"]')) r.checked = r.value === (d.ask || 'internship');
   $('#their-morning').checked = d.theirMorning !== false;
   $('#common-ground').checked = d.commonGround === true;
   renderReview(true);
+  reconcileDelivering().catch(() => null);
+}
+
+/** Another tab, the drawer or the Outreach tab wrote to a firm: the queue hears of it before anything is sent. */
+async function outreachChanged() {
+  state.outreach = await store.getOutreach();
+  if (reconcileQueue()) renderReview(true);
+  else renderReview();
 }
 
 /** A choice above the queue saved; the drafts already written keep theirs until written again. */
@@ -3644,6 +4023,8 @@ function showTab(which) {
     $(`#${t}-view`).hidden = which !== t;
   }
   history.replaceState(null, '', which === 'find' ? '#' : '#' + which);
+  const box = which === 'review' && $('#review-card textarea.body');
+  if (box) fitBox(box);
 }
 
 /* ------------------------------------------------------------- AI model */
@@ -3807,12 +4188,13 @@ async function start() {
   $('#their-morning').addEventListener('change', (e) => saveReviewChoice({ theirMorning: e.target.checked }));
   $('#common-ground').addEventListener('change', (e) => saveReviewChoice({ commonGround: e.target.checked }));
   document.addEventListener('keydown', reviewKeys);
-  // Leaving the page with an email waiting out its five seconds: it goes, as Send was pressed for it.
-  document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && flushPending());
+  // Leaving the page while an email waits out its five seconds asks first; left, the email isn't sent (it's saved as
+  // ready, with a word on why), as Undo would. A tab only hidden keeps counting.
   addEventListener('beforeunload', (e) => {
-    if (!review.pending) return;
-    flushPending();
-    e.preventDefault();
+    if (review.pending.size) e.preventDefault();
+  });
+  api.storage.onChanged.addListener((changes) => {
+    if (changes.outreach) outreachChanged().catch(() => null);
   });
   $('#research-top').addEventListener('click', researchTop);
   $('#results-export').addEventListener('click', exportResults);

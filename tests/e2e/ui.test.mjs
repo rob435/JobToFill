@@ -1128,6 +1128,8 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
     /Jane Doe, Head of Talent[\s\S]*jane\.doe@quiet\.example/,
   );
   assert.match(await page.inputValue(box), /^Dear Jane,\n\n/);
+  // A press in a card's first moment is taken for the card before: a person reads first.
+  await page.waitForTimeout(700);
   await page.keyboard.press('Control+Enter');
   await page.waitForSelector('#review-card .send-go.armed');
   assert.match(await page.textContent('#review-card .doubts'), /You changed who it goes to/);
@@ -1146,11 +1148,15 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
 
   /** Ctrl+Enter, and again if the email has a doubt to accept (a check the stand-in's draft failed). */
   const send = async () => {
+    await page.waitForTimeout(700);
     await page.keyboard.press('Control+Enter');
     await page.waitForFunction(
       () => document.querySelector('#review-card .send-go.armed') || /Sending to/.test(document.body.textContent),
     );
-    if (await page.$('#review-card .send-go.armed')) await page.keyboard.press('Control+Enter');
+    if (await page.$('#review-card .send-go.armed')) {
+      await page.waitForTimeout(700);
+      await page.keyboard.press('Control+Enter');
+    }
     await page.waitForSelector('#review-view .toast');
   };
   // Sent in five seconds unless Undo: U takes it back, and nothing went.
@@ -1158,7 +1164,7 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
   assert.match(await page.textContent('#review-view .toast'), /^Sending to jane\.doe@quiet\.example…Undo/);
   await page.keyboard.press('u');
   await page.waitForSelector(box);
-  assert.match(await page.textContent('#review-view .toast'), /Not sent\./);
+  assert.match(await page.textContent('#review-view .toast'), /Not sent to jane\.doe@quiet\.example\./);
   await page.waitForTimeout(5500);
   assert.equal(sent.length, 0, 'undone');
 
@@ -1233,7 +1239,8 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
     },
     [id, found, saturday],
   );
-  await page.clock.setFixedTime(saturday);
+  // Saturday, with time running from there (a frozen clock would hold every card in its first moment).
+  await page.clock.install({ time: saturday });
   await page.reload();
   await ready();
   await page.check('#their-morning');

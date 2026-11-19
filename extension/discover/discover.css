@@ -715,3 +715,11 @@ a.button.big {
 #review-count:empty {
   display: none;
 }
+.review-progress .nav {
+  display: inline-flex;
+  gap: 4px;
+  white-space: nowrap;
+}
+.review-head h2:focus {
+  outline: none;
+}
