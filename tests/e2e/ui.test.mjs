@@ -1118,7 +1118,8 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
     null,
     5000,
   );
-  assert.match(await page.textContent('#review-card .send-go'), /^Send$/);
+  // The card is drawn again once the page has read the setting back (at night in London it said "arrives…" until then).
+  await page.waitForFunction(() => document.querySelector('#review-card .send-go').textContent === 'Send');
 
   // C: someone else, greeted by name; the email was written for the mailbox, so Send asks twice until R writes it again.
   for (let i = 0; i < 6 && !/jane\.doe@/.test(await page.textContent('#review-card .to-line')); i++)

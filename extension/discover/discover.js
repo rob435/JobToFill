@@ -2258,9 +2258,16 @@ function renderOutreach() {
   $('#outreach-empty').hidden = !!list.length;
   $('#outreach-export').disabled = !list.length;
   // A note being typed isn't drawn again under the cursor when a draft elsewhere adds a firm: that firm waits.
-  const typing = document.activeElement && document.activeElement.closest('#outreach .outreach-notes');
+  const active = document.activeElement;
+  const typing = active && active.closest('#outreach .outreach-notes');
   if (typing) return;
+  // A status just chosen (or a button with the focus) keeps it when the list is drawn again.
+  const row = active && active.closest('#outreach li[data-id]');
+  const kind = row && active.matches('select') ? 'select' : row && active.matches('button') ? 'button' : '';
   $('#outreach').replaceChildren(...list.map(([id, rec]) => outreachItem(id, rec)));
+  const again = kind && [...$('#outreach').children].find((li) => li.dataset.id === row.dataset.id);
+  const control = again && again.querySelector(kind);
+  if (control) control.focus({ preventScroll: true });
 }
 
 /* ------------------------------------------------------------- watchlist */
@@ -2396,19 +2403,25 @@ const review = {
   busy: 0, // items being prepared
   consent: null, // the AI consent asked for on the click that started the work (Firefox)
   pending: new Map(), // item id → { item, timer }: sends waiting out their five seconds, oldest first
-  running: new Map(), // item id → the run preparing or writing it again, still waiting on the AI (owner or not)
+  running: new Map(), // item → the run preparing or writing it again, still waiting on the AI (owner or not); by the
+  // item itself, not its id: a firm cleared and written to again is a new item, and never takes the old one's run
   toast: null, // { text, show?, takeBack? }: what just happened
+  note: null, // { key, node }: the toast under the alerts as drawn
   alerts: [], // [{ text, show?, at }]: what went wrong, kept until read (never pushed out by the next "Sent")
   drawn: '', // what the card was last drawn from, so typing in it isn't undone by a redraw
   shownKey: '', // the item and status the card shows, and since when: a press then is for the card before
   shownAt: 0,
   undoneAt: 0, // the last Undo: a second one straight after (a double click) isn't for the email before
+  typedAt: 0, // the last key typed into the card's boxes
+  dropped: false, // the card was drawn again under the cursor (its email finished elsewhere) mid-word
   cleared: [], // firm ids cleared from the queue, so Write to the next 10 doesn't bring them back
   declined: {}, // firm id → the sentAt of the email whose follow-up was skipped: not offered again
 };
 const PREPARE_AT_ONCE = 2;
 const UNDO_MS = 5000;
 const FRESH_MS = 600; // a Send this soon after a card shows (or a doubt is raised) was meant for what was there before
+const TYPING_MS = 1200; // keys this close together, after the box typed in was drawn away, are still the typing
+const LOOK_FOR_MS = 3 * 24 * 3600e3; // an email the page closed on is looked for in Sent for three days after its time
 const HOOK_AGE = 7 * 24 * 3600e3; // reasons to write are looked for again after a week
 const TOP = 10;
 // Statuses: waiting, preparing, ready, none (no one to write to), failed, sending (its five seconds), delivering (at
@@ -2464,6 +2477,8 @@ function kept(i) {
       unsure: 'It may be in your drafts already: look there before sending it from here.',
     });
   if (k.status === 'waiting') k.held = true;
+  // An older version kept one written to or answered elsewhere as sent: it wasn't sent from here.
+  if (k.status === 'sent' && Object.values(DONE).includes(k.outcome)) k.status = 'elsewhere';
   return k;
 }
 
@@ -2493,18 +2508,26 @@ function alarm(text, item) {
  */
 function alreadyDone(item, rec) {
   if (item.type === 'follow') {
-    if (!rec) return 'The email it follows up is no longer in your outreach list.';
-    if (rec.status === 'replied') return 'They replied: see the Outreach tab.';
-    if (rec.status !== 'sent') return 'No longer waiting for a reply: see the Outreach tab.';
-    return rec.followedUpAt ? 'Followed up already.' : '';
+    if (!rec) return DONE.gone;
+    if (rec.status === 'replied') return DONE.replied;
+    if (rec.status !== 'sent') return DONE.closed;
+    return rec.followedUpAt ? DONE.followed : '';
   }
-  return rec && rec.status !== 'drafted' ? 'Already written to: see the Outreach tab.' : '';
+  return rec && rec.status !== 'drafted' ? DONE.written : '';
 }
+const DONE = {
+  written: 'Already written to: see the Outreach tab.',
+  replied: 'They replied: see the Outreach tab.',
+  closed: 'No longer waiting for a reply: see the Outreach tab.',
+  followed: 'Followed up already.',
+  gone: 'The email it follows up is no longer in your outreach list.',
+};
 
 /**
  * The queue squared with the outreach records: an item written to or answered elsewhere is finished ('elsewhere', not
- * counted as sent), and back again if its record is (a status set to Sent by mistake and back to Drafted); an email
- * scheduled for their morning whose time has passed has gone. Returns the items changed.
+ * counted as sent), and back again only if its record is set back to Drafted (one removed stays finished: it was
+ * written to); an email scheduled for their morning whose time has passed has gone, and one taken back is to read
+ * again. Returns the items changed.
  */
 function reconcileQueue() {
   const changed = [];
@@ -2512,16 +2535,19 @@ function reconcileQueue() {
     const rec = state.outreach[i.firm.id];
     if (i.status === 'scheduled') {
       const at = rec && (i.type === 'first' ? rec.sendAt : rec.followedUpAt);
-      if (i.type === 'first' && rec && rec.status === 'drafted') Object.assign(i, { status: 'ready', outcome: '' });
+      // Taken back is Drafted with no schedule left: one set to Drafted by hand is still waiting at Nylas, so it
+      // stays as it is, with Take it back, until it goes.
+      if (i.type === 'first' && rec && rec.status === 'drafted' && !rec.scheduleId)
+        Object.assign(i, { status: 'ready', outcome: '', error: '' });
       else if (!rec || !at || at <= Date.now())
-        Object.assign(i, { status: 'sent', outcome: at ? `Sent ${day(at)}.` : 'Sent.' });
+        Object.assign(i, { status: 'sent', outcome: at ? `Sent ${day(at)}.` : 'Sent.', error: '' });
       else continue;
       changed.push(i);
       continue;
     }
     const why = alreadyDone(i, rec);
     if (i.status === 'elsewhere') {
-      if (why) continue;
+      if (why || (i.type === 'first' && !rec)) continue;
       Object.assign(i, i.body ? { status: 'ready', outcome: '' } : { status: 'waiting', held: true, outcome: '' });
       changed.push(i);
       continue;
@@ -2531,7 +2557,31 @@ function reconcileQueue() {
     changed.push(i);
   }
   if (changed.length) saveQueue();
+  whenDue();
   return changed;
+}
+
+/**
+ * With the page left open: the queue looked at again when the next email waiting for their morning goes (so it stops
+ * saying "Arrives…"), and when one the page closed on is due to be in Sent.
+ */
+function whenDue() {
+  clearTimeout(whenDue.timer);
+  const now = Date.now();
+  const times = review.items.flatMap((i) => {
+    const rec = state.outreach[i.firm.id];
+    const at = i.status === 'scheduled' && rec ? (i.type === 'first' ? rec.sendAt : rec.followedUpAt) : 0;
+    return [at, i.lookFor && !MOVING.has(i.status) ? i.lookFor.at : 0].filter((t) => t > now);
+  });
+  if (!times.length) return;
+  // A minute past its time, so Nylas has sent it; no further ahead than an hour at once (a timer's own limit).
+  whenDue.timer = setTimeout(
+    () => {
+      afterReconcile(reconcileQueue());
+      reconcileDelivering().catch(() => null);
+    },
+    Math.min(Math.min(...times) - now + 60e3, 3600e3),
+  );
 }
 
 /** An item done outside the queue (written to from the drawer or another tab, answered, followed up already). */
@@ -2627,13 +2677,14 @@ async function settled(set, id) {
  */
 async function prepare(item) {
   const job = (item.job = {});
-  review.running.set(item.id, job);
+  review.running.set(item, job);
   item.status = 'preparing';
   item.error = '';
   const going = () => item.job === job && item.status === 'preparing';
+  // Kept on the run too: picked up again after a skip, the card shows where it had got to.
   const step = (s) => {
     if (!going()) return;
-    item.step = s;
+    item.step = job.step = s;
     redraw(item);
   };
   try {
@@ -2686,7 +2737,7 @@ async function prepare(item) {
     item.status = 'failed';
     item.error = errorText(err);
   } finally {
-    if (review.running.get(item.id) === job) review.running.delete(item.id);
+    if (review.running.get(item) === job) review.running.delete(item);
     // Only the run that still owns the item finishes it; one stopped (skipped, written again) leaves it as it is.
     if (item.job === job) {
       if (going()) item.status = item.body ? 'ready' : 'failed';
@@ -2775,8 +2826,8 @@ async function writeDraft(item, job) {
     result: { ok: r.ok, checks: r.checks },
     usage: usageLine(state.config, r.usage),
     thin: !O.material({ profile, kit, cvText }).ok,
+    // A doubt about an earlier copy (it may have gone, or be in drafts) stays: a new draft doesn't settle it.
     error: '',
-    unsure: '',
     status: 'ready',
   });
   // The stored record, not this page's copy: another tab or the drawer may have sent to this firm meanwhile.
@@ -2817,7 +2868,6 @@ async function writeFollowUp(item, job) {
     result: { ok: r.ok, checks: r.checks },
     usage: usageLine(state.config, r.usage),
     error: '',
-    unsure: '',
     status: 'ready',
   });
 }
@@ -2937,7 +2987,7 @@ function sendItem(item) {
   const why = alreadyDone(item, state.outreach[item.firm.id]);
   if (why) {
     finishElsewhere(item, why);
-    review.toast = { text: `${item.firm.name}: ${why}` };
+    alarm(`${item.firm.name}: ${why} Not sent again.`, item);
     saveQueue();
     return advance();
   }
@@ -3012,7 +3062,12 @@ async function deliver(item) {
   const follow = item.type === 'follow';
   const when = arrival(item);
   // Scheduled, it isn't in Sent until it goes: a page closed meanwhile can't look for it there.
-  Object.assign(item, { status: 'delivering', deliverFrom: Date.now(), scheduling: !!when.at });
+  Object.assign(item, {
+    status: 'delivering',
+    deliverFrom: Date.now(),
+    scheduling: !!when.at,
+    deliverAt: when.at || 0,
+  });
   saveQueue();
   redraw(item);
   try {
@@ -3022,7 +3077,8 @@ async function deliver(item) {
     const why = alreadyDone(item, rec);
     if (why) {
       finishElsewhere(item, why);
-      review.toast = { text: `${firm.name}: ${why} Not sent again.` };
+      // Kept until read: the next email's Undo or "Sent" would hide it, and the person thinks this one went.
+      alarm(`${firm.name}: ${why} Not sent again.`, item);
       return;
     }
     const nylas = await store.getNylas();
@@ -3043,7 +3099,7 @@ async function deliver(item) {
     const later = !!r.scheduleId;
     const at = later ? r.sendAt || when.at : Date.now();
     item.status = later ? 'scheduled' : 'sent';
-    item.unsure = '';
+    Object.assign(item, { unsure: '', lookFor: null });
     item.outcome = later
       ? `Arrives ${when.local}${cv ? `, ${cv.name} attached` : ''}. Until then it waits at Nylas.`
       : `Sent${cv ? `, ${cv.name} attached` : ''}. It’s in your Sent folder.`;
@@ -3079,19 +3135,31 @@ async function deliver(item) {
 
 /**
  * Items the page was handing to Nylas when it closed: sent if Sent has them (and recorded), else back to read with a
- * word to look in Sent first.
+ * word to look in Sent first, and looked for again on later visits (one scheduled for their morning once that has
+ * come), so an email that did go is recorded, followed up and watched for replies like any other.
  */
 async function reconcileDelivering() {
+  const now = Date.now();
   const stuck = review.items.filter((i) => i.status === 'delivering');
-  if (!stuck.length) return;
+  const lost = review.items.filter((i) => i.lookFor && !MOVING.has(i.status) && i.lookFor.at <= now);
+  if (!stuck.length && !lost.length) return;
   const nylas = state.nylas;
-  for (const i of stuck) {
+  const changed = [];
+  for (const i of [...stuck, ...lost]) {
+    const q =
+      i.status === 'delivering'
+        ? { to: i.to, subject: i.subject, after: i.deliverFrom || 0, at: i.scheduling ? i.deliverAt || 0 : 0 }
+        : i.lookFor;
     const m =
       nylas && nylas.grantId && N.sentMessage
-        ? await N.sentMessage(nylas, { to: i.to, subject: i.subject, after: i.deliverFrom || 0, fetch: fetchFn }).catch(
-            () => null,
-          )
+        ? await N.sentMessage(nylas, { to: q.to, subject: q.subject, after: q.after, fetch: fetchFn }).catch(() => null)
         : null;
+    if (!m && i.status !== 'delivering') {
+      // Not there days after its time: it didn't go. The doubt stays; the looking stops.
+      if (now - Math.max(q.at, q.after) > LOOK_FOR_MS) i.lookFor = null;
+      continue;
+    }
+    changed.push(i);
     if (!m) {
       // One being scheduled for their morning isn't in Sent until then: it may be waiting at Nylas.
       Object.assign(
@@ -3110,11 +3178,23 @@ async function reconcileDelivering() {
                 'The page closed while this was being sent, and it isn’t in your Sent folder yet: look there before sending it again.',
               unsure: 'It may have gone already: look in your Sent folder before sending it again.',
             },
+        { lookFor: q },
       );
       continue;
     }
-    const at = m.date ? m.date * 1000 : i.deliverFrom || Date.now();
-    Object.assign(i, { status: 'sent', outcome: 'Sent (the page closed as it went).', unsure: '' });
+    const at = m.date ? m.date * 1000 : q.at || q.after || now;
+    // Found: sent, whatever the item was doing since (still to read, skipped); one finished another way stays so.
+    if (i.status === 'delivering' || !FINISHED.has(i.status) || i.status === 'skipped')
+      Object.assign(i, {
+        status: 'sent',
+        outcome:
+          i.status === 'delivering'
+            ? 'Sent (the page closed as it went).'
+            : `Sent ${day(at)}: found in your Sent folder.`,
+        armed: false,
+      });
+    Object.assign(i, { unsure: '', error: '', lookFor: null });
+    stopRun(i);
     const rec = state.outreach[i.firm.id];
     if (i.type === 'follow')
       await setOutreach(i.firm, { followedUpAt: at, followUps: ((rec && rec.followUps) || 0) + 1 });
@@ -3122,6 +3202,8 @@ async function reconcileDelivering() {
       await setOutreach(i.firm, {
         status: 'sent',
         ...sentFields(i, {}),
+        to: q.to,
+        subject: q.subject,
         via: 'nylas',
         messageId: m.id,
         threadId: m.threadId,
@@ -3131,7 +3213,8 @@ async function reconcileDelivering() {
       });
   }
   saveQueue();
-  renderReview(stuck.includes(shown()));
+  if (changed.length) renderReview(changed.includes(shown()));
+  whenDue();
 }
 
 /** A first email waiting for their morning, taken back: Nylas deletes it, and it's back to read and send again. */
@@ -3145,13 +3228,14 @@ async function takeBack(item) {
     const nylas = await store.getNylas();
     await N.cancelScheduled(nylas, rec.scheduleId, { sendAt: rec.sendAt, fetch: fetchFn });
     await setOutreach(item.firm, { status: 'drafted', sentAt: null, sendAt: null, scheduleId: '' });
-    item.status = 'ready';
-    item.outcome = '';
+    Object.assign(item, { status: 'ready', outcome: '', error: '' });
     review.toast = { text: `Taken back: the email to ${item.firm.name} won’t be sent.`, show: item.id };
     // Nothing else to read: show it straight away.
     if (!shown()) review.at = review.items.indexOf(item);
   } catch (err) {
-    alarm(`Couldn’t take back the email to ${item.firm.name}: ${errorText(err)}`);
+    // Said on its card too (the alert goes once the card is shown): the email still goes at its time.
+    item.error = `Not taken back: ${errorText(err)}`;
+    alarm(`Couldn’t take back the email to ${item.firm.name}: ${errorText(err)}`, item);
   }
   item.takingBack = false;
   redraw(item);
@@ -3206,6 +3290,9 @@ async function saveItem(item) {
   } catch (err) {
     item.status = 'ready';
     item.error = `Not saved: ${errorText(err)}`;
+    // As a failed send: kept until read, and shown straight away when there's nothing else to read.
+    alarm(`Couldn’t save the email to ${item.firm.name} to your drafts: ${errorText(err)}`, item);
+    if (!shown()) review.at = review.items.indexOf(item);
     redraw(item);
   }
   saveQueue();
@@ -3260,8 +3347,8 @@ function unskip(item) {
     saveQueue();
     return renderReview(true);
   }
-  const live = review.running.get(item.id);
-  if (live) Object.assign(item, { job: live, status: 'preparing', held: false });
+  const live = review.running.get(item);
+  if (live) Object.assign(item, { job: live, status: 'preparing', held: false, step: live.step || '' });
   else {
     item.status = item.body ? 'ready' : 'waiting';
     item.held = false;
@@ -3289,8 +3376,8 @@ async function redraft(item) {
   if (!item || !['ready', 'failed'].includes(item.status)) return;
   if (!aiReady()) return noAi();
   const consent = requestAiConsent();
-  const job = (item.job = {});
-  review.running.set(item.id, job);
+  const job = (item.job = { step: 'draft' });
+  review.running.set(item, job);
   Object.assign(item, { status: 'preparing', step: 'draft', armed: false });
   redraw(item);
   try {
@@ -3302,7 +3389,7 @@ async function redraft(item) {
     // The email as it was stays, with why it wasn't written again.
     if (owns(item, job)) Object.assign(item, { status: item.body ? 'ready' : 'failed', error: errorText(err) });
   } finally {
-    if (review.running.get(item.id) === job) review.running.delete(item.id);
+    if (review.running.get(item) === job) review.running.delete(item);
     if (item.job === job) {
       if (owns(item, job)) item.status = item.body ? 'ready' : 'failed';
       Object.assign(item, { job: null, step: '' });
@@ -3358,23 +3445,36 @@ async function primaryAction(item) {
 
 function reviewKeys(e) {
   if ($('#review-view').hidden) return;
+  const send = (e.ctrlKey || e.metaKey) && e.key === 'Enter';
   // A held key is one press: it never sends the next card or says yes to a doubt.
   if (e.repeat) {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') e.preventDefault();
-    return;
-  }
-  const item = shown();
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-    e.preventDefault();
-    primaryAction(item);
+    if (send) e.preventDefault();
     return;
   }
   // Keys are letters while the cursor is in a box; a tick box or a choice above the queue just had the last click.
   const typing =
     e.target.closest &&
     e.target.closest('textarea, select, [contenteditable="true"], input:not([type="checkbox"]):not([type="radio"])');
+  // The box typed in drawn away mid-word (its email finished elsewhere): the rest of the word isn't commands ("u"
+  // undoing the last send, "c" changing who the next email goes to). Keys go on being typing until a pause.
+  if (!typing && review.dropped) {
+    if (Date.now() - review.typedAt < TYPING_MS) {
+      review.typedAt = Date.now();
+      if (e.key !== 'Tab') e.preventDefault();
+      return;
+    }
+    review.dropped = false;
+  }
+  const item = shown();
+  if (send) {
+    e.preventDefault();
+    primaryAction(item);
+    return;
+  }
   if (typing) {
+    review.dropped = false;
     if (e.key === 'Escape') e.target.blur();
+    else review.typedAt = Date.now();
     return;
   }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -3731,6 +3831,10 @@ function itemView(item) {
         className: ['skipped', 'watched', 'elsewhere'].includes(item.status) ? 'muted' : 'ok-text',
         textContent: text,
       }),
+      // A take-back that failed: the email still goes at its time.
+      item.status === 'scheduled' && item.error
+        ? el('p', { className: 'small error', attrs: { role: 'alert' }, textContent: item.error })
+        : null,
       el(
         'div',
         { className: 'review-actions' },
@@ -3798,6 +3902,10 @@ function itemView(item) {
         })
       : null,
     item.error ? el('p', { className: 'small error', attrs: { role: 'alert' }, textContent: item.error }) : null,
+    // The doubt about an earlier copy, still said once the error that raised it has gone (the email written again).
+    !item.error && item.unsure && !doubts.length
+      ? el('p', { className: 'small warn-text', textContent: item.unsure })
+      : null,
     doubts.length
       ? el(
           'div',
@@ -3991,14 +4099,16 @@ function progressView() {
 /**
  * The toasts, bottom of the page: what went wrong (kept until read: closed, or its email shown), and below it, while
  * emails wait out their five seconds, the latest of them with Undo (and how many more); otherwise what just happened,
- * gone after eight seconds.
+ * gone after eight seconds. Each is put in the page once and left there while it says the same, so a screen reader
+ * reads it once and a Close with the keyboard's focus keeps it.
  */
-function toastView() {
+function drawToasts() {
   const target = (id) => review.items.find((i) => i.id === id);
   // An alert about an email now on screen has been read there (the card says it too).
   review.alerts = review.alerts.filter((a) => !a.show || !target(a.show) || shown() !== target(a.show) || !a.at);
+  const canShow = (id) => !!id && !!target(id) && shown() !== target(id);
   const showIt = (id, after) =>
-    id && target(id) && shown() !== target(id)
+    canShow(id)
       ? el('button', {
           className: 'link',
           type: 'button',
@@ -4009,7 +4119,7 @@ function toastView() {
           },
         })
       : null;
-  const alerts = review.alerts.map((a) => {
+  const nodes = review.alerts.map((a) => {
     a.at = a.at || Date.now();
     const close = () => {
       review.alerts = review.alerts.filter((x) => x !== a);
@@ -4017,25 +4127,34 @@ function toastView() {
     };
     // One about no email in particular goes by itself after a while.
     if (!a.show && !a.timer) a.timer = setTimeout(close, 12000);
-    return el(
-      'div',
-      { className: 'toast error', attrs: { role: 'alert' } },
-      el('span', { textContent: a.text }),
-      showIt(a.show, () => (review.alerts = review.alerts.filter((x) => x !== a))),
-      el('button', { className: 'link', type: 'button', textContent: 'Close', onclick: close }),
-    );
+    const key = String(canShow(a.show));
+    if (!a.node || a.key !== key)
+      Object.assign(a, {
+        key,
+        node: el(
+          'div',
+          { className: 'toast error', attrs: { role: 'alert' } },
+          el('span', { textContent: a.text }),
+          showIt(a.show, () => (review.alerts = review.alerts.filter((x) => x !== a))),
+          el('button', { className: 'link', type: 'button', textContent: 'Close', onclick: close }),
+        ),
+      });
+    return a.node;
   });
   const waiting = [...review.pending.values()];
   let note = null;
   if (waiting.length) {
     const last = waiting[waiting.length - 1].item;
     const more = waiting.length > 1 ? ` (and ${plural(waiting.length - 1, 'other')})` : '';
-    note = el(
-      'div',
-      { className: 'toast', attrs: { role: 'status' } },
-      el('span', { textContent: `Sending to ${last.to}${more}…` }),
-      // Undo names its email: a second click lands on the email before, and undoSend lets it pass only after a moment.
-      el('button', { className: 'link', type: 'button', textContent: 'Undo (U)', onclick: () => undoSend(last.id) }),
+    const text = `Sending to ${last.to}${more}…`;
+    note = noteOf(['undo', last.id, text], () =>
+      el(
+        'div',
+        { className: 'toast', attrs: { role: 'status' } },
+        el('span', { textContent: text }),
+        // Undo names its email: a second click lands on the email before, and undoSend lets it pass only after a moment.
+        el('button', { className: 'link', type: 'button', textContent: 'Undo (U)', onclick: () => undoSend(last.id) }),
+      ),
     );
   } else if (review.toast) {
     const t = review.toast;
@@ -4045,24 +4164,47 @@ function toastView() {
         renderReview();
       }, 8000);
     const back = t.takeBack && target(t.takeBack);
-    note = el(
-      'div',
-      { className: 'toast', attrs: { role: 'status' } },
-      el('span', { textContent: t.text }),
-      back && canTakeBack(back)
-        ? el('button', {
-            className: 'link',
-            type: 'button',
-            disabled: !!back.takingBack,
-            textContent: 'Take it back',
-            onclick: () => takeBack(back),
-          })
-        : null,
-      showIt(t.show, () => (review.toast = null)),
+    const taking = back && canTakeBack(back) ? (back.takingBack ? 'busy' : 'yes') : 'no';
+    note = noteOf([t, taking, canShow(t.show)], () =>
+      el(
+        'div',
+        { className: 'toast', attrs: { role: 'status' } },
+        el('span', { textContent: t.text }),
+        taking !== 'no'
+          ? el('button', {
+              className: 'link',
+              type: 'button',
+              disabled: taking === 'busy',
+              textContent: 'Take it back',
+              onclick: () => takeBack(back),
+            })
+          : null,
+        showIt(t.show, () => (review.toast = null)),
+      ),
     );
   }
-  if (!alerts.length && !note) return null;
-  return el('div', { className: 'toasts' }, ...alerts, note);
+  const want = [...nodes, note].filter(Boolean);
+  let box = document.querySelector('#review-view .toasts');
+  if (!box) {
+    box = el('div', { className: 'toasts' });
+    $('#review-view').append(box);
+    // Room below the card for the toasts, so what they cover can be scrolled above them.
+    if (globalThis.ResizeObserver)
+      new ResizeObserver(() => {
+        const h = box.hidden ? 0 : box.offsetHeight;
+        $('#review-view').style.paddingBottom = h ? `${h + 24}px` : '';
+      }).observe(box);
+  }
+  for (const n of [...box.children]) if (!want.includes(n)) n.remove();
+  want.forEach((n, k) => box.children[k] !== n && box.insertBefore(n, box.children[k] || null));
+  box.hidden = !want.length;
+}
+
+/** The note under the alerts, built again only when what it says (or offers) changed. */
+function noteOf(key, build) {
+  const same = review.note && review.note.key.length === key.length && review.note.key.every((k, i) => k === key[i]);
+  if (!same) review.note = { key, node: build() };
+  return review.note.node;
 }
 
 /**
@@ -4094,14 +4236,19 @@ function renderReview(force) {
         onclick: queueFollowUps,
       }),
     );
-  const old = document.querySelector('#review-view .toasts');
-  const toast = toastView();
-  if (old) old.replaceWith(...(toast ? [toast] : []));
-  else if (toast) $('#review-view').append(toast);
+  drawToasts();
   $('#review-keys').hidden = !item || item.status !== 'ready';
   if (!force && key === review.drawn) return;
   review.drawn = key;
+  // Typed in when it's drawn again (its email finished elsewhere): the keys that follow are still the typing.
+  const active = document.activeElement;
+  const lost = !!(active && active.closest && active.closest('#review-card input, #review-card textarea'));
   $('#review-card').replaceChildren(item ? itemView(item) : summaryView());
+  if (lost) {
+    review.dropped = true;
+    const heading = $('#review-card h2');
+    if (heading) heading.focus({ preventScroll: true });
+  }
   const body = $('#review-card textarea.body');
   if (body) fitBox(body);
   // Another firm, or this one now ready to read: what's under the pointer and the keys changed.
@@ -4158,6 +4305,8 @@ async function loadReview() {
 /** Another tab, the drawer or the Outreach tab wrote to a firm: the queue hears of it before anything is sent. */
 async function outreachChanged() {
   state.outreach = await store.getOutreach();
+  // The Outreach tab too: the queue points there for a firm written to in another tab.
+  renderOutreach();
   afterReconcile(reconcileQueue());
 }
 
