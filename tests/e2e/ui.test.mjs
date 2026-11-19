@@ -1147,21 +1147,30 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
   assert.match(await page.inputValue(box), /^Dear Jane,\n\n/);
   assert.equal(await page.$('#review-card .send-go.armed'), null);
 
-  /** Ctrl+Enter, and again if the email has a doubt to accept (a check the stand-in's draft failed). */
-  const send = async () => {
-    await page.waitForTimeout(700);
-    await page.keyboard.press('Control+Enter');
+  /**
+   * Ctrl+Enter, and again if the email has a doubt to accept (a check the stand-in's draft failed); `typed`: each
+   * straight after typing at the end of the email, the cursor still in it.
+   */
+  const send = async (typed) => {
+    const press = async () => {
+      await page.waitForTimeout(700);
+      if (typed) {
+        await page.click(box);
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('.');
+      }
+      await page.keyboard.press('Control+Enter');
+    };
+    await press();
     await page.waitForFunction(
       () => document.querySelector('#review-card .send-go.armed') || /Sending to/.test(document.body.textContent),
     );
-    if (await page.$('#review-card .send-go.armed')) {
-      await page.waitForTimeout(700);
-      await page.keyboard.press('Control+Enter');
-    }
+    if (await page.$('#review-card .send-go.armed')) await press();
     await page.waitForSelector('#review-view .toast');
   };
-  // Sent in five seconds unless Undo: U takes it back, and nothing went.
-  await send();
+  // Sent in five seconds unless Undo: U takes it back, and nothing went. Pressed straight after sending from the email
+  // box too: the card the person's own Ctrl+Enter drew away isn't typing drawn away under them, so U isn't swallowed.
+  await send(true);
   assert.match(await page.textContent('#review-view .toast'), /^Sending to jane\.doe@quiet\.example…Undo/);
   await page.keyboard.press('u');
   await page.waitForSelector(box);

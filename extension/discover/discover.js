@@ -2208,6 +2208,7 @@ function outreachItem(id, rec) {
               const next = await store.setOutreach(id, { status: value });
               state.outreach[id] = next;
               const fresh = outreachItem(id, next);
+              fresh.drawn = JSON.stringify(next);
               item.replaceWith(fresh);
               fresh.querySelector('select').focus();
               rerender(id);
@@ -2252,7 +2253,12 @@ function outreachItem(id, rec) {
   );
 }
 
-function renderOutreach() {
+/**
+ * The Outreach list. While it's on screen its order stays as drawn (a firm written to elsewhere goes on top), so a
+ * status just chosen never moves its row from under the pointer and the next click lands on the firm meant; only rows
+ * whose record changed are drawn again, and one with the focus gives it back to the same control.
+ */
+function renderOutreach(sort) {
   const list = outreachList();
   $('#outreach-count').textContent = String(list.length);
   $('#outreach-empty').hidden = !!list.length;
@@ -2261,12 +2267,31 @@ function renderOutreach() {
   const active = document.activeElement;
   const typing = active && active.closest('#outreach .outreach-notes');
   if (typing) return;
-  // A status just chosen (or a button with the focus) keeps it when the list is drawn again.
+  const ul = $('#outreach');
+  const rows = new Map([...ul.children].map((li) => [li.dataset.id, li]));
+  const byId = new Map(list);
+  const order =
+    sort || $('#outreach-view').hidden
+      ? list
+      : [
+          ...list.filter(([id]) => !rows.has(id)),
+          ...[...rows.keys()].filter((id) => byId.has(id)).map((id) => [id, byId.get(id)]),
+        ];
   const row = active && active.closest('#outreach li[data-id]');
-  const kind = row && active.matches('select') ? 'select' : row && active.matches('button') ? 'button' : '';
-  $('#outreach').replaceChildren(...list.map(([id, rec]) => outreachItem(id, rec)));
-  const again = kind && [...$('#outreach').children].find((li) => li.dataset.id === row.dataset.id);
-  const control = again && again.querySelector(kind);
+  const focusable = (li) => [...li.querySelectorAll('a, select, button, textarea')];
+  const at = row ? focusable(row).indexOf(active) : -1;
+  const want = order.map(([id, rec]) => {
+    const drawn = JSON.stringify(rec);
+    const old = rows.get(id);
+    if (old && old.drawn === drawn) return old;
+    const li = outreachItem(id, rec);
+    li.drawn = drawn;
+    return li;
+  });
+  for (const li of [...ul.children]) if (!want.includes(li)) li.remove();
+  want.forEach((li, k) => ul.children[k] !== li && ul.insertBefore(li, ul.children[k] || null));
+  const again = row && !row.isConnected && want.find((li) => li.dataset.id === row.dataset.id);
+  const control = again && focusable(again)[at];
   if (control) control.focus({ preventScroll: true });
 }
 
@@ -2403,11 +2428,13 @@ const review = {
   busy: 0, // items being prepared
   consent: null, // the AI consent asked for on the click that started the work (Firefox)
   pending: new Map(), // item id → { item, timer }: sends waiting out their five seconds, oldest first
+  delivering: new Set(), // items this page is handing to Nylas now (any other 'delivering' one, the page closed on)
   running: new Map(), // item → the run preparing or writing it again, still waiting on the AI (owner or not); by the
   // item itself, not its id: a firm cleared and written to again is a new item, and never takes the old one's run
   toast: null, // { text, show?, takeBack? }: what just happened
   note: null, // { key, node }: the toast under the alerts as drawn
-  alerts: [], // [{ text, show?, at }]: what went wrong, kept until read (never pushed out by the next "Sent")
+  alerts: [], // [{ text, show?, at, keep?, seen? }]: what went wrong, kept until read (never pushed out by the next "Sent")
+  room: 0, // the room kept below the card for the toasts: grows at once, shrinks only when the card changes
   drawn: '', // what the card was last drawn from, so typing in it isn't undone by a redraw
   shownKey: '', // the item and status the card shows, and since when: a press then is for the card before
   shownAt: 0,
@@ -2495,12 +2522,36 @@ function noAi() {
   renderReview();
 }
 
-/** Something that went wrong, said until it's read: kept beside the Undo toast, never replaced by the next "Sent". */
-function alarm(text, item) {
-  review.alerts = [...review.alerts.filter((a) => a.text !== text), { text, show: item ? item.id : '', at: 0 }].slice(
-    -3,
-  );
+/**
+ * Something that went wrong, said until it's read: kept beside the Undo toast, never replaced by the next "Sent". Three
+ * at most, the oldest going first, but one about an email that will still go (`keep`: a failed take-back) goes last.
+ */
+function alarm(text, item, keep) {
+  const all = [...review.alerts.filter((a) => a.text !== text), { text, show: item ? item.id : '', at: 0, keep }];
+  while (all.length > 3) {
+    const k = all.findIndex((a) => !a.keep);
+    all.splice(k < 0 ? 0 : k, 1);
+  }
+  review.alerts = all;
 }
+
+/** A later success for an email settles what went wrong with it before (a failed take-back retried, a send). */
+function settle(item) {
+  review.alerts = review.alerts.filter((a) => a.show !== item.id);
+}
+
+/** When a scheduled item goes: its record's time, or the item's own once the record is removed on the Outreach tab. */
+function goesAt(i) {
+  const rec = state.outreach[i.firm.id];
+  return rec ? (i.type === 'first' ? rec.sendAt : rec.followedUpAt) || 0 : i.sendAt || 0;
+}
+
+/** The doubt about a copy the page closed on, kept while a copy sent anyway waits at Nylas: back if that's taken back. */
+const doubtBack = (i) => ({
+  unsure: (i.before && i.before.unsure) || '',
+  lookFor: (i.before && i.before.lookFor) || null,
+  before: null,
+});
 
 /**
  * Why an item is done already, from the firm's outreach record ('' when it isn't): a first email to a firm written to
@@ -2534,13 +2585,14 @@ function reconcileQueue() {
   for (const i of review.items) {
     const rec = state.outreach[i.firm.id];
     if (i.status === 'scheduled') {
-      const at = rec && (i.type === 'first' ? rec.sendAt : rec.followedUpAt);
+      const at = goesAt(i);
       // Taken back is Drafted with no schedule left: one set to Drafted by hand is still waiting at Nylas, so it
-      // stays as it is, with Take it back, until it goes.
+      // stays as it is, with Take it back, until it goes; so does one whose record was removed (the item keeps its
+      // schedule).
       if (i.type === 'first' && rec && rec.status === 'drafted' && !rec.scheduleId)
-        Object.assign(i, { status: 'ready', outcome: '', error: '' });
-      else if (!rec || !at || at <= Date.now())
-        Object.assign(i, { status: 'sent', outcome: at ? `Sent ${day(at)}.` : 'Sent.', error: '' });
+        Object.assign(i, { status: 'ready', outcome: '', error: '', scheduleId: '', sendAt: 0, ...doubtBack(i) });
+      else if (!at || at <= Date.now())
+        Object.assign(i, { status: 'sent', outcome: at ? `Sent ${day(at)}.` : 'Sent.', error: '', before: null });
       else continue;
       changed.push(i);
       continue;
@@ -2568,17 +2620,18 @@ function reconcileQueue() {
 function whenDue() {
   clearTimeout(whenDue.timer);
   const now = Date.now();
-  const times = review.items.flatMap((i) => {
-    const rec = state.outreach[i.firm.id];
-    const at = i.status === 'scheduled' && rec ? (i.type === 'first' ? rec.sendAt : rec.followedUpAt) : 0;
-    return [at, i.lookFor && !MOVING.has(i.status) ? i.lookFor.at : 0].filter((t) => t > now);
-  });
+  const times = review.items.flatMap((i) =>
+    [i.status === 'scheduled' ? goesAt(i) : 0, i.lookFor && !MOVING.has(i.status) ? i.lookFor.at : 0].filter(
+      (t) => t > now,
+    ),
+  );
   if (!times.length) return;
-  // A minute past its time, so Nylas has sent it; no further ahead than an hour at once (a timer's own limit).
+  // A minute past its time, so Nylas has sent it; no further ahead than an hour at once (a timer's own limit). Only
+  // what the page closed on is looked for: an email being sent now is this page's own.
   whenDue.timer = setTimeout(
     () => {
       afterReconcile(reconcileQueue());
-      reconcileDelivering().catch(() => null);
+      reconcileDelivering({ closed: false }).catch(() => null);
     },
     Math.min(Math.min(...times) - now + 60e3, 3600e3),
   );
@@ -2741,12 +2794,23 @@ async function prepare(item) {
     // Only the run that still owns the item finishes it; one stopped (skipped, written again) leaves it as it is.
     if (item.job === job) {
       if (going()) item.status = item.body ? 'ready' : 'failed';
+      landed(item);
       item.job = null;
       item.step = '';
       redraw(item);
       saveQueue();
     }
   }
+}
+
+/**
+ * A run's draft landing on a firm written to or answered while it was being written (another tab, the drawer): it isn't
+ * offered to read, it's finished, as reconcileQueue() would have made it had it not been busy.
+ */
+function landed(item) {
+  if (!['ready', 'failed'].includes(item.status)) return;
+  const why = alreadyDone(item, state.outreach[item.firm.id]);
+  if (why) finishElsewhere(item, why);
 }
 
 /** Who the item writes to, and how sure their address is, kept for when the firm's contacts change. */
@@ -2832,6 +2896,7 @@ async function writeDraft(item, job) {
   });
   // The stored record, not this page's copy: another tab or the drawer may have sent to this firm meanwhile.
   const old = (await store.getOutreach())[firm.id];
+  if (old) state.outreach[firm.id] = old;
   if (!old || old.status === 'drafted')
     await setOutreach(firm, {
       status: 'drafted',
@@ -3061,13 +3126,16 @@ async function deliver(item) {
   const firm = item.firm;
   const follow = item.type === 'follow';
   const when = arrival(item);
-  // Scheduled, it isn't in Sent until it goes: a page closed meanwhile can't look for it there.
+  // Scheduled, it isn't in Sent until it goes: a page closed meanwhile can't look for it there. What's handed over is
+  // kept as it is, so one found in Sent later is recorded as it went, not as the draft has been rewritten since.
   Object.assign(item, {
     status: 'delivering',
     deliverFrom: Date.now(),
     scheduling: !!when.at,
     deliverAt: when.at || 0,
+    handed: sentFields(item, contactsOf(firm).find((x) => sameAddress(x.address, item.to)) || {}),
   });
+  review.delivering.add(item);
   saveQueue();
   redraw(item);
   try {
@@ -3099,7 +3167,11 @@ async function deliver(item) {
     const later = !!r.scheduleId;
     const at = later ? r.sendAt || when.at : Date.now();
     item.status = later ? 'scheduled' : 'sent';
-    Object.assign(item, { unsure: '', lookFor: null });
+    // A copy the page closed on may still be at Nylas too: that doubt comes back if this one is taken back.
+    const before = later && (item.unsure || item.lookFor) ? { unsure: item.unsure, lookFor: item.lookFor } : null;
+    Object.assign(item, { unsure: '', lookFor: null, error: '', before, scheduleId: later ? r.scheduleId : '' });
+    item.sendAt = later ? at : 0;
+    settle(item);
     item.outcome = later
       ? `Arrives ${when.local}${cv ? `, ${cv.name} attached` : ''}. Until then it waits at Nylas.`
       : `Sent${cv ? `, ${cv.name} attached` : ''}. It’s in your Sent folder.`;
@@ -3128,39 +3200,56 @@ async function deliver(item) {
     // Nothing else to read: show it straight away.
     if (!shown()) review.at = review.items.indexOf(item);
   } finally {
+    review.delivering.delete(item);
     redraw(item);
     saveQueue();
   }
 }
 
 /**
- * Items the page was handing to Nylas when it closed: sent if Sent has them (and recorded), else back to read with a
- * word to look in Sent first, and looked for again on later visits (one scheduled for their morning once that has
- * come), so an email that did go is recorded, followed up and watched for replies like any other.
+ * Items the page was handing to Nylas when it closed: sent if Sent has them (and recorded as they went), else back to
+ * read with a word to look in Sent first, and looked for again on later visits (one scheduled for their morning once
+ * that has come), so an email that did go is recorded, followed up and watched for replies like any other. `closed`
+ * false (the page's own timer): only those looked for again, never an email this page is sending now.
  */
-async function reconcileDelivering() {
+async function reconcileDelivering({ closed = true } = {}) {
   const now = Date.now();
-  const stuck = review.items.filter((i) => i.status === 'delivering');
+  const stuck = closed ? review.items.filter((i) => i.status === 'delivering' && !review.delivering.has(i)) : [];
   const lost = review.items.filter((i) => i.lookFor && !MOVING.has(i.status) && i.lookFor.at <= now);
   if (!stuck.length && !lost.length) return;
   const nylas = state.nylas;
   const changed = [];
   for (const i of [...stuck, ...lost]) {
-    const q =
-      i.status === 'delivering'
-        ? { to: i.to, subject: i.subject, after: i.deliverFrom || 0, at: i.scheduling ? i.deliverAt || 0 : 0 }
-        : i.lookFor;
-    const m =
-      nylas && nylas.grantId && N.sentMessage
-        ? await N.sentMessage(nylas, { to: q.to, subject: q.subject, after: q.after, fetch: fetchFn }).catch(() => null)
-        : null;
-    if (!m && i.status !== 'delivering') {
-      // Not there days after its time: it didn't go. The doubt stays; the looking stops.
-      if (now - Math.max(q.at, q.after) > LOOK_FOR_MS) i.lookFor = null;
+    const mine = stuck.includes(i);
+    const q = mine
+      ? {
+          to: i.to,
+          subject: i.subject,
+          after: i.deliverFrom || 0,
+          at: i.scheduling ? i.deliverAt || 0 : 0,
+          fields: i.handed || null,
+        }
+      : i.lookFor;
+    // Couldn't look (no inbox now, Nylas down) isn't "not there": the looking goes on.
+    let m = null;
+    let failed = '';
+    if (!(nylas && nylas.grantId && N.sentMessage)) failed = 'no inbox is connected';
+    else
+      m = await N.sentMessage(nylas, { to: q.to, subject: q.subject, after: q.after, fetch: fetchFn }).catch((err) => {
+        failed = errorText(err) || 'Nylas didn’t answer';
+        return null;
+      });
+    // What the person did meanwhile wins: an item they're sending or saving now is theirs.
+    if (mine ? i.status !== 'delivering' || review.delivering.has(i) : MOVING.has(i.status) || i.lookFor !== q)
+      continue;
+    if (!m && !mine) {
+      // Not there days after its time: it didn't go. The doubt stays; the looking stops (after a month, if it can't look).
+      if (now - Math.max(q.at, q.after) > (failed ? 10 : 1) * LOOK_FOR_MS) i.lookFor = null;
       continue;
     }
     changed.push(i);
     if (!m) {
+      const where = failed ? `your Sent folder couldn’t be checked (${failed})` : 'it isn’t in your Sent folder yet';
       // One being scheduled for their morning isn't in Sent until then: it may be waiting at Nylas.
       Object.assign(
         i,
@@ -3174,8 +3263,7 @@ async function reconcileDelivering() {
             }
           : {
               status: 'ready',
-              error:
-                'The page closed while this was being sent, and it isn’t in your Sent folder yet: look there before sending it again.',
+              error: `The page closed while this was being sent, and ${where}: look there before sending it again.`,
               unsure: 'It may have gone already: look in your Sent folder before sending it again.',
             },
         { lookFor: q },
@@ -3183,14 +3271,16 @@ async function reconcileDelivering() {
       continue;
     }
     const at = m.date ? m.date * 1000 : q.at || q.after || now;
-    // Found: sent, whatever the item was doing since (still to read, skipped); one finished another way stays so.
-    if (i.status === 'delivering' || !FINISHED.has(i.status) || i.status === 'skipped')
+    // Found: sent, whatever the item was doing since (still to read, skipped, saved to drafts: that copy would be a
+    // second one); one finished another way stays so.
+    if (mine || !FINISHED.has(i.status) || i.status === 'skipped' || i.status === 'saved')
       Object.assign(i, {
         status: 'sent',
-        outcome:
-          i.status === 'delivering'
-            ? 'Sent (the page closed as it went).'
-            : `Sent ${day(at)}: found in your Sent folder.`,
+        outcome: mine
+          ? 'Sent (the page closed as it went).'
+          : `Sent ${day(at)}: found in your Sent folder.${
+              i.status === 'saved' ? ' The copy saved to your drafts would be a second one: delete it there.' : ''
+            }`,
         armed: false,
       });
     Object.assign(i, { unsure: '', error: '', lookFor: null });
@@ -3201,7 +3291,7 @@ async function reconcileDelivering() {
     else if (!alreadyDone(i, rec))
       await setOutreach(i.firm, {
         status: 'sent',
-        ...sentFields(i, {}),
+        ...(q.fields || sentFields(i, {})),
         to: q.to,
         subject: q.subject,
         via: 'nylas',
@@ -3219,33 +3309,48 @@ async function reconcileDelivering() {
 
 /** A first email waiting for their morning, taken back: Nylas deletes it, and it's back to read and send again. */
 async function takeBack(item) {
-  const rec = state.outreach[item.firm.id];
+  const s = schedule(item);
   // A second click while the first is with Nylas would be told the email is gone: it's been taken back.
-  if (!rec || !rec.scheduleId || item.takingBack) return;
+  if (!s.id || item.takingBack) return;
   item.takingBack = true;
   renderReview(shown() === item);
   try {
     const nylas = await store.getNylas();
-    await N.cancelScheduled(nylas, rec.scheduleId, { sendAt: rec.sendAt, fetch: fetchFn });
-    await setOutreach(item.firm, { status: 'drafted', sentAt: null, sendAt: null, scheduleId: '' });
-    Object.assign(item, { status: 'ready', outcome: '', error: '' });
-    review.toast = { text: `Taken back: the email to ${item.firm.name} won’t be sent.`, show: item.id };
+    await N.cancelScheduled(nylas, s.id, { sendAt: s.at, fetch: fetchFn });
+    if (state.outreach[item.firm.id])
+      await setOutreach(item.firm, { status: 'drafted', sentAt: null, sendAt: null, scheduleId: '' });
+    Object.assign(item, { status: 'ready', outcome: '', error: '', scheduleId: '', sendAt: 0, ...doubtBack(item) });
+    review.toast = {
+      text: item.lookFor
+        ? `Taken back: this copy to ${item.firm.name} won’t be sent, but the one the page closed on may still go.`
+        : `Taken back: the email to ${item.firm.name} won’t be sent.`,
+      show: item.id,
+    };
+    settle(item);
     // Nothing else to read: show it straight away.
     if (!shown()) review.at = review.items.indexOf(item);
   } catch (err) {
-    // Said on its card too (the alert goes once the card is shown): the email still goes at its time.
+    // Said on its card too: the email still goes at its time. Kept above other alerts until read.
     item.error = `Not taken back: ${errorText(err)}`;
-    alarm(`Couldn’t take back the email to ${item.firm.name}: ${errorText(err)}`, item);
+    alarm(`Couldn’t take back the email to ${item.firm.name}: ${errorText(err)}`, item, true);
   }
   item.takingBack = false;
   redraw(item);
   saveQueue();
 }
 
+/** A first email's schedule at Nylas: its record's, or the item's own once the record is removed on Outreach. */
+function schedule(item) {
+  const rec = state.outreach[item.firm.id];
+  if (item.type !== 'first') return {};
+  if (rec) return { id: rec.scheduleId || '', at: rec.sendAt || 0 };
+  return item.status === 'scheduled' ? { id: item.scheduleId || '', at: item.sendAt || 0 } : {};
+}
+
 /** Can a scheduled email still be taken back (Nylas needs a minute's notice)? */
 const canTakeBack = (item) => {
-  const rec = state.outreach[item.firm.id];
-  return item.type === 'first' && !!rec && !!rec.scheduleId && rec.sendAt - Date.now() > 60e3;
+  const s = schedule(item);
+  return !!s.id && s.at - Date.now() > 60e3;
 };
 
 /** Save to the connected inbox's drafts, to send from there (a follow-up in the first email's thread). */
@@ -3256,6 +3361,18 @@ async function saveItem(item) {
   saveQueue();
   redraw(item);
   try {
+    // The stored record, as for a send: one written to meanwhile (another tab, the drawer) keeps its Sent.
+    const stored = (await store.getOutreach())[item.firm.id];
+    if (stored) state.outreach[item.firm.id] = stored;
+    else delete state.outreach[item.firm.id];
+    const why = alreadyDone(item, stored);
+    if (why) {
+      finishElsewhere(item, why);
+      alarm(`${item.firm.name}: ${why} Not saved to your drafts.`, item);
+      if (shown() === item) advance();
+      else renderReview();
+      return saveQueue();
+    }
     const nylas = await store.getNylas();
     if (!nylas || !nylas.grantId) throw new Error('Connect your inbox first (Settings › Email codes).');
     const follow = item.type === 'follow';
@@ -3274,6 +3391,7 @@ async function saveItem(item) {
     );
     item.status = 'saved';
     item.unsure = '';
+    settle(item);
     item.outcome = `Saved to your drafts${cv ? `, ${cv.name} attached` : ''}.`;
     if (follow) await setOutreach(item.firm, { followedUpAt: Date.now(), followUpDraftId: r.id });
     else
@@ -3301,6 +3419,14 @@ async function saveItem(item) {
 /** Without an inbox connected: the person sent it from their own email program and says so. */
 async function markSent(item) {
   if (!item || item.status !== 'ready' || freshCard()) return;
+  // One written to meanwhile keeps its record (its address, date and follow-ups): it isn't marked again.
+  const why = alreadyDone(item, state.outreach[item.firm.id]);
+  if (why) {
+    finishElsewhere(item, why);
+    alarm(`${item.firm.name}: ${why} Not marked again.`, item);
+    saveQueue();
+    return shown() === item ? advance() : renderReview();
+  }
   item.status = 'sent';
   item.outcome = 'Marked as sent.';
   if (item.type === 'follow') await setOutreach(item.firm, { followedUpAt: Date.now() });
@@ -3392,6 +3518,7 @@ async function redraft(item) {
     if (review.running.get(item) === job) review.running.delete(item);
     if (item.job === job) {
       if (owns(item, job)) item.status = item.body ? 'ready' : 'failed';
+      landed(item);
       Object.assign(item, { job: null, step: '' });
       redraw(item);
       saveQueue();
@@ -3455,19 +3582,26 @@ function reviewKeys(e) {
   const typing =
     e.target.closest &&
     e.target.closest('textarea, select, [contenteditable="true"], input:not([type="checkbox"]):not([type="radio"])');
-  // The box typed in drawn away mid-word (its email finished elsewhere): the rest of the word isn't commands ("u"
-  // undoing the last send, "c" changing who the next email goes to). Keys go on being typing until a pause.
+  // The box typed in drawn away mid-word (its email finished elsewhere): the rest of the word isn't commands ("c"
+  // changing who the next email goes to, "s" skipping it). Keys go on being typing until a pause, but never Escape (the
+  // person saying they've stopped), a chord (Ctrl+Enter is a command, not a letter) or U: an Undo only ever stops an
+  // email, and swallowing it would let one go.
   if (!typing && review.dropped) {
-    if (Date.now() - review.typedAt < TYPING_MS) {
+    const word = !e.ctrlKey && !e.metaKey && !e.altKey && !['Escape', 'u', 'U'].includes(e.key);
+    if (word && Date.now() - review.typedAt < TYPING_MS) {
       review.typedAt = Date.now();
       if (e.key !== 'Tab') e.preventDefault();
       return;
     }
     review.dropped = false;
+    if (e.key === 'Escape') return;
   }
   const item = shown();
   if (send) {
     e.preventDefault();
+    // A command, not typing: the card it draws away (sent, or a doubt raised) was the person's own doing, so the keys
+    // after it (U for Undo, S, a second Ctrl+Enter for Send anyway) are commands too.
+    review.typedAt = 0;
     primaryAction(item);
     return;
   }
@@ -3957,8 +4091,12 @@ function tally() {
   };
 }
 
-/** Can Clear the finished ones clear anything (an email that can still be taken back stays)? */
-const clearable = (i) => FINISHED.has(i.status) && !canTakeBack(i);
+/**
+ * Can Clear the finished ones clear it? Not an email that can still be taken back, nor one whose earlier copy (the page
+ * closed as it went) is still looked for in Sent: cleared, that copy would never be recorded, and the firm could be
+ * written to again with no word of it.
+ */
+const clearable = (i) => FINISHED.has(i.status) && !canTakeBack(i) && !i.lookFor;
 
 /** Past the last card: what's left to do first (read, prepare, look at), then what happened and the next ten. */
 function summaryView() {
@@ -4104,8 +4242,11 @@ function progressView() {
  */
 function drawToasts() {
   const target = (id) => review.items.find((i) => i.id === id);
-  // An alert about an email now on screen has been read there (the card says it too).
-  review.alerts = review.alerts.filter((a) => !a.show || !target(a.show) || shown() !== target(a.show) || !a.at);
+  // An alert about an email is read once its card has been on screen with it (the card says it too): it goes when the
+  // person moves on from that card, never at some redraw while they're still reading it.
+  const now = shown();
+  for (const a of review.alerts) if (a.show && now && target(a.show) === now) a.seen = true;
+  review.alerts = review.alerts.filter((a) => !a.seen || !target(a.show) || target(a.show) === now);
   const canShow = (id) => !!id && !!target(id) && shown() !== target(id);
   const showIt = (id, after) =>
     canShow(id)
@@ -4127,18 +4268,28 @@ function drawToasts() {
     };
     // One about no email in particular goes by itself after a while.
     if (!a.show && !a.timer) a.timer = setTimeout(close, 12000);
-    const key = String(canShow(a.show));
-    if (!a.node || a.key !== key)
-      Object.assign(a, {
-        key,
-        node: el(
-          'div',
-          { className: 'toast error', attrs: { role: 'alert' } },
-          el('span', { textContent: a.text }),
-          showIt(a.show, () => (review.alerts = review.alerts.filter((x) => x !== a))),
-          el('button', { className: 'link', type: 'button', textContent: 'Close', onclick: close }),
-        ),
-      });
+    // Built once (a screen reader reads it once); its Show it is there only while its email isn't the one shown.
+    if (!a.node) {
+      a.showIt = a.show
+        ? el('button', {
+            className: 'link',
+            type: 'button',
+            textContent: 'Show it',
+            onclick: () => {
+              review.alerts = review.alerts.filter((x) => x !== a);
+              showItem(target(a.show));
+            },
+          })
+        : null;
+      a.node = el(
+        'div',
+        { className: 'toast error', attrs: { role: 'alert' } },
+        el('span', { textContent: a.text }),
+        a.showIt,
+        el('button', { className: 'link', type: 'button', textContent: 'Close', onclick: close }),
+      );
+    }
+    if (a.showIt) a.showIt.hidden = !canShow(a.show);
     return a.node;
   });
   const waiting = [...review.pending.values()];
@@ -4188,16 +4339,22 @@ function drawToasts() {
   if (!box) {
     box = el('div', { className: 'toasts' });
     $('#review-view').append(box);
-    // Room below the card for the toasts, so what they cover can be scrolled above them.
-    if (globalThis.ResizeObserver)
-      new ResizeObserver(() => {
-        const h = box.hidden ? 0 : box.offsetHeight;
-        $('#review-view').style.paddingBottom = h ? `${h + 24}px` : '';
-      }).observe(box);
+    if (globalThis.ResizeObserver) new ResizeObserver(() => makeRoom()).observe(box);
   }
   for (const n of [...box.children]) if (!want.includes(n)) n.remove();
   want.forEach((n, k) => box.children[k] !== n && box.insertBefore(n, box.children[k] || null));
   box.hidden = !want.length;
+}
+
+/**
+ * Room below the card for the toasts, so what they cover can be scrolled above them. It grows at once and shrinks only
+ * when the card changes (`fresh`): a toast going never shortens the page and moves the card under the pointer.
+ */
+function makeRoom(fresh) {
+  const box = document.querySelector('#review-view .toasts');
+  const h = box && !box.hidden && box.offsetHeight ? box.offsetHeight + 24 : 0;
+  review.room = fresh ? h : Math.max(review.room, h);
+  $('#review-view').style.paddingBottom = review.room ? `${review.room}px` : '';
 }
 
 /** The note under the alerts, built again only when what it says (or offers) changed. */
@@ -4257,6 +4414,7 @@ function renderReview(force) {
     const moved = !item || !review.shownKey.startsWith(`${item.id}|`);
     review.shownKey = shownKey;
     review.shownAt = Date.now();
+    if (moved) makeRoom(true);
     if (moved && !$('#review-view').hidden) {
       const heading = $('#review-card h2');
       if (heading) heading.focus({ preventScroll: true });
@@ -4325,6 +4483,8 @@ function showTab(which) {
     $(`#${t}-view`).hidden = which !== t;
   }
   history.replaceState(null, '', which === 'find' ? '#' : '#' + which);
+  // Newest first again each time the tab is opened (kept as drawn while it's on screen).
+  if (which === 'outreach') renderOutreach(true);
   const box = which === 'review' && $('#review-card textarea.body');
   if (box) fitBox(box);
 }
