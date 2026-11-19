@@ -91,7 +91,14 @@ async function connectionGroup(refresh) {
     status.textContent = 'Checking…';
     try {
       const list = await nylas.messages(n, { since: Date.now() - 7 * 86400e3, limit: 1 });
-      status.textContent = `Works: read ${n.email || 'your inbox'}${list[0] ? ` (latest: “${list[0].subject || 'no subject'}”)` : ''}.`;
+      const read = `Works: read ${n.email || 'your inbox'}${list[0] ? ` (latest: “${list[0].subject || 'no subject'}”)` : ''}.`;
+      // Discover's outreach sends and saves drafts through the same inbox, if its connection allows that.
+      const can = await nylas.abilities(n).catch(() => null);
+      status.textContent = !can
+        ? read
+        : can.draft && can.send
+          ? `${read} It can also send emails and save drafts for Discover’s outreach.`
+          : `${read} It is connected for reading only, so Discover can’t send or save drafts from it: in the Nylas dashboard, give the Google connector the gmail.compose scope (Microsoft: Mail.ReadWrite and Mail.Send), then add the grant again.`;
     } catch (err) {
       status.textContent = err.message;
     }
@@ -99,7 +106,7 @@ async function connectionGroup(refresh) {
 
   return group(
     'Connect your inbox',
-    'Sites that email you a code each time you sign in or create an account get it typed in for you. JobToFill reads your newest emails through Nylas with your own API key; the key and the emails stay in this browser (and your own backup file).',
+    'Sites that email you a code each time you sign in or create an account get it typed in for you, and Discover can send your outreach emails from this inbox (CV attached) or save them to its drafts, one email at a time when you press Send or Save. JobToFill reads your newest emails through Nylas with your own API key; the key and the emails stay in this browser (and your own backup file).',
     el(
       'ol',
       { className: 'steps' },

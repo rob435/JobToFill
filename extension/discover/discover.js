@@ -4,8 +4,10 @@
  * register, Wikipedia and Y Combinator's directory, and from Hacker News' "Who is hiring" posts; leaves out the
  * ones Trackr and Simplify already list; reads each firm's own careers pages, job boards and team pages for student
  * roles and who to email; drafts that email with the person's own AI; and keeps a watchlist that the background
- * re-checks and an outreach list of the firms written to. Nothing is ever sent from here: emails open in the
- * person's own email app.
+ * re-checks and an outreach list of the firms written to. With the person's AI it also searches the web for the people
+ * to write to and the firm's address format (every claim held to what the search returned), checks addresses (MX, and
+ * Hunter with their key), and with Nylas connected it saves the email to their drafts or sends it, CV attached, only
+ * when they press that button for that email.
  */
 import {
   $,
@@ -29,6 +31,9 @@ const {
   discoverContacts: C,
   discoverSources: S,
   discoverOutreach: O,
+  discoverResearch: R,
+  discoverFinder: F,
+  nylas: N,
 } = globalThis.JTF;
 
 const PAGE = 25;
@@ -47,6 +52,9 @@ const state = {
   shown: PAGE,
   checks: {}, // firmId → { at, result } (careers())
   contacts: {}, // firmId → { at, result (findContacts()), read (readPage(), merged) }
+  research: {}, // firmId → { at, result (researchFirm()), error }
+  researching: new Set(),
+  moved: {}, // firmId → { url, name }: where the web research found a firm whose site on file didn't load (GLG → man.com)
   running: new Set(),
   reading: new Set(),
   showAll: new Set(), // cards showing every contact
@@ -56,6 +64,8 @@ const state = {
   outreach: {}, // firmId → store.getOutreach() record
   config: null, // store.discoverAiConfig(): what every AI call on this page uses
   keys: {},
+  finderKeys: {}, // store.getFinderKeys(): { hunter }
+  nylas: null, // store.getNylas(): the inbox drafts are saved to and sent from
   settings: null,
 };
 
@@ -420,6 +430,22 @@ function slim(result) {
   return { ...result, texts };
 }
 
+/**
+ * The firm as it is now: one whose site on file didn't load and that the web research found elsewhere is checked
+ * and written to there, under the name it goes by there (GLG Partners at man.com is Man Group: man.com's pages never
+ * say "GLG", and an email to them shouldn't either).
+ */
+function nowAt(firm) {
+  const moved = state.moved[firm.id];
+  if (!moved) return firm;
+  return {
+    ...firm,
+    site: moved.url,
+    domain: D.domainOf(moved.url),
+    ...(moved.name ? { name: moved.name, aliases: [firm.name, ...(firm.aliases || [])] } : {}),
+  };
+}
+
 /** The firm's careers pages and job boards, then who to email there; both kept for half a day. */
 async function checkFirm(firm, { force } = {}) {
   const cached = state.checks[firm.id];
@@ -427,6 +453,7 @@ async function checkFirm(firm, { force } = {}) {
   if (state.running.has(firm.id)) return null;
   state.running.add(firm.id);
   rerender(firm.id);
+  firm = nowAt(firm);
   try {
     const result = slim(await D.careers(firm, { fetch: fetchFn, boards: firm.boards || [], pages: firm.pages || [] }));
     const at = Date.now();
@@ -486,6 +513,21 @@ async function checkTop() {
     button.disabled = false;
     // The search's own line again, unless a search has said something since.
     if (line.textContent === note) status(...before);
+  }
+}
+
+/** Find people at the top 10 firms not yet searched, two at a time (each checks its firm first if need be). */
+async function researchTop() {
+  const list = visible()
+    .slice(0, 10)
+    .filter((r) => !state.research[r.firm.id]);
+  const consent = canSearch() ? requestAiConsent() : null;
+  const button = $('#research-top');
+  button.disabled = true;
+  try {
+    await D.pool(list, 2, (r) => researchFirm(r.firm, consent));
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -559,21 +601,62 @@ function contactsOf(firm) {
   const c = state.contacts[firm.id] || {};
   const read = c.read || {};
   const check = state.checks[firm.id];
+  const web = (state.research[firm.id] || {}).result || null;
   const out = [];
   const add = (x, extra) => {
     const address = addressOf(x);
-    if (!address || !/@/.test(address) || out.some((o) => o.address.toLowerCase() === address.toLowerCase())) return;
+    if (!address || !/@/.test(address)) return;
     const o = typeof x === 'object' ? x : {};
-    out.push({ name: o.name || '', title: o.title || '', kind: o.kind || '', why: o.why || '', ...extra, address });
+    const next = { name: o.name || '', title: o.title || '', kind: o.kind || '', why: o.why || '', ...extra, address };
+    const had = out.find((y) => y.address.toLowerCase() === address.toLowerCase());
+    if (!had) return out.push(next);
+    // Found twice (the site's pattern guessed it; the web research made it from the same format and found its domain
+    // takes mail): the surer finding stands, and the name and title fill in.
+    const level = (y) => LEVEL_RANK[y.level || (y.guessed ? 'guessed' : 'listed')] ?? 3;
+    if (level(next) < level(had))
+      Object.assign(had, { ...next, name: had.name || next.name, title: had.title || next.title });
   };
-  for (const b of (c.result && c.result.best) || []) add(b, { guessed: !!b.guessed, source: 'check' });
+  for (const b of (c.result && c.result.best) || [])
+    add(b, { guessed: !!b.guessed, source: 'check', role: b.role || '', level: b.guessed ? 'guessed' : 'listed' });
   for (const p of read.contacts || []) add(p, { why: 'Named on the careers page', guessed: false, source: 'ai' });
   for (const e of read.emails || []) add(e, { why: 'On the careers page', guessed: false, source: 'ai' });
   for (const e of (check && check.result.emails) || [])
     add(e, { why: 'On the careers page', guessed: false, source: 'page' });
   for (const e of (firm.hn && firm.hn.emails) || [])
     add(e, { why: 'The Hacker News post says to write here', guessed: false, source: 'hn' });
-  return out;
+  for (const p of (web && web.people) || [])
+    if (p.address && p.level !== 'bad')
+      add(
+        { ...p, kind: 'person', why: p.why },
+        { guessed: p.how === 'format', source: 'web', level: p.level, url: p.url, group: p.group, check: p.verdict },
+      );
+  for (const e of (web && web.mailboxes) || [])
+    add(e, { why: e.why, guessed: false, source: 'web', level: e.level || 'listed', url: e.url });
+  // Whoever runs recruiting first (a careers@ mailbox, then a named recruiter), then the heads of technology and
+  // research, then a small firm's partners, then info@; within each, the surest address first.
+  const order = out.map((p, i) => [rankOf(p), LEVEL_RANK[p.level || (p.guessed ? 'guessed' : 'listed')] ?? 3, i, p]);
+  order.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+  return order.map((x) => x[3]);
+}
+
+const LEVEL_RANK = { verified: 0, listed: 1, likely: 2, guessed: 3, unconfirmed: 4 };
+const GROUP_RANK = { recruiting: 1, technology: 2, research: 2, trading: 2, leadership: 3, other: 5 };
+
+/** Where a contact goes in the list: recruiting mailbox 0, recruiter 1, department head 2, leader 3, info@ 4. */
+function rankOf(p) {
+  // A mailbox or a recruiter for students comes first (internships@, Man Group's "Emerging Talent Partner"), then
+  // careers@ and jobs@, then other recruiters, then HR's own mailboxes (hr@, Man Group's hrso@).
+  const forStudents = /intern|grad|campus|student|early|emerging|university/i;
+  if (!p.name) {
+    if (p.kind === 'general') return 4;
+    if (forStudents.test(p.address)) return 0;
+    return /career|recruit|job|talent|apply|cv|hiring/i.test(p.address) ? 1 : 1.5;
+  }
+  const recruiting = p.group === 'recruiting' || (!p.group && p.role === 'recruiting');
+  if (recruiting) return forStudents.test(p.title || '') ? 0.5 : 1.2;
+  if (p.group) return GROUP_RANK[p.group] ?? 5;
+  if (p.role === 'leadership') return 3;
+  return p.source === 'check' ? 3 : 5;
 }
 
 const KIND_LABEL = {
@@ -662,10 +745,12 @@ function foundFor(firm) {
   const res = (state.checks[firm.id] || {}).result || {};
   const c = state.contacts[firm.id] || {};
   const read = c.read || {};
+  const web = (state.research[firm.id] || {}).result || {};
   return {
     ...res,
     roles: res.roles || [],
-    programmes: [...(res.programmes || []), ...(read.programmes || [])],
+    // The web research's programmes are quoted from a page it returned, like the AI reading's.
+    programmes: [...(res.programmes || []), ...(read.programmes || []), ...(web.programmes || [])],
     contacts: c.result || null,
     read: c.read || null,
     hn: firm.hn || null,
@@ -759,7 +844,7 @@ async function draftEmail(firm, consent) {
     const role = d.kind === 'role' ? roleOf(firm) : '';
     const kind = role ? 'role' : 'speculative';
     const r = await O.draft(aiChat(), {
-      firm,
+      firm: nowAt(firm),
       found: foundFor(firm),
       contact: { ...contact, email: contact.address },
       profile,
@@ -1058,6 +1143,9 @@ function whoView(firm) {
   const seen = (c.result.pattern && c.result.pattern.examples) || 0;
   const site = firm.site || ((state.checks[firm.id] || {}).result || {}).site;
   const named = ((c.read && c.read.contacts) || []).filter((p) => p.name && !p.email);
+  // Named on the firm's own site with no address (HBK's Head of Recruitment), unless the web research gave them one.
+  const withAddress = new Set(people.filter((p) => p.name).map((p) => p.name.toLowerCase()));
+  const onSite = (c.result.named || []).filter((p) => p.name && !withAddress.has(p.name.toLowerCase()));
   return el(
     'div',
     { className: 'contacts' },
@@ -1072,12 +1160,9 @@ function whoView(firm) {
               {},
               el('span', { className: 'who', textContent: whoLabel(p) }),
               el('a', { href: 'mailto:' + p.address, textContent: p.address }),
-              p.source === 'ai'
-                ? aiPill()
-                : p.guessed
-                  ? el('span', { className: 'pill warn', textContent: 'Guessed', title: p.why || 'Guessed' })
-                  : el('span', { className: 'pill ok', textContent: 'Listed' }),
+              p.source === 'ai' ? aiPill() : levelPill(p),
               p.why ? el('span', { className: 'why', textContent: p.why }) : null,
+              p.url ? link(p.url, sourceName(p.url), { className: 'source small' }) : null,
             ),
           ),
         )
@@ -1096,6 +1181,18 @@ function whoView(firm) {
           named.map((p) => [p.name, p.title].filter(Boolean).join(', ')).join('; '),
         )
       : null,
+    onSite.length
+      ? el(
+          'p',
+          { className: 'small named' },
+          'Named on its site, no address yet: ',
+          onSite
+            .slice(0, 4)
+            .map((p) => [p.name, p.title].filter(Boolean).join(', '))
+            .join('; '),
+          canResearch() && !state.research[firm.id] ? ' (Find people looks for their address format)' : '',
+        )
+      : null,
     people.length > SHOWN_CONTACTS
       ? el('button', {
           className: 'link small',
@@ -1109,6 +1206,188 @@ function whoView(firm) {
           className: 'small muted',
           textContent: `Addresses here follow ${/@/.test(pattern) ? pattern : `${pattern}@${domain || 'the firm’s domain'}`}${seen ? ` (${seen} seen)` : ''}`,
         })
+      : null,
+  );
+}
+
+const LEVEL_PILL = {
+  verified: ['ok', 'Verified', 'A mailbox check says this address exists'],
+  listed: ['ok', 'Listed', 'Printed on the firm’s site or another page'],
+  likely: ['', 'Likely', 'Made from the firm’s confirmed address format, on a domain that takes email'],
+  guessed: ['warn', 'Guessed', 'Made from the firm’s address format'],
+  unconfirmed: ['warn', 'Unconfirmed', 'Nothing confirms this address'],
+};
+
+/** How sure an address is, as a pill: Verified, Listed, Likely, Guessed. */
+function levelPill(p) {
+  const level = p.level || (p.guessed ? 'guessed' : 'listed');
+  const [tone, text, title] = LEVEL_PILL[level] || LEVEL_PILL.unconfirmed;
+  return el('span', { className: `pill ${tone}`.trim(), textContent: text, title: p.check || title });
+}
+
+/** "LinkedIn", "hbk.com", the source a contact was found on. */
+function sourceName(url) {
+  const host = shortUrl(url).split('/')[0];
+  return /linkedin\.com$/.test(host) ? 'LinkedIn' : host;
+}
+
+/* -------------------------------------------------------------- research */
+
+const RESEARCH_NOTE =
+  'Searches the web with your AI (about six searches, a few cents on your key) and, with a Hunter key, Hunter’s directory, for the people to write to and the firm’s address format. Sends the firm’s name and what its site showed, nothing about you; every name and address is kept only if a search result or page shows it.';
+const canSearch = () => aiReady() && ai.canSearch(state.config);
+const canResearch = () => canSearch() || !!state.finderKeys.hunter;
+
+/**
+ * Who to write to at a firm, beyond its own site: the web research (its people, printed addresses and address format,
+ * and its website now when the one on file didn't load), Hunter's directory with a key, an address made from the best
+ * confirmed format for each person without one, and a check of each address (MX for all, Hunter's mailbox check for
+ * the first few with a key). Checks the firm first when it hasn't been.
+ */
+async function researchFirm(firm, consent) {
+  if (state.researching.has(firm.id)) return;
+  state.researching.add(firm.id);
+  const entry = (state.research[firm.id] = { ...(state.research[firm.id] || {}), error: '' });
+  rerender(firm.id);
+  try {
+    if (!state.checks[firm.id]) await checkFirm(firm);
+    const useAi = canSearch();
+    if (useAi && consent && !(await consent))
+      throw new Error('Firefox didn’t allow sending the firm’s name to your AI provider.');
+    const check = (state.checks[firm.id] || {}).result || {};
+    let web = null;
+    if (useAi) {
+      state.config = await store.discoverAiConfig();
+      web = await R.research((messages, options) => ai.search(state.config, { messages, ...options }), {
+        firm: { ...firm, site: (state.moved[firm.id] || {}).url || firm.site || check.site || '' },
+        found: check,
+        contacts: (state.contacts[firm.id] || {}).result || {},
+        fetch: fetchFn,
+      });
+      // A site that moved (GLG Partners is part of Man Group now): its careers and contacts are read there.
+      if (web.website.confirmed && ['unreachable', 'none', 'blocked'].includes(check.status)) {
+        state.moved[firm.id] = { url: web.website.url, name: web.website.name || '' };
+        await checkFirm(firm, { force: true });
+      }
+    }
+    const found = await addressesFor(firm, web);
+    entry.result = { ...(web || {}), ...found, usage: web && web.usage, at: Date.now() };
+    entry.at = Date.now();
+    await store.setDiscoverCache({ research: { [firm.id]: { at: entry.at, result: entry.result } } });
+  } catch (err) {
+    entry.error = errorText(err);
+  } finally {
+    state.researching.delete(firm.id);
+    rerender(firm.id);
+  }
+}
+
+/** The domain a firm's people have their addresses on: the format's, its site's now, or the one on file. */
+function mailDomain(firm) {
+  const c = (state.contacts[firm.id] || {}).result || {};
+  const check = (state.checks[firm.id] || {}).result || {};
+  return (
+    (c.pattern && c.pattern.domain) ||
+    D.domainOf((state.moved[firm.id] || {}).url || '') ||
+    firm.domain ||
+    D.domainOf(firm.site || check.site || '')
+  );
+}
+
+/** Every person found, each with the surest address there is, checked (R.addresses with this page's keys). */
+function addressesFor(firm, web) {
+  return R.addresses(web, {
+    firm,
+    contacts: (state.contacts[firm.id] || {}).result || {},
+    domain: mailDomain(firm),
+    hunterKey: state.finderKeys.hunter || '',
+    fetch: fetchFn,
+  });
+}
+
+/** The web research's part of a card: what it found that the site didn't say, and what it dropped. */
+function researchView(firm) {
+  const entry = state.research[firm.id];
+  const running = state.researching.has(firm.id);
+  if (!entry && !running) return null;
+  const r = (entry && entry.result) || null;
+  const noAddress = r ? (r.people || []).filter((p) => !p.address) : [];
+  return el(
+    'div',
+    { className: 'research small' },
+    running ? el('p', { className: 'muted', textContent: 'Searching the web for who to write to…' }) : null,
+    entry && entry.error ? el('p', { className: 'error', textContent: entry.error }) : null,
+    r && r.website && r.website.confirmed
+      ? el(
+          'p',
+          {},
+          'Its website now: ',
+          link(r.website.url, shortUrl(r.website.url)),
+          r.website.note ? ` (${r.website.note})` : '',
+        )
+      : null,
+    r && (r.programmes || []).length
+      ? el(
+          'ul',
+          { className: 'plain' },
+          r.programmes.map((p) =>
+            el(
+              'li',
+              {},
+              el('strong', { textContent: p.name ? `${p.name}: ` : '' }),
+              `“${p.quote}” `,
+              link(p.url, sourceName(p.url)),
+            ),
+          ),
+        )
+      : null,
+    r && (r.careers || []).length
+      ? el(
+          'p',
+          {},
+          'Careers pages on the web: ',
+          ...r.careers.slice(0, 3).map((c, i) => link(c.url, (i ? ' · ' : '') + shortUrl(c.url))),
+        )
+      : null,
+    noAddress.length
+      ? el(
+          'p',
+          {},
+          `Also found, no address yet (no confirmed format): `,
+          noAddress.map((p) => [p.name, p.title].filter(Boolean).join(', ')).join('; '),
+        )
+      : null,
+    r && r.format
+      ? el('p', {
+          className: 'muted',
+          textContent: `Address format: ${r.format.pattern}@${r.format.domain} (${r.format.why})`,
+        })
+      : r
+        ? el('p', {
+            className: 'muted',
+            textContent: (r.disputed || []).length
+              ? `No address format confirmed: the directories disagree (${r.disputed.join(' or ')}).`
+              : 'No address format confirmed: names without an address are listed above.',
+          })
+        : null,
+    r && r.hunter && r.hunter.error ? el('p', { className: 'warn-text', textContent: r.hunter.error }) : null,
+    r && r.usage
+      ? el('p', {
+          className: 'muted',
+          textContent: `Web search: ${plural(r.searches || 0, 'search', 'searches')}, ${usageLine(state.config, r.usage)}`,
+        })
+      : null,
+    r && (r.dropped || []).length
+      ? el(
+          'details',
+          {},
+          el('summary', { textContent: `Left out: ${plural(r.dropped.length, 'claim')} no source bore out` }),
+          el(
+            'ul',
+            { className: 'plain log' },
+            r.dropped.map((d) => el('li', { textContent: `${d.what}: ${d.why}` })),
+          ),
+        )
       : null,
   );
 }
@@ -1362,10 +1641,7 @@ function drawerView(firm) {
                   'There’s little about you to write from: upload your CV (Settings › Resume & files) for a more concrete email.',
               })
             : null,
-          el('p', {
-            className: 'small muted',
-            textContent: 'Attach your CV before sending; JobToFill never sends anything.',
-          }),
+          sendView(firm, d, recipient),
           truncated,
           el(
             'div',
@@ -1410,6 +1686,181 @@ function drawerView(firm) {
   );
 }
 
+/* ---------------------------------------------------------------- sending */
+
+/** Can the connected inbox take a draft or send ({ draft, send }), asked of Nylas once per page. */
+async function inboxAbilities() {
+  if (!state.nylas || !state.nylas.grantId) return { draft: false, send: false };
+  if (!state.abilities)
+    state.abilities = N.abilities(state.nylas, { fetch: fetchFn }).catch((err) => ({
+      draft: true,
+      send: true,
+      error: errorText(err),
+    }));
+  return state.abilities;
+}
+
+/** The CV a sent email carries: the stored resume file ({ name, dataUrl, type }), or null. */
+async function cvFile() {
+  const { profile } = await store.getActive();
+  const doc = await store.getDoc(profile.id, 'resume');
+  return doc && doc.dataUrl ? doc : null;
+}
+
+/**
+ * Send the drawer's email from the connected inbox, or save it to its drafts (Gmail's Drafts folder), CV attached when
+ * ticked. Sending asks first, naming who it goes to and from, and says when the address is only made from a format
+ * or the draft failed a check. The outreach record says how it went (and keeps the thread, for replies).
+ */
+async function sendEmail(firm, how) {
+  const d = drawerOf(firm);
+  const p = recipientOf(d, offeredTo(firm, d));
+  if (!p || d.sending) return;
+  const cv = d.attach !== false ? await cvFile() : null;
+  if (how === 'send') {
+    const doubts = [
+      p.guessed || ['likely', 'guessed', 'unconfirmed'].includes(p.level)
+        ? `${p.address} is made from the firm’s address format and isn’t confirmed: it may bounce.`
+        : '',
+      d.result && d.result.ok === false ? 'Some of the draft’s checks failed: read it through first.' : '',
+    ].filter(Boolean);
+    const from = (state.nylas && state.nylas.email) || 'your inbox';
+    const ask = [
+      `Send this email to ${p.name ? `${p.name} <${p.address}>` : p.address} from ${from}${cv ? `, with ${cv.name} attached` : ', with no attachment'}?`,
+      ...doubts,
+    ].join('\n\n');
+    if (!confirm(ask)) return;
+  }
+  d.sending = how;
+  d.sendError = '';
+  d.sendDone = '';
+  rerender(firm.id);
+  try {
+    const nylas = await store.getNylas();
+    if (!nylas || !nylas.grantId) throw new Error('Connect your inbox first (Settings › Email codes).');
+    const email = {
+      to: [{ email: p.address, ...(p.name ? { name: p.name } : {}) }],
+      subject: d.subject,
+      text: d.body,
+      attachments: cv ? [{ name: cv.name, dataUrl: cv.dataUrl }] : [],
+    };
+    const r =
+      how === 'send'
+        ? await N.send(nylas, email, { fetch: fetchFn })
+        : await N.saveDraft(nylas, email, { fetch: fetchFn });
+    d.sendDone =
+      how === 'send'
+        ? `Sent to ${p.address}${cv ? `, ${cv.name} attached` : ''}. It’s in your Sent folder.`
+        : `Saved to your drafts${cv ? `, ${cv.name} attached` : ''}: open your email to send it.`;
+    await setOutreach(firm, {
+      status: how === 'send' ? 'sent' : 'drafted',
+      to: p.address,
+      subject: d.subject,
+      contact: contactRef(p),
+      way: wayText(firm),
+      via: 'nylas',
+      ...(how === 'send' ? { messageId: r.id, threadId: r.threadId } : { draftId: r.id }),
+    });
+  } catch (err) {
+    d.sendError = errorText(err);
+  } finally {
+    d.sending = '';
+    rerender(firm.id);
+  }
+}
+
+/** The drawer's way out: Send and Save to drafts through Nylas, or how to get them; the CV to attach. */
+function sendView(firm, d) {
+  const n = state.nylas;
+  if (!n || !n.grantId)
+    return el(
+      'p',
+      { className: 'small muted' },
+      'Attach your CV before sending. To send from here with your CV attached, or save it to your drafts, connect your inbox under ',
+      el('button', {
+        className: 'link',
+        type: 'button',
+        textContent: 'Settings › Email codes',
+        onclick: () => api.tabs.create({ url: api.runtime.getURL('options/options.html#email') }),
+      }),
+      '.',
+    );
+  const can = d.abilities || { draft: true, send: true };
+  if (!d.abilities)
+    inboxAbilities().then((a) => {
+      d.abilities = a;
+      if (!a.draft || !a.send) rerender(firm.id);
+    });
+  const rec = state.outreach[firm.id];
+  const sent = rec && rec.status !== 'drafted' && rec.via === 'nylas' && rec.messageId;
+  return el(
+    'div',
+    { className: 'send' },
+    el(
+      'label',
+      { className: 'check small' },
+      el('input', {
+        type: 'checkbox',
+        name: 'attach',
+        checked: d.attach !== false,
+        onchange: (e) => (d.attach = e.target.checked),
+      }),
+      state.cvName ? `Attach my CV (${state.cvName})` : 'Attach my CV (none uploaded yet: Settings › Resume & files)',
+    ),
+    el(
+      'div',
+      { className: 'row' },
+      el('button', {
+        className: 'small primary send-go',
+        type: 'button',
+        disabled: !!d.sending || !can.send || !!sent,
+        textContent: d.sending === 'send' ? 'Sending…' : sent ? 'Sent' : 'Send',
+        title: `Sends it from ${n.email || 'your inbox'} through Nylas`,
+        onclick: () => sendEmail(firm, 'send'),
+      }),
+      el('button', {
+        className: 'small save-draft',
+        type: 'button',
+        disabled: !!d.sending || !can.draft,
+        textContent: d.sending === 'draft' ? 'Saving…' : 'Save to my drafts',
+        title: `Puts it in ${n.email || 'your inbox'}’s Drafts folder, ready to send from there`,
+        onclick: () => sendEmail(firm, 'draft'),
+      }),
+      el('span', { className: 'small muted', textContent: `From ${n.email || 'your inbox'}` }),
+    ),
+    !can.send || !can.draft
+      ? el('p', {
+          className: 'small warn-text',
+          textContent:
+            'Your inbox is connected to Nylas for reading codes only. To send or save drafts from here, connect it again with permission to send and draft mail (Settings › Email codes).',
+        })
+      : null,
+    d.sendDone ? el('p', { className: 'small ok-text', attrs: { role: 'status' }, textContent: d.sendDone }) : null,
+    d.sendError ? el('p', { className: 'small error', attrs: { role: 'alert' }, textContent: d.sendError }) : null,
+  );
+}
+
+/** Replies to emails sent from here: a sent record whose thread has a message from someone else becomes Replied. */
+async function checkReplies() {
+  const nylas = state.nylas;
+  if (!nylas || !nylas.grantId) return;
+  const waiting = Object.entries(state.outreach).filter(([, r]) => r.status === 'sent' && r.threadId);
+  for (const [id, rec] of waiting) {
+    const list = await N.replies(nylas, {
+      threadId: rec.threadId,
+      after: rec.sentAt,
+      me: nylas.email,
+      fetch: fetchFn,
+    }).catch(() => []);
+    if (!list.length) continue;
+    const from = (list[0].from || [])[0] || {};
+    const note = `Reply from ${from.name || from.email || 'them'} on ${day((list[0].date || 0) * 1000)}: “${String(list[0].snippet || '').slice(0, 140)}”`;
+    const next = await store.setOutreach(id, { status: 'replied', notes: rec.notes ? `${rec.notes}\n${note}` : note });
+    if (next) state.outreach[id] = next;
+  }
+  if (waiting.length) renderOutreach();
+}
+
 /** The draft's checks: what failed, each on its own line, and the ones that passed as one count. */
 function checksView(checks) {
   const failed = checks.filter((c) => !c.ok);
@@ -1443,6 +1894,7 @@ function firmCard(r) {
   const { firm } = r;
   const check = state.checks[firm.id];
   const running = state.running.has(firm.id);
+  const researching = state.researching.has(firm.id);
   const watched = state.watch.some((w) => w.id === firm.id);
   const people = contactsOf(firm);
   const d = state.drafts[firm.id];
@@ -1480,6 +1932,20 @@ function firmCard(r) {
         title: thorough() ? THOROUGH_READ : '',
         onclick: () => checkAndRead(firm, { force: !!check }, thorough() ? requestAiConsent() : null),
       }),
+      canResearch()
+        ? el('button', {
+            className: 'small research-go' + (check && !people.some((p) => p.name) ? ' primary' : ''),
+            type: 'button',
+            disabled: researching,
+            title: RESEARCH_NOTE,
+            textContent: researching
+              ? 'Searching the web…'
+              : state.research[firm.id]
+                ? 'Search the web again'
+                : 'Find people',
+            onclick: () => researchFirm(firm, canSearch() ? requestAiConsent() : null),
+          })
+        : null,
       el('button', {
         className: 'small',
         type: 'button',
@@ -1506,6 +1972,7 @@ function firmCard(r) {
     ),
     running && thorough() ? el('p', { className: 'small muted reads', textContent: THOROUGH_READ }) : null,
     check ? foundView(firm, check.result) : null,
+    researchView(firm),
     d && d.open && people.length ? drawerView(firm) : null,
   );
 }
@@ -1966,7 +2433,30 @@ function syncAi() {
   $('#use-ai').disabled = !ready;
   $('#ai-wrap').title = ready ? '' : NO_AI;
   $('#check-top').title = thorough() ? THOROUGH_READ : '';
+  $('#research-top').hidden = !canResearch();
+  $('#research-top').title = RESEARCH_NOTE;
   if (state.results.length) renderResults();
+}
+
+/** The Hunter key box under “AI model for this page”: optional, kept like the AI keys. */
+function buildFinderBox() {
+  const input = $('#hunter-key');
+  if (!input) return;
+  input.value = state.finderKeys.hunter || '';
+  const saved = $('#hunter-saved');
+  input.addEventListener('change', async () => {
+    state.finderKeys = await store.setFinderKey('hunter', input.value);
+    saved.textContent = input.value.trim() ? 'Checking the key…' : 'Removed.';
+    syncAi();
+    if (!input.value.trim()) return;
+    try {
+      const a = await F.hunter.account(state.finderKeys.hunter, { fetch: fetchFn });
+      const left = (x) => Math.max(0, (x.available || 0) - (x.used || 0));
+      saved.textContent = `Saved. ${a.plan || 'Hunter'}: ${left(a.searches)} searches and ${left(a.verifications)} checks left this month.`;
+    } catch (err) {
+      saved.textContent = errorText(err);
+    }
+  });
 }
 
 /* ------------------------------------------------------------------ init */
@@ -2017,6 +2507,7 @@ async function start() {
   $('#only-open').addEventListener('change', renderResults);
   $('#sort-way').addEventListener('change', renderResults);
   $('#check-top').addEventListener('click', checkTop);
+  $('#research-top').addEventListener('click', researchTop);
   $('#results-export').addEventListener('click', exportResults);
   $('#outreach-export').addEventListener('click', exportOutreach);
   for (const t of TABS) $(`#tab-${t}`).addEventListener('click', () => showTab(t));
@@ -2044,8 +2535,25 @@ async function start() {
     loadRegistry(),
     loadWatch(),
     loadOutreach(),
-    store.getDiscoverCache().then((c) => ((state.checks = c.careers || {}), (state.contacts = c.contacts || {}))),
+    store
+      .getDiscoverCache()
+      .then(
+        (c) => (
+          (state.checks = c.careers || {}),
+          (state.contacts = c.contacts || {}),
+          (state.research = c.research || {})
+        ),
+      ),
+    store.getNylas().then((n) => (state.nylas = n)),
+    store.getFinderKeys().then((k) => (state.finderKeys = k)),
+    cvFile()
+      .then((doc) => (state.cvName = doc ? doc.name : ''))
+      .catch(() => ''),
   ]);
+  buildFinderBox();
+  // What a Hunter key alone makes possible (Find people) shows once the keys are read.
+  syncAi();
+  checkReplies().catch(() => null);
   const tab = location.hash.slice(1);
   showTab(TABS.includes(tab) ? tab : 'find');
 }

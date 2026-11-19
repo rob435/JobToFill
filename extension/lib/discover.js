@@ -109,11 +109,26 @@
   const INTERN =
     /\b(interns?\b|internships?\b|summer (analyst|associate|programme|program|intern|placement|school)|off[- ]?cycle|industrial placement|placement (year|student|programme|program)|year in industry|co-?op\b|working student|werkstudent|praktik(um|ant)|stagiaire|stage (de|d’|d')|tirocin|práctica|becario)/i;
   const GRADUATE =
-    /\b(graduate (programme|program|analyst|scheme|trader|researcher|developer|engineer|role|associate|software)|new grad|campus hire|class of 20\d\d|analyst (programme|program)|grad(uate)? 20\d\d|20\d\d graduate|entry[- ]level|early careers?|junior (analyst|trader|quant|researcher)|,\s*graduates?$|^graduates?\b)/i;
+    /\b(graduate (programme|program|analyst|scheme|trader|researcher|developer|engineer|role|associate|software)|new grad|campus hire|class of 20\d\d|analyst (programme|program)|grad(uate)? 20\d\d|20\d\d graduate|entry[- ]level|early careers?|junior (analyst|trader|quant|researcher)|,\s*graduates?$|^graduates?\b|\bjunior\s*[/&]\s*graduate|\bgraduate\s*[/&]\s*junior)/i;
   const INSIGHT =
     /\b(insight (day|week|programme|program|event|evening)s?|spring (week|insight|programme|program|internship)|discovery (day|week|programme|program)|open day|taster|virtual (information|experience)|information session|informationals?|women in (trading|finance|technology|investing|quant)|diversity (programme|program|insight|fellowship)|fellowship|bootcamp)/i;
   const NOT_STUDENT =
     /\b(vp|principal|senior|sr|lead|staff engineer|manager|coordinator|recruiter|recruitment|officer|\d+\+? years)\b/i;
+
+  /**
+   * A job's kind from its title, or from the board's own employment type when the title doesn't say (Jane Street's
+   * Greenhouse posts say "Summer Internship" and "New Grad" only in "Employment Type"); a senior title never.
+   */
+  function jobKind(j) {
+    const byTitle = roleKind(j && j.title);
+    if (byTitle || !j || !j.type) return byTitle;
+    if (/\b(vice president|director|head of|senior|sr|lead|principal|manager|staff)\b/i.test(j.title || ''))
+      return null;
+    return (
+      roleKind(j.type) ||
+      (/^\s*(intern|internship|co-?op|placement|apprentice\w*)\s*$/i.test(j.type) ? 'internship' : null)
+    );
+  }
 
   /** 'internship', 'graduate', 'insight' or null: is this job title a student role? */
   function roleKind(title) {
@@ -691,6 +706,9 @@
   // Pages that are something else unless their link says careers (a blog post, a help article).
   const NOT_CAREER =
     /\/(people|team|our-team|leadership|fund|funds|news|insights|press|media|contact|legal|privacy|cookie|investor|portfolio|post|blog|hc|articles?)(\/|$)|\.(pdf|jpg|png|zip)$|^mailto:|^tel:|^javascript:/i;
+  // Investment strategies and products whose names say "opportunities".
+  const INVESTING_PATH =
+    /(credit|equity|equities|fund|funds|strategy|strategies|investment|investments|what-we-do|market|markets|income|bond|bonds)[-/][^/]*opportunit|opportunit[^/]*[-/](fund|strateg|credit|equit)/i;
   // Never a careers page, whatever the link says: Synthesia's "Join" leads to community.synthesia.io/sign_up.
   const NEVER_CAREER = /(^|\/)(sign[_-]?up|sign[_-]?in|log[_-]?in|register)(\/|$|[?.#])/i;
   const NOT_CAREER_TEXT =
@@ -801,6 +819,9 @@
         const path = u.pathname + u.search;
         if (NEVER_CAREER.test(path) || NOT_CAREER_TEXT.test(l.text)) return false;
         if (NOT_CAREER.test(path) && !CAREER_LINK.test(l.text)) return false;
+        // A fund's "opportunities" is no careers page: TT International's /what-we-do/credit-opportunities/.
+        if (INVESTING_PATH.test(path) && !/career|\bjobs?\b|vacanc|recruit|intern|graduate|join/i.test(l.text))
+          return false;
         return CAREER_LINK.test(l.text) || CAREER_LINK.test(path.replace(/[-_/]/g, ' '));
       })
       .map((l) => {
@@ -983,13 +1004,24 @@
   }
 
   /** A board's jobs as roles (every job, student or not; the caller filters). */
+  /** A Greenhouse job's own type from its custom fields ("Employment Type": "Summer Internship"), or ''. */
+  function boardType(metadata) {
+    for (const m of Array.isArray(metadata) ? metadata : []) {
+      if (!m || !/type|level|category|program/i.test(m.name || '')) continue;
+      const v = [].concat(m.value == null ? [] : m.value).join(', ');
+      if (v) return v;
+    }
+    return '';
+  }
+
   function parseBoard(b, res) {
     const json = res && res.json;
     const jobs = [];
-    const add = (title, url, location, posted) => {
+    const add = (title, url, location, posted, type) => {
       if (!title || !url) return;
       jobs.push({
         title: String(title).replace(/\s+/g, ' ').trim().slice(0, 200),
+        ...(type ? { type: String(type).replace(/\s+/g, ' ').trim().slice(0, 80) } : {}),
         url: String(url),
         location: String(location || '')
           .replace(/\s+/g, ' ')
@@ -1002,7 +1034,13 @@
     switch (b.ats) {
       case 'greenhouse':
         for (const j of (json && json.jobs) || [])
-          add(j.title, j.absolute_url, j.location && j.location.name, j.first_published || j.updated_at);
+          add(
+            j.title,
+            j.absolute_url,
+            j.location && j.location.name,
+            j.first_published || j.updated_at,
+            boardType(j.metadata),
+          );
         break;
       case 'lever':
         for (const j of Array.isArray(json) ? json : [])
@@ -1011,11 +1049,12 @@
             j.hostedUrl,
             j.categories && j.categories.location,
             j.createdAt ? new Date(j.createdAt).toISOString() : null,
+            j.categories && j.categories.commitment,
           );
         break;
       case 'ashby':
         for (const j of (json && json.jobs) || [])
-          if (j.isListed !== false) add(j.title, j.jobUrl, j.location, j.publishedAt);
+          if (j.isListed !== false) add(j.title, j.jobUrl, j.location, j.publishedAt, j.employmentType);
         break;
       case 'workable':
         for (const j of (json && json.jobs) || [])
@@ -1587,8 +1626,13 @@
         if (!guessed) log.push({ url, outcome: r.blocked ? 'blocked' : `failed: ${r.status || r.error}` });
         continue;
       }
-      // A guessed path that lands back on the home page isn't a careers page.
+      // A guessed path that lands back on the home page isn't a careers page, and nor is one that doesn't name the firm
+      // or says next to nothing: brookam.com/careers/ is a 114-byte redirect to a parking page.
       if (guessed && parseUrl(r.url) && parseUrl(r.url).pathname.replace(/\/+$/, '') === '') continue;
+      if (guessed && (textOf(r.text).length < 200 || !pageIsFirm(r.text, firm))) {
+        log.push({ url: r.url, outcome: 'guessed page doesn’t name the firm, skipped' });
+        continue;
+      }
       if (/^\s*%PDF/.test(r.text)) {
         log.push({ url: r.url, outcome: 'PDF, not read' });
         continue;
@@ -1695,7 +1739,7 @@
       found,
       jobs: n,
     }));
-    result.roles = jobs.map((j) => ({ ...j, kind: roleKind(j.title) })).filter((j) => all || j.kind);
+    result.roles = jobs.map((j) => ({ ...j, kind: jobKind(j) })).filter((j) => all || j.kind);
     result.other = jobs.length - result.roles.filter((r) => r.kind).length;
     result.emails = [...new Set(result.emails)];
     result.programmes = programmesFromText(pageTexts.join(' \n '), now).map((p) => ({
@@ -1784,7 +1828,7 @@
           if (r.ok)
             res.roles.push(
               ...parseBoard(b, r)
-                .map((j) => ({ ...j, kind: roleKind(j.title) }))
+                .map((j) => ({ ...j, kind: jobKind(j) }))
                 .filter((j) => j.kind),
             );
         }
@@ -1980,6 +2024,7 @@
     SIZES,
     PLACES,
     roleKind,
+    jobKind,
     wantsTech,
     normName,
     coreName,

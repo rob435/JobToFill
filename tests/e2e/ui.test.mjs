@@ -716,6 +716,266 @@ test('Discover: Tech kinds, a model of its own, who to email at a checked firm, 
   await page.close();
 });
 
+test('Discover: Find people searches the web, keeps what the results show, and Send goes from the inbox with the CV', async () => {
+  await h.bg(() =>
+    globalThis.JTF.store.setDiscoverCache({
+      trackr: { names: [], domains: [], at: Date.now(), answered: 1 },
+      listed: { names: [], domains: [], roles: [], at: Date.now(), answered: 1, asked: 1 },
+    }),
+  );
+  const page = await openExt('discover/discover.html');
+  const ready = () =>
+    page.waitForFunction(() => /firms in the registry/.test(document.querySelector('#registry-info').textContent));
+  await ready();
+  await page.selectOption('#place', 'any');
+  await page.selectOption('#size', 'any');
+  await page.click('#search');
+  await page.waitForSelector('#results .firm');
+  const id = await page.$eval('#results .firm', (li) => li.dataset.id);
+  const card = `#results .firm[data-id="${id}"]`;
+  // Its site was checked already (the fixtures, as in the test above): no person in technology there.
+  const found = await page.evaluate(
+    async ([home, base]) => {
+      const { discover: D, discoverContacts: C } = globalThis.JTF;
+      const fetchFn = (u, init) => {
+        const url = new URL(u);
+        if (/(^|\.)quiet\.example$/.test(url.hostname) && url.pathname === '/') return fetch(home, init);
+        if (/^discover-(home|team|careers)\.html$/.test(url.pathname.slice(1)) && u.startsWith(base))
+          return fetch(u, init);
+        return Promise.resolve(new Response('Not found', { status: 404 }));
+      };
+      const firm = {
+        id: 'x',
+        name: 'Quiet Capital',
+        aliases: [],
+        domain: 'quiet.example',
+        site: 'https://quiet.example',
+        cities: ['London'],
+        tags: [],
+      };
+      const result = await D.careers(firm, { fetch: fetchFn, guess: false });
+      const contacts = await C.findContacts(firm, { fetch: fetchFn, pages: result.pages });
+      return { result, contacts };
+    },
+    [h.url('discover-home.html'), h.url('')],
+  );
+
+  // Claude searches the web (answered here): a LinkedIn result names the firm's head of engineering, a directory
+  // states its format; the model also names someone no result shows.
+  const asked = [];
+  // The card is a registry firm whose site check came from the fixtures: the results name that firm.
+  const name = (await page.textContent(`${card} .firm-name`)).trim();
+  const SEARCH_REPLY = {
+    model: 'claude-sonnet-5-5',
+    stop_reason: 'end_turn',
+    content: [
+      { type: 'server_tool_use', id: 's1', name: 'web_search', input: { query: `${name} head of engineering` } },
+      {
+        type: 'web_search_tool_result',
+        tool_use_id: 's1',
+        content: [
+          {
+            type: 'web_search_result',
+            url: 'https://uk.linkedin.com/in/tom-brown',
+            title: `Tom Brown - Head of Engineering - ${name} | LinkedIn`,
+            encrypted_content: 'x',
+          },
+        ],
+      },
+      {
+        type: 'text',
+        text: JSON.stringify({
+          website: 'https://quiet.example',
+          people: [
+            {
+              name: 'Tom Brown',
+              title: 'Head of Engineering',
+              group: 'technology',
+              url: 'https://uk.linkedin.com/in/tom-brown',
+            },
+            { name: 'Made Up', title: 'CTO', url: 'https://uk.linkedin.com/in/made-up' },
+          ],
+          emails: [],
+          format: { pattern: 'first.last' },
+        }),
+        citations: [
+          {
+            type: 'web_search_result_location',
+            url: 'https://rocketreach.co/quiet-capital-email-format',
+            title: 'Quiet Capital Email Format',
+            cited_text:
+              'The most common Quiet Capital email format is [first].[last] (ex. jane.doe@quiet.example), used 91% of the time.',
+          },
+        ],
+      },
+    ],
+    usage: { input_tokens: 1200, output_tokens: 300, server_tool_use: { web_search_requests: 1 } },
+  };
+  await h.context.route('https://api.anthropic.com/**', async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    asked.push(body);
+    const reply = body.tools
+      ? SEARCH_REPLY
+      : {
+          model: 'claude-sonnet-5-5',
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: JSON.stringify(DRAFT) }],
+          usage: { input_tokens: 10, output_tokens: 10 },
+        };
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(reply) });
+  });
+  // The website the model gives is read to confirm it: answered here with a page that names another firm.
+  await h.context.route('https://quiet.example/**', (route) =>
+    route.fulfill({
+      contentType: 'text/html',
+      body: '<html><title>Elsewhere</title><p>Another firm entirely.</p></html>',
+    }),
+  );
+  await h.context.route('https://dns.google/**', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ Status: 0, Answer: [{ type: 15, data: '10 mx.quiet.example.' }] }),
+    }),
+  );
+  const sent = [];
+  await h.context.route('https://api.us.nylas.com/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (/\/messages\/send$/.test(url.pathname)) {
+      sent.push(JSON.parse(route.request().postData()));
+      return route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: { id: 'm-1', thread_id: 't-1' } }),
+      });
+    }
+    if (/\/grants\/g-1$/.test(url.pathname))
+      return route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: { id: 'g-1', provider: 'google', scope: ['https://www.googleapis.com/auth/gmail.compose'] },
+        }),
+      });
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: [] }) });
+  });
+  const before = await h.bg(
+    async ([firmId, f]) => {
+      const { store } = globalThis.JTF;
+      await store.setDiscoverCache({
+        careers: { [firmId]: { at: Date.now(), result: f.result } },
+        contacts: { [firmId]: { at: Date.now(), result: f.contacts } },
+      });
+      const { profile } = await store.getActive();
+      const was = { ai: (await store.getSettings()).ai, personal: { ...profile.personal } };
+      profile.personal.firstName = 'Ada';
+      profile.personal.lastName = 'Lovelace';
+      await store.saveProfile(profile);
+      await store.saveKit(profile.id, {
+        notes: 'Built a reconciliation tool in Python that checks 40,000 trades a night.',
+      });
+      await store.setDoc(profile.id, 'resume', {
+        name: 'Ada Lovelace CV.pdf',
+        type: 'application/pdf',
+        dataUrl: 'data:application/pdf;base64,' + btoa('%PDF-1.4 e2e'),
+      });
+      await store.setAiKey('sk-ant-e2e', 'anthropic');
+      await store.saveAiSettings({ provider: 'anthropic', model: 'claude-sonnet-5-5' });
+      await store.setNylas({ apiKey: 'nyk_e2e', region: 'us', grantId: 'g-1', email: 'ada@example.org' });
+      return was;
+    },
+    [id, found],
+  );
+  await page.reload();
+  await ready();
+  await page.selectOption('#place', 'any');
+  await page.selectOption('#size', 'any');
+  await page.click('#search');
+  await page.waitForSelector(`${card} .contacts`);
+  assert.match(await page.getAttribute(`${card} button.research-go`, 'title'), /nothing about you/);
+
+  await page.click(`${card} button.research-go`);
+  await page.waitForSelector(`${card} .research details`);
+  // Recruiting first (the mailboxes, then the Head of Talent), then the head of engineering: shown with the rest.
+  await page.click(`${card} .contacts button.link`);
+  const search = asked.find((b) => b.tools);
+  assert.equal(search.tools[0].name, 'web_search');
+  assert.doesNotMatch(JSON.stringify(search.messages), /Ada|Lovelace|reconciliation/, 'nothing about the person');
+  const who = await page.textContent(`${card} .contacts`);
+  assert.match(who, /Tom Brown, Head of Engineering/);
+  assert.ok(await page.$(`${card} .contacts a[href="mailto:tom.brown@quiet.example"]`));
+  assert.ok(await page.$(`${card} .contacts .pill:text-is("Likely")`));
+  assert.ok(await page.$(`${card} .contacts a.source:text-is("LinkedIn")`));
+  assert.doesNotMatch(who, /Made Up/);
+  assert.match(
+    await page.textContent(`${card} .research details summary`),
+    /^Left out: \d+ claims no source bore out$/,
+  );
+  assert.match(
+    await page.textContent(`${card} .research details ul`),
+    /Made Up, CTO: no source names them with the firm/,
+  );
+  assert.match(
+    await page.textContent(`${card} .research`),
+    /Address format: first\.last@quiet\.example \(2 addresses on its site\)/,
+  );
+
+  // The draft to Tom, sent from the connected inbox with the CV, after asking.
+  await page.click(`${card} button.draft`);
+  await page.selectOption(`${card} select[name="contact"]`, 'tom.brown@quiet.example');
+  await page.click(`${card} button.draft-go`);
+  await page.waitForSelector(`${card} textarea[name="body"]`);
+  assert.match(await page.inputValue(`${card} textarea[name="body"]`), /^Dear Tom,\n\n/);
+  assert.match(
+    await page.textContent(`${card} .send`),
+    /Attach my CV \(Ada Lovelace CV\.pdf\)[\s\S]*From ada@example\.org/,
+  );
+  let question = '';
+  page.once('dialog', (d) => ((question = d.message()), d.accept()));
+  await page.click(`${card} button.send-go`);
+  await page.waitForSelector(`${card} .send .ok-text`);
+  assert.match(
+    question,
+    /^Send this email to Tom Brown <tom\.brown@quiet\.example> from ada@example\.org, with Ada Lovelace CV\.pdf attached\?/,
+  );
+  assert.match(question, /isn’t confirmed: it may bounce/);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0].to, [{ email: 'tom.brown@quiet.example', name: 'Tom Brown' }]);
+  assert.match(sent[0].body, /^<p>Dear Tom,<\/p>/);
+  assert.equal(sent[0].attachments[0].filename, 'Ada Lovelace CV.pdf');
+  assert.equal(atob(sent[0].attachments[0].content), '%PDF-1.4 e2e');
+  const record = await until(
+    h.bg,
+    async (i) => {
+      const r = (await globalThis.JTF.store.getOutreach())[i];
+      return r && r.status === 'sent' && r;
+    },
+    id,
+    5000,
+  );
+  assert.deepEqual([record.to, record.via, record.threadId], ['tom.brown@quiet.example', 'nylas', 't-1']);
+  assert.equal(await page.textContent(`${card} button.send-go`), 'Sent');
+
+  await h.context.unroute('https://api.anthropic.com/**');
+  await h.context.unroute('https://dns.google/**');
+  await h.context.unroute('https://quiet.example/**');
+  await h.context.unroute('https://api.us.nylas.com/**');
+  await h.bg(
+    async ([i, was]) => {
+      const { store } = globalThis.JTF;
+      await store.removeOutreach(i);
+      await store.setAiKey('', 'anthropic');
+      await store.saveSettings({ ai: was.ai });
+      await store.setNylas(null);
+      const { profile } = await store.getActive();
+      profile.personal = was.personal;
+      await store.saveProfile(profile);
+      await store.removeDoc(profile.id, 'resume');
+      await store.saveKit(profile.id, { notes: '' });
+    },
+    [id, before],
+  );
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
 test('settings: what Learn from this page saves while the page is open stays, through edits made there', async () => {
   const page = await openExt('options/options.html#personal');
   await page.waitForSelector('input[name="contact.phone"]');

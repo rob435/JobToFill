@@ -20,6 +20,7 @@
  *   quickApply    the one result of the last "Quick apply" (see saveQuickApply), and quickStatus, its progress.
  *                 In storage.session where there is one (memory only), else storage.local; never in a backup.
  *   nylas         the Nylas connection for verification codes: { apiKey, region, grantId, email }; in backups
+ *   finderKeys    the email finder's key for Discover ({ hunter }); in backups with the AI keys, unless that's off
  *                 with the AI keys
  *   watchlist     firms watched for new internships: [{ id, firm, boards, pages, emails, addedAt }] (Discover page)
  *   watch:<id>    what the last checks of a watched firm found: { seen: [key], fresh: [item], checkedAt, status,
@@ -28,7 +29,8 @@
  *                 listed (the names and domains on Simplify's lists, discoverSources.simplifyListings without its
  *                 roles), hn (this month's Hacker News "Who is
  *                 hiring" posts, discoverSources.hnHiring), careers: { [firmId]: { at, result } } (careers checks) and
- *                 contacts: { [firmId]: { at, result } } (discoverContacts.findContacts) }; never in a backup
+ *                 contacts: { [firmId]: { at, result } } (discoverContacts.findContacts) and research: { [firmId]: { at, result } }
+ *                 (discoverResearch.research and the address checks) }; never in a backup
  *   outreach      emails to firms, written on the Discover page: { [firmId]: { firm: { id, name, domain, site },
  *                 status: 'drafted'|'sent'|'replied'|'closed', to, subject, notes, contact: { name, title, email,
  *                 guessed }, way, at (first saved), sentAt, updatedAt } }; in backups
@@ -382,6 +384,29 @@
     return { ...config, source: 'discover', effort: d.effort };
   }
 
+  /* ---------------------------------------------------------- email finder */
+
+  const FINDERS = ['hunter'];
+
+  /** The email finder keys Discover uses: { hunter: '…' } (only those set). */
+  async function getFinderKeys() {
+    const got = (await area().get('finderKeys')).finderKeys || {};
+    const keys = {};
+    for (const id of FINDERS) if (typeof got[id] === 'string' && got[id].trim()) keys[id] = got[id].trim();
+    return keys;
+  }
+
+  const setFinderKey = exclusive(async function setFinderKey(id, key) {
+    if (!FINDERS.includes(id)) throw new Error(`Unknown email finder: ${id}`);
+    const keys = await getFinderKeys();
+    const value = String(key || '').trim();
+    if (value) keys[id] = value;
+    else delete keys[id];
+    if (Object.keys(keys).length) await area().set({ finderKeys: keys });
+    else await area().remove('finderKeys');
+    return keys;
+  });
+
   /* ------------------------------------------------------ verification codes */
 
   /** The Nylas connection: { apiKey, region, grantId, email }, or null when not set up. */
@@ -709,7 +734,7 @@
   // the last Quick apply, the application log and caches are left out (the log rides along with the rest).
   // "vault": the encrypted vault of older versions, until its passwords are moved over (passwords.js).
   const BACKED_UP =
-    /^(profiles|profileOrder|settings|passwords|vault|aiKeys|nylas|answers|watchlist|outreach|doc:.+|kit:.+)$/;
+    /^(profiles|profileOrder|settings|passwords|vault|aiKeys|finderKeys|nylas|answers|watchlist|outreach|doc:.+|kit:.+)$/;
   const backsUp = (key) => BACKED_UP.test(key);
 
   /**
@@ -727,6 +752,7 @@
     if (saved.defaultPassword || (saved.credentials || []).length || (saved.cards || []).length || all.vault)
       return true;
     if (all.nylas || Object.values(all.aiKeys || {}).some((k) => String(k || '').trim())) return true;
+    if (Object.values(all.finderKeys || {}).some((k) => String(k || '').trim())) return true;
     return (
       (Array.isArray(all.answers) && all.answers.length > 0) ||
       (Array.isArray(all.watchlist) && all.watchlist.length > 0) ||
@@ -815,6 +841,7 @@
       listed: listedOf(cache.listed),
       careers: cache.careers || {},
       contacts: cache.contacts || {},
+      research: cache.research || {},
     });
   }
 
@@ -822,7 +849,14 @@
    * Remember what Discover fetched: Trackr's list, Simplify's names and domains and the Hacker News posts whole, and
    * firms' careers and contact checks by firm id ({ [firmId]: { at, result } }, the newest few hundred of each).
    */
-  const setDiscoverCache = exclusive(async function setDiscoverCache({ trackr, hn, listed, careers, contacts }) {
+  const setDiscoverCache = exclusive(async function setDiscoverCache({
+    trackr,
+    hn,
+    listed,
+    careers,
+    contacts,
+    research,
+  }) {
     const cache = await getDiscoverCache();
     if (trackr) cache.trackr = trackr;
     if (hn) cache.hn = hn;
@@ -830,6 +864,7 @@
     for (const [key, add] of [
       ['careers', careers],
       ['contacts', contacts],
+      ['research', research],
     ]) {
       if (!add) continue;
       cache[key] = Object.assign(cache[key], add);
@@ -965,6 +1000,8 @@
       if (Object.keys(aiKeys).length) out.aiKeys = aiKeys;
       const nylas = await getNylas();
       if (nylas) out.nylas = nylas;
+      const finderKeys = await getFinderKeys();
+      if (Object.keys(finderKeys).length) out.finderKeys = finderKeys;
     }
     return out;
   }
@@ -993,6 +1030,13 @@
       for (const [id, key] of Object.entries(data.aiKeys))
         if (PROVIDER_IDS.includes(id) && typeof key === 'string' && key.trim()) keys[id] = key.trim();
       set.aiKeys = keys;
+    }
+    if (data.finderKeys && typeof data.finderKeys === 'object') {
+      const keys = await getFinderKeys();
+      for (const id of FINDERS)
+        if (typeof data.finderKeys[id] === 'string' && data.finderKeys[id].trim())
+          keys[id] = data.finderKeys[id].trim();
+      if (Object.keys(keys).length) set.finderKeys = keys;
     }
     if (
       data.nylas &&
@@ -1067,6 +1111,8 @@
     setWatchState,
     getDiscoverCache,
     setDiscoverCache,
+    getFinderKeys,
+    setFinderKey,
     getOutreach,
     setOutreach,
     removeOutreach,

@@ -476,6 +476,178 @@
     }
   }
 
+  /* ------------------------------------------------------------ web search */
+
+  // Claude's web search runs on Anthropic's servers at $10 per 1,000 searches, on top of the tokens; OpenRouter's web
+  // plugin costs about $4 per 1,000 results. Both are billed to the person's own key.
+  const SEARCH_PRICE = { anthropic: 0.01, openrouter: 0.004 };
+  // The newest tool versions (they filter results before the model reads them) need Sonnet 4.6, Opus 4.6 or later.
+  const NEWER_TOOLS = /^claude-(sonnet-(4-6|5)|opus-(4-[6-9]|5)|fable|mythos)/;
+  // Rounds a search may pause and be resumed for, when it runs long on Anthropic's side ("pause_turn").
+  const RESUMES = 3;
+
+  /** Can this provider search the web for a reply: Claude through Anthropic's API, or any model on OpenRouter? */
+  function canSearch(config) {
+    const c = resolve(config);
+    return apiOf(c) === 'anthropic' || /openrouter\.ai/.test(c.base);
+  }
+
+  /**
+   * What the search engine itself returned, collected from a reply's blocks: each result's address and title, the
+   * passages a reply cites (word for word, as the engine gave them) and the text of a page the model fetched. The
+   * model's own words are never a source. → [{ url, title, text, kind: 'result'|'cited'|'page' }]
+   */
+  function sourcesIn(content) {
+    const out = [];
+    const walk = (v, depth) => {
+      if (!v || typeof v !== 'object' || depth > 6) return;
+      if (Array.isArray(v)) return v.forEach((x) => walk(x, depth + 1));
+      if (v.type === 'web_search_result' && v.url)
+        out.push({ url: v.url, title: v.title || '', text: '', kind: 'result' });
+      if (v.type === 'web_search_result_location' && v.url)
+        out.push({ url: v.url, title: v.title || '', text: v.cited_text || '', kind: 'cited' });
+      if (v.type === 'web_fetch_result' && v.url) {
+        const doc = v.content || {};
+        const src = doc.source || {};
+        const text = src.type === 'text' || /^text\//.test(src.media_type || '') ? String(src.data || '') : '';
+        out.push({ url: v.url, title: doc.title || '', text, kind: 'page' });
+      }
+      if (Array.isArray(v.citations)) walk(v.citations, depth + 1);
+      if (v.content && typeof v.content === 'object') walk(v.content, depth + 1);
+    };
+    walk(content, 0);
+    return out;
+  }
+
+  /** Claude's web search and web fetch tools, in the versions this model takes. */
+  function searchTools(model, maxSearches, maxFetches) {
+    const newer = NEWER_TOOLS.test(model);
+    const tools = [
+      { type: newer ? 'web_search_20260209' : 'web_search_20250305', name: 'web_search', max_uses: maxSearches },
+    ];
+    if (maxFetches > 0)
+      tools.push({
+        type: newer ? 'web_fetch_20260209' : 'web_fetch_20250910',
+        name: 'web_fetch',
+        max_uses: maxFetches,
+        max_content_tokens: 6000,
+      });
+    return tools;
+  }
+
+  /**
+   * A reply that may search the web first, for Discover's research: Claude with Anthropic's web search and fetch
+   * tools, or any model on OpenRouter with its web plugin. → { text, json (with `json: true`), sources (sourcesIn()),
+   * searches, usage: { prompt_tokens, completion_tokens, cost }, model }. A provider that can't search throws an
+   * AIError with code 'nosearch'.
+   */
+  async function search(
+    config,
+    { messages, json = true, maxTokens = 6000, maxSearches = 5, maxFetches = 3, signal, fetch: fetchImpl },
+  ) {
+    const c = resolve(config);
+    const bad = problem(c);
+    if (bad) throw new AIError(bad, { code: 'setup' });
+    if (!canSearch(c))
+      throw new AIError(`${c.label} can’t search the web: choose Claude or OpenRouter for this page.`, {
+        code: 'nosearch',
+      });
+    const doFetch = fetchImpl || root.fetch.bind(root);
+    const cap = (PROVIDERS[c.provider] && PROVIDERS[c.provider].maxTokens) || 16000;
+    let text = '';
+    const sources = [];
+    let searches = 0;
+    let model = c.model;
+    const usage = { prompt_tokens: 0, completion_tokens: 0, cost: 0 };
+    const withRetry = async (body) => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await post(c, body, signal, doFetch);
+        } catch (err) {
+          if (signal && signal.aborted) throw err;
+          if (!(err instanceof AIError) || !err.retry || attempt >= RETRY_DELAYS.length) throw err;
+          await sleep(err.waitMs || RETRY_DELAYS[attempt]);
+        }
+      }
+    };
+    if (apiOf(c) === 'anthropic') {
+      const system = messages
+        .filter((m) => m.role === 'system')
+        .map((m) => String(m.content))
+        .join('\n\n');
+      const convo = messages
+        .filter((m) => m.role !== 'system')
+        .map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content) }));
+      const body = {
+        model: c.model,
+        max_tokens: Math.min(maxTokens + THINKING_ROOM, cap),
+        output_config: { effort: 'medium' },
+        tools: searchTools(c.model, maxSearches, maxFetches),
+        messages: convo,
+      };
+      if (system) body.system = system;
+      // A tool version or the fetch tool the key or model won't take: asked again without it (or with the older one).
+      const fallback = async () => {
+        try {
+          return await withRetry(body);
+        } catch (err) {
+          const said = (err && (err.detail || err.message)) || '';
+          if (!(err instanceof AIError) || err.status !== 400 || !/web_(fetch|search)/i.test(said)) throw err;
+          if (/web_fetch/i.test(said) && body.tools.length > 1) body.tools = body.tools.slice(0, 1);
+          else if (/2026/.test(body.tools[0].type)) body.tools = searchTools('', maxSearches, 0);
+          else throw err;
+          return fallback();
+        }
+      };
+      for (let round = 0; round <= RESUMES; round++) {
+        const data = await fallback();
+        if (data && data.stop_reason === 'refusal')
+          throw new AIError(`${c.label} declined this search.`, { code: 'refusal' });
+        const content = (data && data.content) || [];
+        sources.push(...sourcesIn(content));
+        text += content
+          .filter((b) => b.type === 'text')
+          .map((b) => b.text)
+          .join('');
+        const u = (data && data.usage) || {};
+        const n = (u.server_tool_use && u.server_tool_use.web_search_requests) || 0;
+        searches += n;
+        usage.prompt_tokens +=
+          (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+        usage.completion_tokens += u.output_tokens || 0;
+        usage.cost += (costOf(c, u) || 0) + n * SEARCH_PRICE.anthropic;
+        model = (data && data.model) || model;
+        // A long search pauses: the turn so far goes back as it was, and Claude carries on from there.
+        if (!data || data.stop_reason !== 'pause_turn') break;
+        body.messages = [...convo, { role: 'assistant', content }];
+      }
+    } else {
+      const body = {
+        model: c.model,
+        messages,
+        max_tokens: Math.min(maxTokens, cap),
+        plugins: [{ id: 'web', max_results: Math.max(3, Math.min(10, maxSearches * 2)) }],
+      };
+      if (json) body.response_format = { type: 'json_object' };
+      const data = await withRetry(body);
+      if (data && data.error) throw explain(data.error.code || 502, data, c);
+      const msg = (((data && data.choices) || [])[0] || {}).message || {};
+      text = msg.content || '';
+      for (const a of msg.annotations || []) {
+        const u = a && (a.url_citation || a);
+        if (u && u.url) sources.push({ url: u.url, title: u.title || '', text: u.content || '', kind: 'cited' });
+      }
+      searches = 1;
+      const u = (data && data.usage) || {};
+      usage.prompt_tokens = u.prompt_tokens || 0;
+      usage.completion_tokens = u.completion_tokens || 0;
+      usage.cost = typeof u.cost === 'number' ? u.cost : undefined;
+      model = (data && data.model) || model;
+    }
+    if (!text.trim()) throw new AIError('The model returned nothing.', { retry: true });
+    return { text: text.trim(), json: json ? parseJson(text) : null, sources, searches, usage, model };
+  }
+
   /** A tiny request that proves the key, address and model all work. */
   async function test(config, options) {
     const started = Date.now();
@@ -514,6 +686,9 @@
     test,
     models,
     parseJson,
+    search,
+    canSearch,
+    sourcesIn,
     suggestions,
     describe,
     hasFastMode,

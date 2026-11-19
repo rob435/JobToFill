@@ -113,6 +113,13 @@ test('discover contacts: what an address is for', () => {
     'talent-notifications@acme.com': 'other',
     'mailer-daemon@acme.com': 'other',
     'jobalerts@acme.com': 'other',
+    // Mailbox words run together, or after the firm's own name: Lingotto's "LingottoIR@" is investor relations.
+    'LingottoIR@lingotto.com': 'other',
+    'pressoffice@acme.com': 'other',
+    'mwamhr@mwam.com': 'recruiting',
+    'acmeinfo@acme.com': 'general',
+    'irene@acme.com': 'person',
+    'usha@acme.com': 'person',
   };
   for (const [address, kind] of Object.entries(kinds)) assert.equal(C.kindOf(address), kind, address);
 });
@@ -624,4 +631,152 @@ test('discover contacts: a site that doesn’t answer is unreachable', async () 
   assert.equal(res.status, 'unreachable');
   assert.deepEqual(res.best, []);
   assert.ok(D.get, 'discover.js is what fetches');
+});
+
+test('discover contacts: mailboxes as the dry run of 23 firms found them', () => {
+  const kinds = {
+    // Marshall Wace's Human Capital team; Man Group's HR shared services.
+    'HC@mwam.com': 'recruiting',
+    'humancapital@acme.com': 'recruiting',
+    'hrso@man.com': 'recruiting',
+    // The firm's own name is its front desk; an office's enquiries; a department's services.
+    'mwam@mwam.com': 'general',
+    'pl.enquiries@man.com': 'general',
+    'clientservices@odey.com': 'other',
+    // Jane Street's mailbox for checking a recruiter is real isn't for applying.
+    'recruiting-security@janestreet.com': 'other',
+    'jobs@janestreet.com': 'recruiting',
+    "james.o'donnell@man.com": 'person',
+  };
+  for (const [address, kind] of Object.entries(kinds)) assert.equal(C.kindOf(address), kind, address);
+});
+
+test('discover contacts: an apostrophe in an address, a heading closed with another tag, a name alone in a paragraph', () => {
+  const own = { domain: 'man.com', name: 'Man Group' };
+  const html = `<a href="mailto:james.o'donnell@man.com">James O'Donnell</a> <a href='mailto:jane.smith@man.com'>Jane</a>`;
+  assert.deepEqual(
+    C.emailsIn(html, own).map((e) => e.address),
+    ["james.o'donnell@man.com", 'jane.smith@man.com'],
+  );
+  // HBK writes "<h2>Brian Palabrica</h3>".
+  const hbk = `<div><h2>Brian Palabrica</h3><p>Head of Recruitment</p></div><div><h2>Keila Selders</h3><p>Head of Human Resources</p></div>`;
+  assert.deepEqual(
+    C.peopleIn(hbk, { domain: 'hbk.com', name: 'HBK' }).map((p) => [p.name, p.title, p.role]),
+    [
+      ['Brian Palabrica', 'Head of Recruitment', 'recruiting'],
+      ['Keila Selders', 'Head of Human Resources', 'recruiting'],
+    ],
+  );
+  // Apollo Research's names sit in a styled paragraph.
+  const apollo = `<div><p class="text-size-large">Marius Hobbhahn</p><p>CEO and Co-founder</p><a href="https://www.linkedin.com/in/mh">LinkedIn</a></div>`;
+  assert.deepEqual(
+    C.peopleIn(apollo, { domain: 'apolloresearch.ai', name: 'Apollo Research' }).map((p) => [p.name, p.role]),
+    [['Marius Hobbhahn', 'leadership']],
+  );
+  // An address under a menu heading is no one: Lansdowne's "Battersea Bridge" over "Our People".
+  assert.deepEqual(C.peopleIn(`<h3>Battersea Bridge</h3><p>Our People</p><img alt="Battersea Bridge">`, {}), []);
+});
+
+test('discover contacts: named people with no address are kept, student recruiters first', () => {
+  const page = (body) => ({ url: 'https://acme.com/team', html: `<html><title>Acme</title>${PAD}${body}</html>` });
+  const r = C.contacts({ name: 'Acme Capital', domain: 'acme.com', employees: 40 }, [
+    page(
+      `<div><h3>Tom Lee</h3><p>Head of Talent Acquisition</p><img alt="Tom Lee"></div>` +
+        `<div><h3>Amy Chan</h3><p>Emerging Talent Partner</p><img alt="Amy Chan"></div>` +
+        `<div><h3>Raj Patel</h3><p>Founding Partner</p></div>`,
+    ),
+  ]);
+  assert.deepEqual(
+    r.named.map((p) => p.name),
+    ['Amy Chan', 'Tom Lee', 'Raj Patel'].filter((n) => r.named.some((p) => p.name === n)),
+  );
+  assert.ok(r.named.some((p) => p.name === 'Tom Lee'));
+  assert.ok(
+    r.named.some((p) => p.name === 'Raj Patel'),
+    'a small firm’s partner',
+  );
+  // With a pattern, the student recruiter comes before the head of talent.
+  const withPattern = C.contacts({ name: 'Acme Capital', domain: 'acme.com', employees: 40 }, [
+    page(
+      `<div><h3>Tom Lee</h3><p>Head of Talent Acquisition</p><img alt="Tom Lee"></div>` +
+        `<div><h3>Amy Chan</h3><p>Emerging Talent Partner</p><img alt="Amy Chan"></div>` +
+        `<p>Press: <a href="mailto:bob.jones@acme.com">Bob Jones</a>, <a href="mailto:sue.wu@acme.com">Sue Wu</a></p>`,
+    ),
+  ]);
+  const people = withPattern.best.filter((b) => b.name);
+  assert.deepEqual(
+    people.slice(0, 2).map((b) => b.address),
+    ['amy.chan@acme.com', 'tom.lee@acme.com'],
+  );
+});
+
+test('discover contacts: a customer’s or an investor’s quote on the site is no one at the firm', () => {
+  const html =
+    '<div><h3>Steve Cox</h3><p>CEO - Spinnaker</p><img alt="Steve Cox"></div>' +
+    '<div><h3>Jared Friedman</h3><p>Partner at Y Combinator</p><img alt="Jared Friedman"></div>' +
+    '<div><h3>Hal Sarjant</h3><p>Chief Customer Officer, Gen H</p><img alt="Hal Sarjant"></div>' +
+    '<div><h3>Ed Jones</h3><p>Chief Technology Officer</p><img alt="Ed Jones"></div>' +
+    '<div><img alt="Control Panels"><p>Partner Portal</p></div>';
+  assert.deepEqual(
+    C.peopleIn(html, { domain: 'devyce.com', name: 'Devyce' }).map((p) => p.name),
+    ['Ed Jones'],
+  );
+  // The firm's own name, a department or a place after the title is still the firm.
+  for (const [title, firm] of [
+    ['Global Head of Talent Acquisition, Man Group', 'Man Group'],
+    ['Partner, Co-Head of Investment Grade', 'TwentyFour'],
+    ['Head of Operations, UK', 'Acme'],
+    ['Partner & Co-Portfolio Manager, DM UCITS', 'Lansdowne'],
+    ['CEO, Trigger.dev', 'Trigger.dev'],
+  ])
+    assert.equal(C.elsewhere(title, firm), '', title);
+  assert.equal(C.elsewhere('Head of Operations - Harvey John, UK', 'Devyce'), 'Harvey John');
+});
+
+test('discover contacts: a quote’s author is no one to write to, a team page’s people still are', () => {
+  // Humaans' home page: a customer's Head of People under her quote, the customer's logo beside it.
+  const humaans =
+    '<div class="Card"><h3 class="Title Quote">“We wanted to do things well from the start. Choosing Humaans has made ' +
+    'it so much easier to scale.”</h3><p class="QuoteAuthor"><span>Beatriz Lourenço</span>' +
+    '<span class="QuoteTitle">Head of People</span></p><img alt="poolside logo"></div>';
+  // Chenavari's careers slider: staff quoted, years ago.
+  const slider =
+    '<div class="qodef-e-content"><p class="qodef-e-text">“Chenavari is a really collaborative place to work”</p>' +
+    '<div class="qodef-e-author"><h5 class="qodef-e-author-name">Sandrine Streeter</h5>' +
+    '<h6 class="qodef-e-author-job">HR Manager</h6></div></div>';
+  // A plain quotation, then the name: "“…” — Jane Smith, Head of Talent".
+  const plain =
+    '<p>“Working here has been the best decision of my career so far.”</p><p>— Jane Smith</p><p>Head of Talent</p>';
+  for (const [html, name] of [
+    [humaans, 'Humaans'],
+    [slider, 'Chenavari'],
+    [plain, 'Acme'],
+  ])
+    assert.deepEqual(C.peopleIn(html, { domain: 'acme.com', name }), [], name);
+  const team =
+    '<div class="member"><img alt="Ada Lovelace"><h3>Ada Lovelace</h3><p>Head of Talent</p></div>' +
+    '<div class="member"><img alt="Alan Turing"><h3>Alan Turing</h3><p>Partner</p></div>';
+  assert.deepEqual(
+    C.peopleIn(team, { domain: 'acme.com', name: 'Acme' }).map((p) => p.name),
+    ['Ada Lovelace', 'Alan Turing'],
+  );
+  // Framer keeps the quotation in an attribute, the paragraph has no quote marks (Saturn's home page).
+  const framer =
+    '<div data-framer-name="“Saturn has completely transformed the way we operate.”"><p>We had paraplanners ' +
+    'attending client meetings to take notes.</p></div><div><h5>Tracey Corbett</h5></div><div><p>Head of Technology</p></div>';
+  assert.deepEqual(C.peopleIn(framer, { domain: 'saturnos.com', name: 'Saturn' }), []);
+  // An investor's card (Humaans' backers), however the title reads.
+  const backers =
+    '<div class="Investor"><img alt="Jane Doherty"></div><div><div class="Name">Jane Doherty</div>' +
+    '<div class="Sub">Head of Talent</div></div>';
+  assert.deepEqual(C.peopleIn(backers, { domain: 'humaans.io', name: 'Humaans' }), []);
+  // A job board's field label isn't a name: StoneX's "Job Type" over "New Graduate & Early Talent".
+  assert.equal(C.isName('Job Type'), false);
+  // Backers known by where they were or what they founded: "Former Workday CTO", "Slack Founder", "Stripe COO".
+  assert.equal(C.elsewhere('Former Workday CTO', 'Humaans'), 'Workday CTO');
+  assert.equal(C.elsewhere('Ex-Google', 'Acme'), 'Google');
+  assert.equal(C.elsewhere('Slack Founder', 'Humaans'), 'Slack');
+  assert.equal(C.elsewhere('Stripe COO', 'Humaans'), 'Stripe');
+  for (const title of ['Founding CTO', 'Group CEO', 'Humaans Founder', 'Co-Founder'])
+    assert.equal(C.elsewhere(title, 'Humaans'), '', title);
 });
