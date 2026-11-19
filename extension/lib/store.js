@@ -31,9 +31,9 @@
  *                 hiring" posts, discoverSources.hnHiring), careers: { [firmId]: { at, result } } (careers checks) and
  *                 contacts: { [firmId]: { at, result } } (discoverContacts.findContacts) and research: { [firmId]: { at, result } }
  *                 (discoverResearch.research and the address checks) and hooks: { [firmId]: { at, result } }
- *                 (discoverHooks.find: reasons to write) and queue: { items, at, cleared } (the review queue: the firms an
- *                 email is being prepared for, with the drafts, and the ids of those cleared from it) }; never in a
- *                 backup
+ *                 (discoverHooks.find: reasons to write) and queue: { items, at, cleared, declined } (the review
+ *                 queue: the firms an email is being prepared for, with the drafts, the ids of those cleared from it,
+ *                 and the follow-ups skipped: { [firmId]: the sentAt of the email followed up }) }; never in a backup
  *   outreach      emails to firms, written on the Discover page: { [firmId]: { firm: { id, name, domain, site },
  *                 status: 'drafted'|'sent'|'replied'|'closed', to, subject, notes, contact: { name, title, email,
  *                 guessed }, way, at (first saved), sentAt, updatedAt, and for one sent from the review queue body
@@ -887,7 +887,12 @@
     if (listed) cache.listed = listedOf(listed);
     if (queue)
       cache.queue = Array.isArray(queue.items)
-        ? { items: queue.items, at: Number(queue.at) || 0, cleared: Array.isArray(queue.cleared) ? queue.cleared : [] }
+        ? {
+            items: queue.items,
+            at: Number(queue.at) || 0,
+            cleared: Array.isArray(queue.cleared) ? queue.cleared : [],
+            declined: queue.declined && typeof queue.declined === 'object' ? queue.declined : {},
+          }
         : null;
     for (const [key, add] of [
       ['careers', careers],
