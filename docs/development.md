@@ -60,8 +60,11 @@ extension/
   popup/               toolbar popup
   map/                 the page map viewer: a tab's map to read, search, copy redacted, and click through to the page
   studio/              the cover letter page: find the job, write, check, preview, attach, tailor the CV
-  discover/            Discover internships page: search, careers and contact checks, email drafts, outreach, watchlist
+  discover/            Discover internships page: the Overview (control panel), search, careers and contact checks, email
+                       drafts, the Review queue, outreach with replies sorted, watchlist
   data/firms.json      the registry Discover searches: finance and tech firms (built by scripts/firms.mjs)
+  data/checks.json     every registry firm's careers pages, job boards, mailboxes and address format, found ahead of time,
+                       and the firms found gone (built by scripts/firm-checks.mjs: `npm run checks`)
   options/             settings page: main.js (shell), profile.js, letters.js, email.js, passwords.js, app.js, controls.js,
                        setup.js (Get started), edits.js (what the page changed, put onto the profile as stored now)
 tests/

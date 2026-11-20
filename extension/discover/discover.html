@@ -10,22 +10,25 @@
   </head>
   <body>
     <header class="topbar">
-      <img src="../icons/icon32.png" alt="" width="24" height="24" />
-      <h1>Discover internships</h1>
-      <span class="muted small tagline">Reputable firms that keep a low profile</span>
-      <span class="grow"></span>
-      <div class="tabs" role="tablist" aria-label="Discover">
+      <div class="brand">
+        <img src="../icons/icon32.png" alt="" width="24" height="24" />
+        <h1>Discover internships</h1>
+      </div>
+      <nav class="tabs" role="tablist" aria-label="Discover">
+        <button id="tab-home" role="tab" type="button" aria-selected="false" aria-controls="home-view">Overview</button>
         <button id="tab-find" role="tab" type="button" aria-selected="true" aria-controls="find-view">Find firms</button>
         <button id="tab-review" role="tab" type="button" aria-selected="false" aria-controls="review-view">
           Review <span id="review-count" class="pill"></span>
         </button>
-        <button id="tab-watch" role="tab" type="button" aria-selected="false" aria-controls="watch-view">
-          Watchlist <span id="watch-count" class="pill"></span>
-        </button>
         <button id="tab-outreach" role="tab" type="button" aria-selected="false" aria-controls="outreach-view">
           Outreach <span id="outreach-count" class="pill"></span>
         </button>
-      </div>
+        <button id="tab-watch" role="tab" type="button" aria-selected="false" aria-controls="watch-view">
+          Watchlist <span id="watch-count" class="pill"></span>
+        </button>
+      </nav>
+      <span class="grow"></span>
+      <div id="health" class="health small"></div>
     </header>
 
     <div class="page">
@@ -35,164 +38,270 @@
         <div class="row"><button id="access-allow" class="primary" type="button">Allow</button></div>
       </section>
 
-      <div id="find-view" role="tabpanel" aria-labelledby="tab-find">
-        <form id="query" class="card">
+      <div id="home-view" role="tabpanel" aria-labelledby="tab-home" hidden>
+        <section class="card home-hero">
           <div class="card-head">
-            <h2>What are you looking for?</h2>
-            <span id="registry-info" class="muted small"></span>
-          </div>
-          <fieldset class="niches">
-            <legend>Kind of firm</legend>
-            <div id="niches" class="niche-groups"></div>
-          </fieldset>
-          <div class="grid">
-            <label class="field"
-              ><span>Where</span>
-              <select id="place"></select>
-            </label>
-            <label class="field"
-              ><span>Size</span>
-              <select id="size"></select>
-            </label>
-            <label class="field wide"
-              ><span>Firms like</span>
-              <input
-                id="seeds"
-                type="text"
-                list="firm-names"
-                placeholder="HBK, Lansdowne Partners, Egerton Capital"
-                autocomplete="off"
-                spellcheck="false"
-              />
-              <datalist id="firm-names"></datalist>
-              <small>Separate names with commas. Firms like these (same niche, city, size, Wikipedia categories) rank first.</small>
-            </label>
-            <label class="field wide"
-              ><span>Name contains</span>
-              <input id="text" type="text" placeholder="Optional" autocomplete="off" spellcheck="false" />
-            </label>
-          </div>
-          <fieldset class="sources">
-            <legend>Sources</legend>
-            <label class="check"
-              ><input id="hide-trackr" type="checkbox" checked />
-              <span
-                >Leave out firms on Trackr and Simplify’s lists <span class="muted small">(the ones everyone applies to)</span></span
-              ></label
-            >
-            <label class="check"
-              ><input id="use-hn" type="checkbox" />
-              <span>Hacker News ‘Who is hiring’ <span class="muted small">(small tech firms posting this month)</span></span></label
-            >
-            <label class="check" id="ai-wrap"
-              ><input id="use-ai" type="checkbox" />
-              <span
-                >Ask the AI for more ideas
-                <span class="muted small">(each one checked against the SEC, Wikipedia and its own website)</span></span
-              ></label
-            >
-          </fieldset>
-          <details id="ai-box">
-            <summary id="ai-summary">AI model for this page</summary>
-            <div class="ai-body">
-              <p id="ai-none" class="small" hidden>
-                No AI key yet. Add one under
-                <button id="ai-settings" class="link" type="button">Settings › Cover letters &amp; AI</button> to ask for more ideas, have
-                careers pages read and draft emails.
-              </p>
-              <div id="ai-fields" class="grid">
-                <label class="field"
-                  ><span>Provider</span>
-                  <select id="discover-provider"></select>
-                </label>
-                <label id="discover-model-field" class="field"><span>Model</span></label>
-                <p id="discover-same" class="muted small wide"></p>
-                <label class="field wide"
-                  ><span>Effort</span>
-                  <select id="discover-effort">
-                    <option value="quick">Quick (one round of ideas)</option>
-                    <option value="thorough">Thorough (several angles, more ideas, reads pages)</option>
-                  </select>
-                </label>
-              </div>
-              <label class="field wide"
-                ><span>Hunter.io API key (optional)</span>
-                <input id="hunter-key" type="password" autocomplete="off" spellcheck="false" placeholder="Finds and checks addresses" />
-                <small
-                  >With a free key from <a href="https://hunter.io/api-keys" target="_blank" rel="noopener">hunter.io</a> (50 credits a
-                  month), <strong>Find people</strong> also asks Hunter for the addresses it has seen on the web for the firm’s domain, its
-                  address format, and checks a made-up address with the firm’s mail server before you send.</small
-                >
-                <span id="hunter-saved" class="muted small" aria-live="polite"></span>
-              </label>
-              <span id="ai-saved" class="muted small" aria-live="polite"></span>
-            </div>
-          </details>
-          <div class="row">
-            <button id="search" class="primary" type="submit">Search</button>
-            <span id="status" class="muted small" aria-live="polite"></span>
-          </div>
-        </form>
-
-        <section id="results-card" class="card" hidden>
-          <div class="write-bar">
             <div>
-              <h2 id="results-title">Firms</h2>
-              <p class="muted small">
-                JobToFill checks each firm, finds who to write to and a reason to, and drafts the email. You read each one and press Send.
-              </p>
+              <h2>Control panel</h2>
+              <p id="home-sub" class="muted small"></p>
             </div>
-            <button id="write-top" class="primary big" type="button">Write to the top 10</button>
-          </div>
-          <div class="card-head">
             <div class="row">
-              <label class="check small"><input id="only-open" type="checkbox" /> Only firms with something open</label>
-              <label class="check small"><input id="sort-way" type="checkbox" /> Best way in first</label>
-              <button id="check-top" class="small" type="button">Check the top 10</button>
-              <button id="research-top" class="small" type="button" hidden>Find people for the top 10</button>
-              <button id="results-export" class="small" type="button">Export results as CSV</button>
+              <span id="home-status" class="muted small" aria-live="polite"></span>
+              <button id="home-check-replies" class="small" type="button">Check for replies</button>
+              <button id="home-write" class="primary" type="button">Write to the next 10</button>
             </div>
           </div>
-          <ol id="results" class="firms"></ol>
-          <div class="row"><button id="more" class="small" type="button" hidden>Show more</button></div>
-          <details id="rejected" hidden>
-            <summary></summary>
-            <ul class="plain small"></ul>
-          </details>
+          <div id="home-stats" class="stats-grid"></div>
         </section>
+        <div class="home-cols">
+          <section class="card">
+            <h2>To do now</h2>
+            <ol id="home-next" class="todo"></ol>
+          </section>
+          <section class="card">
+            <h2>Prepare ahead</h2>
+            <p class="muted small">
+              Emails are written in the background from your last search, so the next one is ready when you press Send. Each one is a few
+              calls on your AI key.
+            </p>
+            <label class="field"
+              ><span>Keep this many emails ready to read</span>
+              <select id="keep-ready">
+                <option value="0">Off: only when I press Write to…</option>
+                <option value="5">5</option>
+                <option value="10">10</option>
+                <option value="20">20</option>
+              </select>
+            </label>
+            <p id="keep-ready-note" class="muted small" aria-live="polite"></p>
+            <div id="home-setup" class="setup"></div>
+          </section>
+        </div>
+        <section class="card">
+          <div class="card-head">
+            <h2>Latest activity</h2>
+            <button id="home-outreach" class="small ghost" type="button">See all on Outreach</button>
+          </div>
+          <ol id="home-recent" class="activity"></ol>
+          <p id="home-stats-line" class="small muted"></p>
+        </section>
+      </div>
+
+      <div id="find-view" role="tabpanel" aria-labelledby="tab-find">
+        <div class="find-cols">
+          <form id="query" class="card filters">
+            <div class="card-head">
+              <h2>What are you looking for?</h2>
+            </div>
+            <span id="registry-info" class="muted small"></span>
+            <fieldset class="niches">
+              <legend>
+                Kind of firm
+                <span class="legend-actions">
+                  <button id="niche-all" class="link small" type="button">All</button>
+                  <button id="niche-none" class="link small" type="button">None</button>
+                </span>
+              </legend>
+              <div id="niches" class="niche-groups"></div>
+            </fieldset>
+            <div class="grid">
+              <label class="field"
+                ><span>Where</span>
+                <select id="place"></select>
+              </label>
+              <label class="field"
+                ><span>Size</span>
+                <select id="size"></select>
+              </label>
+              <label class="field wide"
+                ><span>Firms like</span>
+                <input
+                  id="seeds"
+                  type="text"
+                  list="firm-names"
+                  placeholder="HBK, Lansdowne Partners"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <datalist id="firm-names"></datalist>
+                <small>Names, with commas. Firms in the same niche, city and size rank first.</small>
+              </label>
+              <label class="field wide"
+                ><span>Name contains</span>
+                <input id="text" type="text" placeholder="Optional" autocomplete="off" spellcheck="false" />
+              </label>
+            </div>
+            <fieldset class="sources">
+              <legend>Sources</legend>
+              <label class="check"
+                ><input id="hide-trackr" type="checkbox" checked />
+                <span
+                  >Leave out firms on Trackr and Simplify’s lists <span class="muted small">(the ones everyone applies to)</span></span
+                ></label
+              >
+              <label class="check"
+                ><input id="use-hn" type="checkbox" />
+                <span>Hacker News ‘Who is hiring’ <span class="muted small">(small tech firms posting this month)</span></span></label
+              >
+              <label class="check" id="ai-wrap"
+                ><input id="use-ai" type="checkbox" />
+                <span
+                  >Ask the AI for more ideas
+                  <span class="muted small">(each checked against the SEC, Wikipedia and its own website)</span></span
+                ></label
+              >
+            </fieldset>
+            <details id="ai-box">
+              <summary id="ai-summary">AI model for this page</summary>
+              <div class="ai-body">
+                <p id="ai-none" class="small" hidden>
+                  No AI key yet. Add one under
+                  <button id="ai-settings" class="link" type="button">Settings › Cover letters &amp; AI</button> to ask for more ideas, have
+                  careers pages read and draft emails.
+                </p>
+                <div id="ai-fields" class="grid">
+                  <label class="field"
+                    ><span>Provider</span>
+                    <select id="discover-provider"></select>
+                  </label>
+                  <label id="discover-model-field" class="field"><span>Model</span></label>
+                  <p id="discover-same" class="muted small wide"></p>
+                  <label class="field wide"
+                    ><span>Effort</span>
+                    <select id="discover-effort">
+                      <option value="quick">Quick (one round of ideas)</option>
+                      <option value="thorough">Thorough (several angles, more ideas, reads pages)</option>
+                    </select>
+                  </label>
+                </div>
+                <label class="field wide"
+                  ><span>Hunter.io API key (optional)</span>
+                  <input id="hunter-key" type="password" autocomplete="off" spellcheck="false" placeholder="Finds and checks addresses" />
+                  <small
+                    >With a free key from <a href="https://hunter.io/api-keys" target="_blank" rel="noopener">hunter.io</a> (50 credits a
+                    month), <strong>Find people</strong> also asks Hunter for the addresses it has seen for the firm’s domain, its address
+                    format, and checks a made-up address with the firm’s mail server before you send.</small
+                  >
+                  <span id="hunter-saved" class="muted small" aria-live="polite"></span>
+                </label>
+                <span id="ai-saved" class="muted small" aria-live="polite"></span>
+              </div>
+            </details>
+            <div class="row search-row">
+              <button id="search" class="primary" type="submit">Search</button>
+              <span id="status" class="muted small" aria-live="polite"></span>
+            </div>
+          </form>
+
+          <div class="results-col">
+            <section id="results-empty" class="card empty-results">
+              <h2>Pick what you want, then Search</h2>
+              <p class="muted">
+                Firms come from the SEC’s adviser register, Wikipedia, Wikidata and Y Combinator’s directory. Every firm was checked ahead
+                of time for its careers page and who to write to, so results say straight away how to get in.
+              </p>
+            </section>
+            <section id="results-card" class="card" hidden>
+              <div class="write-bar">
+                <div>
+                  <h2 id="results-title">Firms</h2>
+                  <p id="results-note" class="muted small"></p>
+                </div>
+                <button id="write-top" class="primary big" type="button">Write to the top 10</button>
+              </div>
+              <div class="results-tools">
+                <div class="row">
+                  <label class="check small toggle"><input id="hide-written" type="checkbox" checked /> Hide firms I’ve written to</label>
+                  <label class="check small toggle"><input id="only-open" type="checkbox" /> Only firms with something open</label>
+                  <label class="check small toggle"><input id="only-contact" type="checkbox" /> Only firms with someone to write to</label>
+                  <label class="check small toggle"><input id="sort-way" type="checkbox" /> Best way in first</label>
+                </div>
+                <div class="row pick-bar">
+                  <span id="picked-count" class="small muted">None selected</span>
+                  <button id="pick-top" class="small" type="button">Select the top 10</button>
+                  <button id="pick-page" class="small" type="button">Select all shown</button>
+                  <button id="pick-none" class="small" type="button" hidden>Clear</button>
+                  <button id="write-picked" class="small primary" type="button" hidden>Write to them</button>
+                  <button id="watch-picked" class="small" type="button" hidden>Watch them</button>
+                  <span class="grow"></span>
+                  <button id="check-top" class="small ghost" type="button">Check the top 10</button>
+                  <button id="research-top" class="small ghost" type="button" hidden>Find people for the top 10</button>
+                  <button id="results-export" class="small ghost" type="button">Export CSV</button>
+                </div>
+              </div>
+              <ol id="results" class="firms"></ol>
+              <div class="row"><button id="more" class="small" type="button" hidden>Show more</button></div>
+              <details id="rejected" hidden>
+                <summary></summary>
+                <ul class="plain small"></ul>
+              </details>
+            </section>
+          </div>
+        </div>
       </div>
 
       <div id="review-view" role="tabpanel" aria-labelledby="tab-review" hidden>
         <section class="review-top">
           <div id="review-progress" class="review-progress" aria-live="polite"></div>
-          <div class="review-options">
-            <div class="segmented" role="radiogroup" aria-label="What the email asks for">
-              <span class="seg-label">Ask for</span>
-              <label><input type="radio" name="ask" value="internship" checked /><span>An internship</span></label>
-              <label><input type="radio" name="ask" value="call" /><span>A 15-minute call</span></label>
-              <label><input type="radio" name="ask" value="project" /><span>A trial task</span></label>
+          <details class="review-options-box" open>
+            <summary>Email options</summary>
+            <div class="review-options">
+              <div class="segmented" role="radiogroup" aria-label="What the email asks for">
+                <span class="seg-label">Ask for</span>
+                <label><input type="radio" name="ask" value="internship" checked /><span>An internship</span></label>
+                <label><input type="radio" name="ask" value="call" /><span>A 15-minute call</span></label>
+                <label><input type="radio" name="ask" value="project" /><span>A trial task</span></label>
+              </div>
+              <label class="check small"
+                ><input id="their-morning" type="checkbox" checked />
+                <span>Arrive at 8:10 their time <span class="muted">(when it’s evening or the weekend there)</span></span></label
+              >
+              <label class="check small"
+                ><input id="common-ground" type="checkbox" />
+                <span
+                  >Look for common ground
+                  <span class="muted"
+                    >(sends the names of your university, school, past employers and home town to your AI’s web search, never your
+                    name)</span
+                  ></span
+                ></label
+              >
             </div>
-            <label class="check small"
-              ><input id="their-morning" type="checkbox" checked />
-              <span>Arrive at 8:10 their time <span class="muted">(when it’s evening or the weekend there)</span></span></label
-            >
-            <label class="check small"
-              ><input id="common-ground" type="checkbox" />
-              <span
-                >Look for common ground
-                <span class="muted"
-                  >(sends the names of your university, school, past employers and home town to your AI’s web search, never your name)</span
-                ></span
-              ></label
-            >
-          </div>
+          </details>
           <div id="follow-due" class="follow-due" hidden></div>
         </section>
-        <section id="review-card" class="review-card" aria-live="polite"></section>
-        <p id="review-keys" class="muted small review-keys" hidden>
-          <kbd>Ctrl</kbd>+<kbd>Enter</kbd> send · <kbd>S</kbd> skip · <kbd>←</kbd> <kbd>→</kbd> back and next · <kbd>C</kbd> someone else ·
-          <kbd>H</kbd> another reason · <kbd>R</kbd> write it again · <kbd>E</kbd> edit
-        </p>
+        <div class="review-cols">
+          <aside class="queue-side" aria-label="The queue">
+            <ol id="review-queue" class="queue-list"></ol>
+          </aside>
+          <div class="review-main">
+            <section id="review-card" class="review-card" aria-live="polite"></section>
+            <p id="review-keys" class="muted small review-keys" hidden>
+              <kbd>Ctrl</kbd>+<kbd>Enter</kbd> send · <kbd>S</kbd> skip · <kbd>←</kbd> <kbd>→</kbd> back and next · <kbd>C</kbd> someone
+              else · <kbd>H</kbd> another reason · <kbd>R</kbd> write it again · <kbd>E</kbd> edit
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div id="outreach-view" role="tabpanel" aria-labelledby="tab-outreach" hidden>
+        <section class="card">
+          <div class="card-head">
+            <h2>Outreach</h2>
+            <div class="row">
+              <span id="outreach-status" class="muted small" aria-live="polite"></span>
+              <input id="outreach-search" type="search" placeholder="Search firms, people, notes" autocomplete="off" />
+              <button id="outreach-replies" class="small" type="button">Check for replies</button>
+              <button id="outreach-export" class="small" type="button">Export CSV</button>
+            </div>
+          </div>
+          <div id="outreach-filters" class="filter-chips" role="radiogroup" aria-label="Show"></div>
+          <div id="outreach-empty" class="empty">
+            <p class="muted">Nothing yet. Search for firms and press <strong>Write to the top 10</strong>.</p>
+          </div>
+          <ol id="outreach" class="firms outreach-list"></ol>
+          <p id="outreach-none" class="muted small" hidden>No firm fits this filter.</p>
+        </section>
       </div>
 
       <div id="watch-view" role="tabpanel" aria-labelledby="tab-watch" hidden>
@@ -206,34 +315,13 @@
             </div>
           </div>
           <p class="muted small">
-            Watched firms are checked every six hours. New internships and programme pages show up here and as a number on the toolbar
-            button.
+            Checked every six hours. New internships and programme pages show here and as a number on the toolbar button.
           </p>
           <div id="watch-empty" class="empty">
             <p class="muted">Nothing watched yet. Search for firms and press <strong>Watch</strong> on the ones you like.</p>
             <div class="row"><button id="watch-find" class="primary" type="button">Find firms</button></div>
           </div>
           <ol id="watchlist" class="firms"></ol>
-        </section>
-      </div>
-
-      <div id="outreach-view" role="tabpanel" aria-labelledby="tab-outreach" hidden>
-        <section class="card">
-          <div class="card-head">
-            <h2>Outreach</h2>
-            <div class="row">
-              <span id="outreach-status" class="muted small" aria-live="polite"></span>
-              <button id="outreach-export" class="small" type="button">Export CSV</button>
-            </div>
-          </div>
-          <p class="muted small">
-            Every firm you drafted an email to or wrote to. Set the status as replies come in, and keep notes (“Spoke to Jane, call back in
-            January”). An email sent from here through your connected inbox turns to Replied by itself when they answer.
-          </p>
-          <div id="outreach-empty" class="empty">
-            <p class="muted">Nothing yet. Check a firm’s careers and contacts, then press <strong>Draft an email</strong>.</p>
-          </div>
-          <ol id="outreach" class="firms"></ol>
         </section>
       </div>
 

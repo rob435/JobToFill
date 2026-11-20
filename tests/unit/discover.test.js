@@ -1440,3 +1440,266 @@ test('discover: a fund’s “opportunities” is no careers page', () => {
     ['https://www.ttint.com/careers/', 'https://www.ttint.com/job-opportunities'],
   );
 });
+
+/* ------------------------------------------- careers, the ones it used to miss */
+
+test('discover: careers links in other languages, and a link that only says “Hiring”', () => {
+  const aixtron = `<a href="/de/karriere/karriere-bei-aixtron">Karriere bei AIXTRON</a>
+    <a href="/de/karriere/stellenangebote">Stellenangebote</a> <a href="/de/produkte">Produkte</a>`;
+  assert.deepEqual(
+    D.careerLinks(aixtron, 'https://www.aixtron.com/', 'aixtron.com').map((l) => l.url),
+    ['https://www.aixtron.com/de/karriere/karriere-bei-aixtron', 'https://www.aixtron.com/de/karriere/stellenangebote'],
+  );
+  // 99minutos' "Trabaja con nosotros" menu is a <div>; its one link says "Como repartidor".
+  const minutos = '<a href="/unete-al-equipo/">Como repartidor</a><a href="/blog/desempleo-y-logistica">Blog</a>';
+  assert.deepEqual(
+    D.careerLinks(minutos, 'https://www.99minutos.com/', '99minutos.com').map((l) => l.url),
+    ['https://www.99minutos.com/unete-al-equipo/'],
+  );
+  // Access Games' "採用情報", 4Paradigm's "加入我们"; a product's "導入・採用事例" (adoption cases) isn't one.
+  const japanese =
+    '<a href="/recruit/">採用情報</a><a href="/cases/">導入・採用事例</a><a href="/about/hr.html">加入我们</a>';
+  assert.deepEqual(
+    D.careerLinks(japanese, 'https://www.accessgames.co.jp/', 'accessgames.co.jp').map((l) => l.url),
+    ['https://www.accessgames.co.jp/recruit/', 'https://www.accessgames.co.jp/about/hr.html'],
+  );
+  // Alignment Research Center's "Hiring"; AccessOwl's blog post about hiring is not.
+  const arc = `<a href="/hiring/">Hiring</a>
+    <a href="/blog/hiring-an-it-administrator-6-signs-your-startup-needs-one">Hiring an IT administrator: 6 signs</a>`;
+  assert.deepEqual(
+    D.careerLinks(arc, 'https://www.alignment.org/', 'alignment.org').map((l) => l.url),
+    ['https://www.alignment.org/hiring/'],
+  );
+});
+
+test('discover: a careers link to another of the group’s sites, and what isn’t one', () => {
+  const html = `<a href="https://www.acdsee.com/en/about/careers/">Careers</a>
+    <a href="https://careers.adhocla.com/"><span>Careers</span><span>Careers</span></a>
+    <a href="https://www.workatastartup.com/companies/algotest">Careers</a>
+    <a href="https://jobs.getro.com/x-portfolio">Portfolio Jobs</a>
+    <a href="https://www.linkedin.com/company/acd-systems/jobs/">Jobs</a>
+    <a href="https://www.glassdoor.com/Overview/Working-at-ACD-Systems.htm">Careers</a>
+    <a href="https://news.example.com/blog/careers-in-imaging">Careers</a>
+    <a href="https://www.acdsee.com/en/products/">ACDSee Photo Studio</a>
+    <a href="https://www.teamtailor.com/en/?utm_campaign=poweredby">Teamtailor</a>`;
+  const away = D.careerLinks(html, 'https://www.acdsystems.com/', 'acdsystems.com', { away: true });
+  assert.deepEqual(
+    away.map((l) => [l.url, !!l.away]),
+    [
+      // Work at a Startup is a job board, YC's: no "away" needed.
+      ['https://www.workatastartup.com/companies/algotest', false],
+      ['https://www.acdsee.com/en/about/careers/', true],
+      ['https://careers.adhocla.com/', true],
+    ],
+  );
+  // Without `away` (any page but the home page), only the firm's own site and job boards.
+  assert.deepEqual(
+    D.careerLinks(html, 'https://www.acdsystems.com/', 'acdsystems.com').map((l) => l.url),
+    ['https://www.workatastartup.com/companies/algotest'],
+  );
+});
+
+test('discover: ABB’s /careers redirects to careers.abb, and 222’s to the root of careers.222.place', async () => {
+  const redirect = (to, body) => () => ({ ok: true, status: 200, url: to, text: async () => body });
+  const abb = await D.careers(firm({ n: 'ABB', d: 'global.abb' }), {
+    fetch: mockFetch({
+      // A home page drawn by script: no links at all.
+      'https://global.abb/': `<html><head><title>ABB Group</title></head><body>${'Leading technology. '.repeat(30)}</body></html>`,
+      'https://global.abb/careers': redirect(
+        'https://careers.abb/us/en',
+        `<html><head><title>Job and Career opportunities at ABB | ABB Career</title></head><body>
+        <h1>Careers at ABB</h1><p>${'Find your next role at ABB. '.repeat(20)}</p></body></html>`,
+      ),
+    }),
+    now: NOW,
+    guess: false,
+  });
+  assert.deepEqual([abb.status, abb.pages], ['page', ['https://careers.abb/us/en']]);
+  const two = await D.careers(firm({ n: '222', d: '222.place' }), {
+    fetch: mockFetch({
+      'https://222.place/': `<html><head><title>222 — meet people</title></head><body>${'Dinners with strangers. '.repeat(30)}</body></html>`,
+      'https://222.place/careers': redirect(
+        'https://careers.222.place/',
+        `<html><head><title>join 222.</title></head><body><h1>Open roles at 222</h1>
+        <p>${'Help us bring people together. '.repeat(20)}</p></body></html>`,
+      ),
+      // A guess that lands back on the home page is no careers page.
+      'https://222.place/career': redirect('https://222.place/', '<html><title>222</title></html>'),
+    }),
+    now: NOW,
+    guess: false,
+  });
+  assert.deepEqual([two.status, two.pages], ['page', ['https://careers.222.place/']]);
+});
+
+test('discover: careers pages from the sitemap, then from careers. and jobs. hosts that read as careers', async () => {
+  const home = (name) =>
+    `<html><head><title>${name}</title></head><body>${`${name} builds things. `.repeat(30)}</body></html>`;
+  // 360 ONE links /wealth/careers from a menu drawn by script; its sitemap index lists it in the pages' sitemap.
+  const log = [];
+  const one = await D.careers(firm({ n: '360 One Asset Management', d: 'www.360.one' }), {
+    fetch: mockFetch(
+      {
+        'https://www.360.one/': home('360 ONE'),
+        'https://www.360.one/sitemap.xml': `<?xml version="1.0"?><sitemapindex>
+          <sitemap><loc>https://www.360.one/post-sitemap.xml</loc></sitemap>
+          <sitemap><loc>https://www.360.one/page-sitemap.xml</loc></sitemap></sitemapindex>`,
+        'https://www.360.one/page-sitemap.xml': `<?xml version="1.0"?><urlset>
+          <url><loc>https://www.360.one/about-us</loc></url>
+          <url><loc>https://www.360.one/blog/careers-in-wealth-management</loc></url>
+          <url><loc>https://www.360.one/wealth/careers/senior-relationship-manager</loc></url>
+          <url><loc>https://www.360.one/wealth/careers</loc></url></urlset>`,
+        'https://www.360.one/wealth/careers': '<html><head><title>Careers at 360 ONE Wealth</title></head></html>',
+      },
+      log,
+    ),
+    now: NOW,
+    guess: false,
+  });
+  assert.deepEqual([one.status, one.pages], ['page', ['https://www.360.one/wealth/careers']]);
+  assert.ok(!log.some((l) => /post-sitemap|blog|senior-relationship/.test(l.url)), 'one child sitemap, one page');
+  // AgentCollect's careers. host is its "Secure payment" page; AlemHealth's jobs. host is its board.
+  const alem = await D.careers(firm({ n: 'AlemHealth', d: 'www.alemhealth.com' }), {
+    fetch: mockFetch({
+      'https://www.alemhealth.com/': home('AlemHealth'),
+      'https://careers.alemhealth.com/': `<html><head><title>Secure payment</title></head><body>
+        <h1>Pay your AlemHealth invoice</h1><p>${'Enter your card details. '.repeat(20)}</p></body></html>`,
+      'https://jobs.alemhealth.com/': `<html><head><title>Jobs at AlemHealth</title>
+        <meta name="description" content="View our open jobs at AlemHealth and apply today.">
+        <meta name="twitter:title" value="Jobs at AlemHealth" />
+        <meta name="twitter:description" value="View our open jobs at AlemHealth and apply today." /></head>
+        <body><div id="app"></div></body></html>`,
+    }),
+    now: NOW,
+    guess: false,
+  });
+  assert.deepEqual([alem.status, alem.pages], ['page', ['https://jobs.alemhealth.com/']]);
+  assert.ok(alem.log.some((l) => /careers\.alemhealth/.test(l.url) && /isn’t a careers page/.test(l.outcome)));
+});
+
+test('discover: 22cans’ careers are a section of its one-page site', async () => {
+  const page = (jobs) => `<html><head><title>22cans</title></head><body>
+    <nav><a href="/">Home</a><h4>Jobs</h4></nav>
+    <h2>We are 22cans</h2><p>${'We make games in Guildford. '.repeat(20)}</p>
+    ${jobs ? '<h3><span style="color: #ffffff;">Jobs</span></h3><p>We do not have any open roles at the moment. You can still send in a speculative application to <a href="mailto:jobs@22cans.com">jobs@22cans.com</a></p>' : ''}
+    <footer><h4>Careers</h4></footer></body></html>`;
+  const r = await D.careers(firm({ n: '22cans', d: '22cans.com' }), {
+    fetch: mockFetch({ 'https://22cans.com/': page(true) }),
+    now: NOW,
+    guess: false,
+  });
+  assert.deepEqual([r.status, r.pages, r.emails], ['page', ['https://22cans.com/'], ['jobs@22cans.com']]);
+  assert.ok(r.log.some((l) => l.outcome === 'careers section on the home page'));
+  // A "Jobs" heading in the menu or the footer is not a section.
+  const bare = await D.careers(firm({ n: '22cans', d: '22cans.com' }), {
+    fetch: mockFetch({ 'https://22cans.com/': page(false) }),
+    now: NOW,
+    guess: false,
+  });
+  assert.deepEqual([bare.status, bare.pages], ['none', []]);
+});
+
+test('discover: Acres’ careers on its manager’s site, and Aqua’s on YC’s, are read but not crawled', async () => {
+  const log = [];
+  const r = await D.careers(firm({ n: 'Acres', d: 'www.acresreit.com' }), {
+    fetch: mockFetch(
+      {
+        'https://www.acresreit.com/': `<html><head><title>ACRES Commercial Realty</title></head><body>
+          ${'ACRES lends to commercial real estate. '.repeat(20)}
+          <a href="https://acrescap.com/careers/">Careers</a> <a href="https://acrescap.com/news/">News</a></body></html>`,
+        'https://acrescap.com/careers/': `<html><body><h1>Careers</h1><p>Join ACRES Capital.</p>
+          <a href="https://acrescap.com/careers/internships/">Internships</a></body></html>`,
+      },
+      log,
+    ),
+    now: NOW,
+    guess: false,
+  });
+  assert.deepEqual([r.status, r.pages], ['page', ['https://acrescap.com/careers/']]);
+  assert.ok(!log.some((l) => /internships|news/.test(l.url)), 'nothing followed on another firm’s site');
+  // A home page that doesn't name the firm (ABA Games' registered site is its ISP's) gives no other site's careers.
+  const isp = await D.careers(firm({ n: 'ABA Games', d: 'www.asahi-net.or.jp' }), {
+    fetch: mockFetch({
+      'https://www.asahi-net.or.jp/': `<html><head><title>ASAHIネット</title></head><body>${'インターネット接続 '.repeat(40)}
+        <a href="https://careers.asahi.example/">Careers</a></body></html>`,
+      'https://careers.asahi.example/': '<html><body><h1>Careers</h1></body></html>',
+    }),
+    now: NOW,
+    guess: false,
+  });
+  assert.deepEqual([isp.status, isp.pages], ['none', []]);
+});
+
+test('discover: a bot wall is “blocked”, and a site whose https is broken is read over http', async () => {
+  const wall = () => ({
+    ok: false,
+    status: 403,
+    url: 'https://www.agwcapital.com/',
+    text: async () => '<!DOCTYPE html><html><head><title>Just a moment...</title></head><body></body></html>',
+  });
+  const agw = await D.careers(firm({ n: 'Agw Capital Advisors', d: 'www.agwcapital.com' }), {
+    fetch: mockFetch({ 'https://www.agwcapital.com/': wall, 'https://agwcapital.com/': wall }),
+    now: NOW,
+    guess: false,
+  });
+  assert.equal(agw.status, 'blocked');
+  // Access Games: its certificate fails (the fetch throws), its http site answers.
+  const access = await D.careers(firm({ n: 'Access Games', d: 'www.accessgames.co.jp' }), {
+    fetch: mockFetch({
+      'https://www.accessgames.co.jp/': () => Promise.reject(new TypeError('fetch failed')),
+      'https://accessgames.co.jp/': () => Promise.reject(new TypeError('fetch failed')),
+      'http://www.accessgames.co.jp/': `<html><head><title>ACCESS GAMES</title></head><body>
+        ${'Access Games Inc. '.repeat(20)}<a href="http://www.accessgames.co.jp/recruit/">採用情報</a></body></html>`,
+      'http://www.accessgames.co.jp/recruit/': '<html><body><h1>採用情報</h1><p>新卒採用</p></body></html>',
+    }),
+    now: NOW,
+    guess: false,
+  });
+  assert.deepEqual([access.status, access.pages], ['page', ['http://www.accessgames.co.jp/recruit/']]);
+});
+
+test('discover: FICO’s Imperva page served with a 200, Shva’s Radware redirect and Don’t Nod’s careers pages that answer 500 are “blocked”', async () => {
+  // fico.com answers every robot with "Pardon Our Interruption", status 200: turned away, not an empty site.
+  const imperva = `<!DOCTYPE html><html><head><noscript><title>Pardon Our Interruption</title></noscript>
+    <script>window.reeseSkipExpirationCheck = true;</script></head><body>${'<p>Please wait.</p>'.repeat(30)}</body></html>`;
+  const fico = await D.careers(firm({ n: 'FICO', d: 'www.fico.com' }), {
+    fetch: mockFetch({ 'https://www.fico.com/': imperva, 'https://fico.com/': imperva }),
+    now: NOW,
+    guess: false,
+  });
+  assert.equal(fico.status, 'blocked');
+  // Shva's home page sends a robot to Radware's check on validate.perfdrive.com.
+  const radware = () => ({
+    ok: true,
+    status: 200,
+    url: 'https://validate.perfdrive.com/shva/captcha?ssa=1',
+    text: async () => `<html><body>${'<p>Please complete the check.</p>'.repeat(20)}</body></html>`,
+  });
+  const shva = await D.careers(firm({ n: 'Automatic Bank Services', d: 'www.shva.co.il' }), {
+    fetch: mockFetch({ 'https://www.shva.co.il/': radware, 'https://shva.co.il/': radware }),
+    now: NOW,
+    guess: false,
+  });
+  assert.equal(shva.status, 'blocked');
+  // Don't Nod's home page links its careers pages, and each answers 500 to a script.
+  const failing = (url) => ({ ok: false, status: 500, url, text: async () => 'Internal Server Error' });
+  const home = `<html><head><title>DON'T NOD</title></head><body>${'<p>Don’t Nod is a game studio in Paris.</p>'.repeat(10)}
+    <a href="https://dont-nod.com/en/careers/">Careers</a><a href="https://dont-nod.com/en/job-offers-montreal/">Jobs in Montreal</a></body></html>`;
+  const dontnod = await D.careers(firm({ n: "Don't Nod", d: 'dont-nod.com' }), {
+    fetch: mockFetch({
+      'https://dont-nod.com/': home,
+      'https://dont-nod.com/en/careers/': failing,
+      'https://dont-nod.com/en/job-offers-montreal/': failing,
+    }),
+    now: NOW,
+    guess: false,
+  });
+  assert.equal(dontnod.status, 'blocked');
+  // A careers link that's simply missing (404) is no sign of a robot being turned away.
+  const gone = await D.careers(firm({ n: "Don't Nod", d: 'dont-nod.com' }), {
+    fetch: mockFetch({ 'https://dont-nod.com/': home }),
+    now: NOW,
+    guess: false,
+  });
+  assert.equal(gone.status, 'none');
+});

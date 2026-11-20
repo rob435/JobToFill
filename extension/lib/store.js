@@ -89,6 +89,8 @@
       ask: 'internship',
       commonGround: false,
       theirMorning: true,
+      keepReady: 0,
+      hideWritten: true,
     },
   };
 
@@ -129,8 +131,10 @@
   /**
    * The Discover page's AI choice over its defaults: { provider ('' = as Settings), model, effort, and the review
    * queue's ask ('internship' | 'call' | 'project'), commonGround (send the names of the person's university, school and
-   * employers to the AI's web search; off unless switched on) and theirMorning (a sent email arrives at 8:10 their
-   * time when it's outside their working day; on) }.
+   * employers to the AI's web search; off unless switched on), theirMorning (a sent email arrives at 8:10 their
+   * time when it's outside their working day; on), keepReady (how many emails Review keeps prepared ahead from the
+   * last search: 0, off, by default; 5, 10 or 20) and hideWritten (firms already written to are left out of the
+   * results; on) }.
    */
   function discoverAiSettings(settings) {
     const saved = (settings && settings.discoverAi) || {};
@@ -141,6 +145,8 @@
       ask: ['call', 'project'].includes(saved.ask) ? saved.ask : 'internship',
       commonGround: saved.commonGround === true,
       theirMorning: saved.theirMorning !== false,
+      keepReady: [5, 10, 20].includes(saved.keepReady) ? saved.keepReady : 0,
+      hideWritten: saved.hideWritten !== false,
     };
   }
 

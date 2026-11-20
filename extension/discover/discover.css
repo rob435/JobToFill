@@ -3,17 +3,24 @@ body {
   min-height: 100vh;
 }
 
+/* The bar across the top: the name, the five tabs as an underlined row, and how the AI and inbox stand. */
 .topbar {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: 3;
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 20px;
+  align-items: stretch;
+  gap: 4px 18px;
+  padding: 0 24px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
 }
 .topbar h1 {
   font-size: 15px;
@@ -26,19 +33,83 @@ body {
   font-size: 12.5px;
 }
 
+.tabs {
+  display: flex;
+  gap: 2px;
+  align-items: stretch;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  padding: 14px 12px 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tabs button:where(:not(:disabled)):hover {
+  background: none;
+  color: var(--text);
+}
+.tabs button[aria-selected='true'] {
+  color: var(--text);
+  border-bottom-color: var(--primary);
+}
+.tabs .pill:empty {
+  display: none;
+}
+.tabs button[aria-selected='true'] .pill {
+  background: var(--primary-weak);
+  color: var(--primary);
+}
+.health {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+}
+.health .pill {
+  cursor: default;
+}
+.health button.pill {
+  border: 0;
+  cursor: pointer;
+}
+
 .page {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 20px;
-  max-width: 1000px;
+  padding: 20px 24px;
+  max-width: 1320px;
   margin: 0 auto;
 }
 #find-view,
-#watch-view {
+#watch-view,
+#home-view,
+#outreach-view {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+#find-view[hidden],
+#watch-view[hidden],
+#home-view[hidden],
+#outreach-view[hidden] {
+  display: none;
+}
+/* Watchlist and Outreach read best at a measure, not the width of a wide screen. */
+#watch-view > .card,
+#outreach-view > .card {
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
 }
 
 .card {
@@ -116,6 +187,60 @@ legend {
   color: var(--danger);
 }
 
+/* Find firms: the search on the left (it stays in view while the results scroll), the firms on the right. */
+.find-cols {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+/* Under the bar, however tall it wraps (--bar is its height, kept by discover.js). */
+.filters {
+  position: sticky;
+  top: calc(var(--bar, 50px) + 14px);
+  max-height: calc(100vh - var(--bar, 50px) - 30px);
+  overflow-y: auto;
+  gap: 14px;
+}
+.filters .grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.results-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.search-row {
+  position: sticky;
+  bottom: -16px;
+  margin: 0 -18px -16px;
+  padding: 12px 18px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.search-row #search {
+  min-width: 120px;
+}
+.empty-results p {
+  max-width: 560px;
+}
+@media (max-width: 900px) {
+  .find-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .filters {
+    position: static;
+    max-height: none;
+  }
+  .search-row {
+    position: static;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+}
+
 .niches,
 .sources {
   border: 0;
@@ -125,21 +250,45 @@ legend {
   flex-direction: column;
   gap: 6px;
 }
-/* The kinds of firm in two short groups, each under its own small heading ("Finance", "Tech"). */
+.niches legend,
+.sources legend {
+  width: 100%;
+  padding: 0 0 6px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.legend-actions {
+  display: inline-flex;
+  gap: 10px;
+  margin-left: auto;
+  font-weight: 500;
+}
+/* The kinds of firm in two short groups, each under its own small heading with All and None ("Finance", "Tech"). */
 .niche-groups {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 .niche-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
+}
+.niche-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
 }
 .niche-head {
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.niche-title .link {
+  font-size: 12px;
 }
 .sources .check {
   align-items: baseline;
@@ -177,7 +326,7 @@ legend {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px;
+  padding: 4px 10px;
   border: 1px solid var(--border-strong);
   border-radius: 999px;
   cursor: pointer;
@@ -192,16 +341,26 @@ legend {
   border-color: var(--primary);
 }
 
-.tabs {
+/* The results' own filters and what to do with the firms picked. */
+.results-tools {
   display: flex;
-  gap: 4px;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
 }
-.tabs button {
+.toggle {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
   border-radius: 999px;
+  cursor: pointer;
 }
-.tabs button[aria-selected='true'] {
+.toggle:has(input:checked) {
   background: var(--primary-weak);
   border-color: var(--primary);
+}
+.pick-bar {
+  gap: 6px;
 }
 
 /* Result and watchlist cards */
@@ -235,6 +394,30 @@ legend {
   align-items: baseline;
   gap: 8px;
 }
+/* The box that picks a firm for Write to them, beside its name. */
+.firm-head .pick {
+  align-self: center;
+  width: 17px;
+  height: 17px;
+}
+.firm.picked {
+  border-color: var(--primary);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+/* What the firm's own site says at a glance: the way in and the first person to write to. */
+.glance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 13px;
+}
+.glance .who {
+  font-weight: 600;
+}
+.firm-head .outreach-pill {
+  margin-left: auto;
+}
 .firm-name {
   font-size: 15px;
   font-weight: 650;
@@ -264,6 +447,9 @@ legend {
   gap: 6px;
   border-top: 1px dashed var(--border);
   padding-top: 8px;
+}
+.found[open] > summary {
+  margin-bottom: 2px;
 }
 .roles,
 .plain {
@@ -395,17 +581,54 @@ a.button.primary:hover {
   border-color: var(--primary-hover);
 }
 
-/* Outreach: status beside the notes, stacked on a phone. */
+/* Outreach: one row per firm on a wide screen (who and what they said, the status and notes, then its buttons),
+   stacked on a narrow one. */
+.outreach-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.2fr) auto;
+  gap: 6px 16px;
+  align-items: start;
+}
+.outreach-item > .firm-head,
+.outreach-item > .reply-snippet,
+.outreach-item > p {
+  grid-column: 1;
+}
+.outreach-item > .outreach-fields {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+}
+.outreach-item > .firm-actions {
+  grid-column: 3;
+  grid-row: 1 / span 3;
+  flex-direction: column;
+  align-items: stretch;
+}
 .outreach-fields {
   display: grid;
-  grid-template-columns: minmax(0, 170px) minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: minmax(0, 130px) minmax(0, 1fr);
+  gap: 8px;
+}
+.outreach-fields .field > span {
+  font-size: 11.5px;
+  color: var(--muted);
 }
 .outreach-fields textarea {
   min-height: 0;
 }
 .outreach-item p {
   margin: 0;
+}
+@media (max-width: 860px) {
+  .outreach-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .outreach-item > .outreach-fields,
+  .outreach-item > .firm-actions {
+    grid-column: 1;
+    grid-row: auto;
+    flex-direction: row;
+  }
 }
 @media (max-width: 640px) {
   .outreach-fields {
@@ -432,13 +655,19 @@ details summary {
   text-align: center;
 }
 
-/* A phone-sized window: the tagline goes, so the tabs share the title's line or sit just under it. */
+/* A phone-sized window: the five tabs wrap under the title, so none is out of sight. */
 @media (max-width: 640px) {
   .topbar {
-    padding: 10px 14px;
-    row-gap: 8px;
+    padding: 0 14px;
   }
-  .topbar .tagline {
+  .tabs {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+  .tabs button {
+    padding: 10px 8px 8px;
+  }
+  .health {
     display: none;
   }
   .page {
@@ -478,9 +707,115 @@ a.button.big {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  max-width: 820px;
+  max-width: 1180px;
   width: 100%;
   margin: 0 auto;
+}
+/* Review: the queue down the left, one email at a time on the right. */
+.review-cols {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.queue-side {
+  position: sticky;
+  top: calc(var(--bar, 50px) + 14px);
+  max-height: calc(100vh - var(--bar, 50px) - 30px);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px;
+}
+.queue-side:has(.queue-list:empty) {
+  display: none;
+}
+.review-cols:has(.queue-list:empty) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.queue-list button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 2px 8px;
+  align-items: baseline;
+  text-align: left;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 8px;
+  background: none;
+  font-weight: 500;
+}
+.queue-list button[aria-current='true'] {
+  background: var(--primary-weak);
+}
+.queue-list .q-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queue-list .q-state {
+  grid-column: 2;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.queue-list .q-icon {
+  font-size: 12px;
+  text-align: center;
+}
+.q-ready .q-icon,
+.q-done .q-icon {
+  color: var(--ok);
+}
+.q-need .q-icon,
+.q-need .q-state {
+  color: var(--warn);
+}
+.q-done .q-name {
+  color: var(--muted);
+}
+.q-busy .q-icon {
+  color: var(--primary);
+  animation: q-spin 1.2s linear infinite;
+  display: inline-block;
+}
+@keyframes q-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.review-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.review-options-box {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  background: var(--surface);
+}
+.review-options-box[open] summary {
+  margin-bottom: 10px;
+}
+@media (max-width: 860px) {
+  .review-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .queue-side {
+    position: static;
+    max-height: 220px;
+  }
 }
 #review-view[hidden] {
   display: none;
@@ -742,4 +1077,182 @@ a.button.big {
 }
 .review-head h2:focus {
   outline: none;
+}
+
+/* Overview: the numbers, what to do now, preparing ahead, and the latest activity. */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: var(--surface);
+  font-weight: 500;
+}
+.stat .n {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.stat .label {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.stat.ok .n {
+  color: var(--ok);
+}
+.stat.warn .n {
+  color: var(--warn);
+}
+.stat.bad .n {
+  color: var(--danger);
+}
+.stat.accent .n {
+  color: var(--primary);
+}
+.home-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .home-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.todo,
+.activity {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.todo li,
+.activity li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.todo li:first-child,
+.activity li:first-child {
+  border-top: 0;
+}
+.todo .what {
+  flex: 1 1 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.todo .what strong {
+  font-weight: 600;
+}
+.todo .tone {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  flex: none;
+}
+.todo .tone.ok {
+  background: var(--ok);
+}
+.todo .tone.warn {
+  background: var(--warn);
+}
+.todo .tone.bad {
+  background: var(--danger);
+}
+.todo .tone.accent {
+  background: var(--primary);
+}
+.activity .when {
+  color: var(--muted);
+  font-size: 12px;
+  min-width: 56px;
+  font-variant-numeric: tabular-nums;
+}
+.activity .name {
+  font-weight: 600;
+}
+.activity .snippet {
+  flex: 1 1 100%;
+  color: var(--muted);
+  font-size: 12.5px;
+  padding-left: 68px;
+}
+.setup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.setup:empty {
+  display: none;
+}
+.setup li {
+  font-size: 13px;
+}
+
+/* Outreach: filter chips with counts, then one row per firm. */
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.filter-chips button {
+  border-radius: 999px;
+  padding: 4px 11px;
+  font-size: 12.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.filter-chips button[aria-checked='true'] {
+  background: var(--primary-weak);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.filter-chips .count {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-weight: 600;
+}
+#outreach-search {
+  width: 220px;
+}
+.outreach-item .firm-head .reply-pill {
+  margin-left: auto;
+}
+.reply-snippet {
+  font-size: 13px;
+  border-left: 3px solid var(--border-strong);
+  padding: 2px 0 2px 10px;
+  color: var(--text);
+}
+.reply-snippet.positive {
+  border-left-color: var(--ok);
+}
+.reply-snippet.bounced,
+.reply-snippet.declined {
+  border-left-color: var(--danger);
+}
+.reply-snippet.apply {
+  border-left-color: var(--primary);
+}
+.age {
+  font-variant-numeric: tabular-nums;
 }

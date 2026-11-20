@@ -1577,7 +1577,22 @@ const advSource = adv
 if (!adv) console.log(`Form ADV: ${kept.length} firms kept from the previous build: ${advSource}`);
 const { firms: wiki, members } = await loadWikipedia();
 const { firms: yc, count: ycCount } = await loadYc();
-const firms = build(adv?.advisers || [], wiki, yc, kept);
+// Firms scripts/firm-checks.mjs found gone (their site doesn't answer, or it has no careers page and no address of
+// any kind) stay out of the registry; `npm run checks` decides again on its next run.
+const checksFile = path.join(root, 'extension', 'data', 'checks.json');
+const dead = new Set(existsSync(checksFile) ? JSON.parse(await readFile(checksFile, 'utf8')).dead || [] : []);
+const idOf = (f) =>
+  f.r
+    ? `crd:${f.r}`
+    : f.q
+      ? `wd:${f.q}`
+      : f.d
+        ? `d:${String(f.d)
+            .toLowerCase()
+            .replace(/^www\./, '')}`
+        : '';
+const firms = build(adv?.advisers || [], wiki, yc, kept).filter((f) => !dead.has(idOf(f)));
+if (dead.size) console.log(`Left out ${dead.size} firms checks.json lists as gone.`);
 
 const sources = { adv: advSource, wikipedia: `${members} category members` };
 if (ycCount) sources.yc = `${ycCount} companies (yc-oss.github.io)`;
