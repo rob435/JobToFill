@@ -1,6 +1,7 @@
 /* JobToFill settings — the "Get started" checklist: what's left to set up. Pure, so the unit tests run it. */
 
 const filled = (value) => String(value == null ? '' : value).trim() !== '';
+const words = (s) => (String(s).match(/[\p{L}\p{N}]+/gu) || []).length;
 
 /**
  * The steps, from what the settings page already has: { profile, resume (the CV file is uploaded), aiKey (the
@@ -24,6 +25,13 @@ export function setupSteps({ profile, resume, aiKey, inbox, pinned } = {}) {
       text: 'Add your education',
       href: '#education',
       done: (p.education || []).some((e) => e && filled(e.school)),
+    },
+    {
+      id: 'story',
+      text: 'Tell the AI your story: projects, results, why this work',
+      href: '#story',
+      done: words(Object.values(p.story || {}).join(' ')) >= 30,
+      optional: true,
     },
     {
       id: 'ai',

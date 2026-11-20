@@ -113,6 +113,41 @@
 
   const range = (a, b, current) => [a, current ? 'present' : b].filter(Boolean).join(' – ');
 
+  // Your story (Settings › Your story), in the order the model reads it: [the profile's story key, its label there].
+  const STORY = [
+    ['projects', 'Projects'],
+    ['achievements', 'Achievements'],
+    ['motivation', 'Why this kind of work'],
+    ['moments', 'Moments that show how they work'],
+    ['interests', 'Outside work'],
+  ];
+  const STORY_HEAD = 'About the candidate, in their own words:';
+
+  /** The boxes of Your story filled in: [[label, text]]. */
+  const storyParts = (profile) => {
+    const s = (profile && profile.story) || {};
+    return STORY.map(([key, label]) => [label, String(s[key] == null ? '' : s[key]).trim()]).filter(([, t]) => t);
+  };
+
+  /**
+   * Your story as text for the model, under its own heading; '' when it's empty. Past `limit` characters of text
+   * each box gets a fair share: a short one keeps all of it, the long ones split what's left.
+   */
+  function storyText(profile, limit = 15000) {
+    const parts = storyParts(profile);
+    if (!parts.length) return '';
+    const share = new Map();
+    let left = limit;
+    [...parts]
+      .sort((a, b) => a[1].length - b[1].length)
+      .forEach(([label, t], i, all) => {
+        share.set(label, Math.min(t.length, Math.floor(left / (all.length - i))));
+        left -= share.get(label);
+      });
+    const box = ([label, t]) => `${label}:\n${t.length > share.get(label) ? clip(t, share.get(label) - 4) : t}`;
+    return `${STORY_HEAD}\n${parts.map(box).join('\n\n')}`;
+  }
+
   /** Everything the candidate has told us, as text for the model, plus the corpus facts are checked against. */
   function materials(profile, kit, cvText) {
     const out = [];
@@ -152,6 +187,9 @@
     const extra = profile.extraDetails == null ? '' : String(profile.extraDetails).trim();
     if (extra) out.push('', 'Extra details from the candidate:', clip(extra, 4000));
     if (cvText && cvText.trim()) out.push('', 'CV:', clip(cvText, 12000));
+    // Last, so a check that reads only the start (eligibility's first 8,000 characters) keeps the CV.
+    const story = storyText(profile);
+    if (story) out.push('', story);
     return out.join('\n').trim();
   }
 
@@ -160,6 +198,7 @@
     if (cvText && words(cvText) > 60) return true;
     if (kit && words(kit.notes) > 40) return true;
     if (words(profile.extraDetails) > 40) return true;
+    if (storyParts(profile).reduce((n, [, t]) => n + words(t), 0) > 40) return true;
     const exp = (profile.experience || []).filter((x) => x.description && words(x.description) > 10);
     return exp.length > 0 || words(profile.summary) > 30;
   }
@@ -1400,6 +1439,8 @@
     contactLine,
     fullName,
     materials,
+    STORY,
+    storyText,
     hasSubstance,
     sampleCompanies,
     companyAliases,

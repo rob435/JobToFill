@@ -784,6 +784,55 @@ test('letter: extra details from the profile reach the candidate material', () =
   assert.doesNotMatch(L.materials({ ...profile, extraDetails: undefined }, kit, ''), /Extra details/);
 });
 
+test('letter: Your story reaches the material after the CV, each box under its label, and nothing when empty', () => {
+  const story = {
+    projects: 'PriceWatch: checks 2,000 listings a day.',
+    achievements: '',
+    motivation: 'I like work where the answer can be checked.',
+    moments: '  ',
+    interests: 'Rowing.',
+  };
+  const text = L.materials({ ...profile, story }, kit, 'Experience\nNorthwind analyst.');
+  assert.match(
+    text,
+    /\nCV:\nExperience\nNorthwind analyst\.\n\nAbout the candidate, in their own words:\nProjects:\nPriceWatch: checks 2,000 listings a day\.\n\nWhy this kind of work:\nI like work where the answer can be checked\.\n\nOutside work:\nRowing\.$/,
+  );
+  assert.doesNotMatch(text, /Achievements:|Moments/, 'an empty box has no label');
+  const blank = { projects: '', achievements: '', motivation: '', moments: '', interests: '' };
+  assert.equal(L.materials({ ...profile, story: blank }, kit, ''), L.materials(profile, kit, ''));
+  assert.equal(L.materials({ ...profile, story: undefined }, kit, ''), L.materials(profile, kit, ''));
+  assert.deepEqual(
+    L.STORY.map(([key]) => key),
+    Object.keys(JTF.fields.createProfile().story),
+    'every box on the settings page is read',
+  );
+});
+
+test('letter: a long story is shared fairly, so a short box keeps all of it', () => {
+  const story = {
+    projects: 'Built a recorder. '.repeat(500),
+    interests: 'Chess.',
+    moments: 'Fixed a bug. '.repeat(500),
+  };
+  const text = L.storyText({ story }, 3000);
+  assert.match(text, /\nOutside work:\nChess\.$/);
+  assert.ok(text.length < 3200, `${text.length} characters`);
+  const [, projects] = text.match(/Projects:\n([^\n]*)/);
+  const [, moments] = text.match(/Moments that show how they work:\n([^\n]*)/);
+  assert.ok(Math.abs(projects.length - moments.length) < 20, 'the two long boxes split what is left');
+  assert.match(projects, / \[…\]$/);
+  assert.equal(L.storyText({}), '');
+});
+
+test('letter: a story alone is enough to write from', () => {
+  const thin = JTF.fields.upgradeProfile({});
+  assert.equal(L.hasSubstance(thin, {}, ''), false);
+  thin.story.projects = 'Built a market-data recorder that writes every trade and book change for 500 markets. '.repeat(
+    4,
+  );
+  assert.equal(L.hasSubstance(thin, {}, ''), true);
+});
+
 test('letter: enforceCv restores every frozen field of the master, whatever the model writes', () => {
   const evil = structuredClone(MASTER);
   evil.name = 'Someone Else';

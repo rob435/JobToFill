@@ -132,6 +132,22 @@ test('outreach: material() gives the CV and profile, never the disclosures or th
   assert.equal(O.material({ profile: JTF.fields.upgradeProfile({}), kit: {} }).ok, false);
 });
 
+test('outreach: Your story comes last in a room of its own, so the CV keeps its room', () => {
+  const cv = 'Built a trading simulator in Rust. '.repeat(600);
+  const without = O.material({ profile, kit, cvText: cv });
+  const story = {
+    projects: 'Wrote a deal finder for eBay. '.repeat(400),
+    interests: 'Swimming. Date of birth: 4 May 2005',
+  };
+  const withStory = O.material({ profile: { ...profile, story }, kit, cvText: cv });
+  assert.ok(withStory.text.startsWith(without.text), 'the profile and the CV as before');
+  assert.match(withStory.text, /\n\nAbout the candidate, in their own words:\nProjects:\nWrote a deal finder/);
+  assert.match(withStory.text, /\nOutside work:\nSwimming\./);
+  assert.doesNotMatch(withStory.text, /2005|Date of birth/);
+  assert.ok(withStory.text.length <= 7000 + 8200, `${withStory.text.length} characters`);
+  assert.equal(withStory.ctx.sources, withStory.text, 'the checks accept what the story says');
+});
+
 test('outreach: firmFacts() lists what the firm does, its roles, programmes, pages and the contact', () => {
   const f = O.firmFacts({ firm, found, contact: jane });
   assert.match(f.text, /^Firm: Acme Capital LLP\nAlso called: Acme Capital/);

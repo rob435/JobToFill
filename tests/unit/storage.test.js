@@ -719,6 +719,17 @@ test('store: extraDetails survives save, export and import', async () => {
   assert.equal((await store.getActive()).profile.extraDetails, 'No criminal convictions.');
 });
 
+test('store: Your story starts blank on an old profile, and survives save, export and import', async () => {
+  await chrome.storage.local.set({ profiles: { old: { id: 'old', name: 'Old' } }, profileOrder: ['old'] });
+  const { profile: p } = await store.getActive();
+  assert.deepEqual(p.story, { projects: '', achievements: '', motivation: '', moments: '', interests: '' });
+  p.story.projects = 'eBay deal finder: 0.97 precision on 2,432 labelled listings.';
+  await store.saveProfile(p);
+  const exported = await store.exportData();
+  await store.importData(JSON.parse(JSON.stringify(exported)));
+  assert.equal((await store.getActive()).profile.story.projects, p.story.projects);
+});
+
 test('store: interview availability and contact preference get their defaults, and travel in backups', async () => {
   await chrome.storage.local.set({
     profiles: { old: { id: 'old', name: 'Old', job: { referralSource: '' }, contact: { email: 'ada@example.com' } } },

@@ -295,6 +295,58 @@ const FORMS = {
       },
     ],
   },
+  story: {
+    title: 'Your story',
+    intro:
+      'Your CV is one page; this is the rest. Cover letters, tailored CVs, emails from the Discover page and the AI’s answers all draw on it, and pick what fits each firm. Plain notes are fine. Give real numbers and names: the AI only uses what you write here and in your CV, and never adds to it.',
+    groups: [
+      {
+        title: 'What the AI can write about',
+        fields: [
+          f('story.projects', 'Projects', {
+            type: 'textarea',
+            rows: 6,
+            wide: true,
+            placeholder:
+              'PriceWatch (2025): a price tracker in Python that checks 2,000 listings a day and emails a price drop within 5 minutes. 120 automated tests; 300 users after one Reddit post.\nSociety website: rebuilt over a weekend; sign-ups went from 40 to 150 a term.',
+            hint: 'What you built, made or ran outside your job and course: what it does, how it works, and the numbers (users, speed, money saved). Add a link if there is one.',
+          }),
+          f('story.achievements', 'Achievements', {
+            type: 'textarea',
+            rows: 4,
+            wide: true,
+            placeholder:
+              'Top 5% in the Senior Maths Challenge (2022).\nWon £500 at the university trading competition, against 60 teams.\nSaturday job: online orders went from 10 to 35 a week after I set up the shop’s listings.',
+            hint: 'Awards, prizes, rankings, scholarships and competitions, and the results with numbers you’re proud of.',
+          }),
+          f('story.motivation', 'Why this kind of work', {
+            type: 'textarea',
+            rows: 4,
+            wide: true,
+            placeholder:
+              'I got into markets running a £200 paper portfolio at 16. What kept me there was working out why I was wrong. I like work where the answer can be checked.',
+            hint: 'What draws you to the jobs and sectors you apply for, and how you got into them. Letters and emails use this to say why you’re writing.',
+          }),
+          f('story.moments', 'Moments that show how you work', {
+            type: 'textarea',
+            rows: 5,
+            wide: true,
+            placeholder:
+              'A week before the deadline our group project’s data turned out to be wrong. I found the bug in the import and rewrote it, and we handed in on time and got a first.\nRan the chess club’s first tournament: 48 players, and £300 from two sponsors.',
+            hint: 'Two or three short stories: a problem you solved, something you led, a mistake and what you changed afterwards. Answers to “Tell us about a time when…” use them too.',
+          }),
+          f('story.interests', 'Outside work', {
+            type: 'textarea',
+            rows: 4,
+            wide: true,
+            placeholder:
+              'Rowing (college second eight), chess (club captain), cooking Sunday dinner for 10. Grew up in Leeds; I speak Cantonese at home.',
+            hint: 'Interests, sports, clubs, volunteering, where you grew up: things the person you write to might have in common with you. Only what you’d be happy to see in a letter.',
+          }),
+        ],
+      },
+    ],
+  },
   writing: {
     title: 'Skills & writing',
     intro: 'Longer answers for summary, skills and cover letter boxes.',
@@ -308,7 +360,7 @@ const FORMS = {
             wide: true,
             placeholder:
               'I have no involvement with any government or political office, and no relatives who do. No criminal convictions. Happy to relocate. Notice period: none.',
-            hint: 'Anything an application might ask that isn’t in the boxes above, in your own words. The AI reads it when it answers the questions a fill leaves empty (if you’ve added a key under Cover letters) and when it writes your cover letter. Passwords and cards are never sent.',
+            hint: 'Anything an application might ask that isn’t in the boxes above, in your own words. The AI reads it when it answers the questions a fill leaves empty (if you’ve added a key under Cover letters) and when it writes your cover letter. Projects, achievements and what you’d like it to write about go under Your story. Passwords and cards are never sent.',
           }),
         ],
       },
@@ -699,6 +751,28 @@ function renderDocuments({ state }) {
   ];
 }
 
+/* ------------------------------------------------------------- your story */
+
+/** Your story: the profile's boxes, then the notes kept with this profile's letter material (kit.notes). */
+async function renderStory(ctx) {
+  const id = ctx.state.profile.id;
+  const kit = await store.getKit(id);
+  const notes = control(
+    {
+      path: 'kit.notes',
+      type: 'textarea',
+      rows: 5,
+      wide: true,
+      label: 'Notes about you',
+      placeholder: 'Anything that doesn’t fit above: a gap year and what you did in it, a course you’re taking now…',
+      hint: 'Anything else the AI may use, in your own words.',
+    },
+    kit.notes,
+    (v) => store.saveKit(id, { notes: v }),
+  );
+  return [...renderForm('story', ctx), group('Anything else', null, grid([notes]))];
+}
+
 /* ----------------------------------------------------------------- export */
 
 export const PROFILE_SECTIONS = {
@@ -707,6 +781,7 @@ export const PROFILE_SECTIONS = {
   work: (ctx) => renderForm('work', ctx),
   education: (ctx) => renderList('education', ctx),
   experience: (ctx) => renderList('experience', ctx),
+  story: renderStory,
   writing: (ctx) => renderForm('writing', ctx),
   documents: renderDocuments,
   answers: renderAnswers,

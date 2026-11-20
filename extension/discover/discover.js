@@ -1826,7 +1826,7 @@ function drawerView(firm) {
             ? el('p', {
                 className: 'small warn-text',
                 textContent:
-                  'There’s little about you to write from: upload your CV (Settings › Resume & files) for a more concrete email.',
+                  'There’s little about you to write from: upload your CV (Settings › Resume & files) or fill in Settings › Your story for a more concrete email.',
               })
             : null,
           sendView(firm, d, recipient),
@@ -5165,7 +5165,7 @@ function itemView(item) {
       ? el('p', {
           className: 'small warn-text',
           textContent:
-            'Your CV and profile are thin, so the email is too: upload your CV under Settings › Resume & files.',
+            'Your CV and profile are thin, so the email is too: upload your CV under Settings › Resume & files, or fill in Settings › Your story.',
         })
       : null,
     item.error ? el('p', { className: 'small error', attrs: { role: 'alert' }, textContent: item.error }) : null,

@@ -1656,6 +1656,37 @@ test('settings: what Learn from this page saves while the page is open stays, th
   assert.deepEqual(errors, []);
 });
 
+test('Your story: its boxes save to the profile, its notes to the letter material, and Cover letters points to it', async () => {
+  const page = await openExt('options/options.html#story');
+  await page.waitForSelector('textarea[name="story.projects"]');
+  for (const key of ['projects', 'achievements', 'motivation', 'moments', 'interests'])
+    assert.ok(await page.$(`textarea[name="story.${key}"]`), key);
+  await page.fill('textarea[name="story.projects"]', 'eBay deal finder: 0.97 precision on 2,432 listings.');
+  await page.fill('textarea[name="story.interests"]', 'Chess, swimming.');
+  await page.fill('textarea[name="kit.notes"]', 'Taking a Rust course this term.');
+  await page.waitForSelector('#save-state.saved');
+  await until(
+    h.bg,
+    async () => (await globalThis.JTF.store.getActive()).profile.story.interests === 'Chess, swimming.',
+  );
+  const p = await profile();
+  assert.equal(p.story.projects, 'eBay deal finder: 0.97 precision on 2,432 listings.');
+  await until(h.bg, async () => {
+    const { profile: me } = await globalThis.JTF.store.getActive();
+    return (await globalThis.JTF.store.getKit(me.id)).notes === 'Taking a Rust course this term.';
+  });
+  // Cover letters & AI no longer has the notes box, only the way to Your story.
+  await page.click('#nav a[href="#letters"]');
+  await page.waitForSelector('a[href="#story"]');
+  assert.equal(await page.$('#sections textarea[name="kit.notes"]'), null);
+  await page.click('#sections a[href="#story"]');
+  await page.waitForFunction(() => document.querySelector('#sections').dataset.section === 'story');
+  assert.equal(await page.inputValue('textarea[name="kit.notes"]'), 'Taking a Rust course this term.');
+  assert.equal(await page.inputValue('textarea[name="story.interests"]'), 'Chess, swimming.');
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
 test('passwords: a saved login’s username and password are saved as typed, also when the tab closes straight after', async () => {
   await h.bg(() =>
     globalThis.JTF.passwords.update((d) => {
