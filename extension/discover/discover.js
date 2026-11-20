@@ -1753,6 +1753,9 @@ async function sendEmail(firm, how) {
     if (stored) state.outreach[firm.id] = stored;
     if (how === 'send' && stored && stored.status !== 'drafted' && (stored.messageId || stored.scheduleId))
       throw new Error('Not sent: this firm was written to meanwhile (see the Outreach tab).');
+    // Noted before Nylas has it: a page closed meanwhile looks for it in Sent next time, and the firm counts as
+    // written to until then, so it isn't offered a second email.
+    if (how === 'send') await setOutreach(firm, { sending: { to: p.address, subject: d.subject, from: Date.now() } });
     const email = {
       to: [{ email: p.address, ...(p.name ? { name: p.name } : {}) }],
       subject: d.subject,
@@ -1781,12 +1784,14 @@ async function sendEmail(firm, how) {
         way: wayText(firm),
         via: 'nylas',
         ...(how === 'send'
-          ? { messageId: r.id, threadId: r.threadId, sentAt: Date.now(), sendAt: null, scheduleId: '' }
+          ? { messageId: r.id, threadId: r.threadId, sentAt: Date.now(), sendAt: null, scheduleId: '', sending: null }
           : { draftId: r.id }),
       };
     });
   } catch (err) {
     d.sendError = errorText(err);
+    // Nylas said no: it didn't go.
+    if (how === 'send') await setOutreach(firm, (old) => old && old.sending && { sending: null }).catch(() => null);
   } finally {
     d.sending = '';
     rerender(firm.id);
@@ -1816,7 +1821,8 @@ function sendView(firm, d) {
       if (!a.draft || !a.send) rerender(firm.id);
     });
   const rec = state.outreach[firm.id];
-  const sent = rec && rec.status !== 'drafted' && rec.via === 'nylas' && (rec.messageId || rec.scheduleId);
+  const sent =
+    rec && ((rec.status !== 'drafted' && rec.via === 'nylas' && (rec.messageId || rec.scheduleId)) || rec.sending);
   return el(
     'div',
     { className: 'send' },
@@ -1868,6 +1874,30 @@ function sendView(firm, d) {
 async function checkReplies() {
   const nylas = state.nylas;
   if (!nylas || !nylas.grantId) return;
+  // An email the drawer was sending as its page closed: found in Sent, it's recorded as sent; not there (a minute
+  // on), it didn't go; not looked in (Nylas down), it stays counted as written to until it can be.
+  const closedOn = Object.entries(state.outreach).filter(([, r]) => r.sending && Date.now() - r.sending.from > 60e3);
+  for (const [id, rec] of closedOn) {
+    const s = rec.sending;
+    let failed = false;
+    const m = await N.sentMessage(nylas, { to: s.to, subject: s.subject, after: s.from - 60e3, fetch: fetchFn }).catch(
+      () => ((failed = true), null),
+    );
+    if (failed) continue;
+    const found = m && {
+      status: 'sent',
+      to: s.to,
+      subject: s.subject,
+      via: 'nylas',
+      messageId: m.id,
+      threadId: m.threadId,
+      sentAt: m.date ? m.date * 1000 : s.from,
+    };
+    const next = await store.setOutreach(id, (old) =>
+      old && old.sending && old.sending.from === s.from ? { ...found, sending: null } : null,
+    );
+    if (next) state.outreach[id] = next;
+  }
   // An email scheduled for their morning that has gone since: its message and thread, from the Sent folder.
   const gone = Object.entries(state.outreach).filter(
     ([, r]) => r.status === 'sent' && r.scheduleId && !r.messageId && r.sendAt && r.sendAt <= Date.now(),
@@ -1939,7 +1969,7 @@ function shortUrl(u) {
 function writeButton(firm) {
   const item = review.items.find((i) => i.id === firm.id);
   const rec = state.outreach[firm.id];
-  const written = rec && rec.status !== 'drafted';
+  const written = rec && (rec.status !== 'drafted' || !!rec.sending);
   return el('button', {
     className: 'write-go' + (item || written ? '' : ' primary'),
     type: 'button',
@@ -2281,9 +2311,11 @@ function leaveNotes() {
   if (!unsaved.size) return;
   try {
     const left = JSON.parse(localStorage.getItem(NOTES_LEFT) || '{}');
-    // With what the typing started from, as this tab last drew or wrote it.
-    for (const [id, text] of unsaved)
-      left[id] = { text, base: noteBase.has(id) ? noteBase.get(id) : (state.outreach[id] || {}).notes || '' };
+    // With what the typing started from, as this tab last drew or wrote it; after any another tab left for the firm.
+    for (const [id, text] of unsaved) {
+      const base = noteBase.has(id) ? noteBase.get(id) : (state.outreach[id] || {}).notes || '';
+      left[id] = [...(Array.isArray(left[id]) ? left[id] : left[id] ? [left[id]] : []), { text, base }];
+    }
     localStorage.setItem(NOTES_LEFT, JSON.stringify(left));
   } catch (err) {
     // Not allowed: the write started as the page closed may still land.
@@ -2299,17 +2331,21 @@ async function storeLeftNotes() {
   } catch (err) {
     return;
   }
-  for (const [id, n] of Object.entries(left || {})) {
-    if (!n || typeof n.text !== 'string') continue;
-    const rec = await store.setOutreach(id, (old) => {
-      if (!old) return null;
-      const theirs = old.notes || '';
-      const added = n.text.startsWith(n.base || '') ? n.text.slice((n.base || '').length) : n.text;
-      if (theirs === n.text || (added && theirs.includes(added))) return null;
-      return { notes: theirs === (n.base || '') ? n.text : mergeNote(n.base || '', theirs, n.text) };
-    });
-    if (rec) state.outreach[id] = rec;
-  }
+  for (const [id, list] of Object.entries(left || {}))
+    for (const n of Array.isArray(list) ? list : [list]) {
+      if (!n || typeof n.text !== 'string') continue;
+      const base = String(n.base || '');
+      const rec = await store.setOutreach(id, (old) => {
+        if (!old) return null;
+        const theirs = old.notes || '';
+        // Written already (the page's own save landed after all, or another tab stored this one).
+        const added = n.text.startsWith(base) ? n.text.slice(base.length) : '';
+        if (theirs === n.text || (added && theirs.includes(added))) return null;
+        // Unchanged since that page drew it: what it typed, a line cut out included; else put with what's there.
+        return { notes: theirs === base ? n.text : mergeNote(base, theirs, n.text) };
+      });
+      if (rec) state.outreach[id] = rec;
+    }
 }
 
 /** A row's date: 'Sent 6 Nov', 'Arrives 9 Nov' for one waiting at Nylas, else its status and when it last changed. */
@@ -2416,11 +2452,18 @@ function outreachItem(id, rec) {
           const keyboard = e.detail === 0;
           // The note as the box shows it, typed a moment ago or still being written: Undo brings that back.
           const box = e.currentTarget.closest('li').querySelector('.outreach-notes');
+          const typed = box ? box.value : null;
           clearTimeout((notes.get(id) || {}).timer);
           notes.delete(id);
+          unsaved.delete(id);
           await writing.get(id);
+          // Only typing not yet stored is taken from the box (put with a line added meanwhile): a box left as drawn
+          // may be out of date (a reply noted while another note had the focus).
           const was = state.outreach[id];
-          const gone = was && { ...was, notes: box ? box.value : was.notes };
+          const base = noteBase.has(id) ? noteBase.get(id) : (was && was.notes) || '';
+          const stored = (was && was.notes) || '';
+          const keep = typed === null || typed === base || typed === stored ? stored : mergeNote(base, stored, typed);
+          const gone = was && { ...was, notes: keep };
           await store.removeOutreach(id);
           delete state.outreach[id];
           renderOutreach();
@@ -2921,7 +2964,8 @@ function alreadyDone(item, rec) {
     return rec.followedUpAt ? DONE.followed : '';
   }
   if (rec && rec.status === 'closed' && !rec.sentAt) return DONE.dropped;
-  return rec && rec.status !== 'drafted' ? DONE.written : '';
+  // One the drawer was sending when its page closed counts as written to until Sent is looked in.
+  return rec && (rec.status !== 'drafted' || rec.sending) ? DONE.written : '';
 }
 /** "Not sent again." where that email went already (written to, followed up); else "Not sent." (Closed, replied). */
 const notAgain = (why, what) => `Not ${what}${[DONE.written, DONE.followed].includes(why) ? ' again' : ''}.`;
@@ -5218,11 +5262,14 @@ function takeOver() {
   return review.granted;
 }
 
-/** Typing in the card's email a moment ago: a hand-over waits for the pause, so the sentence isn't cut off. */
+/**
+ * Writing in the card's email: the cursor in it while this tab is in front (a pause to think included), or a key a
+ * moment ago. A hand-over waits for that to end, so the sentence isn't cut off; going to the tab that asked ends it.
+ */
 const typingNow = () =>
   !!document.activeElement &&
   !!document.activeElement.closest('#review-card textarea, #review-card input') &&
-  Date.now() - review.typedAt < 2500;
+  (document.hasFocus() || Date.now() - review.typedAt < 2500);
 
 /**
  * Asked for by tab `to`: once nothing is in its five seconds, with Nylas or being taken back, and the email isn't
@@ -5483,6 +5530,8 @@ async function start() {
   // Only in the tab that has the queue: another's copy of an email with Nylas is that tab's to send.
   addEventListener('beforeunload', (e) => {
     if (review.live && (review.pending.size || review.items.some((i) => MOVING.has(i.status)))) e.preventDefault();
+    // A drawer's email with Nylas too.
+    if (Object.values(state.drafts).some((d) => d && d.sending === 'send')) e.preventDefault();
   });
   api.storage.onChanged.addListener((changes) => {
     if (changes.outreach) outreachChanged().catch(() => null);
@@ -5535,6 +5584,14 @@ async function start() {
   addEventListener('pagehide', flushNotes);
   addEventListener('pagehide', leaveQueue);
   addEventListener('pagehide', leaveNotes);
+  // Another Discover tab closed with a note not yet stored: stored from here straight away, and shown.
+  addEventListener('storage', (e) => {
+    if (e.key === NOTES_LEFT && e.newValue)
+      storeLeftNotes().then(
+        () => renderOutreach(),
+        () => null,
+      );
+  });
   $('#discover-effort').addEventListener('change', () => saveAi({ effort: $('#discover-effort').value }));
   state.config = await store.discoverAiConfig();
   await buildAiBox();
