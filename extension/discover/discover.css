@@ -449,3 +449,297 @@ details summary {
     padding: 14px;
   }
 }
+
+/* The review queue: one firm at a time, big buttons. */
+button.big,
+a.button.big {
+  min-height: 46px;
+  padding: 10px 22px;
+  font-size: 15px;
+  border-radius: 10px;
+}
+.write-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.write-bar p {
+  max-width: 560px;
+}
+.firm-actions .write-go {
+  min-height: 36px;
+  padding: 6px 16px;
+}
+#review-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 820px;
+  width: 100%;
+  margin: 0 auto;
+}
+#review-view[hidden] {
+  display: none;
+}
+.review-top {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.review-progress .bar {
+  height: 6px;
+  margin-top: 8px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.review-progress .bar span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.3s;
+}
+.review-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+}
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.seg-label {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.segmented label {
+  position: relative;
+}
+.segmented input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  cursor: pointer;
+}
+.segmented label span {
+  display: inline-block;
+  padding: 7px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 13.5px;
+  font-weight: 550;
+}
+.segmented input:checked + span {
+  background: var(--primary-weak);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.segmented input:focus-visible + span {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.follow-due {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--warn-weak);
+}
+.review-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 22px 24px;
+}
+.review-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.review-body p {
+  margin: 0;
+}
+.review-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.review-head h2 {
+  font-size: 22px;
+  line-height: 1.2;
+}
+.reason {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--primary-weak);
+}
+.reason.none {
+  background: var(--surface-2);
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
+.reason-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.reason-head .ghost {
+  margin-left: auto;
+}
+.reason blockquote {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+}
+.pill.reason-common {
+  background: var(--ok-weak);
+  color: var(--ok);
+}
+.to-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+}
+.to-line .address {
+  color: var(--muted);
+}
+.to-line .ghost {
+  margin-left: auto;
+}
+.review-body input.subject {
+  font-size: 16px;
+  font-weight: 600;
+  padding: 10px 12px;
+}
+.review-body textarea.body {
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.55;
+  padding: 12px 14px;
+  resize: vertical;
+}
+.review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.review-actions .send-go {
+  min-width: 180px;
+}
+.review-actions .armed {
+  background: var(--warn);
+  border-color: var(--warn);
+}
+.doubts {
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--warn-weak);
+  color: var(--warn);
+}
+.steps {
+  margin: 0;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+}
+.steps li.done {
+  color: var(--ok);
+}
+.steps li.done::marker {
+  content: '✓  ';
+}
+.steps li.now {
+  color: var(--text);
+  font-weight: 600;
+}
+.summary h2 {
+  font-size: 20px;
+}
+.review-keys {
+  text-align: center;
+}
+.toasts {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: calc(100vw - 32px);
+  overflow-wrap: anywhere;
+  padding: 12px 18px;
+  border-radius: 12px;
+  background: var(--text);
+  color: var(--surface);
+  box-shadow: var(--shadow);
+}
+.toast.error {
+  background: var(--danger);
+}
+/* A long address in the message wraps, so Show it and Close stay inside the toast on a phone. */
+.toast span {
+  min-width: 0;
+}
+.toast button {
+  flex: none;
+}
+.toast button.link {
+  color: var(--primary-weak);
+}
+.toast.error button.link {
+  color: inherit;
+  text-decoration: underline;
+}
+@media (max-width: 640px) {
+  .review-card {
+    padding: 16px;
+  }
+  .review-actions > * {
+    flex: 1 1 auto;
+  }
+}
+#review-count:empty {
+  display: none;
+}
+.review-progress .nav {
+  display: inline-flex;
+  gap: 4px;
+  white-space: nowrap;
+}
+.review-head h2:focus {
+  outline: none;
+}

@@ -16,6 +16,9 @@
       <span class="grow"></span>
       <div class="tabs" role="tablist" aria-label="Discover">
         <button id="tab-find" role="tab" type="button" aria-selected="true" aria-controls="find-view">Find firms</button>
+        <button id="tab-review" role="tab" type="button" aria-selected="false" aria-controls="review-view">
+          Review <span id="review-count" class="pill"></span>
+        </button>
         <button id="tab-watch" role="tab" type="button" aria-selected="false" aria-controls="watch-view">
           Watchlist <span id="watch-count" class="pill"></span>
         </button>
@@ -132,8 +135,16 @@
         </form>
 
         <section id="results-card" class="card" hidden>
+          <div class="write-bar">
+            <div>
+              <h2 id="results-title">Firms</h2>
+              <p class="muted small">
+                JobToFill checks each firm, finds who to write to and a reason to, and drafts the email. You read each one and press Send.
+              </p>
+            </div>
+            <button id="write-top" class="primary big" type="button">Write to the top 10</button>
+          </div>
           <div class="card-head">
-            <h2 id="results-title">Firms</h2>
             <div class="row">
               <label class="check small"><input id="only-open" type="checkbox" /> Only firms with something open</label>
               <label class="check small"><input id="sort-way" type="checkbox" /> Best way in first</label>
@@ -149,6 +160,39 @@
             <ul class="plain small"></ul>
           </details>
         </section>
+      </div>
+
+      <div id="review-view" role="tabpanel" aria-labelledby="tab-review" hidden>
+        <section class="review-top">
+          <div id="review-progress" class="review-progress" aria-live="polite"></div>
+          <div class="review-options">
+            <div class="segmented" role="radiogroup" aria-label="What the email asks for">
+              <span class="seg-label">Ask for</span>
+              <label><input type="radio" name="ask" value="internship" checked /><span>An internship</span></label>
+              <label><input type="radio" name="ask" value="call" /><span>A 15-minute call</span></label>
+              <label><input type="radio" name="ask" value="project" /><span>A trial task</span></label>
+            </div>
+            <label class="check small"
+              ><input id="their-morning" type="checkbox" checked />
+              <span>Arrive at 8:10 their time <span class="muted">(when it’s evening or the weekend there)</span></span></label
+            >
+            <label class="check small"
+              ><input id="common-ground" type="checkbox" />
+              <span
+                >Look for common ground
+                <span class="muted"
+                  >(sends the names of your university, school, past employers and home town to your AI’s web search, never your name)</span
+                ></span
+              ></label
+            >
+          </div>
+          <div id="follow-due" class="follow-due" hidden></div>
+        </section>
+        <section id="review-card" class="review-card" aria-live="polite"></section>
+        <p id="review-keys" class="muted small review-keys" hidden>
+          <kbd>Ctrl</kbd>+<kbd>Enter</kbd> send · <kbd>S</kbd> skip · <kbd>←</kbd> <kbd>→</kbd> back and next · <kbd>C</kbd> someone else ·
+          <kbd>H</kbd> another reason · <kbd>R</kbd> write it again · <kbd>E</kbd> edit
+        </p>
       </div>
 
       <div id="watch-view" role="tabpanel" aria-labelledby="tab-watch" hidden>
@@ -223,6 +267,7 @@
     <script src="../lib/discover-sources.js"></script>
     <script src="../lib/discover-outreach.js"></script>
     <script src="../lib/discover-research.js"></script>
+    <script src="../lib/discover-hooks.js"></script>
     <script src="../lib/discover-finder.js"></script>
     <script src="../lib/nylas.js"></script>
     <script type="module" src="discover.js"></script>

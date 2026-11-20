@@ -30,10 +30,15 @@
  *                 roles), hn (this month's Hacker News "Who is
  *                 hiring" posts, discoverSources.hnHiring), careers: { [firmId]: { at, result } } (careers checks) and
  *                 contacts: { [firmId]: { at, result } } (discoverContacts.findContacts) and research: { [firmId]: { at, result } }
- *                 (discoverResearch.research and the address checks) }; never in a backup
+ *                 (discoverResearch.research and the address checks) and hooks: { [firmId]: { at, result } }
+ *                 (discoverHooks.find: reasons to write) and queue: { items, at, cleared, declined, alerts, savedAt } (the review
+ *                 queue: the firms an email is being prepared for, with the drafts, the ids of those cleared from it,
+ *                 and the follow-ups skipped: { [firmId]: the sentAt of the email followed up }) }; never in a backup
  *   outreach      emails to firms, written on the Discover page: { [firmId]: { firm: { id, name, domain, site },
  *                 status: 'drafted'|'sent'|'replied'|'closed', to, subject, notes, contact: { name, title, email,
- *                 guessed }, way, at (first saved), sentAt, updatedAt } }; in backups
+ *                 guessed }, way, at (first saved), sentAt, updatedAt, and for one sent from the review queue body
+ *                 (the email as sent), reason (the label of the reason it opened with), sendAt (when a scheduled email
+ *                 goes), followedUpAt } }; in backups
  */
 (function (root) {
   'use strict';
@@ -77,7 +82,14 @@
     setupDismissed: false,
     // The AI the Discover page uses: provider '' is the one under Settings › Cover letters & AI; effort 'quick' asks
     // for one round of ideas, 'thorough' for several angles and has pages read (discoverAiConfig).
-    discoverAi: { provider: '', model: '', effort: 'quick' },
+    discoverAi: {
+      provider: '',
+      model: '',
+      effort: 'quick',
+      ask: 'internship',
+      commonGround: false,
+      theirMorning: true,
+    },
   };
 
   // answerNotes: the candidate's own rules for answers ("I have never applied to any of these firms").
@@ -100,7 +112,7 @@
   const WATCH_LIMIT = 200;
   const SEEN_LIMIT = 1000;
   const CAREERS_CACHE_LIMIT = 300;
-  const OUTREACH_LIMIT = 500;
+  const OUTREACH_LIMIT = 2000;
   const OUTREACH_STATUSES = ['drafted', 'sent', 'replied', 'closed'];
   const area = () => JTF.api.storage.local;
 
@@ -114,13 +126,21 @@
     };
   }
 
-  /** The Discover page's AI choice over its defaults: { provider ('' = as Settings), model, effort }. */
+  /**
+   * The Discover page's AI choice over its defaults: { provider ('' = as Settings), model, effort, and the review
+   * queue's ask ('internship' | 'call' | 'project'), commonGround (send the names of the person's university, school and
+   * employers to the AI's web search; off unless switched on) and theirMorning (a sent email arrives at 8:10 their
+   * time when it's outside their working day; on) }.
+   */
   function discoverAiSettings(settings) {
     const saved = (settings && settings.discoverAi) || {};
     return {
       provider: typeof saved.provider === 'string' ? saved.provider : '',
       model: typeof saved.model === 'string' ? saved.model : '',
       effort: saved.effort === 'thorough' ? 'thorough' : 'quick',
+      ask: ['call', 'project'].includes(saved.ask) ? saved.ask : 'internship',
+      commonGround: saved.commonGround === true,
+      theirMorning: saved.theirMorning !== false,
     };
   }
 
@@ -842,6 +862,8 @@
       careers: cache.careers || {},
       contacts: cache.contacts || {},
       research: cache.research || {},
+      hooks: cache.hooks || {},
+      queue: cache.queue && Array.isArray(cache.queue.items) ? cache.queue : null,
     });
   }
 
@@ -856,15 +878,30 @@
     careers,
     contacts,
     research,
+    hooks,
+    queue,
   }) {
     const cache = await getDiscoverCache();
     if (trackr) cache.trackr = trackr;
     if (hn) cache.hn = hn;
     if (listed) cache.listed = listedOf(listed);
+    if (queue)
+      cache.queue = Array.isArray(queue.items)
+        ? {
+            items: queue.items,
+            at: Number(queue.at) || 0,
+            cleared: Array.isArray(queue.cleared) ? queue.cleared : [],
+            declined: queue.declined && typeof queue.declined === 'object' ? queue.declined : {},
+            // What went wrong and wasn't read yet, for the Discover tab the queue is handed to next.
+            alerts: Array.isArray(queue.alerts) ? queue.alerts : [],
+            savedAt: Number(queue.savedAt) || 0,
+          }
+        : null;
     for (const [key, add] of [
       ['careers', careers],
       ['contacts', contacts],
       ['research', research],
+      ['hooks', hooks],
     ]) {
       if (!add) continue;
       cache[key] = Object.assign(cache[key], add);
@@ -892,10 +929,13 @@
   }
 
   /**
-   * The records worth keeping from a stored or imported outreach object, the newest OUTREACH_LIMIT. Times are made
-   * numbers: an imported record without updatedAt is dated now (and at with it), and a sentAt that isn't a time goes.
+   * The records worth keeping from a stored or imported outreach object, the newest OUTREACH_LIMIT. Past the limit a
+   * draft nobody wrote a note on goes before a firm written to (that one stays left out of searches and followed up)
+   * or Closed by hand (the person's decision), and never the record just written (`keep`: the page shows it).
+   * Times are made numbers: an imported record without updatedAt is dated now (and at with it), and a sentAt that
+   * isn't a time goes.
    */
-  function outreachOf(raw) {
+  function outreachOf(raw, keep) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
     const now = Date.now();
     const entries = Object.entries(raw)
@@ -909,8 +949,16 @@
         else delete rec.sentAt;
         return [id, rec];
       });
-    entries.sort(([, a], [, b]) => b.updatedAt - a.updatedAt);
-    return Object.fromEntries(entries.slice(0, OUTREACH_LIMIT));
+    const newest = ([, a], [, b]) => b.updatedAt - a.updatedAt;
+    const written = (r) => !!(r.sentAt || r.status !== 'drafted' || String(r.notes || '').trim());
+    const rank = ([id, r]) => (id === keep ? 2 : written(r) ? 1 : 0);
+    if (entries.length > OUTREACH_LIMIT)
+      entries.splice(
+        0,
+        entries.length,
+        ...entries.sort((a, b) => rank(b) - rank(a) || newest(a, b)).slice(0, OUTREACH_LIMIT),
+      );
+    return Object.fromEntries(entries.sort(newest));
   }
 
   /** Every firm written to (or drafted for): { [firmId]: record }. */
@@ -919,12 +967,18 @@
   }
 
   /**
-   * Create or change a firm's outreach record: patch { firm, status, to, subject, notes, contact, way }. Status
-   * 'none', or a null patch, removes it. The first save sets `at`; the first 'sent', `sentAt`.
+   * Create or change a firm's outreach record: patch { firm, status, to, subject, notes, contact, way }, or a function
+   * of the record as stored (null when there's none) that returns one (or nothing, to leave it), so a change made from
+   * an older read (a reply line added to the notes) never undoes one written meanwhile. Status 'none', or a null patch, removes it. The first
+   * save sets `at`; the first 'sent', `sentAt`; `opts.at` dates a record made again with a time of its own (one
+   * removed and put back), never one that's there.
+   * Returns the record as stored.
    */
-  const setOutreach = exclusive(async function setOutreach(id, patch) {
+  const setOutreach = exclusive(async function setOutreach(id, change, opts = {}) {
     const all = await getOutreach();
     if (!id) throw new Error('An outreach record needs the firm’s id.');
+    const patch = typeof change === 'function' ? change(all[id] || null) : change;
+    if (typeof change === 'function' && !patch) return all[id] || null;
     if (!patch || patch.status === 'none') {
       delete all[id];
       await area().set({ outreach: all });
@@ -932,15 +986,16 @@
     }
     const now = Date.now();
     const old = all[id] || { status: 'drafted', to: '', subject: '', notes: '', at: now };
-    const next = Object.assign({}, old, patch, { updatedAt: now });
+    const next = Object.assign({}, old, patch, { updatedAt: (!all[id] && timeOf(opts.at)) || now });
     next.firm = firmRef(patch.firm || old.firm, id);
     if (!OUTREACH_STATUSES.includes(next.status))
       next.status = OUTREACH_STATUSES.includes(old.status) ? old.status : 'drafted';
     if (next.status === 'sent' && !next.sentAt) next.sentAt = now;
     for (const k of ['to', 'subject', 'notes']) next[k] = String(next[k] == null ? '' : next[k]);
     all[id] = next;
-    await area().set({ outreach: outreachOf(all) });
-    return next;
+    const kept = outreachOf(all, id);
+    await area().set({ outreach: kept });
+    return kept[id] || null;
   });
 
   /** Forget a firm's outreach record. */

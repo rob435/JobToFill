@@ -976,6 +976,429 @@ test('Discover: Find people searches the web, keeps what the results show, and S
   await page.close();
 });
 
+test('Discover: Review prepares a firm’s email by itself, shows it with big buttons and keys, sends it after five seconds, and offers a follow-up', async () => {
+  await h.bg(() =>
+    globalThis.JTF.store.setDiscoverCache({
+      trackr: { names: [], domains: [], at: Date.now(), answered: 1 },
+      listed: { names: [], domains: [], roles: [], at: Date.now(), answered: 1, asked: 1 },
+    }),
+  );
+  let page = await openExt('discover/discover.html');
+  const ready = () =>
+    page.waitForFunction(() => /firms in the registry/.test(document.querySelector('#registry-info').textContent));
+  await ready();
+  await page.selectOption('#place', 'any');
+  await page.selectOption('#size', 'any');
+  await page.click('#search');
+  await page.waitForSelector('#results .firm');
+  const id = await page.$eval('#results .firm', (li) => li.dataset.id);
+  const card = `#results .firm[data-id="${id}"]`;
+  // The first firm's site was checked already (the fixtures, as above), so preparing it needs no network.
+  const found = await page.evaluate(
+    async ([home, base]) => {
+      const { discover: D, discoverContacts: C } = globalThis.JTF;
+      const fetchFn = (u, init) => {
+        const url = new URL(u);
+        if (/(^|\.)quiet\.example$/.test(url.hostname) && url.pathname === '/') return fetch(home, init);
+        if (/^discover-(home|team|careers)\.html$/.test(url.pathname.slice(1)) && u.startsWith(base))
+          return fetch(u, init);
+        return Promise.resolve(new Response('Not found', { status: 404 }));
+      };
+      const firm = {
+        id: 'x',
+        name: 'Quiet Capital',
+        aliases: [],
+        domain: 'quiet.example',
+        site: 'https://quiet.example',
+      };
+      const result = await D.careers({ ...firm, cities: ['London'], tags: [] }, { fetch: fetchFn, guess: false });
+      const contacts = await C.findContacts(firm, { fetch: fetchFn, pages: result.pages });
+      return { result, contacts };
+    },
+    [h.url('discover-home.html'), h.url('')],
+  );
+  const asked = [];
+  await h.context.route('https://ai.test/**', (route) => {
+    asked.push(JSON.parse(route.request().postData() || '{}'));
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        model: 'mock',
+        choices: [{ message: { content: JSON.stringify(DRAFT) }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 10, completion_tokens: 10 },
+      }),
+    });
+  });
+  const sent = [];
+  const cancelled = [];
+  await h.context.route('https://api.us.nylas.com/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (/\/messages\/send$/.test(url.pathname)) {
+      const message = JSON.parse(route.request().postData());
+      sent.push(message);
+      // A scheduled send is accepted with a schedule id and no message yet, as Nylas answers it.
+      const data = message.send_at
+        ? { schedule_id: `s-${sent.length}`, send_at: message.send_at }
+        : { id: `m-${sent.length}`, thread_id: 't-1' };
+      return route.fulfill({
+        status: message.send_at ? 202 : 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ data }),
+      });
+    }
+    const schedule = url.pathname.match(/\/messages\/schedules\/([^/]+)$/);
+    if (schedule && route.request().method() === 'DELETE') {
+      cancelled.push(schedule[1]);
+      return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ data: {} }) });
+    }
+    if (/\/grants\/g-1$/.test(url.pathname))
+      return route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: { id: 'g-1', provider: 'google', scope: ['https://www.googleapis.com/auth/gmail.compose'] },
+        }),
+      });
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: [] }) });
+  });
+  const before = await h.bg(
+    async ([firmId, f]) => {
+      const { store } = globalThis.JTF;
+      await store.setDiscoverCache({
+        careers: { [firmId]: { at: Date.now(), result: f.result } },
+        contacts: { [firmId]: { at: Date.now(), result: f.contacts } },
+      });
+      const { profile } = await store.getActive();
+      const was = { ai: (await store.getSettings()).ai, personal: { ...profile.personal } };
+      profile.personal.firstName = 'Ada';
+      profile.personal.lastName = 'Lovelace';
+      await store.saveProfile(profile);
+      await store.saveKit(profile.id, {
+        notes: 'Built a reconciliation tool in Python that checks 40,000 trades a night.',
+      });
+      await store.setDoc(profile.id, 'resume', {
+        name: 'Ada Lovelace CV.pdf',
+        type: 'application/pdf',
+        dataUrl: 'data:application/pdf;base64,' + btoa('%PDF-1.4 e2e'),
+      });
+      await store.setAiKey('test-key', 'custom');
+      await store.saveAiSettings({ provider: 'custom', baseUrl: 'https://ai.test/v1', model: 'mock' });
+      await store.setNylas({ apiKey: 'nyk_e2e', region: 'us', grantId: 'g-1', email: 'ada@example.org' });
+      return was;
+    },
+    [id, found],
+  );
+  await page.reload();
+  await ready();
+  await page.selectOption('#place', 'any');
+  await page.selectOption('#size', 'any');
+  await page.click('#search');
+  await page.waitForSelector(`${card} .contacts`);
+  assert.match(await page.textContent('#write-top'), /^Write to the top 10$/);
+
+  // One press: the firm is checked (cached), its email drafted, and Review shows it with the big buttons.
+  await page.click(`${card} button.write-go`);
+  const box = '#review-card textarea.body';
+  await page.waitForSelector(`#review-view:not([hidden]) ${box}`);
+  assert.equal(await page.getAttribute('#tab-review', 'aria-selected'), 'true');
+  assert.equal(
+    (await page.textContent('#review-card h2')).trim(),
+    (await page.textContent(`${card} .firm-name`)).trim(),
+  );
+  assert.match(await page.textContent('#review-progress'), /1 of 1/);
+  assert.match(await page.inputValue(box), /^Dear .+ recruiting team,\n\nI am a final-year/);
+  assert.match(await page.textContent('#review-card .to-line'), /internships@quiet\.example/);
+  assert.match(await page.textContent('#review-card .reason'), /opens with what the firm does/, 'no web search here');
+  assert.equal(await page.isVisible('#review-keys'), true);
+  assert.equal(await page.textContent(`${card} button.write-go`), 'In Review');
+  // Arriving in their morning depends on the hour: off here, so it sends now.
+  await page.uncheck('#their-morning');
+  await until(
+    h.bg,
+    async () => (await globalThis.JTF.store.getSettings()).discoverAi.theirMorning === false,
+    null,
+    5000,
+  );
+  // The card is drawn again once the page has read the setting back (at night in London it said "arrives…" until then).
+  await page.waitForFunction(() => document.querySelector('#review-card .send-go').textContent === 'Send');
+
+  // C: someone else, greeted by name; the email was written for the mailbox, so Send asks twice until R writes it again.
+  for (let i = 0; i < 6 && !/jane\.doe@/.test(await page.textContent('#review-card .to-line')); i++)
+    await page.keyboard.press('c');
+  assert.match(
+    await page.textContent('#review-card .to-line'),
+    /Jane Doe, Head of Talent[\s\S]*jane\.doe@quiet\.example/,
+  );
+  assert.match(await page.inputValue(box), /^Dear Jane,\n\n/);
+  // A press in a card's first moment is taken for the card before: a person reads first.
+  await page.waitForTimeout(700);
+  await page.keyboard.press('Control+Enter');
+  await page.waitForSelector('#review-card .send-go.armed');
+  assert.match(await page.textContent('#review-card .doubts'), /You changed who it goes to/);
+  assert.equal(sent.length, 0);
+  const drafts = asked.length;
+  await page.keyboard.press('r');
+  await until(
+    async () => asked.length > drafts && !(await page.$('#review-card .steps')),
+    () => true,
+    null,
+    10000,
+  );
+  await page.waitForSelector(box);
+  assert.match(await page.inputValue(box), /^Dear Jane,\n\n/);
+  assert.equal(await page.$('#review-card .send-go.armed'), null);
+
+  /**
+   * Ctrl+Enter, and again if the email has a doubt to accept (a check the stand-in's draft failed); `typed`: each
+   * straight after typing at the end of the email, the cursor still in it.
+   */
+  const send = async (typed) => {
+    const press = async () => {
+      await page.waitForTimeout(700);
+      if (typed) {
+        await page.click(box);
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('.');
+      }
+      await page.keyboard.press('Control+Enter');
+    };
+    await press();
+    await page.waitForFunction(
+      () => document.querySelector('#review-card .send-go.armed') || /Sending to/.test(document.body.textContent),
+    );
+    if (await page.$('#review-card .send-go.armed')) await press();
+    await page.waitForSelector('#review-view .toast');
+  };
+  // Sent in five seconds unless Undo: U takes it back, and nothing went. Pressed straight after sending from the email
+  // box too: the card the person's own Ctrl+Enter drew away isn't typing drawn away under them, so U isn't swallowed.
+  await send(true);
+  assert.match(await page.textContent('#review-view .toast'), /^Sending to jane\.doe@quiet\.example…Undo/);
+  await page.keyboard.press('u');
+  await page.waitForSelector(box);
+  assert.match(await page.textContent('#review-view .toast'), /Not sent to jane\.doe@quiet\.example\./);
+  await page.waitForTimeout(5500);
+  assert.equal(sent.length, 0, 'undone');
+
+  await send();
+  await until(
+    async () => sent.length === 1,
+    () => true,
+    null,
+    10000,
+  );
+  assert.deepEqual(sent[0].to, [{ email: 'jane.doe@quiet.example', name: 'Jane Doe' }]);
+  assert.match(sent[0].body, /^<p>Dear Jane,<\/p>/);
+  assert.equal(sent[0].attachments[0].filename, 'Ada Lovelace CV.pdf');
+  assert.equal(sent[0].send_at, undefined, 'sent now');
+  const record = await until(
+    h.bg,
+    async (i) => {
+      const r = (await globalThis.JTF.store.getOutreach())[i];
+      return r && r.status === 'sent' && r;
+    },
+    id,
+    5000,
+  );
+  assert.deepEqual(
+    [record.to, record.via, record.messageId, record.threadId],
+    ['jane.doe@quiet.example', 'nylas', 'm-1', 't-1'],
+  );
+  assert.match(record.body, /^Dear Jane,\n\nI am a final-year/);
+  await page.waitForFunction(() => /All read/.test(document.querySelector('#review-card').textContent));
+  assert.match(await page.textContent('#review-card'), /1 sent/);
+
+  // A week on without a reply: the queue offers a follow-up, written for the same thread, with no attachment.
+  await h.bg((i) => globalThis.JTF.store.setOutreach(i, { sentAt: Date.now() - 9 * 864e5 }), id);
+  await page.reload();
+  await ready();
+  await page.click('#tab-review');
+  await page.waitForSelector('#follow-due:not([hidden])');
+  assert.match(
+    await page.textContent('#follow-due'),
+    /^1 email sent from here has had no reply for five working days\./,
+  );
+  assert.match(await page.textContent('#review-card'), /All read[\s\S]*1 sent/, 'the queue as it was left');
+  await page.click('#follow-due button');
+  await page.waitForSelector(box);
+  assert.match(await page.inputValue('#review-card input.subject'), /^Re: /);
+  assert.match(await page.textContent('#review-card .review-head'), /Follow-up/);
+  await send();
+  await until(
+    async () => sent.length === 2,
+    () => true,
+    null,
+    10000,
+  );
+  assert.equal(sent[1].reply_to_message_id, 'm-1', 'in the same thread');
+  assert.deepEqual(sent[1].attachments || [], []);
+  await until(h.bg, async (i) => !!(await globalThis.JTF.store.getOutreach())[i].followedUpAt, id, 5000);
+  assert.equal(await page.isVisible('#follow-due'), false);
+
+  // On a Saturday, with Arrive at 8:10 their time on: the email waits at Nylas for Monday morning in the firm's city,
+  // and Take it back deletes it there.
+  const saturday = Date.parse('2026-11-21T12:00:00Z');
+  // The page closed first: it stores its queue as it goes, so the queue is emptied after that. The firm's check is
+  // dated that day, so it's still fresh then.
+  await page.close();
+  await h.bg(
+    async ([i, f, at]) => {
+      const { store } = globalThis.JTF;
+      await store.removeOutreach(i);
+      await store.setDiscoverCache({
+        queue: { items: [], at: 0, savedAt: Date.now() },
+        careers: { [i]: { at, result: f.result } },
+        contacts: { [i]: { at, result: f.contacts } },
+      });
+    },
+    [id, found, saturday],
+  );
+  // Saturday, with time running from there (a frozen clock would hold every card in its first moment).
+  page = await h.context.newPage();
+  page.on('pageerror', (e) => errors.push(`discover/discover.html: ${e.message}`));
+  await page.clock.install({ time: saturday });
+  await page.goto(h.extUrl('discover/discover.html#review'));
+  await ready();
+  await page.check('#their-morning');
+  await until(h.bg, async () => (await globalThis.JTF.store.getSettings()).discoverAi.theirMorning, null, 5000);
+  await page.click('#tab-find');
+  await page.selectOption('#place', 'any');
+  await page.selectOption('#size', 'any');
+  await page.click('#search');
+  await page.click(`${card} button.write-go`);
+  await page.waitForSelector(box);
+  assert.equal(await page.textContent('#review-card .send-go'), 'Send · arrives in their morning');
+  assert.match(
+    await page.textContent('#review-card'),
+    /arrives Mon 08:10 in \w[\w ]*, as it’s outside their working day now/,
+  );
+  await send();
+  await until(
+    async () => sent.length === 3,
+    () => true,
+    null,
+    10000,
+  );
+  assert.ok(sent[2].send_at * 1000 > Date.parse('2026-11-23T00:00:00Z'), 'Monday');
+  const take = '#review-view .toast button:text-is("Take it back")';
+  await page.waitForSelector(take);
+  assert.match(
+    await page.textContent('#review-view .toast'),
+    /Arrives Mon 08:10 in [\s\S]*Until then it waits at Nylas\./,
+  );
+  const waiting = await h.bg(async (i) => (await globalThis.JTF.store.getOutreach())[i], id);
+  assert.deepEqual([waiting.status, waiting.scheduleId, waiting.messageId], ['sent', 's-3', '']);
+  await page.click(take);
+  await until(h.bg, async (i) => (await globalThis.JTF.store.getOutreach())[i].status === 'drafted', id, 5000);
+  assert.deepEqual(cancelled, ['s-3']);
+  await page.waitForSelector(box);
+
+  // Closed first: the page stores its queue as it goes (and leaves a copy in the extension's localStorage, dated by
+  // the Saturday clock, which stays installed for the context: cleared too).
+  await page.close();
+  const blank = await openExt('options/options.html');
+  await blank.evaluate(() => localStorage.clear());
+  await blank.close();
+  await h.context.unroute('https://ai.test/**');
+  await h.context.unroute('https://api.us.nylas.com/**');
+  await h.bg(
+    async ([i, was]) => {
+      const { store } = globalThis.JTF;
+      await store.removeOutreach(i);
+      await store.setDiscoverCache({ queue: { items: [], at: 0 } });
+      await store.saveDiscoverAi({ theirMorning: true });
+      await store.setAiKey('', 'custom');
+      await store.saveSettings({ ai: was.ai });
+      await store.setNylas(null);
+      const { profile } = await store.getActive();
+      profile.personal = was.personal;
+      await store.saveProfile(profile);
+      await store.removeDoc(profile.id, 'resume');
+      await store.saveKit(profile.id, { notes: '' });
+    },
+    [id, before],
+  );
+  assert.deepEqual(errors, []);
+});
+
+test('Discover: Review works in one tab at a time, handed to the tab it’s asked for in, and kept through a reload', async () => {
+  const items = ['Alpha', 'Beta'].map((name) => {
+    const id = name.toLowerCase();
+    return {
+      id,
+      firm: { id, name, domain: `${id}.example`, site: `https://${id}.example` },
+      type: 'first',
+      status: 'ready',
+      step: '',
+      hooks: [],
+      hook: -1,
+      to: `careers@${id}.example`,
+      subject: 'Summer internship enquiry',
+      body: `Dear ${name} recruiting team,\n\n${DRAFT.body}\n\nAda Lovelace`,
+      result: { ok: true, checks: [] },
+      draftedFor: { address: `careers@${id}.example`, hook: -1, ask: 'internship' },
+    };
+  });
+  await h.bg(
+    (queue) =>
+      globalThis.JTF.store.setDiscoverCache({
+        trackr: { names: [], domains: [], at: Date.now(), answered: 1 },
+        listed: { names: [], domains: [], roles: [], at: Date.now(), answered: 1, asked: 1 },
+        queue: { items: queue, at: 0, savedAt: Date.now() },
+      }),
+    items,
+  );
+  const heading = (page) => page.textContent('#review-card h2');
+  const open = async () => {
+    const page = await openExt('discover/discover.html#review');
+    await page.waitForFunction(
+      () => !/Opening/.test(document.querySelector('#review-card h2')?.textContent || 'Opening'),
+    );
+    return page;
+  };
+  const elsewhere = 'Review is open in another Discover tab';
+  // A has the queue; B and C, opened after it, say it's open elsewhere and ignore the review keys.
+  const a = await open();
+  assert.equal(await heading(a), 'Alpha');
+  const b = await open();
+  const c = await open();
+  assert.equal(await heading(b), elsewhere);
+  assert.equal(await heading(c), elsewhere);
+  await c.keyboard.press('ArrowRight');
+  assert.equal(await heading(c), elsewhere);
+  // Asked for in C, it goes to C, not to B (waiting for it longer).
+  await c.bringToFront();
+  await c.click('#review-card button:text-is("Review here instead")');
+  await c.waitForFunction(() => document.querySelector('#review-card h2').textContent === 'Alpha');
+  await a.waitForFunction((t) => document.querySelector('#review-card h2').textContent === t, elsewhere);
+  assert.equal(await heading(b), elsewhere);
+  await c.keyboard.press('ArrowRight');
+  await c.waitForFunction(() => document.querySelector('#review-card h2').textContent === 'Beta');
+  // Reloaded, C keeps it, on the card it was reading (B, waiting, would otherwise take it as the page reloads).
+  await c.waitForTimeout(600);
+  await c.reload();
+  const seen = async () => Promise.all([a, b, c].map((p) => heading(p).catch(() => '?')));
+  await until(
+    async () => (await heading(c).catch(() => '')) === 'Beta',
+    () => true,
+    null,
+    10000,
+  ).catch(async () => assert.fail(`after the reload, A, B and C show ${JSON.stringify(await seen())}`));
+  await b.waitForTimeout(500);
+  assert.equal(await heading(b), elsewhere);
+  assert.equal(await heading(a), elsewhere);
+  // Closed, it goes to one of the others, as C left it.
+  await c.close();
+  await until(
+    async () => [await heading(a), await heading(b)].filter((t) => t === 'Beta').length === 1,
+    () => true,
+    null,
+    5000,
+  );
+  await h.bg(() => globalThis.JTF.store.setDiscoverCache({ queue: { items: [], at: 0 } }));
+  await a.close();
+  await b.close();
+  assert.deepEqual(errors, []);
+});
+
 test('settings: what Learn from this page saves while the page is open stays, through edits made there', async () => {
   const page = await openExt('options/options.html#personal');
   await page.waitForSelector('input[name="contact.phone"]');

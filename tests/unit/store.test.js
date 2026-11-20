@@ -8,10 +8,13 @@ const { store } = JTF;
 
 test.beforeEach(() => installChrome());
 
+// The review queue's own choices, as they start: ask for an internship, no common ground, arrive in their morning.
+const QUEUE = { ask: 'internship', commonGround: false, theirMorning: true };
+
 test('store: Discover’s AI follows Settings until a provider with a key is chosen there', async () => {
   await store.setAiKey('sk-or-1', 'openrouter');
   await store.saveAiSettings({ provider: 'openrouter', model: 'deepseek/deepseek-v4.1-flash' });
-  assert.deepEqual((await store.getSettings()).discoverAi, { provider: '', model: '', effort: 'quick' });
+  assert.deepEqual((await store.getSettings()).discoverAi, { provider: '', model: '', effort: 'quick', ...QUEUE });
   let config = await store.discoverAiConfig();
   assert.deepEqual(
     [config.source, config.effort, config.provider, config.model, config.apiKey],
@@ -46,14 +49,36 @@ test('store: Discover’s AI follows Settings until a provider with a key is cho
 
   // Another provider forgets the model chosen for the last one; '' goes back to Settings; junk is refused.
   await store.saveDiscoverAi({ provider: 'deepseek' });
-  assert.deepEqual((await store.getSettings()).discoverAi, { provider: 'deepseek', model: '', effort: 'thorough' });
+  assert.deepEqual((await store.getSettings()).discoverAi, {
+    provider: 'deepseek',
+    model: '',
+    effort: 'thorough',
+    ...QUEUE,
+  });
   assert.equal((await store.discoverAiConfig()).source, 'settings', 'no DeepSeek key');
   await store.saveDiscoverAi({ provider: 'mystery', effort: 'max' });
-  assert.deepEqual((await store.getSettings()).discoverAi, { provider: '', model: '', effort: 'quick' });
-  assert.deepEqual(store.DEFAULT_SETTINGS.discoverAi, { provider: '', model: '', effort: 'quick' });
+  assert.deepEqual((await store.getSettings()).discoverAi, { provider: '', model: '', effort: 'quick', ...QUEUE });
+  assert.deepEqual(store.DEFAULT_SETTINGS.discoverAi, { provider: '', model: '', effort: 'quick', ...QUEUE });
+
+  // The queue's choices are kept; junk falls back to the defaults, and common ground is on only when set to true.
+  await store.saveDiscoverAi({ ask: 'project', commonGround: true, theirMorning: false });
+  assert.deepEqual(
+    [(await store.getSettings()).discoverAi.ask, (await store.discoverAiConfig()).effort],
+    ['project', 'quick'],
+  );
+  assert.equal((await store.getSettings()).discoverAi.commonGround, true);
+  await store.saveDiscoverAi({ ask: 'beg', commonGround: 'yes', theirMorning: 0 });
+  assert.deepEqual((await store.getSettings()).discoverAi, {
+    provider: '',
+    model: '',
+    effort: 'quick',
+    ask: 'internship',
+    commonGround: false,
+    theirMorning: true,
+  });
 });
 
-test('store: outreach records are created, merged, removed and kept to the newest 500', async () => {
+test('store: outreach records are created, merged, removed and kept to the newest 2000, drafts going first', async () => {
   const firm = { id: 'crd:1', name: 'Quiet Capital', domain: 'quiet.example', site: 'https://quiet.example', aum: 3 };
   const first = await store.setOutreach(firm.id, {
     firm,
@@ -78,15 +103,52 @@ test('store: outreach records are created, merged, removed and kept to the newes
   await store.removeOutreach('a');
   assert.deepEqual(await store.getOutreach(), {});
 
-  // 501 records: the one changed longest ago goes.
+  // 2001 records, all written to: the one changed longest ago goes.
   const many = {};
-  for (let i = 0; i < 501; i++)
+  for (let i = 0; i < 2001; i++)
     many['f' + i] = { firm: { id: 'f' + i, name: 'Firm ' + i }, status: 'sent', updatedAt: 1000 + i, at: 1 };
   await chrome.storage.local.set({ outreach: many });
-  await store.setOutreach('f500', { notes: 'x' });
+  await store.setOutreach('f2000', { notes: 'x' });
   all = await store.getOutreach();
-  assert.equal(Object.keys(all).length, 500);
-  assert.ok(!all.f0 && all.f1 && all.f500);
+  assert.equal(Object.keys(all).length, 2000);
+  assert.ok(!all.f0 && all.f1 && all.f2000);
+  assert.deepEqual(Object.keys(all).slice(0, 2), ['f2000', 'f1999'], 'newest first');
+
+  // A draft goes before a firm written to, however old that is: one with a note, or replied, or closed after sending, stays.
+  delete many.f2000;
+  Object.assign(many.f1, { status: 'drafted' });
+  Object.assign(many.f2, { status: 'drafted', notes: 'Call Jane' });
+  Object.assign(many.f3, { status: 'closed', sentAt: 5 });
+  await chrome.storage.local.set({ outreach: many });
+  await store.setOutreach('new', { firm: { id: 'new', name: 'Newco' }, status: 'drafted' });
+  all = await store.getOutreach();
+  assert.equal(Object.keys(all).length, 2000);
+  assert.deepEqual(
+    ['f0', 'f1', 'f2', 'f3', 'new'].map((id) => !!all[id]),
+    [true, false, true, true, true],
+  );
+
+  // Every one written to or Closed by hand (ranked as one): the draft just saved is still kept (the page shows it), and
+  // the one changed longest ago goes, not the Closed one.
+  const full = {};
+  for (let i = 0; i < 2000; i++)
+    full['g' + i] = { firm: { id: 'g' + i, name: 'Firm ' + i }, status: i ? 'sent' : 'closed', updatedAt: 1000 + i };
+  full.g0.updatedAt = 1500;
+  await chrome.storage.local.set({ outreach: full });
+  const draft = await store.setOutreach('alpha', { firm: { id: 'alpha', name: 'Alpha' }, status: 'drafted' });
+  all = await store.getOutreach();
+  assert.equal(Object.keys(all).length, 2000);
+  assert.ok(draft && all.alpha && all.g0 && !all.g1, 'the draft and the Closed firm kept, the oldest sent one gone');
+
+  // Put back with its own date (a record that's there is dated now); a change worked out from the record as stored, or
+  // nothing to change.
+  await store.removeOutreach('alpha');
+  await store.setOutreach('alpha', { firm: { id: 'alpha', name: 'Alpha' }, notes: 'Back' }, { at: 5000 });
+  assert.equal((await store.getOutreach()).alpha.updatedAt, 5000);
+  assert.ok((await store.setOutreach('alpha', { to: 'a@alpha.example' }, { at: 5000 })).updatedAt > 5000);
+  const merged = await store.setOutreach('alpha', (old) => ({ notes: `${old.notes}\nReply from Jane` }));
+  assert.equal(merged.notes, 'Back\nReply from Jane');
+  assert.equal((await store.setOutreach('alpha', () => null)).notes, 'Back\nReply from Jane');
 });
 
 test('store: outreach travels in backups, imported only when it names its firms', async () => {
@@ -146,6 +208,8 @@ test('store: the Discover cache keeps the lists whole and checks per firm, the n
     careers: {},
     contacts: {},
     research: {},
+    hooks: {},
+    queue: null,
   });
   const hn = { posts: [{ id: 1 }], threads: [{ id: 9, title: 'Ask HN: Who is hiring? (November 2026)' }], at: 5 };
   const listed = { names: ['jane street'], domains: ['janestreet.com'], at: 6 };
@@ -160,6 +224,21 @@ test('store: the Discover cache keeps the lists whole and checks per firm, the n
   assert.deepEqual(Object.keys(cache.careers), ['a']);
   await store.setDiscoverCache({ research: { a: { at: 4, result: { people: [] } } } });
   assert.deepEqual((await store.getDiscoverCache()).research, { a: { at: 4, result: { people: [] } } });
+  // Reasons to write are kept per firm too; the review queue is kept whole, and an empty one clears it.
+  await store.setDiscoverCache({
+    hooks: { a: { at: 5, result: { hooks: [] } } },
+    queue: { items: [{ id: 'a' }], at: 7 },
+  });
+  cache = await store.getDiscoverCache();
+  assert.deepEqual(
+    [cache.hooks.a.at, cache.queue],
+    [5, { items: [{ id: 'a' }], at: 7, cleared: [], declined: {}, alerts: [], savedAt: 0 }],
+  );
+  // The alerts not yet read go with it, for the Discover tab it's handed to.
+  await store.setDiscoverCache({ queue: { items: [], alerts: [{ text: 'Couldn’t send', show: 'a' }], savedAt: 9 } });
+  assert.deepEqual((await store.getDiscoverCache()).queue.alerts, [{ text: 'Couldn’t send', show: 'a' }]);
+  await store.setDiscoverCache({ queue: { items: 'junk' } });
+  assert.equal((await store.getDiscoverCache()).queue, null);
   const lots = {};
   for (let i = 0; i < 305; i++) lots['x' + i] = { at: 100 + i, result: {} };
   await store.setDiscoverCache({ contacts: lots });

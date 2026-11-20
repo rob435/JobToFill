@@ -86,6 +86,33 @@ function scripted(replies) {
 }
 
 const failed = (r) => r.checks.filter((c) => !c.ok).map((c) => c.what);
+const sha = (s) => require('node:crypto').createHash('sha256').update(s).digest('hex');
+
+test('outreach: without a hook or an ask, draft()’s messages are byte for byte what they were', async () => {
+  // Recorded before hooks and asks existed: both calls (the draft, then the fixes after an empty reply), so the
+  // system prompt, the user message and every check's feedback are held. A change here is a change to measure.
+  const run = async (input) => {
+    const seen = [];
+    const chat = async (messages) => {
+      seen.push(messages.map((m) => m.content).join('\n-----\n'));
+      return { json: {} };
+    };
+    await O.draft(chat, input);
+    assert.equal(seen.length, 2);
+    return sha(seen.join('\n=====\n'));
+  };
+  const GB = 'd37db65dc2eddbcbd90d16ac21ee305ce8c9f0f9a4108e0659466c04f68eabda';
+  const US = '647d541505ab88c75afea0f4d8bf4bb00a797b17cf295645cdc0ee4c297a992b';
+  const us = { ...firm, country: 'US' };
+  for (const extra of [{}, { ask: 'internship', hook: null }, { ask: 'anything', hook: {} }]) {
+    assert.equal(
+      await run({ firm, found, contact: jane, profile, kit, cvText, kind: 'speculative', today, ...extra }),
+      GB,
+    );
+    const role = { firm: us, found, contact: jane, profile, kit, cvText, kind: 'role', today };
+    assert.equal(await run({ ...role, instruction: 'mention my chess', ...extra }), US);
+  }
+});
 
 test('outreach: material() gives the CV and profile, never the disclosures or the date of birth', () => {
   const m = O.material({ profile, kit, cvText });
@@ -540,4 +567,640 @@ test('outreach: readPage() pairs a name with a title or address beside it, or an
     'on the page, but neither beside the name nor made from it',
   );
   assert.equal(why['Priya Patel’s title “Head of Talent”'], 'on the page, but not beside the name');
+});
+
+/* ------------------------------------------------------------- hooks and asks */
+
+// A hook as discoverHooks.find() keeps one: checked against its source there, the quote the source's own words.
+const leeds = {
+  kind: 'common',
+  about: 'Jane Smith',
+  shared: 'University of Leeds',
+  url: 'https://acme.com/team/jane-smith',
+  quote: 'Jane Smith joined Acme Capital in 2019 after a BSc in Mathematics at the University of Leeds.',
+  source: 'acme.com',
+  label: 'Common ground: University of Leeds',
+};
+const [, brings, asks] = good.body.split('\n\n');
+const hooked = {
+  subject: good.subject,
+  body: [
+    'I saw that you also studied Mathematics at the University of Leeds before joining Acme Capital in 2019. I am in my second year of the same degree there, and I want to learn how a discretionary macro fund trades government bonds and currencies.',
+    brings.replace('I am a second-year Mathematics student at the University of Leeds, graduating in 2027. ', ''),
+    asks,
+  ].join('\n\n'),
+};
+/** `fn` with JTF.discoverHooks set to `hooks` (or gone), as it was afterwards. */
+async function withHooks(hooks, fn) {
+  const saved = JTF.discoverHooks;
+  if (hooks) JTF.discoverHooks = hooks;
+  else delete JTF.discoverHooks;
+  try {
+    return await fn();
+  } finally {
+    if (saved) JTF.discoverHooks = saved;
+    else delete JTF.discoverHooks;
+  }
+}
+
+test('outreach: a hook opens the email, and its quote’s names and numbers count as the firm’s', async () => {
+  await withHooks(null, async () => {
+    const { chat, calls } = scripted([hooked]);
+    const r = await O.draft(chat, { firm, found, contact: jane, profile, kit, cvText, hook: leeds, today });
+    assert.deepEqual(failed(r), []);
+    assert.equal(r.ok, true);
+    assert.equal(r.hook, leeds);
+    assert.equal(r.ask, 'internship');
+    assert.ok(r.checks.some((c) => c.what === 'Opens with the reason to write'));
+    const [system, user] = calls[0].messages;
+    assert.match(system.content, /^1\. Why you’re writing: open with the reason to write in FIRM FACTS, .*own voice/m);
+    assert.match(system.content, /never claiming more than its quote says/);
+    assert.match(system.content, /Mention common ground once, lightly\./);
+    assert.doesNotMatch(system.content, /1\. Why this firm/);
+    assert.match(
+      user.content,
+      /\nWriting to: Jane Smith, Head of Talent\n\nReason to write \(checked; open with it\):\nReason to write, found on acme\.com: “Jane Smith joined Acme Capital in 2019 after a BSc in Mathematics at the University of Leeds\.” The candidate and Jane Smith share University of Leeds\.\nAbout: Jane Smith \(the person you’re writing to\)\n\nCANDIDATE MATERIAL:/,
+    );
+  });
+
+  // Without the hook, 2019 is a number nobody gave.
+  const bare = await O.draft(scripted([hooked, hooked]).chat, {
+    firm,
+    found,
+    contact: jane,
+    profile,
+    kit,
+    cvText,
+    today,
+  });
+  assert.equal(bare.hook, null);
+  assert.ok(failed(bare).some((w) => /numbers aren’t in .*: 2019$/.test(w)));
+
+  // A draft that ignores the hook goes back once with it quoted, and the one that opens with it wins.
+  const { chat, calls } = scripted([good, hooked]);
+  const r = await O.draft(chat, { firm, found, contact: jane, profile, kit, cvText, hook: leeds, today });
+  assert.match(
+    calls[1].messages.at(-1).content,
+    /^- Open with the reason to write from FIRM FACTS, .*“Jane Smith joined/m,
+  );
+  assert.equal(r.attempts, 2);
+  assert.equal(r.ok, true);
+  assert.match(r.body, /^Dear Jane,\n\nI saw that you also studied Mathematics/);
+});
+
+test('outreach: the hook’s line is discoverHooks.factLine()’s when that is loaded, else the same line made here', async () => {
+  const work = {
+    kind: 'work',
+    about: 'Acme Capital',
+    date: '2026-09',
+    url: 'https://www.acme.com/news/fx-desk',
+    quote: 'In September 2026 Acme Capital opened a systematic FX desk in its London office.',
+    label: 'Their work, September 2026',
+  };
+  await withHooks(null, () => {
+    const f = O.firmFacts({ firm, found: {}, contact: jane, hook: work });
+    assert.match(
+      f.text,
+      /\n\nReason to write \(checked; open with it\):\nReason to write, found on acme\.com \(September 2026\): “In September 2026 Acme Capital opened a systematic FX desk in its London office\.”\nAbout: Acme Capital \(the firm, not the person you’re writing to\)$/,
+    );
+    assert.doesNotMatch(f.text, /share/);
+    assert.ok(f.numbers.includes('2026'));
+    assert.doesNotMatch(O.firmFacts({ firm, found: {}, hook: { kind: 'work', quote: '' } }).text, /Reason to write/);
+  });
+  await withHooks({ factLine: (h) => `From discoverHooks: ${h.label}` }, () => {
+    assert.match(
+      O.firmFacts({ firm, hook: work }).text,
+      /open with it\):\nFrom discoverHooks: Their work, September 2026\nAbout: Acme Capital \(the firm, not the person you’re writing to\)$/,
+    );
+  });
+});
+
+const call = {
+  subject: 'A 15-minute call about internships at Acme Capital',
+  body: good.body.replace(
+    asks,
+    'Could we have a 15-minute call, so I can hear how Acme Capital takes on students? My CV is attached for context. Thank you for your time.',
+  ),
+};
+const project = {
+  subject: 'A short trial project for Acme Capital',
+  body: good.body.replace(
+    asks,
+    'If there is something your team has not had time for, I would gladly do it as a short, unpaid trial task within 14 days, so you can see my work first. Would Acme Capital then consider me for an internship? My CV is attached. Thank you for your time.',
+  ),
+};
+
+test('outreach: the ask can be a 15-minute call or a short trial project, its own numbers accepted for it only', async () => {
+  const run = async (ask, reply, more = {}) => {
+    const { chat, calls } = scripted([reply, reply]);
+    const r = await O.draft(chat, { firm, found, contact: jane, profile, kit, cvText, ask, today, ...more });
+    return { r, system: calls[0].messages[0].content };
+  };
+  const byCall = await run('call', call);
+  assert.deepEqual(failed(byCall.r), []);
+  assert.equal(byCall.r.ask, 'call');
+  assert.match(byCall.system, /^3\. The ask: ask for a 15-minute call to hear how Acme Capital takes on students: /m);
+  assert.match(byCall.system, /Say the CV is attached for context/);
+  assert.match(byCall.system, /e\.g\. “A 15-minute call about internships at Acme Capital”\./);
+
+  const byProject = await run('project', project);
+  assert.deepEqual(failed(byProject.r), []);
+  assert.equal(byProject.r.ask, 'project');
+  assert.match(
+    byProject.system,
+    /^3\. The ask: offer to do a short, unpaid trial task on something the team hasn’t had/m,
+  );
+  assert.match(byProject.system, /done within a fortnight/);
+  assert.match(byProject.system, /Then ask whether Acme Capital would consider the candidate for an internship\./);
+  assert.match(byProject.system, /e\.g\. “A short trial project for Acme Capital”\./);
+
+  // The ask's numbers are its own: a 15 asking about internships, or a 14 in a call, is invented.
+  assert.ok(failed((await run('internship', call)).r).some((w) => /numbers aren’t in .*: 15$/.test(w)));
+  assert.ok(failed((await run('call', project)).r).some((w) => /numbers aren’t in .*: 14$/.test(w)));
+
+  // About a role, the call and the project still name it.
+  const role = await run('call', call, { kind: 'role' });
+  assert.match(role.system, /and about “Quantitative Research Intern \(Summer 2027\)” \(name it as written\)/);
+  assert.match(role.system, /e\.g\. “A 15-minute call about Quantitative Research Intern \(Summer 2027\)”/);
+  const trial = await run('project', project, { kind: 'role' });
+  assert.match(trial.system, /consider the candidate for “Quantitative Research Intern \(Summer 2027\)” \(name it as/);
+});
+
+// The firm's own hook, about the firm (as discoverHooks.find() gives it: the registered name).
+const fund = {
+  kind: 'work',
+  about: 'Acme Capital LLP',
+  date: '2026-09',
+  url: 'https://acme.com/news/credit',
+  source: 'acme.com',
+  quote: 'Acme Capital launched its first European credit fund in September 2026, run by a new team in London.',
+};
+/** Draft a three-paragraph email with this opening (twice: the fix gets the same reply) → the result. */
+const opening = (first, input) => {
+  const reply = { subject: good.subject, body: [first, brings, asks].join('\n\n') };
+  return O.draft(scripted([reply, reply]).chat, { firm, found, contact: jane, profile, kit, cvText, today, ...input });
+};
+
+test('outreach: an opening that gives only the firm’s own facts doesn’t take up the hook', async () => {
+  const opens = async (hook, first) =>
+    (await opening(first, { hook })).checks.find((c) => /reason to write/.test(c.what)).what;
+  // "fund" and "London" are in the quote, but FIRM FACTS said them already.
+  const city =
+    'Acme Capital is a discretionary macro fund in London that trades government bonds and currencies. Seeing how such a fund works is the part of finance I most want to learn.';
+  const lse = {
+    kind: 'common',
+    about: 'Jane Smith',
+    shared: 'London School of Economics',
+    url: 'https://acme.com/team/jane-smith',
+    source: 'acme.com',
+    quote: 'Jane Smith studied Economics at the London School of Economics before joining Acme Capital.',
+  };
+  for (const hook of [fund, lse])
+    assert.match(await opens(hook, city), /^Open with the reason to write from FIRM FACTS/);
+  assert.equal(
+    await opens(
+      fund,
+      'I read that Acme Capital launched its first European credit fund in September 2026. Credit is the part of finance I most want to learn.',
+    ),
+    'Opens with the reason to write',
+  );
+  assert.equal(
+    await opens(
+      lse,
+      'I saw that you also went to the London School of Economics. Economics is the part of my degree I most enjoy.',
+    ),
+    'Opens with the reason to write',
+  );
+});
+
+test('outreach: a hook about someone else says whose it is, and never gives it to the reader', async () => {
+  const bob = {
+    kind: 'common',
+    about: 'Bob Jones',
+    shared: 'University of Leeds',
+    url: 'https://acme.com/team/bob-jones',
+    source: 'acme.com',
+    quote: 'Bob Jones joined Acme Capital in 2019 after a BSc in Mathematics at the University of Leeds.',
+  };
+  const piece = {
+    kind: 'work',
+    about: 'Bob Jones',
+    date: '2026-09',
+    url: 'https://bobjones.substack.com/p/rates',
+    source: 'bobjones.substack.com',
+    quote: 'We think short-dated gilt yields will fall faster than the market expects.',
+  };
+  // FIRM FACTS says whom it is about, factLine() or not: a work hook's quote needn't.
+  for (const hooks of [null, { factLine: () => 'Reason to write, found on bobjones.substack.com: “…”' }])
+    await withHooks(hooks, () => {
+      assert.match(
+        O.firmFacts({ firm, contact: jane, hook: piece }).text,
+        /\nAbout: Bob Jones \(someone else at the firm, not the person you’re writing to\)$/,
+      );
+      assert.match(
+        O.firmFacts({ firm, contact: jane, hook: leeds }).text,
+        /\nAbout: Jane Smith \(the person you’re writing to\)$/,
+      );
+      assert.match(O.firmFacts({ firm, contact: jane, hook: fund }).text, /\nAbout: Acme Capital \(the firm, not/);
+      const short = { ...fund, about: 'Acme' };
+      assert.match(O.firmFacts({ firm, contact: jane, hook: short }).text, /\nAbout: Acme \(the firm, not/);
+      assert.match(O.firmFacts({ firm, contact: mailbox, hook: leeds }).text, /\nAbout: Jane Smith \(someone else at/);
+    });
+  const whose = (r) => r.checks.find((c) => /whose it is/.test(c.what));
+  const studied =
+    'also studied Mathematics at the University of Leeds before joining Acme Capital in 2019. I am in my second year of the same degree there.';
+  // Bob's university given to Jane, and the firm's fund given to her as her piece: false, so severe.
+  const mine = await opening(`I saw that you ${studied}`, { hook: bob });
+  assert.equal(mine.ok, false);
+  assert.match(
+    whose(mine).what,
+    /^Say whose it is: the reason to write is about Bob Jones, not the person you’re writing to; name them/,
+  );
+  const hers = await opening(
+    'I read your piece on launching Acme Capital’s first European credit fund in September 2026. Credit is the part of finance I most want to learn.',
+    { hook: fund },
+  );
+  assert.match(whose(hers).what, /^Say whose it is: the reason to write is about Acme Capital, .*; name the firm/);
+  // Named, it stands; a hook about the reader needs no such check.
+  const named = await opening(`I saw that your colleague Bob Jones ${studied}`, { hook: bob });
+  assert.equal(whose(named).what, 'Says whose it is: Bob Jones');
+  assert.deepEqual(failed(named), []);
+  assert.equal(whose(await opening(hooked.body.split('\n\n')[0], { hook: leeds })), undefined);
+  const { chat, calls } = scripted([hooked, hooked]);
+  await O.draft(chat, { firm, found, contact: jane, profile, kit, cvText, hook: bob, today });
+  assert.match(
+    calls[0].messages[0].content,
+    /\(FIRM FACTS says whom it is about\), say who, and don’t write “you” or “your” for it\./,
+  );
+  assert.match(calls[0].messages[0].content, /The quote is about them, never about the candidate/);
+});
+
+test('outreach: a hook’s names and numbers stand in the opening, never in what the email says about the candidate', async () => {
+  const imperial = {
+    ...leeds,
+    quote:
+      'Jane Smith studied Mathematics at the University of Leeds and took her MSc at Imperial College London in 2019.',
+  };
+  const first =
+    'I saw that you also studied Mathematics at the University of Leeds before your MSc at Imperial College London in 2019. I am in my second year of the same degree there.';
+  const reply = (p2) => ({ subject: good.subject, body: [first, p2, asks].join('\n\n') });
+  const run = (p2) =>
+    O.draft(scripted([reply(p2), reply(p2)]).chat, {
+      firm,
+      found,
+      contact: jane,
+      profile,
+      kit,
+      cvText,
+      hook: imperial,
+      today,
+    });
+  const leak = await run(
+    'I am a second-year Mathematics student at the University of Leeds and have an offer for an MSc at Imperial College London in 2019. At Northwind I cleaned 12,000 customer records in Python and SQL.',
+  );
+  const all = failed(leak).join('\n');
+  assert.match(all, /numbers aren’t in .*: 2019$/m);
+  assert.match(all, /names aren’t in .*: Imperial College London$/m);
+  assert.deepEqual(failed(await run(brings)), [], 'in the opening, the quote’s 2019 and Imperial stand');
+});
+
+test('outreach: an ask’s own numbers pass only in the phrase that brings them', async () => {
+  const run = async (ask, reply) =>
+    failed(
+      await O.draft(scripted([reply, reply]).chat, { firm, found, contact: jane, profile, kit, cvText, ask, today }),
+    );
+  const add = (reply, sentence) => ({
+    ...reply,
+    body: reply.body.replace('I also captain the university chess team.', sentence),
+  });
+  assert.ok(
+    (await run('call', add(call, 'I also led a team of 15 in the university chess league.'))).some((w) =>
+      /numbers aren’t in .*: 15$/.test(w),
+    ),
+  );
+  assert.ok(
+    (await run('project', add(project, 'I also came 2nd of 14 teams at the national maths modelling challenge.'))).some(
+      (w) => /numbers aren’t in .*: 2, 14$/.test(w),
+    ),
+  );
+  // As the ask says them, however it is written: "a 15 minute call", "within two weeks", "within 2 weeks".
+  assert.deepEqual(await run('call', { ...call, body: call.body.replace('15-minute', '15 minute') }), []);
+  assert.deepEqual(
+    await run('project', { ...project, body: project.body.replace('within 14 days', 'within 2 weeks') }),
+    [],
+  );
+});
+
+/* ------------------------------------------------------------------ follow-ups */
+
+// Thursday 12 November 2026, midday in London.
+const sentAt = Date.UTC(2026, 10, 12, 12);
+const rec = {
+  firm: { id: 'acme', name: 'Acme Capital LLP', domain: 'acme.com', site: 'https://acme.com', country: 'GB' },
+  status: 'sent',
+  via: 'nylas',
+  messageId: 'msg-1',
+  threadId: 'thread-1',
+  sentAt,
+  to: 'jane.smith@acme.com',
+  subject: good.subject,
+  body: ['Dear Jane,', '', good.body, '', 'Kind regards,', 'Ada Lovelace'].join('\n'),
+  contact: { name: 'Jane Smith', title: 'Head of Talent', email: 'jane.smith@acme.com' },
+};
+const nudge = {
+  body: [
+    'I am following up on my email of Thursday 12 November about a summer internship at Acme Capital. One thing I left out: as well as Python and SQL, I work in Excel.',
+    'Would Acme Capital consider me for a summer internship or an off-cycle placement in 2027? Thank you for your time.',
+  ].join('\n\n'),
+};
+const later = new Date(2026, 10, 19);
+
+test('outreach: followUp() writes a short nudge for the same thread, with something new and the same ask', async () => {
+  const { chat, calls } = scripted([nudge]);
+  const r = await O.followUp(chat, { firm, rec, contact: jane, profile, kit, cvText, today: later });
+  assert.deepEqual(failed(r), []);
+  assert.equal(r.ok, true);
+  assert.equal(r.subject, 'Re: Summer internship enquiry, Acme Capital');
+  assert.equal(r.kind, 'follow-up');
+  assert.equal(r.ask, 'internship');
+  assert.equal(r.hook, null);
+  assert.equal(r.lang, 'en-GB');
+  assert.equal(r.greeting, 'Dear Jane,');
+  assert.ok(r.body.startsWith('Dear Jane,\n\nI am following up on my email of Thursday 12 November'));
+  assert.ok(r.body.endsWith('\n\nKind regards,\nAda Lovelace\n07700 900123 | ada@example.com | github.com/ada'));
+  assert.ok(r.checks.some((c) => c.what === 'Adds something the first email didn’t say'));
+  assert.ok(!r.checks.some((c) => /^Subject/.test(c.what)), 'the subject is the thread’s, not the model’s');
+  const [system, user] = calls[0].messages;
+  assert.match(system.content, /two short paragraphs, 40–90 words in all/);
+  assert.match(system.content, /following up on your email of Thursday 12 November about internships at Acme Capital/);
+  assert.match(system.content, /that the first email didn’t mention/);
+  assert.match(system.content, /^2\. The same ask, in a sentence: ask again whether Acme Capital takes interns/m);
+  assert.match(system.content, /just following up/);
+  assert.match(
+    user.content,
+    /\n\nTHE FIRST EMAIL \(sent Thursday 12 November, subject “Summer internship enquiry, Acme Capital”\):\nDear Jane,\n\nYour careers page says/,
+  );
+  assert.match(user.content, /\n\nCANDIDATE MATERIAL:\nName: Ada Lovelace/);
+  assert.doesNotMatch(user.content, /Female|White British|Date of birth/);
+});
+
+test('outreach: a follow-up that nags or only repeats the first email goes back once', async () => {
+  const lazy = {
+    subject: 'Following up',
+    body: 'Just following up on my email below about a summer internship at Acme Capital. At Northwind I cleaned 12,000 customer records in Python and SQL.\n\nWould Acme Capital consider me? Thank you for your time.',
+  };
+  const { chat, calls } = scripted([lazy, nudge]);
+  const r = await O.followUp(chat, { firm, rec, contact: jane, profile, kit, cvText, today: later });
+  const fix = calls[1].messages.at(-1).content;
+  assert.match(fix, /“just following up”/);
+  assert.match(fix, /Add one concrete thing from CANDIDATE MATERIAL that the first email didn’t mention/);
+  assert.equal(r.attempts, 2);
+  assert.equal(r.ok, true);
+  assert.equal(r.subject, 'Re: Summer internship enquiry, Acme Capital', 'the model’s own subject is not used');
+  // Too long for a nudge.
+  const long = { body: `${nudge.body}\n\n${good.body}` };
+  const r2 = await O.followUp(scripted([long, long]).chat, {
+    firm,
+    rec,
+    contact: jane,
+    profile,
+    kit,
+    cvText,
+    today: later,
+  });
+  assert.ok(failed(r2).some((w) => /^Too long: \d+ words; cut it to 90 or fewer$/.test(w)));
+});
+
+test('outreach: followUp() takes the firm, contact and ask from the record, and never says “Re: Re:”', async () => {
+  const kept = { ...rec, subject: 'Re: Summer internship enquiry, Acme Capital', body: '', ask: 'call' };
+  const callNudge = {
+    body: nudge.body.replace(
+      'Would Acme Capital consider me for a summer internship or an off-cycle placement in 2027?',
+      'Could we have a 15-minute call, so I can hear how Acme Capital takes on students?',
+    ),
+  };
+  const { chat, calls } = scripted([callNudge]);
+  const r = await O.followUp(chat, { rec: kept, profile, kit, cvText, today: later });
+  assert.equal(r.subject, 'Re: Summer internship enquiry, Acme Capital');
+  assert.equal(r.greeting, 'Dear Jane,');
+  assert.equal(r.ask, 'call');
+  assert.deepEqual(failed(r), [], 'the call’s 15 and the day it went are numbers the follow-up may use');
+  assert.ok(!r.checks.some((c) => /first email didn’t say/.test(c.what)), 'nothing to compare without its body');
+  const [system, user] = calls[0].messages;
+  assert.match(system.content, /about a 15-minute call, naming Acme Capital/);
+  assert.match(system.content, /ask again for a 15-minute call to hear how Acme Capital takes on students\./);
+  assert.match(
+    user.content,
+    /THE FIRST EMAIL \(sent Thursday 12 November, subject “Re: Summer internship enquiry, Acme Capital”\):\n\(Not kept/,
+  );
+  const shouted = await O.followUp(scripted([nudge]).chat, {
+    rec: { ...rec, subject: 'RE: Internship' },
+    profile,
+    kit,
+    cvText,
+    today: later,
+  });
+  assert.equal(shouted.subject, 'RE: Internship');
+});
+
+test('outreach: a follow-up dates the first email by the firm’s calendar, wherever the candidate is', async () => {
+  const prompts = async (f, iso) => {
+    const { chat, calls } = scripted([nudge, nudge]);
+    await O.followUp(chat, { firm: f, rec: { ...rec, sentAt: Date.parse(iso) }, profile, kit, cvText, today: later });
+    return calls[0].messages.map((m) => m.content).join('\n');
+  };
+  // sendTime()'s 08:10 on Monday in Tokyo and Hong Kong is still Sunday in London and California.
+  const tokyo = await prompts({ ...firm, country: 'JP', cities: ['Tokyo'] }, '2026-11-22T23:10:00Z');
+  assert.match(tokyo, /following up on your email of Monday 23 November about internships/);
+  assert.match(tokyo, /THE FIRST EMAIL \(sent Monday 23 November, subject/);
+  assert.doesNotMatch(tokyo, /Sunday/);
+  const hk = await prompts({ ...firm, country: 'HK', cities: ['Hong Kong'] }, '2026-11-23T00:10:00Z');
+  assert.match(hk, /email of Monday 23 November about/);
+  // 23:30 on Monday in New York, already Tuesday in London; American dates for a US firm.
+  const ny = await prompts({ ...firm, country: 'US', cities: ['New York'] }, '2026-11-24T04:30:00Z');
+  assert.match(ny, /email of Monday, November 23 about/);
+  // The year by the firm's calendar too: New Year's Day in Tokyo is this year there.
+  const newYear = await prompts({ ...firm, country: 'JP', cities: ['Tokyo'] }, '2025-12-31T16:00:00Z');
+  assert.match(newYear, /email of Thursday 1 January about/);
+});
+
+test('outreach: a follow-up adds something only with a thing from the material, not its labels or filler', async () => {
+  const lazy = (sentence) => ({
+    body: `I am following up on my email of Thursday 12 November about internships at Acme Capital. ${sentence}\n\nWould Acme Capital consider me for a summer internship or an off-cycle placement in 2027? Thank you for your time.`,
+  });
+  // "Skills:", "Links:", "Contact:", "Notes from the candidate:" and "Education:" head the material's sections.
+  for (const said of [
+    'I would welcome the chance to put my skills to use on your team.',
+    'My links, contact details and notes are on the attached CV.',
+    'As a candidate, I hope my education and experience are a good match.',
+  ]) {
+    const r = await O.followUp(scripted([lazy(said), lazy(said)]).chat, {
+      firm,
+      rec,
+      contact: jane,
+      profile,
+      kit,
+      cvText,
+      today: later,
+    });
+    assert.ok(
+      failed(r).some((w) => /^Add one concrete thing from CANDIDATE MATERIAL/.test(w)),
+      said,
+    );
+  }
+  // A skill the first email didn't name is new.
+  const r = await O.followUp(scripted([lazy('As well as Python and SQL, I work in Excel.')]).chat, {
+    firm,
+    rec,
+    contact: jane,
+    profile,
+    kit,
+    cvText,
+    today: later,
+  });
+  assert.ok(r.checks.some((c) => c.what === 'Adds something the first email didn’t say'));
+});
+
+test('outreach: dueFollowUps() lists sent, unanswered Nylas emails five working days on, oldest first', () => {
+  const at = (iso) => Date.parse(iso);
+  const sent = (iso, more = {}) => ({ ...rec, sentAt: at(iso), ...more });
+  const outreach = {
+    monday: sent('2026-11-02T10:00:00Z'), // due Monday 9 November, 10:00
+    friday: sent('2026-11-06T15:00:00Z'), // the weekend doesn't count: due Friday 13 November, 15:00
+    wednesday: sent('2026-11-11T09:00:00Z'), // due Wednesday 18 November
+    replied: sent('2026-10-01T10:00:00Z', { status: 'replied' }),
+    closed: sent('2026-10-01T10:00:00Z', { status: 'closed' }),
+    drafted: sent('2026-10-01T10:00:00Z', { status: 'drafted' }),
+    mailto: sent('2026-10-01T10:00:00Z', { via: 'mailto' }),
+    noId: sent('2026-10-01T10:00:00Z', { messageId: '' }),
+    chased: sent('2026-10-01T10:00:00Z', { followedUpAt: at('2026-10-08T10:00:00Z') }),
+    unsent: { ...rec, sentAt: undefined },
+  };
+  const due = (now, opts) =>
+    O.dueFollowUps(outreach, at(now), opts).map((x) => [x.id, new Date(x.dueSince).toISOString()]);
+  assert.deepEqual(due('2026-11-13T16:00:00Z'), [
+    ['monday', '2026-11-09T10:00:00.000Z'],
+    ['friday', '2026-11-13T15:00:00.000Z'],
+  ]);
+  assert.deepEqual(due('2026-11-13T14:00:00Z'), [['monday', '2026-11-09T10:00:00.000Z']]);
+  assert.deepEqual(
+    due('2026-11-12T16:00:00Z').map(([id]) => id),
+    ['monday'],
+    'six days on, but four working days',
+  );
+  assert.deepEqual(due('2026-11-13T16:00:00Z', { days: 10 }), []);
+  assert.deepEqual(
+    due('2026-11-30T00:00:00Z').map(([id]) => id),
+    ['monday', 'friday', 'wednesday'],
+  );
+  const [one] = O.dueFollowUps(outreach, at('2026-11-10T00:00:00Z'));
+  assert.equal(one.rec, outreach.monday);
+  assert.deepEqual(O.dueFollowUps(null, Date.now()), []);
+  assert.deepEqual(
+    O.dueFollowUps([{ ...outreach.monday, id: 'acme' }], at('2026-11-10T00:00:00Z')).map((x) => x.id),
+    ['acme'],
+  );
+});
+
+test('outreach: dueFollowUps() starts a weekend email’s five working days on the Monday, oldest still first', () => {
+  const sent = (iso) => ({ ...rec, sentAt: Date.parse(iso) });
+  // sendTime() says "send now" to a firm whose zone isn't known, so a Saturday send happens.
+  const outreach = {
+    saturday: sent('2026-11-21T09:00:00Z'),
+    friday: sent('2026-11-20T15:00:00Z'),
+    early: sent('2026-11-21T00:01:00Z'),
+    sunday: sent('2026-11-22T23:59:00Z'),
+  };
+  const due = (iso) => O.dueFollowUps(outreach, Date.parse(iso)).map((x) => [x.id, new Date(x.dueSince).toISOString()]);
+  // By Friday night only Monday to Thursday have passed since the weekend.
+  assert.deepEqual(due('2026-11-27T23:59:00Z'), [['friday', '2026-11-27T15:00:00.000Z']]);
+  assert.deepEqual(due('2026-11-30T00:00:00Z'), [
+    ['friday', '2026-11-27T15:00:00.000Z'],
+    ['early', '2026-11-30T00:00:00.000Z'],
+    ['saturday', '2026-11-30T00:00:00.000Z'],
+    ['sunday', '2026-11-30T00:00:00.000Z'],
+  ]);
+});
+
+test('outreach: sendTime() aims for 08:10 on a weekday, the firm’s time, across clock changes', () => {
+  const when = (f, iso, opts) => {
+    const r = O.sendTime(f, Date.parse(iso), opts);
+    return [r.at && new Date(r.at).toISOString(), r.zone, r.local];
+  };
+  const london = { country: 'GB', cities: ['London'] };
+  // British Summer Time ends at 02:00 on Sunday 25 October 2026.
+  assert.deepEqual(when(london, '2026-10-22T20:00:00Z'), [
+    '2026-10-23T07:10:00.000Z',
+    'Europe/London',
+    'Fri 08:10 in London',
+  ]);
+  assert.deepEqual(when(london, '2026-10-23T18:30:00Z'), [
+    '2026-10-26T08:10:00.000Z',
+    'Europe/London',
+    'Mon 08:10 in London',
+  ]);
+  assert.deepEqual(when(london, '2026-10-24T12:00:00Z')[0], '2026-10-26T08:10:00.000Z', 'a Saturday waits for Monday');
+  assert.deepEqual(when(london, '2026-10-26T07:00:00Z')[0], '2026-10-26T08:10:00.000Z', 'before 08:00: this morning');
+  // And begins on Sunday 29 March 2026.
+  assert.deepEqual(when(london, '2026-03-27T18:00:00Z')[0], '2026-03-30T07:10:00.000Z');
+  // In working hours there: send now.
+  assert.deepEqual(when(london, '2026-10-20T09:00:00Z'), [null, 'Europe/London', 'Tue 10:00 in London']);
+  assert.deepEqual(when(london, '2026-10-20T15:59:00Z')[0], null);
+  assert.deepEqual(when(london, '2026-10-20T16:00:00Z')[0], '2026-10-21T07:10:00.000Z', '17:00 there is too late');
+  // A firm known only by its country is named by its zone's city.
+  assert.deepEqual(when({ country: 'IE' }, '2026-10-20T15:30:00Z'), [null, 'Europe/Dublin', 'Tue 16:30 in Dublin']);
+
+  // A US firm by its city: New York's clocks change a week after London's (Sunday 1 November 2026).
+  const greenwich = { country: 'US', cities: ['Greenwich, CT'] };
+  assert.deepEqual(when(greenwich, '2026-10-29T22:00:00Z'), [
+    '2026-10-30T12:10:00.000Z',
+    'America/New_York',
+    'Fri 08:10 in Greenwich',
+  ]);
+  assert.deepEqual(when(greenwich, '2026-10-30T22:00:00Z')[0], '2026-11-02T13:10:00.000Z');
+  assert.deepEqual(when(greenwich, '2026-10-28T09:00:00Z')[0], '2026-10-28T12:10:00.000Z', 'London’s morning is 05:00');
+  assert.deepEqual(when({ country: 'US', cities: ['Menlo Park, CA'] }, '2026-10-28T12:10:00Z'), [
+    '2026-10-28T15:10:00.000Z',
+    'America/Los_Angeles',
+    'Wed 08:10 in Menlo Park',
+  ]);
+  assert.deepEqual(when({ country: 'US', cities: ['Austin, TX'] }, '2026-11-21T03:00:00Z')[1], 'America/Chicago');
+  assert.deepEqual(when({ cities: ['Bay Area'] }, '2026-11-21T03:00:00Z')[2], 'Mon 08:10 in the Bay Area');
+  // A city in another country than the firm's doesn't decide.
+  assert.deepEqual(when({ country: 'GB', cities: ['New York', 'London'] }, '2026-11-21T03:00:00Z')[1], 'Europe/London');
+  assert.deepEqual(when({ country: 'HK' }, '2026-11-21T03:00:00Z'), [
+    '2026-11-23T00:10:00.000Z',
+    'Asia/Hong_Kong',
+    'Mon 08:10 in Hong Kong',
+  ]);
+  assert.deepEqual(when({ country: 'CA', cities: ['Toronto'] }, '2026-11-21T03:00:00Z')[1], 'America/Toronto');
+  assert.deepEqual(when(london, '2026-10-24T12:00:00Z', { hour: 9, minute: 0 })[0], '2026-10-26T09:00:00.000Z');
+
+  // Unknown: a US firm without a city we know, a country not in the table, no firm.
+  for (const f of [
+    { country: 'US' },
+    { country: 'US', cities: ['Omaha'] },
+    { country: 'BR', cities: ['São Paulo'] },
+    null,
+  ])
+    assert.deepEqual(O.sendTime(f, Date.parse('2026-11-21T03:00:00Z')), { at: null, zone: null, local: '' });
+});
+
+test('outreach: sendTime() keeps to Israel’s Sunday-to-Thursday week', () => {
+  const when = (iso) => {
+    const r = O.sendTime({ country: 'IL' }, Date.parse(iso));
+    return [r.at && new Date(r.at).toISOString(), r.zone, r.local];
+  };
+  // Thursday 22:00 in Jerusalem: Friday and Saturday are the weekend there, so Sunday morning.
+  assert.deepEqual(when('2026-11-19T20:00:00Z'), [
+    '2026-11-22T06:10:00.000Z',
+    'Asia/Jerusalem',
+    'Sun 08:10 in Jerusalem',
+  ]);
+  assert.deepEqual(when('2026-11-20T08:00:00Z')[0], '2026-11-22T06:10:00.000Z', 'Friday 10:00 there waits');
+  assert.deepEqual(when('2026-11-21T21:00:00Z')[0], '2026-11-22T06:10:00.000Z', 'Saturday night: Sunday, not Monday');
+  // Sunday 10:00 there is a working morning: send now.
+  assert.deepEqual(when('2026-11-22T08:00:00Z'), [null, 'Asia/Jerusalem', 'Sun 10:00 in Jerusalem']);
+  // Everywhere else the week is still Monday to Friday.
+  assert.deepEqual(O.sendTime({ country: 'GB' }, Date.parse('2026-11-22T08:00:00Z')).local, 'Mon 08:10 in London');
 });
