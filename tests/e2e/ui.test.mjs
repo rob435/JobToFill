@@ -1495,6 +1495,13 @@ test('Discover: the Overview counts everything, replies are sorted (a bounce, an
     null,
     10000,
   );
+  // The three are looked at one after another, in no set order: Beta's out-of-office may come last.
+  await until(
+    async () => !!(await rec('beta')).reply,
+    () => true,
+    null,
+    10000,
+  );
   const alpha = await rec('alpha');
   assert.deepEqual([alpha.reply.kind, alpha.bounced], ['bounced', ['jane@alpha.example']]);
   const beta = await rec('beta');
