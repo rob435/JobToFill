@@ -516,9 +516,25 @@ function openPageMap() {
   window.close();
 }
 
-/** Discover: firms that keep a low profile, and the watchlist. */
-function openDiscover(hash) {
-  api.tabs.create({ url: api.runtime.getURL('discover/discover.html') + (hash || '') });
+/**
+ * Discover: firms that keep a low profile, and the watchlist. A Discover tab already open is brought forward rather
+ * than a second opened: the Review queue works in one tab at a time, and a second would show it as open elsewhere.
+ */
+async function openDiscover(hash) {
+  const url = api.runtime.getURL('discover/discover.html');
+  const open = api.runtime.getContexts ? await api.runtime.getContexts({ contextTypes: ['TAB'] }).catch(() => []) : [];
+  const there = open.find((c) => c.tabId >= 0 && String(c.documentUrl || '').split(/[?#]/)[0] === url);
+  // Closed meanwhile: a new one, then.
+  const shown =
+    there &&
+    (await api.tabs
+      .update(there.tabId, { active: true, ...(hash ? { url: url + hash } : {}) })
+      .then(() => api.windows.update(there.windowId, { focused: true }).catch(() => null))
+      .then(
+        () => true,
+        () => false,
+      ));
+  if (!shown) await api.tabs.create({ url: url + (hash || '') });
   window.close();
 }
 

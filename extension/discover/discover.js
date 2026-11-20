@@ -4939,6 +4939,8 @@ async function start() {
   $('#results-export').addEventListener('click', exportResults);
   $('#outreach-export').addEventListener('click', exportOutreach);
   for (const t of TABS) $(`#tab-${t}`).addEventListener('click', () => showTab(t));
+  // The popup bringing this tab forward on one of its tabs (the watchlist's new roles).
+  addEventListener('hashchange', () => TABS.includes(location.hash.slice(1)) && showTab(location.hash.slice(1)));
   $('#watch-check').addEventListener('click', checkWatchNow);
   $('#watch-seen').addEventListener('click', markSeen);
   $('#watch-find').addEventListener('click', () => {
