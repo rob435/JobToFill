@@ -1657,3 +1657,36 @@ test('discover: a bot wall is “blocked”, and a site whose https is broken is
   });
   assert.deepEqual([access.status, access.pages], ['page', ['http://www.accessgames.co.jp/recruit/']]);
 });
+
+test('discover: FICO’s Imperva page served with a 200, and Don’t Nod’s careers pages that answer 500, are “blocked”', async () => {
+  // fico.com answers every robot with "Pardon Our Interruption", status 200: turned away, not an empty site.
+  const imperva = `<!DOCTYPE html><html><head><noscript><title>Pardon Our Interruption</title></noscript>
+    <script>window.reeseSkipExpirationCheck = true;</script></head><body>${'<p>Please wait.</p>'.repeat(30)}</body></html>`;
+  const fico = await D.careers(firm({ n: 'FICO', d: 'www.fico.com' }), {
+    fetch: mockFetch({ 'https://www.fico.com/': imperva, 'https://fico.com/': imperva }),
+    now: NOW,
+    guess: false,
+  });
+  assert.equal(fico.status, 'blocked');
+  // Don't Nod's home page links its careers pages, and each answers 500 to a script.
+  const failing = (url) => ({ ok: false, status: 500, url, text: async () => 'Internal Server Error' });
+  const home = `<html><head><title>DON'T NOD</title></head><body>${'<p>Don’t Nod is a game studio in Paris.</p>'.repeat(10)}
+    <a href="https://dont-nod.com/en/careers/">Careers</a><a href="https://dont-nod.com/en/job-offers-montreal/">Jobs in Montreal</a></body></html>`;
+  const dontnod = await D.careers(firm({ n: "Don't Nod", d: 'dont-nod.com' }), {
+    fetch: mockFetch({
+      'https://dont-nod.com/': home,
+      'https://dont-nod.com/en/careers/': failing,
+      'https://dont-nod.com/en/job-offers-montreal/': failing,
+    }),
+    now: NOW,
+    guess: false,
+  });
+  assert.equal(dontnod.status, 'blocked');
+  // A careers link that's simply missing (404) is no sign of a robot being turned away.
+  const gone = await D.careers(firm({ n: "Don't Nod", d: 'dont-nod.com' }), {
+    fetch: mockFetch({ 'https://dont-nod.com/': home }),
+    now: NOW,
+    guess: false,
+  });
+  assert.equal(gone.status, 'none');
+});

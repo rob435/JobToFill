@@ -437,6 +437,11 @@
     /logout|log-out|signout|sign-out|unsubscribe|delete|remove|withdraw|cancel|confirm|verify|activate|reset|token=|password/i;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // A bot check served as an ordinary page (often with a 200): Imperva's "Pardon Our Interruption" on fico.com,
+  // Cloudflare's "Just a moment...", Akamai's "Access Denied", DataDome and PerimeterX challenges. A browser gets
+  // through; a check that reads one has been turned away, not shown an empty site.
+  const BOT_WALL =
+    /<title>\s*(Pardon Our Interruption|Just a moment\.\.\.|Attention Required! \| Cloudflare|Access Denied|Request Rejected|Security Check)|_Incapsula_Resource|cf_chl_opt|challenge-platform\/h\/|captcha-delivery\.com|px-captcha|Checking your browser before accessing/i;
 
   /**
    * One request with a timeout and a retry on 429/5xx. Returns { ok, status, url, text, json, blocked } and
@@ -461,6 +466,7 @@
         const text = await res.text();
         last = { ok: res.ok, status: res.status, url: res.url || url, text };
         if (res.status === 202 && text.length < 2000) last.blocked = true;
+        if (!json && text.length < 60000 && BOT_WALL.test(text.slice(0, 20000))) last.blocked = true;
         if (/^(429|5\d\d)$/.test(String(res.status)) && attempt < retries) {
           await sleep(2000 * 2 ** attempt);
           continue;
@@ -1744,6 +1750,7 @@
       if (result.texts.length < 3) result.texts.push({ url: r.url, text: tidyText(text).slice(0, 8000) });
     };
     let fetched = 0;
+    const turnedAway = [];
     const crawl = async (limit) => {
       while (queue.length && fetched < limit) {
         const url = queue.shift();
@@ -1762,6 +1769,9 @@
         const r = await get(fetchFn, url, { retries: 0, timeout: 15000 });
         if (!r.ok || r.blocked) {
           if (!guessed) log.push({ url, outcome: r.blocked ? 'blocked' : `failed: ${r.status || r.error}` });
+          // A careers page its own site links to that won't load for a robot (Don't Nod's /en/careers/ answers 500
+          // to a script, never to a browser): the site turns robots away, it isn't without one.
+          if (!guessed && (r.blocked || /^(401|403|429|5\d\d)$/.test(String(r.status)))) turnedAway.push(url);
           continue;
         }
         const at = parseUrl(r.url);
@@ -1922,6 +1932,7 @@
     else if (result.mentions.length) result.status = 'described';
     else if (boards.length) result.status = 'board';
     else if (result.pages.length) result.status = 'page';
+    else if (turnedAway.length && result.status === 'none') result.status = 'blocked';
     // With roles to show there is nothing for the AI to read.
     if (result.status === 'roles') result.texts = [];
     return result;
