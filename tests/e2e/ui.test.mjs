@@ -983,7 +983,7 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
       listed: { names: [], domains: [], roles: [], at: Date.now(), answered: 1, asked: 1 },
     }),
   );
-  const page = await openExt('discover/discover.html');
+  let page = await openExt('discover/discover.html');
   const ready = () =>
     page.waitForFunction(() => /firms in the registry/.test(document.querySelector('#registry-info').textContent));
   await ready();
@@ -1236,13 +1236,15 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
   // On a Saturday, with Arrive at 8:10 their time on: the email waits at Nylas for Monday morning in the firm's city,
   // and Take it back deletes it there.
   const saturday = Date.parse('2026-11-21T12:00:00Z');
-  // The firm's check is dated that day, so it's still fresh then.
+  // The page closed first: it stores its queue as it goes, so the queue is emptied after that. The firm's check is
+  // dated that day, so it's still fresh then.
+  await page.close();
   await h.bg(
     async ([i, f, at]) => {
       const { store } = globalThis.JTF;
       await store.removeOutreach(i);
       await store.setDiscoverCache({
-        queue: { items: [], at: 0 },
+        queue: { items: [], at: 0, savedAt: Date.now() },
         careers: { [i]: { at, result: f.result } },
         contacts: { [i]: { at, result: f.contacts } },
       });
@@ -1250,8 +1252,10 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
     [id, found, saturday],
   );
   // Saturday, with time running from there (a frozen clock would hold every card in its first moment).
+  page = await h.context.newPage();
+  page.on('pageerror', (e) => errors.push(`discover/discover.html: ${e.message}`));
   await page.clock.install({ time: saturday });
-  await page.reload();
+  await page.goto(h.extUrl('discover/discover.html#review'));
   await ready();
   await page.check('#their-morning');
   await until(h.bg, async () => (await globalThis.JTF.store.getSettings()).discoverAi.theirMorning, null, 5000);
@@ -1287,6 +1291,12 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
   assert.deepEqual(cancelled, ['s-3']);
   await page.waitForSelector(box);
 
+  // Closed first: the page stores its queue as it goes (and leaves a copy in the extension's localStorage, dated by
+  // the Saturday clock, which stays installed for the context: cleared too).
+  await page.close();
+  const blank = await openExt('options/options.html');
+  await blank.evaluate(() => localStorage.clear());
+  await blank.close();
   await h.context.unroute('https://ai.test/**');
   await h.context.unroute('https://api.us.nylas.com/**');
   await h.bg(
@@ -1307,7 +1317,6 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
     [id, before],
   );
   assert.deepEqual(errors, []);
-  await page.close();
 });
 
 test('Discover: Review works in one tab at a time, handed to the tab it’s asked for in, and kept through a reload', async () => {
@@ -1333,7 +1342,7 @@ test('Discover: Review works in one tab at a time, handed to the tab it’s aske
       globalThis.JTF.store.setDiscoverCache({
         trackr: { names: [], domains: [], at: Date.now(), answered: 1 },
         listed: { names: [], domains: [], roles: [], at: Date.now(), answered: 1, asked: 1 },
-        queue: { items: queue, at: 0 },
+        queue: { items: queue, at: 0, savedAt: Date.now() },
       }),
     items,
   );

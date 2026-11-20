@@ -230,7 +230,13 @@ test('store: the Discover cache keeps the lists whole and checks per firm, the n
     queue: { items: [{ id: 'a' }], at: 7 },
   });
   cache = await store.getDiscoverCache();
-  assert.deepEqual([cache.hooks.a.at, cache.queue], [5, { items: [{ id: 'a' }], at: 7, cleared: [], declined: {} }]);
+  assert.deepEqual(
+    [cache.hooks.a.at, cache.queue],
+    [5, { items: [{ id: 'a' }], at: 7, cleared: [], declined: {}, alerts: [], savedAt: 0 }],
+  );
+  // The alerts not yet read go with it, for the Discover tab it's handed to.
+  await store.setDiscoverCache({ queue: { items: [], alerts: [{ text: 'Couldn’t send', show: 'a' }], savedAt: 9 } });
+  assert.deepEqual((await store.getDiscoverCache()).queue.alerts, [{ text: 'Couldn’t send', show: 'a' }]);
   await store.setDiscoverCache({ queue: { items: 'junk' } });
   assert.equal((await store.getDiscoverCache()).queue, null);
   const lots = {};

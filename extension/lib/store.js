@@ -31,7 +31,7 @@
  *                 hiring" posts, discoverSources.hnHiring), careers: { [firmId]: { at, result } } (careers checks) and
  *                 contacts: { [firmId]: { at, result } } (discoverContacts.findContacts) and research: { [firmId]: { at, result } }
  *                 (discoverResearch.research and the address checks) and hooks: { [firmId]: { at, result } }
- *                 (discoverHooks.find: reasons to write) and queue: { items, at, cleared, declined } (the review
+ *                 (discoverHooks.find: reasons to write) and queue: { items, at, cleared, declined, alerts, savedAt } (the review
  *                 queue: the firms an email is being prepared for, with the drafts, the ids of those cleared from it,
  *                 and the follow-ups skipped: { [firmId]: the sentAt of the email followed up }) }; never in a backup
  *   outreach      emails to firms, written on the Discover page: { [firmId]: { firm: { id, name, domain, site },
@@ -892,6 +892,9 @@
             at: Number(queue.at) || 0,
             cleared: Array.isArray(queue.cleared) ? queue.cleared : [],
             declined: queue.declined && typeof queue.declined === 'object' ? queue.declined : {},
+            // What went wrong and wasn't read yet, for the Discover tab the queue is handed to next.
+            alerts: Array.isArray(queue.alerts) ? queue.alerts : [],
+            savedAt: Number(queue.savedAt) || 0,
           }
         : null;
     for (const [key, add] of [
