@@ -127,6 +127,28 @@ test('store: outreach records are created, merged, removed and kept to the newes
     ['f0', 'f1', 'f2', 'f3', 'new'].map((id) => !!all[id]),
     [true, false, true, true, true],
   );
+
+  // Every one written to or Closed by hand (ranked as one): the draft just saved is still kept (the page shows it), and
+  // the one changed longest ago goes, not the Closed one.
+  const full = {};
+  for (let i = 0; i < 2000; i++)
+    full['g' + i] = { firm: { id: 'g' + i, name: 'Firm ' + i }, status: i ? 'sent' : 'closed', updatedAt: 1000 + i };
+  full.g0.updatedAt = 1500;
+  await chrome.storage.local.set({ outreach: full });
+  const draft = await store.setOutreach('alpha', { firm: { id: 'alpha', name: 'Alpha' }, status: 'drafted' });
+  all = await store.getOutreach();
+  assert.equal(Object.keys(all).length, 2000);
+  assert.ok(draft && all.alpha && all.g0 && !all.g1, 'the draft and the Closed firm kept, the oldest sent one gone');
+
+  // Put back with its own date (a record that's there is dated now); a change worked out from the record as stored, or
+  // nothing to change.
+  await store.removeOutreach('alpha');
+  await store.setOutreach('alpha', { firm: { id: 'alpha', name: 'Alpha' }, notes: 'Back' }, { at: 5000 });
+  assert.equal((await store.getOutreach()).alpha.updatedAt, 5000);
+  assert.ok((await store.setOutreach('alpha', { to: 'a@alpha.example' }, { at: 5000 })).updatedAt > 5000);
+  const merged = await store.setOutreach('alpha', (old) => ({ notes: `${old.notes}\nReply from Jane` }));
+  assert.equal(merged.notes, 'Back\nReply from Jane');
+  assert.equal((await store.setOutreach('alpha', () => null)).notes, 'Back\nReply from Jane');
 });
 
 test('store: outreach travels in backups, imported only when it names its firms', async () => {

@@ -913,8 +913,10 @@ function modelLabel(config) {
 
 /* ---------------------------------------------------------------- outreach */
 
+/** Change a firm's record (patch, or a function of the record as stored: see store.setOutreach) and draw it. */
 async function setOutreach(firm, patch) {
-  const rec = await store.setOutreach(firm.id, { ...patch, firm: firmRef(firm) });
+  const named = (p) => p && { ...p, firm: firmRef(firm) };
+  const rec = await store.setOutreach(firm.id, typeof patch === 'function' ? (old) => named(patch(old)) : named(patch));
   if (rec) state.outreach[firm.id] = rec;
   else delete state.outreach[firm.id];
   renderOutreach();
@@ -1760,15 +1762,19 @@ async function sendEmail(firm, how) {
       how === 'send'
         ? `Sent to ${p.address}${cv ? `, ${cv.name} attached` : ''}. It’s in your Sent folder.`
         : `Saved to your drafts${cv ? `, ${cv.name} attached` : ''}: open your email to send it.`;
-    await setOutreach(firm, {
-      status: how === 'send' ? 'sent' : 'drafted',
+    // Sent now: dated now, and no longer the email waiting at Nylas (Take it back leaves this one alone). A draft
+    // saved for a firm already written to or answered doesn't make it Drafted again.
+    await setOutreach(firm, (old) => ({
+      status: how === 'send' ? 'sent' : old && ['sent', 'replied'].includes(old.status) ? old.status : 'drafted',
       to: p.address,
       subject: d.subject,
       contact: contactRef(p),
       way: wayText(firm),
       via: 'nylas',
-      ...(how === 'send' ? { messageId: r.id, threadId: r.threadId } : { draftId: r.id }),
-    });
+      ...(how === 'send'
+        ? { messageId: r.id, threadId: r.threadId, sentAt: Date.now(), sendAt: null, scheduleId: '' }
+        : { draftId: r.id }),
+    }));
   } catch (err) {
     d.sendError = errorText(err);
   } finally {
@@ -1861,7 +1867,10 @@ async function checkReplies() {
       () => null,
     );
     if (!m) continue;
-    const next = await store.setOutreach(id, { messageId: m.id, threadId: m.threadId });
+    // Worked out from the record as it is when written: it may have been taken back or changed meanwhile.
+    const next = await store.setOutreach(id, (old) =>
+      old && old.scheduleId === rec.scheduleId && !old.messageId ? { messageId: m.id, threadId: m.threadId } : null,
+    );
     if (next) state.outreach[id] = next;
   }
   const waiting = Object.entries(state.outreach).filter(([, r]) => r.status === 'sent' && r.threadId);
@@ -1875,7 +1884,12 @@ async function checkReplies() {
     if (!list.length) continue;
     const from = (list[0].from || [])[0] || {};
     const note = `Reply from ${from.name || from.email || 'them'} on ${day((list[0].date || 0) * 1000)}: “${String(list[0].snippet || '').slice(0, 140)}”`;
-    const next = await store.setOutreach(id, { status: 'replied', notes: rec.notes ? `${rec.notes}\n${note}` : note });
+    // Added to the note as it is when written, not as it was when the check began: one saved meanwhile stays.
+    const next = await store.setOutreach(id, (old) =>
+      old && old.status === 'sent' && old.threadId === rec.threadId
+        ? { status: 'replied', notes: old.notes ? `${old.notes}\n${note}` : note }
+        : null,
+    );
     if (next) state.outreach[id] = next;
   }
   if (waiting.length) renderOutreach();
@@ -1921,7 +1935,14 @@ function writeButton(firm) {
     type: 'button',
     disabled: !!written || !aiReady(),
     title: aiReady() ? 'Check it, find who to write to and a reason to, and draft the email to read in Review' : NO_AI,
-    textContent: written ? 'Written to' : item ? 'In Review' : 'Write to them',
+    // One Closed by hand before anything was sent wasn't written to: it says Closed.
+    textContent: written
+      ? rec.status === 'closed' && !rec.sentAt
+        ? 'Closed'
+        : 'Written to'
+      : item
+        ? 'In Review'
+        : 'Write to them',
     onclick: () => writeTo([firm]),
   });
 }
@@ -2102,7 +2123,9 @@ function exportResults() {
   saveCsv(rows, 'firms');
 }
 
-function exportOutreach() {
+/** The Outreach list as a spreadsheet, with a note typed a moment ago (its box left by the click) in it. */
+async function exportOutreach() {
+  await flushNotes();
   const rows = [
     [
       'Firm',
@@ -2151,22 +2174,55 @@ async function loadOutreach() {
 
 // Notes are saved a moment after typing stops, when the box is left, and when the tab is closed or hidden.
 const notes = new Map(); // firmId → { text, timer }
+const noteBase = new Map(); // firmId → the note as this tab last drew or saved it: what the typing started from
+const writing = new Map(); // firmId → the note being written now
 
-async function writeNote(id) {
+/**
+ * Write a note typed here. One changed meanwhile (a line added in another tab, a reply noted by the reply check) is
+ * kept, with what was typed here put with it, never written over; a box left as it was drawn writes nothing, so the
+ * row (and the select just clicked in it) isn't drawn again.
+ */
+function writeNote(id) {
   const pending = notes.get(id);
-  if (!pending) return;
+  if (!pending) return writing.get(id) || Promise.resolve();
   clearTimeout(pending.timer);
   notes.delete(id);
-  // Removed meanwhile (in another tab): said, and its row goes once the box is left.
-  if (!state.outreach[id]) {
-    $('#outreach-status').textContent = 'Not saved: this firm was removed from the list.';
-    return setTimeout(() => renderOutreach());
-  }
-  // Left unchanged: nothing written, so the row (and the select just clicked in it) isn't drawn again.
-  if ((state.outreach[id].notes || '') === pending.text) return;
-  const rec = await store.setOutreach(id, { notes: pending.text });
-  if (rec) state.outreach[id] = rec;
-  $('#outreach-status').textContent = 'Saved.';
+  const base = noteBase.has(id) ? noteBase.get(id) : (state.outreach[id] && state.outreach[id].notes) || '';
+  if (pending.text === base) return writing.get(id) || Promise.resolve();
+  const done = (async () => {
+    await writing.get(id);
+    let merged = false;
+    const rec = await store.setOutreach(id, (old) => {
+      if (!old) return null;
+      const theirs = old.notes || '';
+      if (theirs === pending.text) return null;
+      merged = theirs !== base;
+      return { notes: merged ? mergeNote(base, theirs, pending.text) : pending.text };
+    });
+    // Removed meanwhile (in another tab): said, and its row goes once the box is left.
+    if (!rec) {
+      $('#outreach-status').textContent = 'Not saved: this firm was removed from the list.';
+      return setTimeout(() => renderOutreach());
+    }
+    state.outreach[id] = rec;
+    noteBase.set(id, rec.notes || '');
+    // The box shows the note as kept, unless more has been typed since.
+    const box = document.querySelector(`#outreach li[data-id="${CSS.escape(id)}"] .outreach-notes`);
+    if (merged && box && box.value === pending.text) box.value = rec.notes;
+    $('#outreach-status').textContent = merged ? 'Saved, with what was added meanwhile kept.' : 'Saved.';
+  })().finally(() => writing.get(id) === done && writing.delete(id));
+  writing.set(id, done);
+  return done;
+}
+
+/**
+ * A note typed from `base` put with one changed meanwhile: each one's addition kept (the typed one first, as the
+ * person wrote it, then the other's), or both whole when either was edited rather than added to.
+ */
+function mergeNote(base, theirs, mine) {
+  if (theirs.startsWith(base)) return mine + theirs.slice(base.length);
+  if (mine.startsWith(base)) return theirs + mine.slice(base.length);
+  return `${theirs}\n${mine}`;
 }
 
 function saveNote(id, text, now) {
@@ -2176,7 +2232,8 @@ function saveNote(id, text, now) {
   if (now) writeNote(id);
 }
 
-const flushNotes = () => [...notes.keys()].forEach(writeNote);
+/** Every note typed and not yet written, written now; resolves once those being written are too. */
+const flushNotes = () => Promise.all([...[...notes.keys()].map(writeNote), ...writing.values()]);
 
 /** A row's date: 'Sent 6 Nov', 'Arrives 9 Nov' for one waiting at Nylas, else its status and when it last changed. */
 const outreachWhen = (rec) =>
@@ -2186,10 +2243,17 @@ const outreachWhen = (rec) =>
       ? `Sent ${day(rec.sentAt)}`
       : `${OUTREACH_TEXT[rec.status]} ${day(rec.updatedAt)}`;
 
-/** What a row shows apart from its note: one whose note alone changed is the same row. */
-const outreachCore = (rec) => JSON.stringify({ ...rec, notes: '', updatedAt: 0, when: outreachWhen(rec) });
+/**
+ * What a row shows apart from its note and the date it last changed: one whose note alone changed (and with it that
+ * date) is the same row, updated in place, so the select or Remove being clicked in it stays.
+ */
+const outreachCore = (rec) =>
+  JSON.stringify({ ...rec, notes: '', updatedAt: 0, when: outreachWhen({ ...rec, updatedAt: 0 }) });
+/** What a row was drawn from: its record, and what its date says now ("Arrives…" turns to "Sent…" when it goes). */
+const outreachDrawn = (rec) => `${JSON.stringify(rec)}|${outreachWhen(rec)}`;
 
 function outreachItem(id, rec) {
+  noteBase.set(id, rec.notes || '');
   const c = rec.contact || {};
   const firmName = rec.firm.site ? link(rec.firm.site, rec.firm.name) : rec.firm.name;
   const when = outreachWhen(rec);
@@ -2234,7 +2298,7 @@ function outreachItem(id, rec) {
               const next = await store.setOutreach(id, { status: value });
               state.outreach[id] = next;
               const fresh = outreachItem(id, next);
-              Object.assign(fresh, { drawn: JSON.stringify(next), core: outreachCore(next) });
+              Object.assign(fresh, { drawn: outreachDrawn(next), core: outreachCore(next) });
               item.replaceWith(fresh);
               fresh.querySelector('select').focus();
               rerender(id);
@@ -2266,33 +2330,79 @@ function outreachItem(id, rec) {
         className: 'small',
         type: 'button',
         textContent: 'Remove',
-        onclick: async () => {
+        onclick: async (e) => {
+          // The note as the box shows it, typed a moment ago or still being written: Undo brings that back.
+          const box = e.currentTarget.closest('li').querySelector('.outreach-notes');
           clearTimeout((notes.get(id) || {}).timer);
           notes.delete(id);
-          const gone = state.outreach[id];
+          await writing.get(id);
+          const was = state.outreach[id];
+          const gone = was && { ...was, notes: box ? box.value : was.notes };
           await store.removeOutreach(id);
           delete state.outreach[id];
           renderOutreach();
           rerender(id);
-          if (!gone) return;
-          // Its address, date and notes back, should the click have been meant for another row.
-          const undo = el('button', {
-            className: 'link',
-            type: 'button',
-            textContent: 'Undo',
-            onclick: async () => {
-              $('#outreach-status').textContent = '';
-              if (state.outreach[id]) return;
-              state.outreach[id] = await store.setOutreach(id, gone);
-              renderOutreach();
-              rerender(id);
-            },
-          });
-          $('#outreach-status').replaceChildren(`Removed ${gone.firm.name}. `, undo);
+          if (gone) outreachToast(`Removed ${gone.firm.name}.`, 'Undo', () => undoRemove(id, gone));
         },
       }),
     ),
   );
+}
+
+/**
+ * Remove undone: the record back as it was, with its date (so it's back in its place when the tab is next opened). A
+ * first email waiting at Nylas that the queue took back meanwhile comes back as Drafted, never as on its way; a firm
+ * drafted again meanwhile keeps the new record, with the old notes put back.
+ */
+async function undoRemove(id, gone) {
+  outreachToast();
+  const name = gone.firm.name;
+  const back =
+    gone.scheduleId && review.items.some((i) => i.firm.id === id && i.takenBack === gone.scheduleId)
+      ? {
+          ...gone,
+          status: gone.status === 'sent' ? 'drafted' : gone.status,
+          sentAt: null,
+          sendAt: null,
+          scheduleId: '',
+          takenBack: gone.scheduleId,
+        }
+      : gone;
+  let again = false;
+  const rec = await store.setOutreach(
+    id,
+    (old) => {
+      if (!old) return back;
+      again = true;
+      const had = String(old.notes || '');
+      return gone.notes && !had.includes(gone.notes) ? { notes: had ? `${had}\n${gone.notes}` : gone.notes } : null;
+    },
+    { at: gone.updatedAt },
+  );
+  if (rec) state.outreach[id] = rec;
+  renderOutreach();
+  rerender(id);
+  const li = document.querySelector(`#outreach li[data-id="${CSS.escape(id)}"]`);
+  if (li) li.querySelector('select').focus({ preventScroll: false });
+  $('#outreach-status').textContent = again
+    ? `${name} was drafted again meanwhile: it keeps the new draft${gone.notes ? ', with its notes put back' : ''}.`
+    : `${name} is back.`;
+}
+
+/** A word at the foot of the screen while Outreach is open (Remove's Undo), seen however far down the row was. */
+function outreachToast(text, label, act) {
+  let box = $('#outreach-view .toasts');
+  if (!box) {
+    box = el('div', { className: 'toasts' });
+    $('#outreach-view').append(box);
+  }
+  clearTimeout(outreachToast.timer);
+  if (!text) return box.replaceChildren();
+  const button = el('button', { className: 'link', type: 'button', textContent: label, onclick: act });
+  box.replaceChildren(
+    el('div', { className: 'toast', attrs: { role: 'status' } }, el('span', { textContent: text }), button),
+  );
+  outreachToast.timer = setTimeout(() => box.replaceChildren(), 12000);
 }
 
 /**
@@ -2307,10 +2417,20 @@ function renderOutreach(sort) {
   $('#outreach-count').textContent = String(list.length);
   $('#outreach-empty').hidden = !!list.length;
   $('#outreach-export').disabled = !list.length;
-  // A note being typed isn't drawn again under the cursor when a draft elsewhere adds a firm: that firm waits.
+  // A note being typed isn't drawn again under the cursor when a draft elsewhere adds a firm: that firm waits (drawn
+  // when the box is left). Its own note changed meanwhile shows in it, unless something has been typed there since.
   const active = document.activeElement;
   const typing = active && active.closest('#outreach .outreach-notes');
-  if (typing) return;
+  if (typing) {
+    const id = typing.closest('li').dataset.id;
+    const rec = state.outreach[id];
+    if (rec && !notes.has(id) && typing.value === noteBase.get(id) && (rec.notes || '') !== typing.value) {
+      typing.value = rec.notes || '';
+      noteBase.set(id, typing.value);
+    }
+    return;
+  }
+  outreachTimer(list);
   const ul = $('#outreach');
   const rows = new Map([...ul.children].map((li) => [li.dataset.id, li]));
   const byId = new Map(list);
@@ -2322,16 +2442,22 @@ function renderOutreach(sort) {
           ...list.filter(([id]) => !rows.has(id)),
         ];
   const row = active && active.closest('#outreach li[data-id]');
-  const focusable = (li) => [...li.querySelectorAll('a, select, button, textarea')];
-  const at = row ? focusable(row).indexOf(active) : -1;
+  // The focus goes back to the same control in a row drawn again: its select, note or Remove, else its nth link (an
+  // address or website added meanwhile mustn't take the select's place).
+  const role = row && active.matches('select, textarea, button') ? active.tagName.toLowerCase() : '';
+  const at = row && !role ? [...row.querySelectorAll('a')].indexOf(active) : -1;
   const core = outreachCore;
   const want = order.map(([id, rec]) => {
-    const drawn = JSON.stringify(rec);
+    const drawn = outreachDrawn(rec);
     const old = rows.get(id);
     if (old && old.drawn === drawn) return old;
     if (old && old.core === core(rec)) {
       const box = old.querySelector('.outreach-notes');
-      if (box && box !== active) box.value = rec.notes || '';
+      if (box && box !== active) {
+        box.value = rec.notes || '';
+        noteBase.set(id, box.value);
+      }
+      old.querySelector('.firm-meta').textContent = outreachWhen(rec);
       old.drawn = drawn;
       return old;
     }
@@ -2342,8 +2468,23 @@ function renderOutreach(sort) {
   for (const li of [...ul.children]) if (!want.includes(li)) li.remove();
   want.forEach((li, k) => ul.children[k] !== li && ul.insertBefore(li, ul.children[k] || null));
   const again = row && !row.isConnected && want.find((li) => li.dataset.id === row.dataset.id);
-  const control = again && focusable(again)[at];
+  const control = again && (role ? again.querySelector(role) : again.querySelectorAll('a')[at]);
   if (control) control.focus({ preventScroll: true });
+}
+
+/** With the page left open, the list (and the firms' cards) drawn again as the next email waiting at Nylas goes. */
+function outreachTimer(list) {
+  clearTimeout(outreachTimer.timer);
+  const waiting = list.filter(([, r]) => waitsAtNylas(r));
+  if (!waiting.length) return;
+  const next = Math.min(...waiting.map(([, r]) => r.sendAt));
+  outreachTimer.timer = setTimeout(
+    () => {
+      renderOutreach();
+      for (const [id, r] of waiting) if (!waitsAtNylas(r)) rerender(id);
+    },
+    Math.min(next - Date.now() + 1000, 3600e3),
+  );
 }
 
 /* ------------------------------------------------------------- watchlist */
@@ -2494,13 +2635,22 @@ const review = {
   dropped: false, // the card was drawn again under the cursor (its email finished elsewhere) mid-word
   cleared: [], // firm ids cleared from the queue, so Write to the next 10 doesn't bring them back
   declined: {}, // firm id → the sentAt of the email whose follow-up was skipped: not offered again
-  live: true, // this tab has the queue (claimQueue): another Discover tab shows it's open there
+  live: false, // this tab has the queue (claimQueue): another Discover tab shows it's open there
+  opening: true, // finding out whether it does, as the page opens
+  ready: null, // resolves once it knows (readied)
+  readied: null,
+  holding: false, // holds the queue's lock (also for a moment after handing it over, until it's taken)
   taking: false, // asked the tab that has it to hand it over
-  handing: false, // handing it over to another tab once nothing is being sent
+  busyThere: false, // and that tab is finishing what it's sending first
+  handing: '', // the tab it's being handed to, once nothing is being sent
+  asked: null, // { from, at }: a tab that asked for it just before this one had it
   granted: null, // resolves once this tab has the queue
-  release: null, // lets go of it
+  grant: null,
+  waiting: null, // aborts this tab's place in the line for it (when handed it, it takes it at once)
+  reclaim: 0, // takes it back when the tab it was handed to doesn't take it
   channel: null, // to ask the tab that has it to hand it over
 };
+review.ready = new Promise((resolve) => (review.readied = resolve));
 const PREPARE_AT_ONCE = 2;
 const UNDO_MS = 5000;
 const FRESH_MS = 600; // a Send this soon after a card shows (or a doubt is raised) was meant for what was there before
@@ -2539,7 +2689,9 @@ function saveQueue(soon) {
   if (!review.live) return Promise.resolve();
   const write = () => {
     const items = review.items.map(({ job, takingBack, ...i }) => kept(i));
-    const queue = { items, at: Math.max(0, review.at), cleared: review.cleared, declined: review.declined };
+    // The alerts not yet read go with it, for a tab it's handed to (an email that didn't go).
+    const alerts = review.alerts.filter((a) => !a.seen).map(({ text, show, keep }) => ({ text, show, keep }));
+    const queue = { items, at: Math.max(0, review.at), cleared: review.cleared, declined: review.declined, alerts };
     return store.setDiscoverCache({ queue }).catch(() => null);
   };
   if (soon) saveQueue.timer = setTimeout(write, 400);
@@ -2631,6 +2783,8 @@ function alreadyDone(item, rec) {
   if (rec && rec.status === 'closed' && !rec.sentAt) return DONE.dropped;
   return rec && rec.status !== 'drafted' ? DONE.written : '';
 }
+/** "Not sent again." for a firm written to; just "Not sent." for one Closed by hand, which nothing was sent to. */
+const notAgain = (why, what) => `Not ${what}${why === DONE.dropped ? '' : ' again'}.`;
 const DONE = {
   written: 'Already written to: see the Outreach tab.',
   dropped: 'Closed on the Outreach tab, so not written to.',
@@ -2677,6 +2831,11 @@ function reconcileQueue() {
     }
     const why = alreadyDone(i, rec);
     if (i.status === 'elsewhere') {
+      // Still done, perhaps for another reason now (Closed, then set to Sent: written to after all).
+      if (why && why !== i.outcome && Object.values(DONE).includes(i.outcome)) {
+        i.outcome = why;
+        changed.push(i);
+      }
       if (why || (i.type === 'first' && !rec)) continue;
       Object.assign(i, i.body ? { status: 'ready', outcome: '' } : { status: 'waiting', held: true, outcome: '' });
       changed.push(i);
@@ -2731,13 +2890,22 @@ function writeTo(firms, asked) {
   if (!aiReady()) return noAi();
   if (!asked) review.consent = requestAiConsent();
   // Pressed in a tab that doesn't have the queue: it's asked for first (handed over once nothing is being sent).
-  if (!review.live) return takeOver().then(() => writeTo(firms, true));
+  if (!review.live) {
+    const wait = 'Opening Review here: the other Discover tab hands it over once it has finished what it’s sending…';
+    status(wait);
+    return takeOver().then(() => {
+      if ($('#status').textContent === wait) status('');
+      writeTo(firms, true);
+    });
+  }
   const added = [];
   const written = [];
+  const closed = [];
   for (const firm of firms) {
     if (review.items.some((i) => i.id === firm.id)) continue;
-    if (alreadyDone({ type: 'first' }, state.outreach[firm.id])) {
-      written.push(firm.name);
+    const why = alreadyDone({ type: 'first' }, state.outreach[firm.id]);
+    if (why) {
+      (why === DONE.dropped ? closed : written).push(firm.name);
       continue;
     }
     added.push({ id: firm.id, firm, type: 'first', status: 'waiting', step: '', hooks: [], hook: 0 });
@@ -2747,9 +2915,15 @@ function writeTo(firms, asked) {
   const first = added[0] ? added[0].id : firms.length === 1 ? firms[0].id : '';
   const index = review.items.findIndex((i) => i.id === first);
   if (index >= 0) review.at = index;
-  if (written.length)
+  const names = (list) => `${list.slice(0, 3).join(', ')}${list.length > 3 ? '…' : ''}`;
+  if (written.length || closed.length)
     review.toast = {
-      text: `Already written to ${written.slice(0, 3).join(', ')}${written.length > 3 ? '…' : ''}: see the Outreach tab.`,
+      text: [
+        written.length && `Already written to ${names(written)}: see the Outreach tab.`,
+        closed.length && `${names(closed)}: Closed on the Outreach tab, so left out.`,
+      ]
+        .filter(Boolean)
+        .join(' '),
     };
   pump(added[0]);
   saveQueue();
@@ -2778,7 +2952,7 @@ function nextToWrite(n = TOP) {
 function resumeQueue(first) {
   if (!aiReady()) return noAi();
   review.consent = requestAiConsent();
-  for (const i of review.items) i.held = false;
+  for (const i of review.items) i.held = i.moved = false;
   pump(first);
   renderReview(true);
 }
@@ -3132,7 +3306,7 @@ function sendItem(item) {
   const why = alreadyDone(item, state.outreach[item.firm.id]);
   if (why) {
     finishElsewhere(item, why);
-    alarm(`${item.firm.name}: ${why} Not sent again.`, item);
+    alarm(`${item.firm.name}: ${why} ${notAgain(why, 'sent')}`, item);
     saveQueue();
     return advance();
   }
@@ -3226,7 +3400,7 @@ async function deliver(item) {
     if (why) {
       finishElsewhere(item, why);
       // Kept until read: the next email's Undo or "Sent" would hide it, and the person thinks this one went.
-      alarm(`${firm.name}: ${why} Not sent again.`, item);
+      alarm(`${firm.name}: ${why} ${notAgain(why, 'sent')}`, item);
       return;
     }
     const nylas = await store.getNylas();
@@ -3286,6 +3460,20 @@ async function deliver(item) {
   }
 }
 
+/**
+ * An item's line on what went wrong, changed where its card shows it rather than by drawing the card again: its email
+ * may be being typed in. The card is taken as drawn with it, so no later redraw happens for the wording alone.
+ */
+function reword(item, error) {
+  const was = item.error;
+  item.error = error;
+  if (shown() !== item || !review.live) return;
+  const line = [...document.querySelectorAll('#review-card p.error')].find((p) => p.textContent === was);
+  if (!line) return;
+  line.textContent = error;
+  if (review.drawn === cardKey({ ...item, error: was })) review.drawn = cardKey(item);
+}
+
 /** What the card says about an email the page closed on as it went: why Sent couldn't be looked in (`failed`), if so. */
 const closedText = (failed) =>
   `The page closed while this was being sent, and ${
@@ -3331,9 +3519,9 @@ async function reconcileDelivering({ closed = true } = {}) {
       continue;
     if (!m && !mine) {
       // Looked at since it couldn't be (Nylas back, an inbox connected): the card stops blaming that.
+      // Reworded where it's shown, never by drawing the card (and the email being typed in) again.
       if (q.unchecked && !failed && i.error === closedText(q.unchecked)) {
-        i.error = closedText('');
-        changed.push(i);
+        reword(i, closedText(''));
       }
       // Not there days after its time: it didn't go. The doubt stays; the looking stops (after a month, if it can't look).
       if (now - Math.max(q.at, q.after) > (failed ? 10 : 1) * LOOK_FOR_MS) i.lookFor = null;
@@ -3363,8 +3551,9 @@ async function reconcileDelivering({ closed = true } = {}) {
     }
     const at = m.date ? m.date * 1000 : q.at || q.after || now;
     // Found: sent, whatever the item was doing since (still to read, skipped, saved to drafts: that copy would be a
-    // second one); one finished another way stays so.
-    if (mine || !FINISHED.has(i.status) || i.status === 'skipped' || i.status === 'saved')
+    // second one, Closed by hand meanwhile: it went all the same); one finished another way stays so.
+    const dropped = i.status === 'elsewhere' && i.outcome === DONE.dropped;
+    if (mine || !FINISHED.has(i.status) || i.status === 'skipped' || i.status === 'saved' || dropped)
       Object.assign(i, {
         status: 'sent',
         outcome: mine
@@ -3379,21 +3568,21 @@ async function reconcileDelivering({ closed = true } = {}) {
     const rec = state.outreach[i.firm.id];
     // A follow-up is noted on its firm's record, if that's still there: one removed on Outreach isn't made again as a
     // nameless Drafted one.
+    const message = { to: q.to, subject: q.subject, via: 'nylas', messageId: m.id, threadId: m.threadId };
+    const done = alreadyDone(i, rec);
     if (i.type === 'follow') {
       if (rec) await setOutreach(i.firm, { followedUpAt: at, followUps: (rec.followUps || 0) + 1 });
-    } else if (!alreadyDone(i, rec))
+    } else if (!done)
       await setOutreach(i.firm, {
         status: 'sent',
         ...(q.fields || sentFields(i, {})),
-        to: q.to,
-        subject: q.subject,
-        via: 'nylas',
-        messageId: m.id,
-        threadId: m.threadId,
+        ...message,
         sentAt: at,
         sendAt: null,
         scheduleId: '',
       });
+    // Closed by hand before it was found: still Closed, but written to, and when (left out of searches as such).
+    else if (done === DONE.dropped) await setOutreach(i.firm, { ...message, sentAt: at, sendAt: null, scheduleId: '' });
   }
   saveQueue();
   if (changed.length) renderReview(changed.includes(shown()));
@@ -3410,10 +3599,25 @@ async function takeBack(item) {
   try {
     const nylas = await store.getNylas();
     await N.cancelScheduled(nylas, s.id, { sendAt: s.at, fetch: fetchFn });
-    // Its own record only (stamped, so another tab takes it back too): one made since is another email's.
-    if (state.outreach[item.firm.id] && state.outreach[item.firm.id].scheduleId === s.id)
-      await setOutreach(item.firm, { status: 'drafted', sentAt: null, sendAt: null, scheduleId: '', takenBack: s.id });
-    Object.assign(item, { status: 'ready', outcome: '', error: '', scheduleId: '', sendAt: 0, ...doubtBack(item) });
+    // Its own record only, while it still describes this email (stamped, so another tab takes it back too): its
+    // schedule goes, and Sent with it; a Closed stays Closed. One sent since (from the drawer: it has a message of its
+    // own) or made again is another email's, left as it is.
+    let other = false;
+    const rec = await setOutreach(item.firm, (old) => {
+      if (!old || old.scheduleId !== s.id) return null;
+      if (old.messageId) return void (other = old.status !== 'drafted');
+      return {
+        status: old.status === 'sent' ? 'drafted' : old.status,
+        sentAt: null,
+        sendAt: null,
+        scheduleId: '',
+        takenBack: s.id,
+      };
+    });
+    // Remembered on the item too: Undo on a firm removed from Outreach meanwhile doesn't bring this email back.
+    Object.assign(item, { status: 'ready', outcome: '', error: '', scheduleId: '', sendAt: 0, takenBack: s.id });
+    Object.assign(item, doubtBack(item));
+    if (other || alreadyDone(item, rec)) finishElsewhere(item, alreadyDone(item, rec) || DONE.written);
     review.toast = {
       text: item.lookFor
         ? `Taken back: this copy to ${item.firm.name} won’t be sent, but the one the page closed on may still go.`
@@ -3517,7 +3721,7 @@ async function markSent(item) {
   const why = alreadyDone(item, state.outreach[item.firm.id]);
   if (why) {
     finishElsewhere(item, why);
-    alarm(`${item.firm.name}: ${why} Not marked again.`, item);
+    alarm(`${item.firm.name}: ${why} ${notAgain(why, 'marked')}`, item);
     saveQueue();
     return shown() === item ? advance() : renderReview();
   }
@@ -3568,10 +3772,10 @@ function unskip(item) {
     return renderReview(true);
   }
   const live = review.running.get(item);
-  if (live) Object.assign(item, { job: live, status: 'preparing', held: false, step: live.step || '' });
+  if (live) Object.assign(item, { job: live, status: 'preparing', held: false, moved: false, step: live.step || '' });
   else {
     item.status = item.body ? 'ready' : 'waiting';
-    item.held = false;
+    item.held = item.moved = false;
     if (item.status === 'waiting') {
       if (!aiReady()) return noAi();
       review.consent = requestAiConsent();
@@ -3582,12 +3786,17 @@ function unskip(item) {
   saveQueue();
 }
 
-/** Write it again stopped: the email as it was (with the person's edits) is kept, and the new one dropped when it comes. */
+/**
+ * Write it again stopped: the email as it was (with the person's edits) is kept, and the new one dropped when it comes;
+ * finished instead if the firm was written to or answered meanwhile, as the rewrite landing would have been. Taken
+ * however soon after the card showed: it only ever keeps an email, never sends one.
+ */
 function keepDraft(item) {
-  if (!item || item.status !== 'preparing' || !item.body || freshCard()) return;
+  if (!item || item.status !== 'preparing' || !item.body) return;
   stopRun(item);
   review.running.delete(item);
   item.status = 'ready';
+  landed(item);
   renderReview(true);
   saveQueue();
 }
@@ -3596,7 +3805,7 @@ function keepDraft(item) {
 function retry(item) {
   if (!aiReady()) return noAi();
   review.consent = requestAiConsent();
-  Object.assign(item, { status: 'waiting', held: false, error: '' });
+  Object.assign(item, { status: 'waiting', held: false, moved: false, error: '' });
   pump(item);
   renderReview(true);
 }
@@ -3677,21 +3886,30 @@ async function primaryAction(item) {
 function reviewKeys(e) {
   if ($('#review-view').hidden || !review.live) return;
   const send = (e.ctrlKey || e.metaKey) && e.key === 'Enter';
-  // A held key is one press: it never sends the next card or says yes to a doubt.
-  if (e.repeat) {
-    if (send) e.preventDefault();
-    return;
-  }
   // Keys are letters while the cursor is in a box; a tick box or a choice above the queue just had the last click.
   const typing =
     e.target.closest &&
     e.target.closest('textarea, select, [contenteditable="true"], input:not([type="checkbox"]):not([type="radio"])');
+  const guarded = !typing && review.dropped && Date.now() - review.typedAt < TYPING_MS;
+  // A held key is one press: it never sends the next card or says yes to a doubt. Held in a box (Backspace) it's
+  // typing until it's let go, so the pause below counts from then; never a held Ctrl+Enter, whose U after is an Undo.
+  if (e.repeat) {
+    if (send) e.preventDefault();
+    else if (typing || guarded) review.typedAt = Date.now();
+    return;
+  }
   // The box typed in drawn away mid-word (its email finished elsewhere, a reply came): the rest of the sentence isn't
-  // commands ("j" of "job" moving to the next firm, "e" typing into its email, the "u" of "would" undoing a send). Every
-  // key goes on being typing until a pause (a Shift, Ctrl+Backspace, an AltGr "é" or a Mac Option key too), Escape
-  // ending it at once. A send from the box clears the clock (typedAt), so the U or S straight after one is a command.
+  // commands ("j" of "job" moving to the next firm, "e" typing into its email, "r" writing it again). Every key goes on
+  // being typing until a pause (a Shift, Ctrl+Backspace, an AltGr "é" or a Mac Option key too), Escape ending it at
+  // once. A send from the box clears the clock (typedAt), so the U or S straight after one is a command. U while an
+  // email waits out its five seconds is always Undo: a stray one brings an email back to send again, a swallowed one
+  // lets it go; and it leaves the clock as it was, so the "ld" of "would" is still typing.
   if (!typing && review.dropped) {
-    if (e.key !== 'Escape' && Date.now() - review.typedAt < TYPING_MS) {
+    if (guarded && e.key.toLowerCase() === 'u' && review.pending.size && !(e.ctrlKey || e.metaKey || e.altKey)) {
+      e.preventDefault();
+      return undoSend();
+    }
+    if (e.key !== 'Escape' && guarded) {
       review.typedAt = Date.now();
       if (e.key !== 'Tab') e.preventDefault();
       return;
@@ -3859,8 +4077,17 @@ function reviewActions(item) {
         href: mailtoOf(item).href,
         textContent: 'Open in your email app',
         title: 'Ctrl+Enter',
-        // The link is made when it's clicked, so edits made since are in it.
-        onclick: (e) => (e.currentTarget.href = mailtoOf(item).href),
+        // The link is made when it's clicked, so edits made since are in it; never for a firm written to or answered
+        // meanwhile (another tab, the Outreach tab), which the email app would get a second email to.
+        onclick: (e) => {
+          const why = alreadyDone(item, state.outreach[item.firm.id]);
+          if (!why) return (e.currentTarget.href = mailtoOf(item).href);
+          e.preventDefault();
+          finishElsewhere(item, why);
+          alarm(`${item.firm.name}: ${why} ${notAgain(why, 'opened')}`, item);
+          saveQueue();
+          return shown() === item ? advance() : renderReview();
+        },
       }),
       el('button', {
         className: 'big',
@@ -3968,8 +4195,13 @@ function itemView(item) {
         : STEPS;
     const at = order.findIndex(([k]) => k === item.step);
     const held = item.status === 'waiting' && (item.held || !review.busy);
+    // Another firm really being prepared for the first time (not one written again, nor one waiting behind a skipped
+    // firm's AI call still out).
     const others = review.items.some(
-      (i) => i !== item && (i.status === 'preparing' || (i.status === 'waiting' && !i.held)),
+      (i) =>
+        i !== item &&
+        ((i.status === 'preparing' && !i.body && !!i.job) ||
+          (i.status === 'waiting' && !i.held && review.busy < PREPARE_AT_ONCE)),
     );
     return el(
       'div',
@@ -4013,7 +4245,9 @@ function itemView(item) {
       el('p', {
         className: 'muted small',
         textContent: held
-          ? 'Not prepared yet: the page was closed before its turn.'
+          ? item.moved
+            ? 'Not prepared yet: it was being prepared in another Discover tab when Review moved here.'
+            : 'Not prepared yet: the page was closed before its turn.'
           : item.status === 'waiting'
             ? 'Waiting its turn: two firms are prepared at a time.'
             : again
@@ -4277,9 +4511,7 @@ function summaryView() {
             .map((i) => i.firm.name)
             .join(
               ', ',
-            )}${looking.length > 3 ? '…' : ''} ${looking.length === 1 ? 'stays' : 'stay'} here while the email the page closed on is looked for in your Sent folder (until ${day(
-            Math.max(...looking.map((i) => Math.max(i.lookFor.at, i.lookFor.after || 0) + LOOK_FOR_MS)),
-          )}): found, it’s recorded as sent.`,
+            )}${looking.length > 3 ? '…' : ''} ${looking.length === 1 ? 'stays' : 'stay'} here while the email the page closed on is looked for in your Sent folder (${lookingUntil(looking)}): found, it’s recorded as sent.`,
         })
       : null,
     el(
@@ -4321,31 +4553,44 @@ function summaryView() {
   );
 }
 
-/** Review in a tab that doesn't have the queue: where it is, and asking for it here. */
+/** Review in a tab that doesn't have the queue: where it is, and asking for it here (again, if it's slow to come). */
 function elsewhereView() {
+  if (review.opening)
+    return el('div', { className: 'review-body summary' }, el('h2', { textContent: 'Opening Review…', tabIndex: -1 }));
   return el(
     'div',
     { className: 'review-body summary' },
     el('h2', { textContent: 'Review is open in another Discover tab', tabIndex: -1 }),
     el('p', {
       className: 'muted',
-      textContent: review.taking
-        ? 'Waiting for that tab to finish what it’s sending; the queue then opens here.'
-        : 'The queue works in one tab at a time, so no email is ever sent twice. Close the other tab, or review here: anything it’s sending finishes first, and a firm it was still preparing waits for Prepare them.',
+      attrs: { role: 'status' },
+      textContent: !review.taking
+        ? 'The queue works in one tab at a time, so no email is ever sent twice. Close the other tab, or review here: anything it’s sending finishes first, and a firm it was still preparing waits for Prepare them.'
+        : review.busyThere
+          ? 'Waiting for that tab to finish what it’s sending; the queue then opens here.'
+          : 'Opening the queue here…',
     }),
-    review.taking
-      ? null
-      : el(
-          'div',
-          { className: 'review-actions' },
-          el('button', {
-            className: 'primary big',
-            type: 'button',
-            textContent: 'Review here instead',
-            onclick: () => takeOver(),
-          }),
-        ),
+    el(
+      'div',
+      { className: 'review-actions' },
+      el('button', {
+        className: review.taking ? 'big' : 'primary big',
+        type: 'button',
+        textContent: review.taking ? 'Ask again' : 'Review here instead',
+        onclick: () => takeOver(),
+      }),
+    ),
   );
+}
+
+/**
+ * How long emails the page closed on are looked for in Sent: three days past their time, or, while Sent couldn't be
+ * checked (no inbox, Nylas down), until it can be (reconcileDelivering() goes on looking for a month then).
+ */
+function lookingUntil(looking) {
+  if (looking.some((i) => i.lookFor.unchecked)) return 'until your Sent folder can be checked';
+  const at = Math.max(...looking.map((i) => Math.max(i.lookFor.at, i.lookFor.after || 0) + LOOK_FOR_MS));
+  return at > Date.now() ? `until ${day(at)}` : 'until it’s next looked for';
 }
 
 /** Firm 3 of 10, with how many are ready, being prepared, not prepared, need you and done, as a bar. */
@@ -4534,6 +4779,15 @@ function noteOf(key, build) {
 }
 
 /**
+ * What a card is drawn from: drawn again only when this changes (the summary also when the replies or the firms left
+ * to write to change, not only the queue).
+ */
+const cardKey = (item) =>
+  item
+    ? [item.id, item.status, item.step, item.hook, item.to, item.armed, item.error, (item.hooks || []).length].join('|')
+    : ['summary', review.items.map((i) => i.status).join(), replyStats(), nextToWrite().length].join('|');
+
+/**
  * Draw the queue: progress, the card shown, the follow-ups due and the toast. The card is drawn again only when what
  * it shows changed (force), so typing in it, or a check finishing for another firm, never loses the cursor. A new card
  * gets the focus on its heading and is scrolled to, and a Send pressed in its first moment doesn't count.
@@ -4546,16 +4800,18 @@ function renderReview(force) {
     $('#follow-due').hidden = true;
     $('#review-keys').hidden = true;
     drawToasts();
-    const key = `elsewhere|${review.taking}`;
-    if (force || key !== review.drawn) $('#review-card').replaceChildren(elsewhereView());
+    const key = `elsewhere|${review.opening}|${review.taking}|${review.busyThere}`;
+    if (force || key !== review.drawn) {
+      // Pressed with the keyboard: the focus goes to the card's heading, not the page.
+      const had = document.activeElement && document.activeElement.closest('#review-card');
+      $('#review-card').replaceChildren(elsewhereView());
+      if (had) $('#review-card h2').focus({ preventScroll: true });
+    }
     review.drawn = key;
     return;
   }
   const item = shown();
-  // The summary is drawn again when the replies or the firms left to write to change, not only the queue.
-  const key = item
-    ? [item.id, item.status, item.step, item.hook, item.to, item.armed, item.error, (item.hooks || []).length].join('|')
-    : ['summary', review.items.map((i) => i.status).join(), replyStats(), nextToWrite().length].join('|');
+  const key = cardKey(item);
   $('#review-progress').replaceChildren(...progressView());
   const due = followUpsDue();
   const box = $('#follow-due');
@@ -4619,10 +4875,22 @@ function fitBox(box) {
   box.style.height = `${box.scrollHeight + 4}px`;
 }
 
-/** The queue as it was left (squared with the outreach records), and the choices above it. */
-async function loadReview() {
+/**
+ * The queue as it was left (squared with the outreach records), and the choices above it; with the alerts not yet read
+ * (`alerts`) when this tab is handed it by another. Only the latest call counts: one begun before is stale.
+ */
+async function loadReview(alerts) {
+  const n = (loadReview.n = (loadReview.n || 0) + 1);
   const cache = await store.getDiscoverCache();
+  if (n !== loadReview.n) return;
   state.hooks = cache.hooks || {};
+  if (alerts)
+    review.alerts = ((cache.queue && cache.queue.alerts) || []).map((a) => ({
+      text: a.text,
+      show: a.show || '',
+      keep: !!a.keep,
+      at: 0,
+    }));
   if (cache.queue) {
     // Nothing runs when the page opens, whatever the queue was saved as (one saved by an older version too).
     review.items = cache.queue.items.filter((i) => i && i.id && i.firm).map(kept);
@@ -4642,74 +4910,149 @@ async function loadReview() {
 /* review: one tab at a time */
 
 const QUEUE_LOCK = 'jobtofill-review-queue';
-const held = () => new Promise((resolve) => (review.release = resolve));
+const TAB_ID = Math.random().toString(36).slice(2);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** What the queue isn't let go during: an email in its five seconds, with Nylas, or being taken back. */
+const sending = () => review.pending.size || review.items.some((i) => MOVING.has(i.status) || i.takingBack);
 
 /**
- * The queue works in one Discover tab at a time (the popup opens a new tab each time): two would each store their
- * copy over the other's (a skip undone, a scheduled email losing Take it back) and could send the same email twice.
- * The tab that has it holds a lock while it's open; another shows Review as open there, gets it when that tab closes,
- * or asks for it (Review here instead, Write to them), and it's handed over once nothing is being sent.
+ * Ask for the queue's lock (`opts` as for locks.request): true once this tab has it, false if the asking was given
+ * up. Held until the page closes or the tab it's handed to takes it (steals it, ahead of any other tab waiting).
+ */
+function holdQueue(opts) {
+  return new Promise((resolve) => {
+    let got = false;
+    navigator.locks
+      .request(QUEUE_LOCK, opts, () => {
+        got = review.holding = true;
+        resolve(true);
+        return new Promise(() => {});
+      })
+      .catch(() => (got ? handedOff() : resolve(false)));
+  });
+}
+
+/** Whether this tab had the queue before it was reloaded (kept for the tab only, so a new one doesn't think so). */
+function hadQueue(on) {
+  try {
+    if (on !== undefined) return on ? sessionStorage.setItem(QUEUE_LOCK, '1') : sessionStorage.removeItem(QUEUE_LOCK);
+    const nav = performance.getEntriesByType('navigation')[0];
+    return !!nav && nav.type === 'reload' && sessionStorage.getItem(QUEUE_LOCK) === '1';
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
+ * The queue works in one Discover tab at a time: two would each store their copy over the other's (a skip undone, a
+ * scheduled email losing Take it back) and could send the same email twice. The tab that has it holds a lock while
+ * it's open; another shows Review as open there, gets it when that tab closes, or asks for it (Review here instead,
+ * Write to them) and is handed it, ahead of any other tab waiting, once nothing is being sent. A tab reloaded asks for
+ * it back (another tab waiting gets it as the page reloads).
  */
 async function claimQueue() {
-  if (!navigator.locks || typeof BroadcastChannel !== 'function') return;
+  if (!navigator.locks || typeof BroadcastChannel !== 'function') return void (review.live = true);
   review.channel = new BroadcastChannel(QUEUE_LOCK);
-  review.channel.onmessage = (e) => e.data === 'handover' && handOver();
+  review.channel.onmessage = (e) => heard(e.data || {});
+  // Asked and gone before it came: the tab that has it keeps it, and what it's preparing.
+  addEventListener('pagehide', () => review.taking && review.channel.postMessage({ never: TAB_ID }));
   // A moment's wait: a page being reloaded is still letting go of it.
-  const got = await new Promise((resolve) =>
-    navigator.locks
-      .request(QUEUE_LOCK, { signal: AbortSignal.timeout(1500) }, () => {
-        resolve(true);
-        return held();
-      })
-      .catch(() => resolve(false)),
-  );
-  if (!got) {
-    review.live = false;
-    waitForQueue();
+  const got = await holdQueue({ signal: AbortSignal.timeout(1500) });
+  if (got) {
+    review.live = true;
+    hadQueue(true);
+    return;
   }
+  review.granted = new Promise((resolve) => (review.grant = resolve));
+  waitForQueue();
+  if (hadQueue()) takeOver();
 }
 
-/** Wait for the queue (the tab that has it closed, or handed it over), then open it as stored. */
+/** Wait for the queue: the tab that has it closing gives it to the tab waiting longest. */
 function waitForQueue() {
-  review.granted = new Promise((resolve) =>
-    navigator.locks.request(QUEUE_LOCK, async () => {
-      Object.assign(review, { live: true, taking: false, alerts: [], toast: null, at: 0 });
-      try {
-        await loadReview();
-      } finally {
-        resolve();
-      }
-      return held();
-    }),
-  );
+  review.waiting = new AbortController();
+  holdQueue({ signal: review.waiting.signal }).then((got) => got && opened());
 }
 
-/** Ask the tab that has the queue to hand it over; resolves once this tab has it. */
-function takeOver() {
-  if (review.live) return Promise.resolve();
-  if (!review.taking) {
-    review.taking = true;
-    review.channel.postMessage('handover');
+/** What the other Discover tabs say: asking for the queue, asking no more, handing it to one, still sending. */
+function heard(m) {
+  if (m.ask) {
+    if (review.live) handOver(m.ask);
+    else review.asked = { from: m.ask, at: Date.now() };
+  } else if (m.never) {
+    if (review.handing === m.never) review.handing = '';
+    if (review.asked && review.asked.from === m.never) review.asked = null;
+  } else if (m.yours) {
+    review.asked = null;
+    if (m.yours !== TAB_ID || review.live || !review.waiting) return;
+    // Taken straight away, ahead of any other tab waiting for it.
+    review.waiting.abort();
+    holdQueue({ steal: true }).then((got) => got && opened());
+  } else if (m.busy === TAB_ID && review.taking && !review.busyThere) {
+    review.busyThere = true;
     renderReview(true);
   }
+}
+
+/** This tab has the queue now (the tab that had it closed, or handed it here): opened as stored, its alerts too. */
+async function opened() {
+  clearTimeout(review.reclaim);
+  Object.assign(review, { live: true, taking: false, busyThere: false, toast: null });
+  hadQueue(true);
+  try {
+    await loadReview(true);
+  } finally {
+    review.grant();
+  }
+  // Asked for by another tab a moment before this one had it: handed on.
+  if (review.asked && Date.now() - review.asked.at < 3000) handOver(review.asked.from);
+}
+
+/** Ask the tab that has the queue to hand it over (again, if pressed again); resolves once this tab has it. */
+function takeOver() {
+  if (review.opening) return review.ready.then(takeOver);
+  if (review.live) return Promise.resolve();
+  if (!review.taking) {
+    Object.assign(review, { taking: true, busyThere: false });
+    renderReview(true);
+  }
+  review.channel.postMessage({ ask: TAB_ID });
   return review.granted;
 }
 
 /**
- * Asked for by another tab: once nothing is in its five seconds or with Nylas, what's being prepared stops (it waits
- * there for Prepare them), the queue is stored and let go, and this tab waits to have it back.
+ * Asked for by tab `to`: once nothing is in its five seconds, with Nylas or being taken back, what's being prepared
+ * stops (it waits there for Prepare them), the queue is stored, alerts and all, and the asking tab takes it. Not taken
+ * within a moment (that tab closed), this one has it back.
  */
-async function handOver() {
+async function handOver(to) {
   if (!review.live || review.handing) return;
-  review.handing = true;
-  while (review.pending.size || review.items.some((i) => MOVING.has(i.status)))
-    await new Promise((resolve) => setTimeout(resolve, 300));
+  review.handing = to;
+  if (sending()) review.channel.postMessage({ busy: to });
+  while (sending() && review.handing === to) await sleep(300);
+  if (review.handing !== to) return;
+  for (const i of review.items)
+    if ((i.status === 'preparing' && !i.body) || (i.status === 'waiting' && !i.held)) i.moved = true;
   review.items.forEach(stopRun);
   clearTimeout(whenDue.timer);
   await saveQueue();
-  Object.assign(review, { live: false, handing: false, taking: false, alerts: [], toast: null });
+  Object.assign(review, { live: false, handing: '', taking: false, alerts: [], toast: null });
+  hadQueue(false);
+  review.granted = new Promise((resolve) => (review.grant = resolve));
   renderReview(true);
-  review.release();
+  review.channel.postMessage({ yours: to });
+  review.reclaim = setTimeout(() => review.holding && !review.live && opened(), 3000);
+}
+
+/** The tab this one handed the queue to has it: this one waits to have it back. */
+function handedOff() {
+  clearTimeout(review.reclaim);
+  review.holding = false;
+  if (review.live) {
+    Object.assign(review, { live: false, alerts: [], toast: null });
+    review.granted = new Promise((resolve) => (review.grant = resolve));
+    renderReview(true);
+  }
   waitForQueue();
 }
 
@@ -4918,8 +5261,9 @@ async function start() {
   // Leaving the page while an email waits out its five seconds asks first; left, the email isn't sent (it's saved as
   // ready, with a word on why), as Undo would. A tab only hidden keeps counting.
   // One with Nylas (being sent, scheduled or saved) asks too: closed then, it may or may not have gone.
+  // Only in the tab that has the queue: another's copy of an email with Nylas is that tab's to send.
   addEventListener('beforeunload', (e) => {
-    if (review.pending.size || review.items.some((i) => MOVING.has(i.status))) e.preventDefault();
+    if (review.live && (review.pending.size || review.items.some((i) => MOVING.has(i.status)))) e.preventDefault();
   });
   api.storage.onChanged.addListener((changes) => {
     if (changes.outreach) outreachChanged().catch(() => null);
@@ -4938,6 +5282,11 @@ async function start() {
   $('#research-top').addEventListener('click', researchTop);
   $('#results-export').addEventListener('click', exportResults);
   $('#outreach-export').addEventListener('click', exportOutreach);
+  // Leaving a note box draws what changed while it had the focus (a reply noted, a firm removed in another tab).
+  $('#outreach').addEventListener(
+    'focusout',
+    (e) => e.target.matches('.outreach-notes') && setTimeout(() => renderOutreach()),
+  );
   for (const t of TABS) $(`#tab-${t}`).addEventListener('click', () => showTab(t));
   // The popup bringing this tab forward on one of its tabs (the watchlist's new roles).
   addEventListener('hashchange', () => TABS.includes(location.hash.slice(1)) && showTab(location.hash.slice(1)));
@@ -4987,10 +5336,14 @@ async function start() {
   // What a Hunter key alone makes possible (Find people) shows once the keys are read.
   syncAi();
   checkReplies().catch(() => null);
-  await claimQueue();
-  await loadReview();
+  // The tab asked for straight away; Review says it's opening while another Discover tab may still have the queue.
   const tab = location.hash.slice(1);
   showTab(TABS.includes(tab) ? tab : 'find');
+  await claimQueue();
+  await loadReview();
+  review.opening = false;
+  review.readied();
+  renderReview(true);
 }
 
 async function boot() {

@@ -927,11 +927,12 @@
 
   /**
    * The records worth keeping from a stored or imported outreach object, the newest OUTREACH_LIMIT. Past the limit a
-   * draft nobody wrote a note on goes before a firm written to (that one stays left out of searches and followed up).
+   * draft nobody wrote a note on goes before a firm written to (that one stays left out of searches and followed up)
+   * or Closed by hand (the person's decision), and never the record just written (`keep`: the page shows it).
    * Times are made numbers: an imported record without updatedAt is dated now (and at with it), and a sentAt that
    * isn't a time goes.
    */
-  function outreachOf(raw) {
+  function outreachOf(raw, keep) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
     const now = Date.now();
     const entries = Object.entries(raw)
@@ -946,13 +947,13 @@
         return [id, rec];
       });
     const newest = ([, a], [, b]) => b.updatedAt - a.updatedAt;
-    const written = (r) =>
-      !!(r.sentAt || r.status === 'sent' || r.status === 'replied' || String(r.notes || '').trim());
+    const written = (r) => !!(r.sentAt || r.status !== 'drafted' || String(r.notes || '').trim());
+    const rank = ([id, r]) => (id === keep ? 2 : written(r) ? 1 : 0);
     if (entries.length > OUTREACH_LIMIT)
       entries.splice(
         0,
         entries.length,
-        ...entries.sort((a, b) => written(b[1]) - written(a[1]) || newest(a, b)).slice(0, OUTREACH_LIMIT),
+        ...entries.sort((a, b) => rank(b) - rank(a) || newest(a, b)).slice(0, OUTREACH_LIMIT),
       );
     return Object.fromEntries(entries.sort(newest));
   }
@@ -963,12 +964,18 @@
   }
 
   /**
-   * Create or change a firm's outreach record: patch { firm, status, to, subject, notes, contact, way }. Status
-   * 'none', or a null patch, removes it. The first save sets `at`; the first 'sent', `sentAt`.
+   * Create or change a firm's outreach record: patch { firm, status, to, subject, notes, contact, way }, or a function
+   * of the record as stored (null when there's none) that returns one (or nothing, to leave it), so a change made from
+   * an older read (a reply line added to the notes) never undoes one written meanwhile. Status 'none', or a null patch, removes it. The first
+   * save sets `at`; the first 'sent', `sentAt`; `opts.at` dates a record made again with a time of its own (one
+   * removed and put back), never one that's there.
+   * Returns the record as stored.
    */
-  const setOutreach = exclusive(async function setOutreach(id, patch) {
+  const setOutreach = exclusive(async function setOutreach(id, change, opts = {}) {
     const all = await getOutreach();
     if (!id) throw new Error('An outreach record needs the firm’s id.');
+    const patch = typeof change === 'function' ? change(all[id] || null) : change;
+    if (typeof change === 'function' && !patch) return all[id] || null;
     if (!patch || patch.status === 'none') {
       delete all[id];
       await area().set({ outreach: all });
@@ -976,15 +983,16 @@
     }
     const now = Date.now();
     const old = all[id] || { status: 'drafted', to: '', subject: '', notes: '', at: now };
-    const next = Object.assign({}, old, patch, { updatedAt: now });
+    const next = Object.assign({}, old, patch, { updatedAt: (!all[id] && timeOf(opts.at)) || now });
     next.firm = firmRef(patch.firm || old.firm, id);
     if (!OUTREACH_STATUSES.includes(next.status))
       next.status = OUTREACH_STATUSES.includes(old.status) ? old.status : 'drafted';
     if (next.status === 'sent' && !next.sentAt) next.sentAt = now;
     for (const k of ['to', 'subject', 'notes']) next[k] = String(next[k] == null ? '' : next[k]);
     all[id] = next;
-    await area().set({ outreach: outreachOf(all) });
-    return next;
+    const kept = outreachOf(all, id);
+    await area().set({ outreach: kept });
+    return kept[id] || null;
   });
 
   /** Forget a firm's outreach record. */
