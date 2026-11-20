@@ -1205,32 +1205,43 @@
       extra = 0;
       return y;
     };
-    const put = (lines, x, justify) => {
-      lines.forEach((line) => items.push({ kind: 'line', y: place(), line, x }));
+    // Each line keeps where it came from (`src`: section, entry, part, its index and how many lines there are, the
+    // width and runs it was set in), so lib/cvcheck.js can find a bullet's last line and set it again.
+    const put = (lines, x, src) => {
+      lines.forEach((line, j) =>
+        items.push({ kind: 'line', y: place(), line, x, src: { ...src, line: j, of: lines.length } }),
+      );
     };
     // "left \hfill right": the left part wraps in what the right part leaves, the right part sits on its last line.
-    const row = (leftRuns, right, rightRun) => {
+    const row = (leftRuns, right, rightRun, src) => {
       const rightW = right ? textWidth(right, rightRun, ctx) : 0;
       const room = width - (right ? rightW + CV.hfillGap : 0);
       // A long left part wraps between words: "Computing Sci-ence)" next to a place looks broken.
       const lines = leftRuns.length ? setParagraph(leftRuns, room, ctx, { justify: false, hyphenate: false }) : [];
       lines.forEach((line, k) => {
         const ly = place();
-        items.push({ kind: 'line', y: ly, line, x: m });
+        items.push({ kind: 'line', y: ly, line, x: m, src: { ...src, line: k, of: lines.length, width: room } });
         if (right && k === lines.length - 1)
-          items.push({ kind: 'right', y: ly, text: right, run: rightRun, x: m + width });
+          items.push({ kind: 'right', y: ly, text: right, run: rightRun, x: m + width, src });
       });
-      if (right && !lines.length) items.push({ kind: 'right', y: place(), text: right, run: rightRun, x: m + width });
+      if (right && !lines.length)
+        items.push({ kind: 'right', y: place(), text: right, run: rightRun, x: m + width, src });
     };
 
-    for (const section of data.sections || []) {
+    (data.sections || []).forEach((section, si) => {
       const entries = section.entries || [];
       const rowsOf = section.lines || [];
       y += CV.depth + CV.before * sp + CV.sectionCap * CV.sectionSize;
       const title = String(section.title || '').toUpperCase();
       const head = items.length;
-      items.push({ kind: 'section', y, text: title, run: { font: f.title, size: CV.sectionSize } });
-      items.push({ kind: 'rule', y: y + CV.ruleGap });
+      items.push({
+        kind: 'section',
+        y,
+        text: title,
+        run: { font: f.title, size: CV.sectionSize },
+        src: { section: si },
+      });
+      items.push({ kind: 'rule', y: y + CV.ruleGap, src: { section: si } });
       first = y + CV.ruleGap + CV.rule + CV.after * sp + CV.ascent * size;
       const gap = (section.entryGap == null ? 4 : section.entryGap) * PT * sp;
       let afterList = false;
@@ -1240,19 +1251,28 @@
         const left = [];
         if (e.heading) left.push({ text: e.heading, ...bold });
         if (e.tagline) left.push({ text: `${e.heading ? ' – ' : ''}${e.tagline}`, ...regular });
-        if (left.length || e.right) row(left, e.right, italic);
+        const at = { section: si, entry: idx };
+        if (left.length || e.right) row(left, e.right, italic, { ...at, part: 'heading' });
         if (e.subheading || e.subright)
-          row(e.subheading ? [{ text: e.subheading, ...regular }] : [], e.subright, italic);
-        if (e.text) put(setParagraph([{ text: e.text, ...regular }], width, ctx), m);
+          row(e.subheading ? [{ text: e.subheading, ...regular }] : [], e.subright, italic, {
+            ...at,
+            part: 'subheading',
+          });
+        if (e.text) {
+          const runs = [{ text: e.text, ...regular }];
+          put(setParagraph(runs, width, ctx), m, { ...at, part: 'text', width, runs });
+        }
         const bullets = e.bullets || [];
         const indent = (CV.labelWidth + CV.labelSep) * step.size;
         bullets.forEach((b, k) => {
           extra += (k ? CV.itemsep : CV.topsep) * sp;
-          const lines = setParagraph([{ text: b, ...regular }], width - indent, ctx);
+          const runs = [{ text: b, ...regular }];
+          const lines = setParagraph(runs, width - indent, ctx);
+          const src = { ...at, part: 'bullet', bullet: k, width: width - indent, runs };
           lines.forEach((line, j) => {
             const ly = place();
-            if (!j) items.push({ kind: 'bullet', y: ly, run: regular });
-            items.push({ kind: 'line', y: ly, line, x: m + indent });
+            if (!j) items.push({ kind: 'bullet', y: ly, run: regular, src });
+            items.push({ kind: 'line', y: ly, line, x: m + indent, src: { ...src, line: j, of: lines.length } });
           });
         });
         afterList = bullets.length > 0;
@@ -1265,14 +1285,15 @@
               { text: ` ${l.text}`, ...regular },
             ]
           : [{ text: l.text, ...regular }];
-        put(setParagraph(runs, width, ctx), m);
+        put(setParagraph(runs, width, ctx), m, { section: si, row: idx, part: 'row', width, runs });
       });
       // A title never ends a page on its own: it stays with the first line after it.
       const firstLine = items.slice(head).find((it) => it.kind === 'line' || it.kind === 'right');
       items[head].keepUntil = firstLine ? firstLine.y : y;
       items[head + 1].keepUntil = items[head].keepUntil;
-    }
-    return { W, H, ctx, items, width, bottom, y, fits: y <= bottom + 2, size, step };
+    });
+    const stepIndex = CV_STEPS.indexOf(step);
+    return { W, H, ctx, items, width, bottom, y, fits: y <= bottom + 2, size, step, stepIndex, lead, margin: m };
   }
 
   /** The CV's layout without the PDF: where every line goes (for previews and tests). */
@@ -1340,6 +1361,7 @@
     coverLetter,
     cv,
     layoutCv,
+    CV_STEPS,
   };
   JTF.pdfdoc = pdfdoc;
   if (typeof module === 'object' && module.exports) module.exports = pdfdoc;
