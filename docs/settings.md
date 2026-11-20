@@ -98,7 +98,11 @@ The same inbox sends Discover’s outreach emails (_Send_, your CV attached) and
 
 ## Settings › _Application log_
 
-Every job application page you filled, with the date, the page, the site, how many fields and which profile. _Export CSV_ downloads it; _Clear log_ empties it.
+Every job application you filled, with the date, the employer, the role, how far it got, the site, how many fields and which profile (the steps of one application are one entry). _Export CSV_ downloads it; _Clear log_ empties it; _Open the application tracker_ opens the _Applications_ page (also in the toolbar popup).
+
+| Setting                            | Default | What it does                                                                                                                                                                                                                                                                                                           |
+| ---------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Follow my applications in my inbox | Off     | Every three hours, reads the emails employers send you through your Nylas connection (Settings › _Email codes_) and moves each application on by itself: applied → test → interview → offer, or rejected where it got to. Never sends, moves or deletes an email; nothing goes to the AI ([what it reads](privacy.md)) |
 
 ## Settings › _Backup & restore_
 

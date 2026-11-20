@@ -36,6 +36,7 @@ if (typeof importScripts === 'function') {
     'lib/doctext.js',
     'lib/otp.js',
     'lib/nylas.js',
+    'lib/tracker.js',
     'lib/discover.js',
   );
 }
@@ -340,15 +341,9 @@ async function fillFrames(tabId, opts, payload, letter, aiReady) {
       'Quick apply is still writing your cover letter and tailoring your CV: it puts them in when they’re ready.',
     );
   const top = frames.find((f) => f.frameId === 0);
-  if (summary.jobContext && !opts.only && settings.logApplications !== false && top && top.url) {
-    await store.addHistory({
-      url: top.url,
-      host: top.host,
-      title: top.title,
-      filled: summary.filled,
-      profile: profile.name,
-    });
-  }
+  // Logged on the side: reading the employer and the role off the page never holds up the fill.
+  if (summary.jobContext && !opts.only && settings.logApplications !== false && top && top.url)
+    logApplication(tabId, top, summary.filled, profile.name).catch(() => {});
   // What the rules left empty goes to the AI, in the background: the fill doesn't wait for it.
   const pending = frames.flatMap((f) => (f.pending || []).map((item) => ({ ...item, frameId: f.frameId })));
   summary.pending = pending.length;
@@ -3908,6 +3903,265 @@ async function updateBadge() {
   return n;
 }
 
+/* ------------------------------------------------------ application tracker */
+
+/**
+ * The application log's entry for a fill: the page, and the job (employer, role, place, posting) as already found for
+ * the tab, else as the page itself names it (JTF.jobpage.applicationContext in the top frame; nothing is fetched).
+ * A later step of the same application updates its entry (store.addHistory).
+ */
+async function logApplication(tabId, top, filled, profileName) {
+  const known = await knownTabJob(tabId, top.url).catch(() => null);
+  let page = null;
+  if (!known || !known.company || !known.title) {
+    const [frame] = await readJobPages(tabId, [0]).catch(() => []);
+    page = frame && !frame.error ? frame : null;
+  }
+  const k = known || {};
+  const p = page || {};
+  const ats = p.ats && p.ats.name ? p.ats : jobpage.ats(top.url);
+  const posting = p.posting && p.posting.url ? p.posting.url : '';
+  return store.addHistory({
+    url: top.url,
+    host: top.host,
+    title: top.title,
+    filled,
+    profile: profileName,
+    company: String(k.company || p.company || '').slice(0, 120),
+    role: String(k.title || p.title || '').slice(0, 160),
+    location: String(k.location || p.location || '').slice(0, 120),
+    jobUrl: k.url && k.url !== top.url ? k.url : posting || p.canonical || '',
+    ats: ats.name || '',
+    jobId: String(ats.jobId || (p.jobIds || [])[0] || ''),
+    atsCompany: ats.company || '',
+  });
+}
+
+// The inbox is read every few hours while the tracker is on, and when its page opens or asks.
+const TRACK_MINUTES = 180;
+// The first look goes back to the oldest application still open, at most this far; each look after starts an hour
+// before the last one ended, so a message that arrived late is still seen.
+const TRACK_BACK = 120 * 24 * 3600 * 1000;
+const TRACK_OVERLAP = 3600 * 1000;
+// Per look: messages listed (newest first, without their bodies), and messages read in full.
+const TRACK_LIST = 2000;
+const TRACK_READ = 60;
+let tracking = null;
+
+/** Read the inbox for news of the applications in the log (one look at a time: the alarm and the page can coincide). */
+function checkApplications(opts) {
+  if (!tracking) tracking = runTracker(opts).finally(() => (tracking = null));
+  return tracking;
+}
+
+/** What a message's sender looks like on the tracker page: "Jane Street Recruiting <recruiting@janestreet.com>". */
+const senderLine = (from) =>
+  []
+    .concat(from || [])
+    .map((f) => (f && f.name ? `${f.name} <${f.email || ''}>` : (f && f.email) || ''))
+    .filter(Boolean)
+    .join(', ');
+
+/**
+ * One look at the inbox (Settings › Application log › "Follow my applications in my inbox"): the messages since the
+ * last look, listed without their bodies; those from a recruiting system or naming an employer applied to read in
+ * full; each one sorted (tracker.classify) and put on its application (tracker.match, tracker.advance). One that is
+ * news but could be no application or several waits under "Unsorted" for you. Nothing is sent, moved, marked or
+ * deleted, and nothing goes to the AI. → { read, looked, news, matched, unsorted, more, error }.
+ */
+async function runTracker() {
+  const { tracker } = globalThis.JTF;
+  const settings = await store.getSettings();
+  if (!settings.trackApplications) return { off: true };
+  const config = await otpReady();
+  if (!config) return { error: 'Connect your inbox first (Settings › Email codes).' };
+  const state = await store.getTracker();
+  const apps = await store.getHistory();
+  const now = Date.now();
+  if (!apps.length) {
+    const run = { at: now, read: 0, looked: 0, news: 0, matched: 0, unsorted: 0, more: 0 };
+    await store.setTracker({ lastRun: run, checkedAt: now });
+    return run;
+  }
+  const open = apps.filter((a) => !['rejected', 'withdrawn', 'offer'].includes(tracker.settle({ ...a }).stage));
+  const oldest = Math.min(...(open.length ? open : apps).map((a) => a.date || now));
+  const since = state.checkedAt ? state.checkedAt - TRACK_OVERLAP : Math.max(oldest - 86400000, now - TRACK_BACK);
+  // The stretches of mail still to read: since the last look, then any a look before ran out of room for.
+  const windows = [{ after: since, before: 0 }, ...(state.windows || [])];
+  const later = [];
+  const seen = new Set(state.seen || []);
+  const listed = [];
+  try {
+    for (const w of windows) {
+      if (listed.length >= TRACK_LIST) {
+        later.push(w);
+        continue;
+      }
+      let token = '';
+      const got = [];
+      do {
+        const page = await nylas.listMessages(config, { since: w.after, until: w.before, pageToken: token });
+        got.push(...page.messages);
+        token = page.next;
+      } while (token && listed.length + got.length < TRACK_LIST);
+      listed.push(...got);
+      // Newest first: what this look had no room for is older than the last message listed.
+      if (token && got.length) later.push({ after: w.after, before: Math.min(...got.map((m) => m.date || 0)) * 1000 });
+    }
+  } catch (err) {
+    const error = String((err && err.message) || err);
+    await store.setTracker({ lastRun: { at: now, error } });
+    return { error };
+  }
+  const me = config.email || '';
+  // Oldest first, so each application's events land in the order they happened.
+  const worth = listed
+    .filter((m) => !seen.has(m.id) && tracker.worth(m, apps, { me }))
+    .sort((a, b) => (a.date || 0) - (b.date || 0));
+  const reading = worth.slice(0, TRACK_READ);
+  // Those left unread are listed again next time (the ones read are remembered as seen).
+  const left = worth.slice(TRACK_READ);
+  if (left.length)
+    later.push({ after: (left[0].date || 0) * 1000 - 1000, before: (left[left.length - 1].date || 0) * 1000 + 1000 });
+  const news = [];
+  const done = [];
+  let failed = 0;
+  for (const m of reading) {
+    let full;
+    try {
+      full = await nylas.message(config, m.id);
+    } catch (err) {
+      failed++;
+      continue;
+    }
+    done.push(m.id);
+    const text = tracker.plainText(full.body || full.snippet || m.snippet);
+    const what = tracker.classify({ from: full.from, subject: full.subject, text });
+    if (!what.kind) continue;
+    const at = (full.date || m.date || 0) * 1000;
+    news.push({
+      messageId: m.id,
+      at,
+      from: senderLine(full.from),
+      fromList: full.from,
+      subject: full.subject || m.subject,
+      text,
+      ...what,
+    });
+  }
+  // Put on their applications, against the log as it is now (a stage set by hand meanwhile stays).
+  let matched = 0;
+  const unsorted = [];
+  await store.updateHistory((list) => {
+    const byId = new Map(list.map((a) => [a.id, a]));
+    for (const n of news) {
+      const hit = tracker.match({ from: n.fromList, subject: n.subject, text: n.text, at: n.at }, list);
+      if (hit && hit.id && byId.has(hit.id)) {
+        const next = tracker.advance(byId.get(hit.id), { ...n, why: hit.why });
+        byId.set(hit.id, next);
+        list[list.findIndex((a) => a.id === hit.id)] = next;
+        matched++;
+      } else if (n.kind !== 'received' || (n.fromList || []).some((f) => tracker.fromSystem(f && f.email))) {
+        // News for no application or for several: yours to sort. A bare "Thank you for applying" from a sender no
+        // fill names (a newsletter sign-up, a credit card) only when a recruiting system sent it.
+        unsorted.push({
+          messageId: n.messageId,
+          at: n.at,
+          from: n.from,
+          subject: n.subject,
+          quote: n.quote,
+          kind: n.kind,
+          detail: n.detail,
+          apps: (hit && hit.ambiguous) || [],
+          why: (hit && hit.why) || 'it names no employer you applied to',
+        });
+      }
+    }
+    return list;
+  });
+  const run = {
+    at: now,
+    since,
+    read: listed.length,
+    looked: done.length,
+    news: news.length,
+    matched,
+    unsorted: unsorted.length,
+    // Emails left for the next look (one look reads TRACK_READ in full), and whether older mail is still to list.
+    more: left.length + failed,
+    behind: later.length > (left.length ? 1 : 0),
+  };
+  await store.setTracker((t) => ({
+    ...t,
+    checkedAt: now,
+    windows: later.slice(0, 8),
+    seen: [...(t.seen || []), ...done],
+    unsorted: [...unsorted, ...(t.unsorted || []).filter((u) => !unsorted.some((x) => x.messageId === u.messageId))],
+    lastRun: run,
+  }));
+  return run;
+}
+
+/**
+ * The tracker page's changes, made here so they never cross a look at the inbox writing the log: a stage set by hand
+ * (or cleared), notes, an application removed; an unsorted email put on an application, added as a new one, or set
+ * aside.
+ */
+async function editApplications(msg) {
+  const { tracker } = globalThis.JTF;
+  const now = Date.now();
+  if (msg.action === 'stage' || msg.action === 'notes' || msg.action === 'remove') {
+    await store.updateHistory((list) =>
+      msg.action === 'remove'
+        ? list.filter((a) => a.id !== msg.id)
+        : list.map((a) => {
+            if (a.id !== msg.id) return a;
+            if (msg.action === 'notes') return { ...a, notes: String(msg.notes || '').slice(0, 4000) };
+            return tracker.setStage(a, msg.stage || null, now);
+          }),
+    );
+    return { ok: true };
+  }
+  if (msg.action === 'assign' || msg.action === 'dismiss') {
+    const t = await store.getTracker();
+    const u = (t.unsorted || []).find((x) => x.messageId === msg.messageId);
+    if (!u) return { ok: false };
+    if (msg.action === 'assign') {
+      const event = { ...u, at: u.at || now };
+      await store.updateHistory((list) => {
+        if (msg.id === 'new') {
+          const company = String(msg.company || '').trim() || 'Unknown employer';
+          return [
+            tracker.advance(
+              {
+                id: util.uid(),
+                date: u.at || now,
+                updatedAt: now,
+                url: '',
+                host: '',
+                title: u.subject,
+                filled: 0,
+                company,
+                role: '',
+                added: 'email',
+              },
+              event,
+            ),
+            ...list,
+          ];
+        }
+        return list.map((a) => (a.id === msg.id ? tracker.advance(a, event) : a));
+      });
+    }
+    await store.setTracker((s) => ({
+      ...s,
+      unsorted: (s.unsorted || []).filter((x) => x.messageId !== msg.messageId),
+    }));
+    return { ok: true };
+  }
+  return { ok: false };
+}
+
 /* -------------------------------------------------------------- messages */
 
 const sum = (frames, key) => frames.reduce((n, f) => n + (f[key] || 0), 0);
@@ -3984,6 +4238,9 @@ const HANDLERS = {
     { ok: true }
   ),
   'jtf:watch-check': () => checkWatchlist(),
+  // The tracker page: a look at the inbox, and its changes to the log (see editApplications).
+  'jtf:tracker-check': () => checkApplications(),
+  'jtf:tracker-edit': (msg) => editApplications(msg),
   'jtf:watch-badge': async () => ({ fresh: await updateBadge() }),
   'jtf:learn': async (msg) => {
     const { profile } = await store.getActive();
@@ -4089,11 +4346,15 @@ async function generatePasswordInto(tab, info, frameIds) {
 async function ensureAlarm() {
   if (!(await api.alarms.get('jtf-watch')))
     api.alarms.create('jtf-watch', { delayInMinutes: 5, periodInMinutes: WATCH_MINUTES });
+  if (!(await api.alarms.get('jtf-track')))
+    api.alarms.create('jtf-track', { delayInMinutes: 10, periodInMinutes: TRACK_MINUTES });
 }
 
 api.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'jtf-backup') await writeBackup();
   else if (alarm.name === 'jtf-watch' && (await store.getWatchlist()).length) await checkWatchlist();
+  else if (alarm.name === 'jtf-track' && (await store.getSettings()).trackApplications)
+    await checkApplications().catch(() => {});
 });
 
 // Passwords and cards kept by older versions in an encrypted vault: moved over by themselves while its key is still
@@ -4151,5 +4412,8 @@ globalThis.JTFBackground = {
   endFlow,
   checkWatchlist,
   updateBadge,
+  logApplication,
+  checkApplications,
+  editApplications,
   handlers: HANDLERS,
 };

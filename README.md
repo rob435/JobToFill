@@ -50,6 +50,7 @@ Firefox updates JobToFill by itself. In Chrome, unzip a newer release over the s
 | Remember answers you typed            | JobToFill button › _Learn from this page_                   |
 | Put one detail into a box             | Right-click the box › _Insert from profile_                 |
 | Find firms that don’t advertise       | JobToFill button › _Discover internships_                   |
+| See how far each application got      | JobToFill button › _Applications_                           |
 
 More: [docs/using.md](docs/using.md).
 

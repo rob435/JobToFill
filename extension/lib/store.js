@@ -6,7 +6,11 @@
  *   profileOrder  [id, ...]
  *   settings      see DEFAULT_SETTINGS
  *   doc:<id>:<which>  { name, type, size, dataUrl, updatedAt }   (resume / coverLetter / transcript files)
- *   history       [{ date, url, host, title, filled }]  newest first
+ *   history       the application log, newest first: [{ id, date (first filled), updatedAt, url, host, title, filled,
+ *                 profile, company, role, location, jobUrl, ats, jobId, and what the tracker read of it (tracker.js):
+ *                 events, manual, stage, reached, stageAt, notes }]
+ *   tracker       the application tracker's own state: { checkedAt (mail read up to), seen: [message id], unsorted:
+ *                 [{ messageId, at, from, subject, quote, kind, detail, apps: [id], why }], lastRun }; never in a backup
  *   passwords     saved logins, your default password and payment cards, plain JSON (passwords.js); in backups
  *   vault         the encrypted vault of older versions, until it is moved into passwords or discarded (passwords.js)
  *   backupInfo    { at, path, error, paused, previous, dismissed }  the automatic backup file (background.js)
@@ -57,6 +61,9 @@
     autoBackup: true,
     passwordStrategy: 'generate',
     logApplications: true,
+    // The application tracker reads employers' emails in the connected inbox (Nylas) to follow each application
+    // (background.js runTracker). Off unless switched on.
+    trackApplications: false,
     // models: the model chosen for each provider; fallback: use another provider you have a key for when
     // this one is out of credit or down; backupKeys: keep the API keys in the backup file; fast: Claude Opus's fast
     // mode (twice the price).
@@ -110,6 +117,7 @@
 
   const DOC_TYPES = ['resume', 'coverLetter', 'transcript'];
   const HISTORY_LIMIT = 500;
+  const TRACKER_SEEN_LIMIT = 5000;
   const LETTER_LIMIT = 25;
   const WATCH_LIMIT = 200;
   const SEEN_LIMIT = 1000;
@@ -724,23 +732,69 @@
 
   /* ---------------------------------------------------------------- history */
 
-  async function getHistory() {
-    return (await area().get('history')).history || [];
+  /** An id for an entry logged before entries had one: the same every time it is read. */
+  function legacyId(h) {
+    let n = 0;
+    for (const ch of `${h.date}|${h.url}`) n = (n * 31 + ch.charCodeAt(0)) | 0;
+    return `h${Number(h.date || 0).toString(36)}${(n >>> 0).toString(36)}`;
   }
 
-  /** Log an application. Re-filling the same page within an hour updates the entry. */
+  async function getHistory() {
+    const list = (await area().get('history')).history || [];
+    return list.filter((h) => h && typeof h === 'object').map((h) => (h.id ? h : { ...h, id: legacyId(h) }));
+  }
+
+  // What the first step found of the job stays: a later step's heading ("My Information") is no better a role. A later
+  // step only fills in what is still missing.
+  const STICKY = ['company', 'role', 'location', 'jobUrl', 'ats', 'jobId', 'atsCompany', 'title'];
+
+  /**
+   * Log an application. A later step of the same one (the same page within the hour, the same job id on the same site,
+   * or the same employer and role within 14 days: JTF.tracker.sameApplication) updates its entry, keeping the date it
+   * was first filled. → the entry.
+   */
   const addHistory = exclusive(async function addHistory(entry) {
     const history = await getHistory();
     const now = Date.now();
-    const recent = history.find((h) => h.url === entry.url && now - h.date < 3600000);
-    if (recent) Object.assign(recent, entry, { date: now, filled: Math.max(recent.filled || 0, entry.filled || 0) });
-    else history.unshift(Object.assign({ date: now }, entry));
+    const same = JTF.tracker
+      ? (h) => JTF.tracker.sameApplication(h, entry, now)
+      : (h) => h.url === entry.url && now - (h.updatedAt || h.date) < 3600000;
+    const recent = history.find(same);
+    if (recent) {
+      const filled = Math.max(recent.filled || 0, entry.filled || 0);
+      for (const [k, v] of Object.entries(entry)) if (!(STICKY.includes(k) && recent[k])) recent[k] = v;
+      Object.assign(recent, { updatedAt: now, filled });
+    } else history.unshift({ id: JTF.util.uid(), date: now, updatedAt: now, stage: 'filled', ...entry });
     await area().set({ history: history.slice(0, HISTORY_LIMIT) });
+    return recent || history[0];
+  });
+
+  /** Change the log: `fn(history)` returns it as it should be (read fresh and written at once). */
+  const updateHistory = exclusive(async function updateHistory(fn) {
+    const next = (await fn(await getHistory())) || [];
+    await area().set({ history: next.slice(0, HISTORY_LIMIT) });
+    return next;
   });
 
   async function clearHistory() {
     await area().set({ history: [] });
   }
+
+  /** The application tracker's state (see the top of this file). */
+  async function getTracker() {
+    const t = (await area().get('tracker')).tracker || {};
+    return { checkedAt: 0, seen: [], unsorted: [], lastRun: null, ...t };
+  }
+
+  /** Change the tracker's state: an object merged in, or `fn(state)` returning the new one. */
+  const setTracker = exclusive(async function setTracker(patch) {
+    const now = await getTracker();
+    const next = typeof patch === 'function' ? await patch(now) : { ...now, ...patch };
+    next.seen = (next.seen || []).slice(-TRACKER_SEEN_LIMIT);
+    next.unsorted = (next.unsorted || []).slice(0, 200);
+    await area().set({ tracker: next });
+    return next;
+  });
 
   /* ---------------------------------------------------------------- backups */
 
@@ -1163,7 +1217,10 @@
     clearQuickApply,
     getHistory,
     addHistory,
+    updateHistory,
     clearHistory,
+    getTracker,
+    setTracker,
     getWatchlist,
     saveWatch,
     removeWatch,

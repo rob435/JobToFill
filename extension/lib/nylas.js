@@ -1,7 +1,8 @@
 /*
  * JobToFill — your email through Nylas (https://www.nylas.com), with your own API key and the grant (connected
  * inbox) you choose, on the Nylas v3 API. For verification codes it only reads: the last few messages, never moving
- * or marking anything. Discover's outreach can also save an email you wrote to your mailbox's drafts or send it,
+ * or marking anything; so does the application tracker, which lists the messages since its last look and reads the
+ * ones from employers and recruiting systems in full (only once you switch it on). Discover's outreach can also save an email you wrote to your mailbox's drafts or send it,
  * your CV attached, but only when you press that button for that one email. A send can wait for a time (Nylas holds
  * it until then; taking it back, until a minute before, has Nylas delete it unsent), and a follow-up goes into the
  * first email's thread. Once a waiting email's time has passed it's looked up by its subject, to learn its thread.
@@ -174,6 +175,59 @@
       body: m.body || '',
       snippet: m.snippet || '',
     }));
+  }
+
+  /** A message as JobToFill keeps it: { id, subject, from, date (seconds, as Nylas gives it), snippet, body? }. */
+  const listed = (m) => ({
+    id: m.id,
+    subject: m.subject || '',
+    from: m.from || [],
+    date: m.date || 0,
+    snippet: m.snippet || '',
+    ...(m.body != null ? { body: m.body } : {}),
+  });
+
+  /** GET `path` asking only for `select`, again without it for an older API that doesn't take it. */
+  async function selected(config, path, params, fetchImpl) {
+    try {
+      return await get(config, path, params, fetchImpl);
+    } catch (err) {
+      if (!(err.status === 400 && /select/i.test(err.message))) throw err;
+      const rest = { ...params };
+      delete rest.select;
+      return get(config, path, rest, fetchImpl);
+    }
+  }
+
+  /**
+   * One page of the messages received after `since` (and before `until`, when given; both ms), newest first, without
+   * their bodies (the application tracker reads only the ones worth it in full): { messages: [{ id, subject, from,
+   * date, snippet }], next (the page token for the page after, or '') }. Nylas takes up to 200 a page.
+   */
+  async function listMessages(config, { since, until, limit = 200, pageToken = '', fetch: fetchImpl } = {}) {
+    if (!config || !config.grantId) throw new NylasError('Choose which inbox to read first.', { code: 'setup' });
+    const params = {
+      limit: Math.max(1, Math.min(200, limit)),
+      received_after: since ? Math.floor(since / 1000) : null,
+      received_before: until ? Math.ceil(until / 1000) : null,
+      page_token: pageToken || null,
+      select: 'id,subject,from,date,snippet',
+    };
+    const data = await selected(config, `/v3/grants/${encodeURIComponent(config.grantId)}/messages`, params, fetchImpl);
+    return {
+      messages: (data.data || []).map((m) => listed({ ...m, body: null })),
+      next: String(data.next_cursor || ''),
+    };
+  }
+
+  /** One message with its body: { id, subject, from, date, snippet, body }. */
+  async function message(config, id, { fetch: fetchImpl } = {}) {
+    if (!config || !config.grantId) throw new NylasError('Choose which inbox to read first.', { code: 'setup' });
+    if (!String(id || '').trim()) throw new NylasError('There’s no message to read.', { code: 'setup' });
+    const path = `/v3/grants/${encodeURIComponent(config.grantId)}/messages/${encodeURIComponent(id)}`;
+    const data = await selected(config, path, { select: 'id,subject,from,date,snippet,body' }, fetchImpl);
+    const m = data.data && typeof data.data === 'object' && !Array.isArray(data.data) ? data.data : data;
+    return listed({ ...m, body: m.body || '' });
   }
 
   /* ------------------------------------------------------------ writing */
@@ -431,6 +485,8 @@
     problem,
     grants,
     messages,
+    listMessages,
+    message,
     htmlOf,
     messageOf,
     saveDraft,

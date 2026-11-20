@@ -26,6 +26,7 @@ export default [
       'extension/quick/**/*.js',
       'extension/discover/**/*.js',
       'extension/map/**/*.js',
+      'extension/tracker/**/*.js',
     ],
     languageOptions: { sourceType: 'module', globals: extension },
   },
