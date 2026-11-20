@@ -14,6 +14,7 @@ import {
   api,
   download,
   el,
+  hasAiConsent,
   hasSiteAccess,
   modelPicker,
   plural,
@@ -59,6 +60,7 @@ const state = {
   running: new Set(),
   reading: new Set(),
   showAll: new Set(), // cards showing every contact
+  opened: new Set(), // cards whose folded detail (a firm checked only ahead of time) was opened
   drafts: {}, // firmId → the email drawer: { contact, kind, instruction, subject, body, result, running, error, … }
   watch: [],
   watchStates: {},
@@ -68,6 +70,12 @@ const state = {
   finderKeys: {}, // store.getFinderKeys(): { hunter }
   nylas: null, // store.getNylas(): the inbox drafts are saved to and sent from
   settings: null,
+  pre: {}, // firmId → what data/checks.json found on its site ahead of time (scripts/firm-checks.mjs)
+  preBuilt: '',
+  picked: new Set(), // firms ticked in the results, for Write to them / Watch them
+  hidden: 0, // results left out as written to already, at the last draw
+  outreachFilter: 'all',
+  checkingReplies: false,
 };
 
 const send = (message) => api.runtime.sendMessage(message);
@@ -80,9 +88,17 @@ const errorText = (err) => String((err && err.message) || err);
 /* --------------------------------------------------------------- loading */
 
 async function loadRegistry() {
-  const res = await fetch(api.runtime.getURL('data/firms.json'));
-  const json = await res.json();
-  state.firms = D.loadFirms(json);
+  const [json, pre] = await Promise.all([
+    fetch(api.runtime.getURL('data/firms.json')).then((r) => r.json()),
+    fetch(api.runtime.getURL('data/checks.json'))
+      .then((r) => r.json())
+      .catch(() => null),
+  ]);
+  const dead = new Set((pre && pre.dead) || []);
+  state.pre = (pre && pre.firms) || {};
+  state.preBuilt = (pre && pre.built) || '';
+  // Firms whose site is gone, or that have no careers page and no address anywhere, were found so ahead of time.
+  state.firms = D.loadFirms(json).filter((f) => !dead.has(f.id));
   state.built = json.built || '';
   $('#registry-info').textContent =
     `${state.firms.length.toLocaleString('en-GB')} firms in the registry${state.built ? ` (built ${state.built})` : ''}`;
@@ -157,6 +173,51 @@ function readQuery() {
   };
 }
 
+const LAST_SEARCH = 'jobtofill-discover-search';
+
+/** The search form as it was last searched, kept in this browser so the page opens on the same firms. */
+function rememberSearch() {
+  const q = {
+    niches: [...document.querySelectorAll('#niches input:checked')].map((i) => i.value),
+    place: $('#place').value,
+    size: $('#size').value,
+    seeds: $('#seeds').value,
+    text: $('#text').value,
+    hideTrackr: $('#hide-trackr').checked,
+    hn: $('#use-hn').checked,
+  };
+  try {
+    localStorage.setItem(LAST_SEARCH, JSON.stringify(q));
+  } catch (err) {
+    // Storage off: the page just opens on the defaults next time.
+  }
+}
+
+/** The last search put back in the form; true when there was one. */
+function restoreSearch() {
+  let q;
+  try {
+    q = JSON.parse(localStorage.getItem(LAST_SEARCH) || 'null');
+  } catch (err) {
+    return false;
+  }
+  if (!q || typeof q !== 'object') return false;
+  if (Array.isArray(q.niches))
+    for (const box of document.querySelectorAll('#niches input')) box.checked = q.niches.includes(box.value);
+  const set = (sel, v) => {
+    const box = $(sel);
+    if (typeof v === 'string' && (box.tagName !== 'SELECT' || [...box.options].some((o) => o.value === v)))
+      box.value = v;
+  };
+  set('#place', q.place);
+  set('#size', q.size);
+  set('#seeds', q.seeds);
+  set('#text', q.text);
+  if (typeof q.hideTrackr === 'boolean') $('#hide-trackr').checked = q.hideTrackr;
+  if (typeof q.hn === 'boolean') $('#use-hn').checked = q.hn;
+  return true;
+}
+
 function status(text, error) {
   $('#status').textContent = text;
   $('#status').classList.toggle('error', !!error);
@@ -167,12 +228,14 @@ function listedNote(q) {
   if (!state.listed || !q.hideTrackr || !state.sources.length) return '';
   const who = state.sources.join(' and ');
   const n = (state.listed.names || []).length.toLocaleString('en-GB');
-  return ` ${who} ${state.sources.length > 1 ? 'list' : 'lists'} ${n} names; those are left out.`;
+  return ` ${who} ${state.sources.length > 1 ? 'list' : 'lists'} ${n} ${n === '1' ? 'name' : 'names'}; those are left out.`;
 }
 
-async function search(event) {
+async function search(event, { quiet = false } = {}) {
   if (event) event.preventDefault();
-  const useAi = $('#use-ai').checked && !$('#use-ai').disabled;
+  // The search the page opens on (the last one) never asks the AI: that takes a press.
+  const useAi = !quiet && $('#use-ai').checked && !$('#use-ai').disabled;
+  if (!quiet) rememberSearch();
   // Firefox asks before page text goes to the AI provider; the request must come straight from the click.
   const consent = useAi ? requestAiConsent() : Promise.resolve(true);
   const q = readQuery();
@@ -215,6 +278,8 @@ async function search(event) {
     renderResults();
     const count = state.results.length;
     status(`${count ? `${plural(count, 'firm')} match.` : 'No firms match.'}${hnNote}${listedNote(q)}`);
+    topUp();
+    renderHome();
     if (useAi) await askAi(q, await consent);
   } catch (err) {
     status(errorText(err), true);
@@ -450,7 +515,8 @@ function nowAt(firm) {
 /** The firm's careers pages and job boards, then who to email there; both kept for half a day. */
 async function checkFirm(firm, { force } = {}) {
   const cached = state.checks[firm.id];
-  if (!force && cached && Date.now() - cached.at < CHECK_AGE && state.contacts[firm.id]) return cached.result;
+  if (!force && cached && !cached.bundled && Date.now() - cached.at < CHECK_AGE && state.contacts[firm.id])
+    return cached.result;
   if (state.running.has(firm.id)) return null;
   state.running.add(firm.id);
   rerender(firm.id);
@@ -484,6 +550,65 @@ async function checkFirm(firm, { force } = {}) {
   }
 }
 
+/**
+ * What the firm's site showed when the registry was checked ahead of time (data/checks.json), as a careers check and
+ * a contacts check: its way in and its mailboxes show on its card at once, and Review prepares its email without
+ * waiting for the crawl. Marked `bundled`, so Check again (and Check the top 10) reads the site afresh; a check made
+ * here always wins.
+ */
+function adoptPre() {
+  const at = Date.parse(state.preBuilt) || 0;
+  for (const firm of state.firms) {
+    const p = state.pre[firm.id];
+    if (!p || state.checks[firm.id]) continue;
+    const site = p.u || firm.site || '';
+    const domain = D.domainOf(site) || firm.domain || '';
+    const why = `On ${domain || 'its website'}${state.preBuilt ? ` (checked ${longDate(state.preBuilt)})` : ''}`;
+    const best = (p.m || []).map((m) => ({
+      address: m.a,
+      kind: C.kindOf(m.a),
+      name: '',
+      title: '',
+      why,
+      guessed: false,
+    }));
+    state.checks[firm.id] = {
+      at,
+      bundled: true,
+      result: {
+        status: p.s || 'none',
+        site,
+        pages: p.p || [],
+        boards: (p.b || []).map((b) => ({ ...b, found: 'site' })),
+        roles: [],
+        other: 0,
+        programmes: [],
+        mentions: [],
+        emails: [],
+        texts: [],
+        log: [],
+        pre: { roles: p.r || 0, programmes: p.g || 0 },
+      },
+    };
+    state.contacts[firm.id] = {
+      at,
+      bundled: true,
+      result: {
+        best,
+        people: [],
+        emails: best.map((b) => b.address),
+        pattern: p.f ? { pattern: p.f.p, domain: p.f.d, examples: p.f.n || 0 } : {},
+        named: [],
+        status: p.c || (best.length ? 'found' : 'none'),
+        log: [],
+      },
+    };
+  }
+}
+
+/** Has the firm been checked on this computer (not only ahead of time, in data/checks.json)? */
+const checkedHere = (id) => !!state.checks[id] && !state.checks[id].bundled;
+
 /** A thorough search reads a careers page the rules made nothing of, once the check is done (consent from the click). */
 async function checkAndRead(firm, options, consent) {
   const result = await checkFirm(firm, options);
@@ -499,7 +624,7 @@ const THOROUGH_READ =
 async function checkTop() {
   const list = visible()
     .slice(0, 10)
-    .filter((r) => !state.checks[r.firm.id]);
+    .filter((r) => !checkedHere(r.firm.id));
   const read = thorough();
   const consent = read ? requestAiConsent() : null;
   const button = $('#check-top');
@@ -926,6 +1051,24 @@ async function setOutreach(firm, patch) {
 
 const OUTREACH_TEXT = { drafted: 'Drafted', sent: 'Sent', replied: 'Replied', closed: 'Closed' };
 
+/**
+ * The firms written to (or Closed), by id and by website: the same firm found again under another id (a Hacker News
+ * post of a registry firm) counts as written to, so it's never recommended twice.
+ */
+function writtenIndex() {
+  const ids = new Set();
+  const domains = new Set();
+  for (const [id, rec] of Object.entries(state.outreach)) {
+    if (!rec || (rec.status === 'drafted' && !rec.sending)) continue;
+    ids.add(id);
+    const d = rec.firm && (rec.firm.domain || D.domainOf(rec.firm.site || ''));
+    if (d) domains.add(d);
+  }
+  return { ids, domains };
+}
+const writtenTo = (firm, index = writtenIndex()) =>
+  index.ids.has(firm.id) || (!!firm.domain && index.domains.has(firm.domain));
+
 function day(t) {
   if (!t) return '';
   const d = new Date(t);
@@ -953,9 +1096,13 @@ function outreachPill(rec) {
 
 /** The results as shown: only those with something open when asked, best way in first when asked. */
 function visible() {
-  const list = $('#only-open').checked
-    ? state.results.filter((r) => hasOpen((state.checks[r.firm.id] || {}).result))
-    : state.results;
+  const written = writtenIndex();
+  const hide = $('#hide-written').checked;
+  let list = state.results;
+  if (hide) list = list.filter((r) => !writtenTo(r.firm, written));
+  state.hidden = state.results.length - list.length;
+  if ($('#only-open').checked) list = list.filter((r) => hasOpen((state.checks[r.firm.id] || {}).result));
+  if ($('#only-contact').checked) list = list.filter((r) => contactsOf(r.firm).length);
   if (!$('#sort-way').checked) return list;
   // Checked firms by their way in (the search's order within each), unchecked ones after.
   return list
@@ -1005,7 +1152,6 @@ function badges(firm, flags) {
   else if (state.listed) out.push(el('span', { className: 'pill ok', textContent: `Not on ${lists}` }));
   for (const niche of [...new Set((firm.tags || []).map(nicheOfTag).filter(Boolean))].slice(0, 3))
     out.push(el('span', { className: 'pill', textContent: niche.label }));
-  out.push(outreachPill(state.outreach[firm.id]));
   return el('div', { className: 'badges' }, out);
 }
 
@@ -1420,15 +1566,22 @@ function foundView(firm, result) {
       url: typeof x === 'string' ? x : (x && x.what) || '',
     })),
   ];
+  const bundled = !!(state.checks[firm.id] || {}).bundled;
+  // A firm checked only ahead of time keeps the detail folded: the line at the top of its card says the gist. Opened,
+  // it stays open while the card is drawn again.
+  const open = !bundled || state.opened.has(firm.id);
   return el(
-    'div',
-    { className: 'found' },
-    el(
-      'p',
-      { className: 'way small' },
-      'Best way in: ',
-      el('span', { className: `pill ${WAYS[way][0]}`, textContent: WAYS[way][1] }),
-    ),
+    'details',
+    {
+      className: 'found',
+      open,
+      ontoggle: (e) => (e.target.open ? state.opened.add(firm.id) : state.opened.delete(firm.id)),
+    },
+    el('summary', {
+      textContent: bundled
+        ? `Careers pages and who to email${state.preBuilt ? ` (checked ${longDate(state.preBuilt)})` : ''}`
+        : 'Careers pages and who to email',
+    }),
     // The check's own status, unless the way in already says it ("Programme page" twice).
     el(
       'div',
@@ -1438,6 +1591,19 @@ function foundView(firm, result) {
       result.other ? el('span', { className: 'muted', textContent: `${plural(result.other, 'other job')}` }) : null,
     ),
     (result.roles || []).length ? rolesList(result.roles) : null,
+    result.pre && (result.pre.roles || result.pre.programmes)
+      ? el('p', {
+          className: 'small muted',
+          textContent: `${[
+            result.pre.roles && plural(result.pre.roles, 'student role'),
+            result.pre.programmes && plural(result.pre.programmes, 'programme'),
+          ]
+            .filter(Boolean)
+            .join(
+              ' and ',
+            )} on its site when it was checked${state.preBuilt ? ` on ${longDate(state.preBuilt)}` : ''}: Check now lists them.`,
+        })
+      : null,
     programmesList(result.programmes || []),
     mentionsList(result.mentions || []),
     c.read ? readView(c.read) : null,
@@ -1469,7 +1635,7 @@ function foundView(firm, result) {
     c.readError ? el('p', { className: 'small error', textContent: c.readError }) : null,
     el(
       'details',
-      {},
+      { hidden: !log.length },
       el('summary', { textContent: 'What was checked' }),
       el(
         'ul',
@@ -1921,19 +2087,67 @@ async function checkReplies() {
       me: nylas.email,
       fetch: fetchFn,
     }).catch(() => []);
-    if (!list.length) continue;
-    const from = (list[0].from || [])[0] || {};
-    const note = `Reply from ${from.name || from.email || 'them'} on ${day((list[0].date || 0) * 1000)}: “${String(list[0].snippet || '').slice(0, 140)}”`;
+    // An out-of-office noted once isn't noted again at the next look.
+    const seen = new Set(rec.seenReplies || []);
+    const fresh = list.filter((m) => !seen.has(m.id)).map((m) => ({ ...m, kind: O.replyKind(m) }));
+    if (!fresh.length) continue;
+    // A person's answer counts over a bounce, a bounce over an out-of-office.
+    const human = fresh.find((m) => !['auto', 'bounced'].includes(m.kind));
+    const bounce = fresh.find((m) => m.kind === 'bounced');
+    const m = human || bounce || fresh[0];
+    const from = (m.from || [])[0] || {};
+    const who = from.name || from.email || 'them';
+    const snippet = String(m.snippet || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 200);
+    const label = human ? 'Reply' : bounce ? 'Bounced' : 'Auto-reply';
+    const note = `${label} from ${who} on ${day((m.date || 0) * 1000)}: “${snippet.slice(0, 140)}”`;
+    const reply = { kind: m.kind, from: who, at: (m.date || 0) * 1000 || Date.now(), snippet };
     // Added to the note as it is when written, not as it was when the check began: one saved meanwhile stays.
-    const next = await store.setOutreach(id, (old) =>
-      old && old.status === 'sent' && old.threadId === rec.threadId
-        ? { status: 'replied', notes: old.notes ? `${old.notes}\n${note}` : note }
-        : null,
-    );
+    const next = await store.setOutreach(id, (old) => {
+      if (!old || old.status !== 'sent' || old.threadId !== rec.threadId) return null;
+      const notes = old.notes ? `${old.notes}\n${note}` : note;
+      const seenReplies = [...new Set([...(old.seenReplies || []), ...fresh.map((x) => x.id)])].slice(-20);
+      if (human) return { status: 'replied', reply, notes, seenReplies };
+      // Never arrived: closed, with the address kept so the firm is written to at someone else's if asked.
+      if (bounce) {
+        const bounced = [...new Set([...(old.bounced || []), String(old.to || '').toLowerCase()])].filter(Boolean);
+        return { status: 'closed', reply, notes, seenReplies, bounced };
+      }
+      // An out-of-office: still waiting for a person, and followed up as any other.
+      return { reply, notes, seenReplies };
+    });
     if (next) state.outreach[id] = next;
   }
   if (waiting.length) renderOutreach();
   afterReconcile(reconcileQueue());
+  renderHome();
+}
+
+/** The reply check from a button (and every ten minutes while the page is open), one at a time. */
+async function lookForReplies(button) {
+  if (state.checkingReplies) return;
+  if (!state.nylas || !state.nylas.grantId) {
+    if (button)
+      $('#outreach-status').textContent = 'Connect your inbox under Settings › Email codes to have replies found.';
+    return;
+  }
+  state.checkingReplies = true;
+  if (button) button.disabled = true;
+  const before = JSON.stringify(Object.values(state.outreach).map((r) => [r.status, r.reply && r.reply.at]));
+  try {
+    await checkReplies();
+    if (button) {
+      const after = JSON.stringify(Object.values(state.outreach).map((r) => [r.status, r.reply && r.reply.at]));
+      $('#outreach-status').textContent = after === before ? 'No new replies.' : 'Replies found: see below.';
+    }
+  } catch (err) {
+    if (button) $('#outreach-status').textContent = `Couldn’t look for replies: ${errorText(err)}`;
+  } finally {
+    state.checkingReplies = false;
+    if (button) button.disabled = false;
+  }
 }
 
 /** The draft's checks: what failed, each on its own line, and the ones that passed as one count. */
@@ -1969,7 +2183,7 @@ function shortUrl(u) {
 function writeButton(firm) {
   const item = review.items.find((i) => i.id === firm.id);
   const rec = state.outreach[firm.id];
-  const written = rec && (rec.status !== 'drafted' || !!rec.sending);
+  const written = (rec && (rec.status !== 'drafted' || !!rec.sending)) || writtenTo(firm);
   return el('button', {
     className: 'write-go' + (item || written ? '' : ' primary'),
     type: 'button',
@@ -1977,7 +2191,7 @@ function writeButton(firm) {
     title: aiReady() ? 'Check it, find who to write to and a reason to, and draft the email to read in Review' : NO_AI,
     // One Closed by hand before anything was sent wasn't written to: it says Closed.
     textContent: written
-      ? rec.status === 'closed' && !rec.sentAt
+      ? rec && rec.status === 'closed' && !rec.sentAt
         ? 'Closed'
         : 'Written to'
       : item
@@ -1987,6 +2201,59 @@ function writeButton(firm) {
   });
 }
 
+/** One line at the top of a card: the best way in and the first person to write to, from whatever check there is. */
+function glanceView(firm) {
+  const way = wayOf(firm);
+  if (way == null) return null;
+  const first = contactsOf(firm)[0];
+  return el(
+    'div',
+    { className: 'glance' },
+    el('span', {}, 'Best way in: ', el('span', { className: `pill ${WAYS[way][0]}`, textContent: WAYS[way][1] })),
+    first
+      ? el(
+          'span',
+          {},
+          'Write to ',
+          el('span', { className: 'who', textContent: whoLabel(first) }),
+          ' ',
+          el('a', { href: 'mailto:' + first.address, textContent: first.address }),
+        )
+      : el('span', { className: 'muted', textContent: 'No address on its site yet' }),
+  );
+}
+
+/** Tick or untick a firm for Write to them / Watch them. */
+function pick(id, on) {
+  if (on) state.picked.add(id);
+  else state.picked.delete(id);
+  const li = document.querySelector(`#results .firm[data-id="${CSS.escape(id)}"]`);
+  if (li) {
+    li.classList.toggle('picked', on);
+    const box = li.querySelector('input.pick');
+    if (box) box.checked = on;
+  }
+  pickedBar();
+}
+
+/** The bar over the results: how many are picked, and what can be done with them. */
+function pickedBar() {
+  const ids = [...state.picked].filter((id) => state.results.some((r) => r.firm.id === id));
+  state.picked = new Set(ids);
+  const n = ids.length;
+  $('#picked-count').textContent = n ? `${plural(n, 'firm')} selected` : 'None selected';
+  $('#pick-none').hidden = !n;
+  $('#write-picked').hidden = !n;
+  $('#watch-picked').hidden = !n;
+  $('#write-picked').textContent = `Write to ${n === 1 ? 'it' : `these ${n}`}`;
+  $('#write-picked').disabled = !aiReady();
+  $('#write-picked').title = aiReady() ? '' : NO_AI;
+  $('#watch-picked').textContent = `Watch ${n === 1 ? 'it' : `these ${n}`}`;
+}
+
+/** The firms picked, in the order they're shown. */
+const pickedFirms = () => state.results.filter((r) => state.picked.has(r.firm.id)).map((r) => r.firm);
+
 function firmCard(r) {
   const { firm } = r;
   const check = state.checks[firm.id];
@@ -1995,15 +2262,28 @@ function firmCard(r) {
   const watched = state.watch.some((w) => w.id === firm.id);
   const people = contactsOf(firm);
   const d = state.drafts[firm.id];
+  const picked = state.picked.has(firm.id);
   return el(
     'li',
-    { className: 'firm', dataset: { id: firm.id, open: String(hasOpen(check && check.result)) } },
+    {
+      className: 'firm' + (picked ? ' picked' : ''),
+      dataset: { id: firm.id, open: String(hasOpen(check && check.result)) },
+    },
     el(
       'div',
       { className: 'firm-head' },
+      el('input', {
+        type: 'checkbox',
+        className: 'pick',
+        checked: picked,
+        attrs: { 'aria-label': `Select ${firm.name}` },
+        onchange: (e) => pick(firm.id, e.target.checked),
+      }),
       el('span', { className: 'firm-name', textContent: firm.name }),
       el('span', { className: 'firm-meta', textContent: meta(firm) }),
+      outreachPill(state.outreach[firm.id]),
     ),
+    glanceView(firm),
     badges(firm, r.flags),
     r.reasons.length || r.why || firm.about
       ? el('p', {
@@ -2026,9 +2306,18 @@ function firmCard(r) {
         className: 'small check',
         type: 'button',
         disabled: running,
-        textContent: running ? 'Checking…' : check ? 'Check again' : 'Check careers & contacts',
-        title: thorough() ? THOROUGH_READ : '',
+        textContent: running
+          ? 'Checking…'
+          : checkedHere(firm.id)
+            ? 'Check again'
+            : check
+              ? 'Check now'
+              : 'Check careers & contacts',
         onclick: () => checkAndRead(firm, { force: !!check }, thorough() ? requestAiConsent() : null),
+        title:
+          (check && check.bundled
+            ? `Checked ahead of time${state.preBuilt ? ` on ${longDate(state.preBuilt)}` : ''}: Check now reads its site again for today’s roles and people. `
+            : '') + (thorough() ? THOROUGH_READ : ''),
       }),
       canResearch()
         ? el('button', {
@@ -2078,11 +2367,24 @@ function firmCard(r) {
 function renderResults() {
   const list = visible();
   $('#results-card').hidden = false;
+  $('#results-empty').hidden = true;
   $('#results-title').textContent = plural(list.length, 'firm');
+  const ready = list.filter((r) => contactsOf(r.firm).length).length;
+  $('#results-note').textContent = [
+    list.length && `${ready} with someone to write to`,
+    state.hidden && `${plural(state.hidden, 'firm')} you’ve written to left out`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  pickedBar();
   // Nothing to list: what to change to get something.
   const none = $('#only-open').checked
     ? 'No firm checked so far has anything open. Check more firms (“Check careers & contacts”, “Check the top 10”), or untick “Only firms with something open”.'
-    : 'No firms match. Try “Anywhere”, any size, more kinds of firm, or fewer words in “Name contains”.';
+    : $('#only-contact').checked
+      ? 'No firm here has an address yet. Untick “Only firms with someone to write to”, or press Write to them: your AI looks for people.'
+      : state.hidden && !list.length
+        ? 'You’ve written to every firm that matches. Untick “Hide firms I’ve written to” to see them.'
+        : 'No firms match. Try “Anywhere”, any size, more kinds of firm, or fewer words in “Name contains”.';
   $('#results').replaceChildren(
     ...(list.length ? list.slice(0, state.shown).map(firmCard) : [el('li', { className: 'muted', textContent: none })]),
   );
@@ -2179,6 +2481,7 @@ async function exportOutreach() {
       'Subject',
       'Notes',
       'Best way in',
+      'Reply',
     ],
   ];
   for (const [id, rec] of outreachList()) {
@@ -2195,6 +2498,7 @@ async function exportOutreach() {
       rec.subject || '',
       rec.notes || '',
       (state.checks[id] && wayText({ id })) || rec.way || '',
+      replyOf(rec) ? REPLY_TEXT[replyOf(rec)][1] : '',
     ]);
   }
   saveCsv(rows, 'outreach');
@@ -2206,6 +2510,90 @@ const outreachList = () =>
   Object.entries(state.outreach)
     .filter(([, r]) => r)
     .sort(([, a], [, b]) => b.updatedAt - a.updatedAt);
+
+// The Outreach tab's filters: [key, words, does a record fit].
+const OUTREACH_FILTERS = [
+  ['all', 'All', () => true],
+  ['waiting', 'Awaiting a reply', (r) => r.status === 'sent' && !waitsAtNylas(r)],
+  ['quiet', 'No reply for 5+ days', (r) => r.status === 'sent' && !waitsAtNylas(r) && workingDaysSince(r.sentAt) >= 5],
+  ['replied', 'Replied', (r) => r.status === 'replied'],
+  ['positive', 'Interested', (r) => replyOf(r) === 'positive'],
+  ['apply', 'Apply online', (r) => replyOf(r) === 'apply'],
+  ['declined', 'Declined', (r) => replyOf(r) === 'declined'],
+  ['auto', 'Auto-reply', (r) => r.status === 'sent' && replyOf(r) === 'auto'],
+  ['bounced', 'Bounced', (r) => replyOf(r) === 'bounced'],
+  ['scheduled', 'Arriving later', (r) => waitsAtNylas(r)],
+  ['drafted', 'Drafted', (r) => r.status === 'drafted'],
+  ['closed', 'Closed', (r) => r.status === 'closed' && replyOf(r) !== 'bounced'],
+];
+
+/** Does a record fit the filter chosen and the words typed in the search box? */
+function outreachFits(rec) {
+  const f = OUTREACH_FILTERS.find(([k]) => k === state.outreachFilter) || OUTREACH_FILTERS[0];
+  if (!f[2](rec)) return false;
+  const words = ($('#outreach-search').value || '').trim().toLowerCase();
+  if (!words) return true;
+  const c = rec.contact || {};
+  const hay = [rec.firm.name, rec.firm.domain, c.name, c.title, c.email, rec.to, rec.subject, rec.notes]
+    .join(' ')
+    .toLowerCase();
+  return words.split(/\s+/).every((w) => hay.includes(w));
+}
+
+/** The filter chips over the list, each with its count; one with none is left out (All always shows). */
+function drawOutreachFilters() {
+  const recs = Object.values(state.outreach).filter(Boolean);
+  const box = $('#outreach-filters');
+  const chips = OUTREACH_FILTERS.map(([key, words, fits]) => {
+    const n = recs.filter(fits).length;
+    if (!n && key !== 'all' && key !== state.outreachFilter) return null;
+    return el(
+      'button',
+      {
+        type: 'button',
+        attrs: { role: 'radio', 'aria-checked': String(key === state.outreachFilter) },
+        dataset: { filter: key },
+        onclick: () => {
+          state.outreachFilter = key;
+          renderOutreach(true);
+        },
+      },
+      words,
+      el('span', { className: 'count', textContent: String(n) }),
+    );
+  }).filter(Boolean);
+  const key = chips.map((c) => c.textContent + c.getAttribute('aria-checked')).join('|');
+  if (key !== box.dataset.drawn) {
+    const had = document.activeElement && document.activeElement.closest('#outreach-filters');
+    box.replaceChildren(...chips);
+    box.dataset.drawn = key;
+    if (had) {
+      const again = box.querySelector('[aria-checked="true"]');
+      if (again) again.focus();
+    }
+  }
+}
+
+/** The registry's firm for an outreach record (its id, else its website), or the record's own short copy. */
+function firmOf(rec) {
+  const id = rec.firm.id;
+  const found =
+    state.firms.find((f) => f.id === id) ||
+    (rec.firm.domain && state.firms.find((f) => f.domain === rec.firm.domain)) ||
+    (state.results.find((r) => r.firm.id === id) || {}).firm;
+  return found || { aliases: [], cities: [], tags: [], ...rec.firm };
+}
+
+/** A bounced email's firm back to Drafted and into Review, where its email goes to someone else there. */
+async function tryAgain(id) {
+  const rec = state.outreach[id];
+  if (!rec) return;
+  if (!aiReady()) return void ($('#outreach-status').textContent = NO_AI);
+  const consent = requestAiConsent();
+  await setOutreach(firmOf(rec), (old) => (old ? { status: 'drafted', reply: null, sentAt: old.sentAt } : null));
+  review.consent = consent;
+  writeTo([firmOf(rec)], true);
+}
 
 async function loadOutreach() {
   await storeLeftNotes();
@@ -2349,12 +2737,15 @@ async function storeLeftNotes() {
 }
 
 /** A row's date: 'Sent 6 Nov', 'Arrives 9 Nov' for one waiting at Nylas, else its status and when it last changed. */
-const outreachWhen = (rec) =>
-  waitsAtNylas(rec)
-    ? `Arrives ${day(rec.sendAt)} (waiting at Nylas)`
-    : rec.status === 'sent' && rec.sentAt
-      ? `Sent ${day(rec.sentAt)}`
-      : `${OUTREACH_TEXT[rec.status]} ${day(rec.updatedAt)}`;
+const outreachWhen = (rec) => {
+  if (waitsAtNylas(rec)) return `Arrives ${day(rec.sendAt)} (waiting at Nylas)`;
+  if (rec.status === 'sent' && rec.sentAt) {
+    const quiet = workingDaysSince(rec.sentAt);
+    return `Sent ${day(rec.sentAt)}${quiet >= 2 ? ` · no reply for ${quiet} working days` : ''}${rec.followedUpAt ? ' · followed up' : ''}`;
+  }
+  if (rec.reply && rec.reply.at && rec.status !== 'drafted') return `${OUTREACH_TEXT[rec.status]} ${day(rec.reply.at)}`;
+  return `${OUTREACH_TEXT[rec.status]} ${day(rec.updatedAt)}`;
+};
 
 /**
  * What a row shows apart from its note and the date it last changed: one whose note alone changed (and with it that
@@ -2372,6 +2763,8 @@ function outreachItem(id, rec) {
   const c = rec.contact || {};
   const firmName = rec.firm.site ? link(rec.firm.site, rec.firm.name) : rec.firm.name;
   const when = outreachWhen(rec);
+  const kind = replyOf(rec);
+  const [tone, said] = kind ? REPLY_TEXT[kind] : ['', ''];
   return el(
     'li',
     { className: 'firm outreach-item', dataset: { id } },
@@ -2380,7 +2773,14 @@ function outreachItem(id, rec) {
       { className: 'firm-head' },
       el('span', { className: 'firm-name' }, firmName),
       el('span', { className: 'firm-meta', textContent: when }),
+      kind ? el('span', { className: `pill reply-pill ${tone}`, textContent: said }) : null,
     ),
+    rec.reply && rec.reply.snippet
+      ? el('p', {
+          className: `reply-snippet ${kind}`,
+          textContent: `${rec.reply.from ? `${rec.reply.from}: ` : ''}“${rec.reply.snippet}”`,
+        })
+      : null,
     el(
       'p',
       { className: 'small' },
@@ -2432,7 +2832,7 @@ function outreachItem(id, rec) {
           className: 'outreach-notes',
           rows: 2,
           value: rec.notes || '',
-          placeholder: 'Spoke to Jane; call back in January',
+          placeholder: 'Add a note',
           oninput: (e) => saveNote(id, e.target.value),
           onchange: (e) => saveNote(id, e.target.value, true),
         }),
@@ -2441,6 +2841,15 @@ function outreachItem(id, rec) {
     el(
       'div',
       { className: 'firm-actions' },
+      kind === 'bounced'
+        ? el('button', {
+            className: 'small primary try-again',
+            type: 'button',
+            textContent: 'Try someone else',
+            title: `Back into Review, written to another person at ${rec.firm.name} (never ${(rec.bounced || []).join(', ') || 'the address that bounced'})`,
+            onclick: () => tryAgain(id),
+          })
+        : null,
       el('button', {
         className: 'small',
         type: 'button',
@@ -2552,10 +2961,15 @@ function outreachToast(text, label, act, focus) {
  * back to the same control.
  */
 function renderOutreach(sort) {
-  const list = outreachList();
-  $('#outreach-count').textContent = String(list.length);
-  $('#outreach-empty').hidden = !!list.length;
-  $('#outreach-export').disabled = !list.length;
+  const every = outreachList();
+  $('#outreach-count').textContent = String(every.length);
+  $('#outreach-empty').hidden = !!every.length;
+  $('#outreach-export').disabled = !every.length;
+  $('#outreach-filters').hidden = !every.length;
+  drawOutreachFilters();
+  const list = every.filter(([, r]) => outreachFits(r));
+  $('#outreach-none').hidden = !every.length || !!list.length;
+  renderHome();
   // A note being typed isn't drawn again under the cursor when a draft elsewhere adds a firm: that firm waits (drawn
   // when the box is left). Its own note changed meanwhile shows in it, unless something has been typed there since.
   const active = document.activeElement;
@@ -2629,7 +3043,9 @@ function outreachTimer(list) {
 /* ------------------------------------------------------------- watchlist */
 
 async function watchFirm(firm) {
-  const result = (state.checks[firm.id] || {}).result || (await checkFirm(firm));
+  // Its roles as its site lists them today are the baseline: one checked only ahead of time lists none, so every role
+  // open now would come up as new.
+  const result = checkedHere(firm.id) ? state.checks[firm.id].result : await checkFirm(firm);
   const entry = {
     id: firm.id,
     firm,
@@ -2791,7 +3207,7 @@ const review = {
   channel: null, // to ask the tab that has it to hand it over
 };
 review.ready = new Promise((resolve) => (review.readied = resolve));
-const PREPARE_AT_ONCE = 2;
+const PREPARE_AT_ONCE = 4;
 const UNDO_MS = 5000;
 const FRESH_MS = 600; // a Send this soon after a card shows (or a doubt is raised) was meant for what was there before
 const TYPING_MS = 1200; // keys this close together, after the box typed in was drawn away, are still the typing
@@ -2908,6 +3324,69 @@ function kept(i) {
 function reviewCount() {
   const ready = review.items.filter((i) => i.status === 'ready').length;
   $('#review-count').textContent = ready ? String(ready) : '';
+  drawQueue();
+  renderHome();
+}
+
+// How each item stands, in the list down the side of Review: [class, icon, words].
+const QUEUE_STATE = {
+  waiting: ['', '○', 'Waiting'],
+  preparing: ['q-busy', '◌', 'Preparing'],
+  ready: ['q-ready', '●', 'Ready to read'],
+  none: ['q-need', '!', 'No one to write to'],
+  failed: ['q-need', '!', 'Needs you'],
+  sending: ['q-busy', '◌', 'Sending'],
+  delivering: ['q-busy', '◌', 'Sending'],
+  saving: ['q-busy', '◌', 'Saving to drafts'],
+  sent: ['q-done', '✓', 'Sent'],
+  scheduled: ['q-done', '✓', 'Arrives in their morning'],
+  saved: ['q-done', '✓', 'Saved to drafts'],
+  skipped: ['q-done', '–', 'Skipped'],
+  watched: ['q-done', '–', 'Watched'],
+  elsewhere: ['q-done', '–', 'No longer needed'],
+};
+const STEP_WORDS = { check: 'Reading its site', people: 'Finding people', hooks: 'Finding a reason', draft: 'Writing' };
+
+/** The queue down the side of Review: every firm, how far it has got, and a click to read it. */
+function drawQueue() {
+  const list = $('#review-queue');
+  if (!list) return;
+  if (!review.live || !review.items.length) return void list.replaceChildren();
+  const at = shown();
+  const key = review.items.map((i) => `${i.id}|${i.status}|${i.step}|${i.held}|${i.type}|${i === at}`).join(';');
+  if (key === drawQueue.key) return;
+  drawQueue.key = key;
+  list.replaceChildren(
+    ...review.items.map((i) => {
+      const [cls, icon, words] = QUEUE_STATE[i.status] || ['', '○', i.status];
+      const what =
+        i.status === 'preparing'
+          ? STEP_WORDS[i.step] || words
+          : i.status === 'waiting' && i.held
+            ? 'Not prepared yet'
+            : i.status === 'failed' && i.error
+              ? 'Something went wrong'
+              : i.status === 'skipped' && i.nobody
+                ? 'No one to write to'
+                : words;
+      return el(
+        'li',
+        { className: cls },
+        el(
+          'button',
+          {
+            type: 'button',
+            attrs: { 'aria-current': String(i === at) },
+            title: i.error || '',
+            onclick: () => showItem(i),
+          },
+          el('span', { className: 'q-icon', textContent: icon, attrs: { 'aria-hidden': 'true' } }),
+          el('span', { className: 'q-name', textContent: (i.type === 'follow' ? 'Follow-up: ' : '') + i.firm.name }),
+          el('span', { className: 'q-state', textContent: what }),
+        ),
+      );
+    }),
+  );
 }
 
 /** No AI key: said where the person is looking (the toast on Review, the status line on Find firms). */
@@ -3118,11 +3597,14 @@ function writeTo(firms, asked) {
 
 /** The next firms of the results to write to: not in the queue or cleared from it, not written to or saved as a draft. */
 function nextToWrite(n = TOP) {
+  const written = writtenIndex();
   return visible()
     .map((r) => r.firm)
     .filter((f) => {
       const rec = state.outreach[f.id];
       return (
+        // Written to under another entry (its website matches), whatever "Hide firms I've written to" says.
+        !writtenTo(f, written) &&
         !review.items.some((i) => i.id === f.id) &&
         !review.cleared.includes(f.id) &&
         !alreadyDone({ type: 'first' }, rec) &&
@@ -3151,6 +3633,7 @@ function pump(first) {
     prepare(item).finally(() => {
       review.busy--;
       pump();
+      topUp();
     });
   }
   reviewCount();
@@ -3190,21 +3673,33 @@ async function prepare(item) {
     }
     const firm = item.firm;
     step('check');
-    await checkFirm(firm);
+    // A firm checked ahead of time whose site answered then has its site read again while the web is searched, not
+    // before: the search starts from what the site showed then. (One whose site didn't answer may have moved, which
+    // the search finds, and is checked again there.)
+    const pre = state.checks[firm.id];
+    const alongside = !!pre && pre.bundled && !['unreachable', 'none', 'blocked'].includes(pre.result.status);
+    const checking = checkFirm(firm).catch(() => null);
+    if (!alongside) await checking;
     // A check or search the firm's card started is waited for, not started again.
-    await settled(state.running, firm.id);
+    if (!alongside) await settled(state.running, firm.id);
     if (!going()) return;
     if (canResearch() && !(state.research[firm.id] && state.research[firm.id].result)) {
       step('people');
       await researchFirm(firm, null);
     }
     await settled(state.researching, firm.id);
+    await checking;
+    await settled(state.running, firm.id);
     if (!going()) return;
-    const people = contactsOf(firm);
+    const people = writable(firm);
     const searchError = (state.research[firm.id] || {}).error;
     if (!people.length && searchError) throw new Error(`Couldn’t search the web for people: ${searchError}`);
     if (!people.length) {
-      item.status = 'none';
+      // Nothing to write to after the site and the web were both read: left out, and never offered again.
+      item.status = 'skipped';
+      item.nobody = true;
+      item.outcome = 'No one to write to: its site and the web gave no address, so it’s left out.';
+      review.cleared = [...new Set([...review.cleared, firm.id])].slice(-2000);
       return;
     }
     const sure = people.find((p) => !p.guessed && !['guessed', 'unconfirmed'].includes(p.level));
@@ -3235,7 +3730,9 @@ async function prepare(item) {
       landed(item);
       item.job = null;
       item.step = '';
-      redraw(item);
+      // Left out for having no one to write to while it was on screen: on to the next one to read.
+      if (item.nobody && item.status === 'skipped' && shown() === item) advance();
+      else redraw(item);
       saveQueue();
     }
   }
@@ -3249,6 +3746,12 @@ function landed(item) {
   if (!['ready', 'failed'].includes(item.status)) return;
   const why = alreadyDone(item, state.outreach[item.firm.id]);
   if (why) finishElsewhere(item, why);
+}
+
+/** Everyone at the firm an email can go to: contactsOf(), less any address that bounced before. */
+function writable(firm) {
+  const bounced = new Set(((state.outreach[firm.id] || {}).bounced || []).map((a) => String(a).toLowerCase()));
+  return contactsOf(firm).filter((p) => !bounced.has(p.address.toLowerCase()));
 }
 
 /** Who the item writes to, and how sure their address is, kept for when the firm's contacts change. */
@@ -3295,7 +3798,7 @@ const owns = (item, job) => item.job === job && item.status === 'preparing';
  */
 async function writeDraft(item, job) {
   const firm = item.firm;
-  const people = contactsOf(firm);
+  const people = writable(firm);
   const contact = people.find((p) => sameAddress(p.address, item.to)) || people[0];
   if (!contact) throw new Error('No one to write to yet.');
   const { profile } = await store.getActive();
@@ -3960,6 +4463,7 @@ function skipItem(item) {
 function unskip(item) {
   if (frozen()) return;
   delete review.declined[item.firm.id];
+  item.nobody = false;
   const why = alreadyDone(item, state.outreach[item.firm.id]);
   if (why) {
     finishElsewhere(item, why);
@@ -4041,7 +4545,7 @@ async function redraft(item) {
 function otherContact(item) {
   if (frozen()) return;
   if (!item || item.status !== 'ready' || item.type === 'follow') return;
-  const people = contactsOf(item.firm);
+  const people = writable(item.firm);
   if (people.length < 2) return;
   const i = people.findIndex((p) => sameAddress(p.address, item.to));
   const p = people[(i + 1) % people.length];
@@ -4202,8 +4706,10 @@ function reasonView(item) {
 
 /** Who it goes to, how sure the address is, and the next person at the firm. */
 function toView(item) {
-  const people = item.type === 'follow' ? [] : contactsOf(item.firm);
-  const p = people.find((x) => sameAddress(x.address, item.to));
+  const people = item.type === 'follow' ? [] : writable(item.firm);
+  const p =
+    people.find((x) => sameAddress(x.address, item.to)) ||
+    contactsOf(item.firm).find((x) => sameAddress(x.address, item.to));
   const rec = state.outreach[item.firm.id];
   const name = p ? whoLabel(p) : (rec && rec.contact && rec.contact.name) || '';
   const level = p || (item.type === 'first' && item.toLevel ? { level: item.toLevel } : null);
@@ -4667,6 +5173,7 @@ const clearable = (i) =>
 /** Past the last card: what's left to do first (read, prepare, look at), then what happened and the next ten. */
 function summaryView() {
   const count = (s) => review.items.filter((i) => i.status === s).length;
+  const nobody = review.items.filter((i) => i.status === 'skipped' && i.nobody).length;
   const t = tally();
   const next = nextToWrite();
   const firstOf = (f) => review.items.find(f);
@@ -4678,7 +5185,8 @@ function summaryView() {
     count('scheduled') && `${count('scheduled')} arriving in their morning`,
     count('saved') && `${count('saved')} saved to drafts`,
     count('elsewhere') && `${count('elsewhere')} no longer needed (see the Outreach tab)`,
-    count('skipped') && `${count('skipped')} skipped`,
+    count('skipped') - nobody && `${count('skipped') - nobody} skipped`,
+    nobody && `${nobody} with no one to write to (left out)`,
     count('watched') && `${count('watched')} watched`,
   ].filter(Boolean);
   const [heading, action] = !review.items.length
@@ -5347,14 +5855,334 @@ async function saveReviewChoice(patch) {
   renderReview(true);
 }
 
-const TABS = ['find', 'review', 'watch', 'outreach'];
+/* -------------------------------------------------------------- overview */
+
+/** What a reply in an email's thread was ('positive', 'apply', 'declined', 'reply', 'auto', 'bounced'), or ''. */
+function replyOf(rec) {
+  if (!rec) return '';
+  if (rec.reply && rec.reply.kind) return rec.reply.kind;
+  if (rec.status !== 'replied') return '';
+  // Answered before replies were sorted: worked out from the line the reply check left in the notes.
+  const line = String(rec.notes || '').match(/Reply from ([^\n]*?) on [^:\n]*: “([^\n]*)”/);
+  return line ? O.replyKind({ from: [{ name: line[1] }], snippet: line[2] }) : 'reply';
+}
+
+const REPLY_TEXT = {
+  positive: ['ok', 'Interested'],
+  apply: ['', 'Apply online'],
+  declined: ['bad', 'Declined'],
+  reply: ['ok', 'Replied'],
+  auto: ['', 'Auto-reply'],
+  bounced: ['bad', 'Bounced'],
+};
+
+/** Working days since a time, counting Monday to Friday. */
+function workingDaysSince(t) {
+  if (!t) return 0;
+  let n = 0;
+  for (let d = new Date(t); d < Date.now() - 864e5 + 1; d = new Date(d.getTime() + 864e5)) {
+    const next = new Date(d.getTime() + 864e5);
+    if (next <= Date.now() && next.getDay() % 6) n++;
+  }
+  return n;
+}
+
+/** When a record last had news: its reply, else when it was sent, else when it was last changed. */
+const lastEvent = (r) => (r.reply && r.reply.at) || (r.status !== 'drafted' && r.sentAt) || r.updatedAt || 0;
+
+/** The outreach list counted every way the Overview and Outreach's filters want it. */
+function outreachTally() {
+  const recs = Object.entries(state.outreach);
+  const t = { all: recs.length, drafted: 0, sent: 0, waiting: 0, quiet: 0, replied: 0, positive: 0, apply: 0 };
+  Object.assign(t, { declined: 0, bounced: 0, auto: 0, closed: 0, scheduled: 0 });
+  for (const [, r] of recs) {
+    const kind = replyOf(r);
+    if (r.sentAt || ['sent', 'replied'].includes(r.status)) t.sent++;
+    if (r.status === 'drafted') t.drafted++;
+    if (r.status === 'closed' && kind !== 'bounced') t.closed++;
+    if (waitsAtNylas(r)) t.scheduled++;
+    else if (r.status === 'sent') {
+      t.waiting++;
+      if (workingDaysSince(r.sentAt) >= 5) t.quiet++;
+    }
+    if (r.status === 'replied') t.replied++;
+    if (kind && t[kind] != null && kind !== 'reply') t[kind]++;
+  }
+  return t;
+}
+
+/** One number on the Overview, a button that opens where it's counted. */
+function stat(n, label, tone, go) {
+  return el(
+    'button',
+    { className: `stat ${n ? tone : ''}`, type: 'button', onclick: go },
+    el('span', { className: 'n', textContent: String(n) }),
+    el('span', { className: 'label', textContent: label }),
+  );
+}
+
+/** Outreach, showing one filter. */
+function openOutreach(filter) {
+  state.outreachFilter = filter;
+  showTab('outreach');
+}
+
+/** The first queue item that's `f`, shown on Review. */
+function openReview(f) {
+  showTab('review');
+  const item = f && review.items.find(f);
+  if (item) showItem(item);
+}
+
+/** The Overview: the numbers, what needs doing now, preparing ahead, and the latest replies and sends. */
+function renderHome() {
+  if (!$('#home-view') || $('#home-view').hidden) return;
+  const q = tally();
+  const o = outreachTally();
+  const due = followUpsDue();
+  const fresh = Object.values(state.watchStates).reduce((n, st) => n + ((st && st.fresh.length) || 0), 0);
+  const rate = o.sent ? Math.round((o.replied / o.sent) * 100) : 0;
+  $('#home-sub').textContent = o.sent
+    ? `${plural(o.sent, 'email')} sent, ${o.replied} answered (${rate}%).`
+    : 'Nothing sent yet. Search for firms, then Write to the top 10.';
+  $('#home-stats').replaceChildren(
+    stat(q.ready, 'Ready to read', 'accent', () => openReview((i) => i.status === 'ready')),
+    stat(q.working, 'Being prepared', '', () => openReview((i) => ['preparing', 'waiting'].includes(i.status))),
+    stat(o.waiting, 'Awaiting a reply', '', () => openOutreach('waiting')),
+    stat(o.replied, 'Replied', 'ok', () => openOutreach('replied')),
+    stat(o.positive, 'Interested', 'ok', () => openOutreach('positive')),
+    stat(due.length, 'Follow-ups due', 'warn', () =>
+      due.length ? (showTab('review'), queueFollowUps()) : openOutreach('quiet'),
+    ),
+    stat(o.bounced + q.needYou, 'Bounced or stuck', 'bad', () =>
+      o.bounced ? openOutreach('bounced') : openReview((i) => i.status === 'failed' || i.status === 'none'),
+    ),
+    stat(o.sent, 'Sent in all', '', () => openOutreach('all')),
+  );
+  const todo = [];
+  const add = (tone, title, detail, label, act, primary) =>
+    todo.push(
+      el(
+        'li',
+        {},
+        el('span', { className: `tone ${tone}`, attrs: { 'aria-hidden': 'true' } }),
+        el(
+          'span',
+          { className: 'what' },
+          el('strong', { textContent: title }),
+          detail ? el('span', { className: 'small muted', textContent: detail }) : null,
+        ),
+        label
+          ? el('button', {
+              className: primary ? 'primary small' : 'small',
+              type: 'button',
+              textContent: label,
+              onclick: act,
+            })
+          : null,
+      ),
+    );
+  if (!aiReady())
+    add(
+      'bad',
+      'Add an AI key',
+      'Needed to find people, look for a reason to write and draft emails.',
+      'Open Settings',
+      () => api.tabs.create({ url: api.runtime.getURL('options/options.html#letters') }),
+    );
+  if (!state.nylas || !state.nylas.grantId)
+    add(
+      'warn',
+      'Connect your inbox to send in one click',
+      'Settings › Email codes, with Nylas: Send then sends from your own mailbox with your CV, and replies are noticed by themselves.',
+      'Open Settings',
+      () => api.tabs.create({ url: api.runtime.getURL('options/options.html#email') }),
+    );
+  const alerts = (review.alerts || []).filter((a) => !a.seen);
+  if (q.ready)
+    add(
+      'accent',
+      `${plural(q.ready, 'email')} ready to read`,
+      'Read, edit if you like, and press Send (Ctrl+Enter).',
+      'Read them',
+      () => openReview((i) => i.status === 'ready'),
+      true,
+    );
+  if (alerts.length)
+    add('bad', `${plural(alerts.length, 'send')} went wrong`, alerts[0].text || '', 'Show it', () => showTab('review'));
+  if (q.needYou)
+    add(
+      'bad',
+      `${plural(q.needYou, 'firm')} stuck in Review`,
+      'A step failed (the AI or a website didn’t answer). Try again or skip.',
+      'Show them',
+      () => openReview((i) => i.status === 'failed' || i.status === 'none'),
+    );
+  if (o.bounced)
+    add(
+      'bad',
+      `${plural(o.bounced, 'email')} bounced`,
+      'The address doesn’t exist. Try someone else at the firm.',
+      'See them',
+      () => openOutreach('bounced'),
+    );
+  if (due.length)
+    add(
+      'warn',
+      `${plural(due.length, 'follow-up')} due`,
+      'Sent five working days ago with no reply: a short note in the same thread.',
+      'Write them',
+      () => (showTab('review'), queueFollowUps()),
+    );
+  const answer = Object.values(state.outreach).filter(
+    (r) => r.status === 'replied' && ['positive', 'reply'].includes(replyOf(r)),
+  ).length;
+  if (answer)
+    add(
+      'ok',
+      `${plural(answer, 'reply')} to answer`,
+      'People who wrote back: answer from your inbox, then set them to Closed.',
+      'See them',
+      () => openOutreach('replied'),
+    );
+  if (o.apply)
+    add(
+      '',
+      `${plural(o.apply, 'firm')} asked you to apply online`,
+      'Their reply points to the website or a programme.',
+      'See them',
+      () => openOutreach('apply'),
+    );
+  if (q.held)
+    add(
+      '',
+      `${plural(q.held, 'firm')} not prepared yet`,
+      'Left waiting when the page closed.',
+      'Prepare them',
+      () => (showTab('review'), resumeQueue()),
+    );
+  if (fresh) add('ok', `${fresh} new at firms you watch`, '', 'See them', () => showTab('watch'));
+  const next = state.results.length ? nextToWrite() : [];
+  if (next.length)
+    add(
+      'accent',
+      `Write to the next ${next.length === TOP ? TOP : plural(next.length, 'firm')}`,
+      `From your search: ${next
+        .slice(0, 3)
+        .map((f) => f.name)
+        .join(', ')}${next.length > 3 ? '…' : ''}`,
+      'Write to them',
+      () => writeTo(next),
+      !q.ready,
+    );
+  else if (!state.results.length)
+    add('', 'Find firms to write to', 'Pick kinds of firm and a place.', 'Find firms', () => showTab('find'), !q.ready);
+  $('#home-next').replaceChildren(...todo);
+  $('#home-write').hidden = !next.length;
+  $('#home-write').textContent =
+    next.length === TOP ? `Write to the next ${TOP}` : `Write to the next ${plural(next.length, 'firm')}`;
+  $('#home-write').disabled = !aiReady();
+  // Latest activity: the newest sends and replies.
+  const recent = Object.values(state.outreach)
+    .filter((r) => r.sentAt || r.status !== 'drafted')
+    .sort((a, b) => lastEvent(b) - lastEvent(a))
+    .slice(0, 8);
+  $('#home-recent').replaceChildren(
+    ...(recent.length
+      ? recent.map((r) => {
+          const kind = replyOf(r);
+          const [tone, text] = kind ? REPLY_TEXT[kind] : ['', ''];
+          return el(
+            'li',
+            {},
+            el('span', { className: 'when', textContent: day(lastEvent(r)) }),
+            el('span', { className: 'name', textContent: r.firm.name }),
+            kind ? el('span', { className: `pill ${tone}`, textContent: text }) : outreachPill(r),
+            el('span', { className: 'small muted', textContent: (r.contact && r.contact.name) || r.to || '' }),
+            r.reply && r.reply.snippet
+              ? el('span', { className: 'snippet', textContent: `“${r.reply.snippet}”` })
+              : null,
+          );
+        })
+      : [el('li', { className: 'muted small', textContent: 'Emails you send and the replies to them show here.' })]),
+  );
+  $('#home-stats-line').textContent = replyStats();
+  // Not while it's being chosen: the choice is saved a moment later, and drawing the old one would undo it.
+  if (document.activeElement !== $('#keep-ready'))
+    $('#keep-ready').value = String((state.settings && state.settings.discoverAi.keepReady) || 0);
+  keepReadyNote();
+  const setup = [];
+  if (!state.cvName) setup.push('No CV uploaded: emails go without one (Settings › Resume & files).');
+  if (!canSearch() && aiReady())
+    setup.push('Your AI provider can’t search the web: Claude or OpenRouter find people and reasons to write.');
+  $('#home-setup').replaceChildren(
+    ...(setup.length
+      ? [
+          el(
+            'ul',
+            { className: 'plain small muted' },
+            setup.map((t) => el('li', { textContent: t })),
+          ),
+        ]
+      : []),
+  );
+}
+
+/** Under "Keep this many emails ready": what it's doing now. */
+function keepReadyNote() {
+  const want = (state.settings && state.settings.discoverAi.keepReady) || 0;
+  const q = tally();
+  $('#keep-ready-note').textContent = !want
+    ? ''
+    : !aiReady()
+      ? NO_AI
+      : !state.results.length
+        ? 'Search for firms first: it prepares from your last search.'
+        : `${q.ready} ready, ${q.working} being prepared. It tops up as you send.`;
+}
+
+/**
+ * Prepare ahead: with "Keep this many emails ready" on, firms from the last search go into the queue (in the
+ * background, without leaving the tab) until that many are ready or being prepared. Nothing is sent: each is read and
+ * sent from Review as before.
+ */
+function topUp() {
+  const want = (state.settings && state.settings.discoverAi.keepReady) || 0;
+  if (!want || !review.live || !aiReady() || !state.results.length || !review.consent) return;
+  const q = tally();
+  const short = want - q.ready - q.working;
+  if (short <= 0) return;
+  const next = nextToWrite(short);
+  if (!next.length) return;
+  for (const firm of next)
+    review.items.push({ id: firm.id, firm, type: 'first', status: 'waiting', step: '', hooks: [], hook: 0 });
+  pump();
+  saveQueue();
+  renderReview();
+  if (state.results.length) renderResults();
+}
+
+/** The header's line on how things stand: the AI, the inbox, the CV. */
+function renderHealth() {
+  const pill = (tone, text, title) => el('span', { className: `pill ${tone}`, textContent: text, title });
+  const inbox = state.nylas && state.nylas.grantId;
+  $('#health').replaceChildren(
+    aiReady() ? pill('ok', `AI: ${modelLabel(state.config)}`, 'Discover’s AI model') : pill('bad', 'No AI key', NO_AI),
+    inbox
+      ? pill('ok', 'Inbox connected', `Sends from ${state.nylas.email || 'your inbox'}`)
+      : pill('warn', 'No inbox', 'Connect one under Settings › Email codes to send in one click'),
+  );
+}
+
+const TABS = ['home', 'find', 'review', 'watch', 'outreach'];
 
 function showTab(which) {
   for (const t of TABS) {
     $(`#tab-${t}`).setAttribute('aria-selected', String(which === t));
     $(`#${t}-view`).hidden = which !== t;
   }
-  history.replaceState(null, '', which === 'find' ? '#' : '#' + which);
+  history.replaceState(null, '', '#' + which);
+  if (which === 'home') renderHome();
   // Newest first again each time the tab is opened (kept as drawn while it's on screen).
   if (which === 'outreach') renderOutreach(true);
   // What changed while it was hidden (a search's firms to write to next), and an alert's card now really on screen.
@@ -5446,6 +6274,7 @@ function syncAi() {
   $('#check-top').title = thorough() ? THOROUGH_READ : '';
   $('#research-top').hidden = !canResearch();
   $('#research-top').title = RESEARCH_NOTE;
+  renderHealth();
   if (state.results.length) renderResults();
 }
 
@@ -5489,18 +6318,43 @@ function buildForm() {
         ),
       );
   }
+  // Each group's kinds ticked or unticked at once ("All" the finance kinds, "None" of the tech ones).
+  const setAll = (root, on) => {
+    for (const box of root.querySelectorAll('input[type="checkbox"]')) box.checked = on;
+  };
   $('#niches').replaceChildren(
     ...[...byGroup]
       .filter(([, chips]) => chips.length)
-      .map(([g, chips]) =>
-        el(
+      .map(([g, chips]) => {
+        const group = el(
           'div',
           { className: 'niche-group', dataset: { group: g }, attrs: { role: 'group', 'aria-label': groups[g] || g } },
-          el('span', { className: 'niche-head', textContent: groups[g] || g }),
+          el(
+            'div',
+            { className: 'niche-title' },
+            el('span', { className: 'niche-head', textContent: groups[g] || g }),
+            el('button', {
+              className: 'link small niche-all',
+              type: 'button',
+              textContent: 'All',
+              attrs: { 'aria-label': `All ${groups[g] || g} kinds` },
+              onclick: () => setAll(group, true),
+            }),
+            el('button', {
+              className: 'link small niche-none',
+              type: 'button',
+              textContent: 'None',
+              attrs: { 'aria-label': `No ${groups[g] || g} kinds` },
+              onclick: () => setAll(group, false),
+            }),
+          ),
           el('div', { className: 'chips' }, chips),
-        ),
-      ),
+        );
+        return group;
+      }),
   );
+  $('#niche-all').onclick = () => setAll($('#niches'), true);
+  $('#niche-none').onclick = () => setAll($('#niches'), false);
   $('#place').replaceChildren(
     ...Object.entries(D.PLACES).map(([id, p]) => el('option', { value: id, textContent: p.label })),
   );
@@ -5513,10 +6367,52 @@ function buildForm() {
 
 async function start() {
   buildForm();
+  const searched = restoreSearch();
   $('#query').addEventListener('submit', search);
   $('#more').addEventListener('click', () => ((state.shown += PAGE), renderResults()));
   $('#only-open').addEventListener('change', renderResults);
+  $('#only-contact').addEventListener('change', renderResults);
   $('#sort-way').addEventListener('change', renderResults);
+  $('#hide-written').addEventListener('change', (e) => {
+    saveAi({ hideWritten: e.target.checked }).catch(() => null);
+    renderResults();
+  });
+  // Picking firms: the top ten not written to, everything shown, or none; then write to them or watch them.
+  $('#pick-top').addEventListener('click', () => {
+    for (const r of visible().slice(0, TOP)) pick(r.firm.id, true);
+  });
+  $('#pick-page').addEventListener('click', () => {
+    for (const r of visible().slice(0, state.shown)) pick(r.firm.id, true);
+  });
+  $('#pick-none').addEventListener('click', () => {
+    for (const id of [...state.picked]) pick(id, false);
+  });
+  $('#write-picked').addEventListener('click', () => {
+    const firms = pickedFirms();
+    for (const id of [...state.picked]) pick(id, false);
+    writeTo(firms);
+  });
+  $('#watch-picked').addEventListener('click', async () => {
+    const firms = pickedFirms().filter((f) => !state.watch.some((w) => w.id === f.id));
+    for (const id of [...state.picked]) pick(id, false);
+    status(`Watching ${plural(firms.length, 'firm')}…`);
+    await D.pool(firms, 3, (f) => watchFirm(f));
+    status(`Watching ${plural(firms.length, 'more firm')}: see the Watchlist.`);
+  });
+  $('#home-write').addEventListener('click', () => writeTo(nextToWrite()));
+  $('#home-check-replies').addEventListener('click', (e) => lookForReplies(e.currentTarget));
+  $('#outreach-replies').addEventListener('click', (e) => lookForReplies(e.currentTarget));
+  $('#home-outreach').addEventListener('click', () => openOutreach('all'));
+  $('#outreach-search').addEventListener('input', () => renderOutreach(true));
+  $('#keep-ready').addEventListener('change', async (e) => {
+    const n = Number(e.target.value) || 0;
+    // Asked from the change itself (Firefox), and kept for the emails prepared ahead from now on.
+    if (n) review.consent = requestAiConsent();
+    await saveAi({ keepReady: n });
+    state.settings = await store.getSettings();
+    topUp();
+    renderHome();
+  });
   $('#check-top').addEventListener('click', checkTop);
   $('#write-top').addEventListener('click', () => writeTo(nextToWrite()));
   for (const r of document.querySelectorAll('input[name="ask"]'))
@@ -5615,18 +6511,29 @@ async function start() {
       .then((doc) => (state.cvName = doc ? doc.name : ''))
       .catch(() => ''),
   ]);
+  adoptPre();
+  state.settings = await store.getSettings();
+  $('#hide-written').checked = state.settings.discoverAi.hideWritten;
   buildFinderBox();
   // What a Hunter key alone makes possible (Find people) shows once the keys are read.
   syncAi();
   checkReplies().catch(() => null);
+  // And again every ten minutes while the page is open.
+  setInterval(() => lookForReplies().catch(() => null), 10 * 60e3);
   // The tab asked for straight away; Review says it's opening while another Discover tab may still have the queue.
+  // Without one, the Overview once there's something on it, else Find firms.
   const tab = location.hash.slice(1);
-  showTab(TABS.includes(tab) ? tab : 'find');
+  showTab(TABS.includes(tab) ? tab : Object.keys(state.outreach).length ? 'home' : 'find');
   await claimQueue();
   await loadReview();
   review.opening = false;
   review.readied();
   renderReview(true);
+  // Preparing ahead goes on from where it was, without asking again where the AI may be used already.
+  if (state.settings.discoverAi.keepReady && (await hasAiConsent())) review.consent = Promise.resolve(true);
+  // The last search again, so its firms (and the next ten to write to) are there; never with the AI's ideas.
+  if (searched) await search(null, { quiet: true });
+  renderHome();
 }
 
 async function boot() {

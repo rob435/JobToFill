@@ -1204,3 +1204,45 @@ test('outreach: sendTime() keeps to Israel’s Sunday-to-Thursday week', () => {
   // Everywhere else the week is still Monday to Friday.
   assert.deepEqual(O.sendTime({ country: 'GB' }, Date.parse('2026-11-22T08:00:00Z')).local, 'Mon 08:10 in London');
 });
+
+test('outreach: replyKind() tells a bounce, an out-of-office, a pointer to apply online, a no and a yes apart', () => {
+  const kind = (
+    snippet,
+    from = [{ name: 'Jane Doe', email: 'jane@acme.example' }],
+    subject = 'Re: Summer internship',
+  ) => O.replyKind({ from, subject, snippet });
+  // Gmail's bounce comes from the Mail Delivery Subsystem; Outlook's says "Undeliverable" in its subject.
+  assert.equal(
+    kind('Address not found. Your message wasn’t delivered to jane@acme.example', [
+      { name: 'Mail Delivery Subsystem', email: 'mailer-daemon@googlemail.com' },
+    ]),
+    'bounced',
+  );
+  assert.equal(
+    kind(
+      'Delivery has failed to these recipients or groups',
+      [{ email: 'postmaster@acme.example' }],
+      'Undeliverable: Hi',
+    ),
+    'bounced',
+  );
+  // Out of the office: nobody has read it yet.
+  assert.equal(kind('I am out of the office until 28 November with limited access to email.'), 'auto');
+  assert.equal(kind('Thanks', undefined, 'Automatic reply: Summer internship enquiry'), 'auto');
+  // Man Group's answer: no email applications, apply on the website.
+  assert.equal(
+    kind(
+      'Dear Robin, Thank you for your interest in Man Group. Unfortunately, we are unable to accept applications via email. Please apply directly o',
+    ),
+    'apply',
+  );
+  assert.equal(
+    kind('Unfortunately we have no internships available this year. We wish you the best of luck.'),
+    'declined',
+  );
+  assert.equal(kind('Hi Robin, happy to have a chat. Are you free on Tuesday afternoon?'), 'positive');
+  // A no now with a chat offered counts as a yes.
+  assert.equal(kind('Unfortunately nothing formal this summer, but I would be happy to chat next week.'), 'positive');
+  assert.equal(kind('Good afternoon Robin, Hope you are well? Thank you for reaching out.'), 'reply');
+  assert.equal(O.replyKind(), 'reply');
+});

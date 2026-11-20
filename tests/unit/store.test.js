@@ -9,7 +9,7 @@ const { store } = JTF;
 test.beforeEach(() => installChrome());
 
 // The review queue's own choices, as they start: ask for an internship, no common ground, arrive in their morning.
-const QUEUE = { ask: 'internship', commonGround: false, theirMorning: true };
+const QUEUE = { ask: 'internship', commonGround: false, theirMorning: true, keepReady: 0, hideWritten: true };
 
 test('store: Discover’s AI follows Settings until a provider with a key is chosen there', async () => {
   await store.setAiKey('sk-or-1', 'openrouter');
@@ -75,7 +75,20 @@ test('store: Discover’s AI follows Settings until a provider with a key is cho
     ask: 'internship',
     commonGround: false,
     theirMorning: true,
+    keepReady: 0,
+    hideWritten: true,
   });
+  // Emails kept ready ahead: 5, 10 or 20, else off; firms written to stay hidden unless switched off.
+  await store.saveDiscoverAi({ keepReady: 10, hideWritten: false });
+  assert.deepEqual(
+    [(await store.getSettings()).discoverAi.keepReady, (await store.getSettings()).discoverAi.hideWritten],
+    [10, false],
+  );
+  await store.saveDiscoverAi({ keepReady: 7, hideWritten: 'no' });
+  assert.deepEqual(
+    [(await store.getSettings()).discoverAi.keepReady, (await store.getSettings()).discoverAi.hideWritten],
+    [0, true],
+  );
 });
 
 test('store: outreach records are created, merged, removed and kept to the newest 2000, drafts going first', async () => {

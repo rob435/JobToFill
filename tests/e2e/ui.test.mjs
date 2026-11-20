@@ -500,12 +500,23 @@ test('Discover: Tech kinds, a model of its own, who to email at a checked firm, 
     },
     [id, found],
   );
-  await page.reload();
+  // Opened afresh (a reload keeps the tab it was on): with a firm written to, the page opens on the Overview.
+  await page.goto(h.extUrl('discover/discover.html'));
   await ready();
+  await page.waitForFunction(() => !document.querySelector('#home-view').hidden);
+  assert.match(await page.textContent('#home-stats'), /1\s*Awaiting a reply/);
+  await page.click('#tab-find');
   await page.selectOption('#place', 'any');
   await page.selectOption('#size', 'any');
   await page.click('#search');
   const card = `#results .firm[data-id="${id}"]`;
+  // A firm written to is left out of the results until asked for.
+  await page.waitForFunction(() =>
+    /you’ve written to left out/.test(document.querySelector('#results-note').textContent),
+  );
+  assert.equal(await page.$(card), null, 'written to: not recommended again');
+  assert.match(await page.textContent('#results-note'), /1 firm you’ve written to left out/);
+  await page.uncheck('#hide-written');
   await page.waitForSelector(`${card} .contacts`);
   const text = await page.textContent(card);
   assert.match(text, /Who to email/);
@@ -518,7 +529,16 @@ test('Discover: Tech kinds, a model of its own, who to email at a checked firm, 
   assert.equal(await page.textContent(`${card} button.check`), 'Check again');
   assert.equal(await page.isDisabled(`${card} button.draft`), true, 'drafting needs an AI key');
   await page.check('#sort-way');
-  assert.equal(await page.$eval('#results .firm', (li) => li.dataset.id), id, 'the checked firm comes first');
+  // Best way in first: roles open, then a programme page, and so on (every firm was checked ahead of time).
+  const ORDER = ['Roles open', 'Programme page', 'Programme described', 'Email to apply', 'A person to write to'];
+  const ways = await page.$$eval('#results .firm .glance > span > .pill', (ps) => ps.map((p) => p.textContent));
+  const ranks = ways.map((w) => (ORDER.includes(w) ? ORDER.indexOf(w) : ORDER.length));
+  assert.deepEqual(
+    ranks,
+    [...ranks].sort((a, b) => a - b),
+    `in order of the way in: ${ways.join(', ')}`,
+  );
+  await page.uncheck('#sort-way');
 
   // Hacker News posts (from the cache: no network) join a tech search, never a finance-only one.
   await h.bg(() =>
@@ -596,12 +616,15 @@ test('Discover: Tech kinds, a model of its own, who to email at a checked firm, 
   const [download] = await Promise.all([page.waitForEvent('download'), page.click('#outreach-export')]);
   assert.match(download.suggestedFilename(), /^jobtofill-outreach-\d{4}-\d\d-\d\d\.csv$/);
   const csv = await readFile(await download.path(), 'utf8');
-  assert.match(csv, /^\ufeffFirm,Website,Contact name,Title,Email,Guessed,Status,Date,Subject,Notes,Best way in\r\n/);
+  assert.match(
+    csv,
+    /^\ufeffFirm,Website,Contact name,Title,Email,Guessed,Status,Date,Subject,Notes,Best way in,Reply\r\n/,
+  );
   assert.match(
     csv,
     /Quiet Capital,https:\/\/quiet\.example,Jane Doe,Head of Talent,jane\.doe@quiet\.example,no,Replied,/,
   );
-  assert.match(csv, /Summer internship,Call back in January,Programme page\r\n$/);
+  assert.match(csv, /Summer internship,Call back in January,Programme page,Replied\r\n$/);
 
   await h.bg((i) => globalThis.JTF.store.removeOutreach(i), id);
 
@@ -638,6 +661,10 @@ test('Discover: Tech kinds, a model of its own, who to email at a checked firm, 
   await page.reload();
   await ready();
   await page.click('#tab-find');
+  // The last search (software, remote) comes back with the page; hedge funds again for the firm above.
+  assert.equal(await page.isChecked('#niches input[value="software"]'), true, 'the search is remembered');
+  await page.click('#niche-none');
+  await page.check('#niches input[value="hedge"]');
 
   // “Another model…” stays chosen while its id is typed.
   await page.click('#ai-box summary');
@@ -701,7 +728,7 @@ test('Discover: Tech kinds, a model of its own, who to email at a checked firm, 
     async ([i, was]) => {
       const { store } = globalThis.JTF;
       await store.removeOutreach(i);
-      await store.saveDiscoverAi({ provider: '', effort: 'quick' });
+      await store.saveDiscoverAi({ provider: '', effort: 'quick', hideWritten: true });
       await store.setAiKey('', 'anthropic');
       await store.setAiKey('', 'custom');
       await store.saveSettings({ ai: was.ai });
@@ -1397,6 +1424,139 @@ test('Discover: Review works in one tab at a time, handed to the tab it’s aske
   await a.close();
   await b.close();
   assert.deepEqual(errors, []);
+});
+
+test('Discover: the Overview counts everything, replies are sorted (a bounce, an out-of-office), Outreach filters them, and firms are picked in bulk', async () => {
+  const day = 864e5;
+  const firm = (id, name) => ({ id, name, domain: `${id}.example`, site: `https://${id}.example` });
+  await h.bg(
+    async ([day, firms]) => {
+      const { store } = globalThis.JTF;
+      await store.setDiscoverCache({
+        trackr: { names: [], domains: [], at: Date.now(), answered: 1 },
+        listed: { names: [], domains: [], roles: [], at: Date.now(), answered: 1, asked: 1 },
+        queue: { items: [], at: 0, savedAt: Date.now() },
+      });
+      const sent = (f, extra) =>
+        store.setOutreach(f.id, {
+          firm: f,
+          status: 'sent',
+          via: 'nylas',
+          to: `jane@${f.domain}`,
+          subject: 'Summer internship enquiry',
+          sentAt: Date.now() - 2 * day,
+          ...extra,
+        });
+      // Three emails out: one will bounce, one gets an out-of-office, one a real answer.
+      await sent(firms[0], { messageId: 'm-a', threadId: 't-a' });
+      await sent(firms[1], { messageId: 'm-b', threadId: 't-b' });
+      await sent(firms[2], { messageId: 'm-c', threadId: 't-c' });
+      await store.setNylas({ apiKey: 'nyk_e2e', region: 'us', grantId: 'g-1', email: 'ada@example.org' });
+    },
+    [day, [firm('alpha', 'Alpha Capital'), firm('beta', 'Beta Partners'), firm('gamma', 'Gamma Research')]],
+  );
+  const THREADS = {
+    't-a': {
+      from: [{ name: 'Mail Delivery Subsystem', email: 'mailer-daemon@googlemail.com' }],
+      subject: 'Delivery Status Notification (Failure)',
+      snippet: 'Address not found. Your message wasn’t delivered to jane@alpha.example',
+    },
+    't-b': {
+      from: [{ name: 'Jane', email: 'jane@beta.example' }],
+      subject: 'Automatic reply: Summer internship enquiry',
+      snippet: 'I am out of the office until 1 December with limited access to email.',
+    },
+    't-c': {
+      from: [{ name: 'Jane', email: 'jane@gamma.example' }],
+      subject: 'Re: Summer internship enquiry',
+      snippet: 'Hi Ada, happy to have a chat. Are you free on Tuesday?',
+    },
+  };
+  await h.context.route('https://api.us.nylas.com/**', (route) => {
+    const url = new URL(route.request().url());
+    const t = url.searchParams.get('thread_id');
+    const data = THREADS[t] ? [{ id: `r-${t}`, date: Math.floor(Date.now() / 1000), ...THREADS[t] }] : [];
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data }) });
+  });
+  const page = await openExt('discover/discover.html');
+  await page.waitForFunction(() => /firms in the registry/.test(document.querySelector('#registry-info').textContent));
+  // The replies are looked for as the page opens: a bounce closes the firm and keeps the address, an out-of-office
+  // leaves it waiting for a person, a real answer is Replied (and Interested).
+  const rec = (id) => h.bg(async (i) => (await globalThis.JTF.store.getOutreach())[i], id);
+  await until(
+    async () => (await rec('gamma')).status === 'replied',
+    () => true,
+    null,
+    10000,
+  );
+  await until(
+    async () => (await rec('alpha')).status === 'closed',
+    () => true,
+    null,
+    10000,
+  );
+  const alpha = await rec('alpha');
+  assert.deepEqual([alpha.reply.kind, alpha.bounced], ['bounced', ['jane@alpha.example']]);
+  const beta = await rec('beta');
+  assert.deepEqual([beta.status, beta.reply.kind], ['sent', 'auto']);
+  assert.match(beta.notes, /^Auto-reply from Jane on /);
+  assert.equal((await rec('gamma')).reply.kind, 'positive');
+
+  // The Overview: the counts, and what to do about them.
+  await page.click('#tab-home');
+  await page.waitForFunction(() => /1\s*Interested/.test(document.querySelector('#home-stats').textContent));
+  const stats = await page.textContent('#home-stats');
+  assert.match(stats, /1\s*Awaiting a reply/);
+  assert.match(stats, /1\s*Replied/);
+  assert.match(stats, /1\s*Bounced or stuck/);
+  assert.match(stats, /3\s*Sent in all/);
+  assert.match(await page.textContent('#home-next'), /1 email bounced/);
+  assert.match(await page.textContent('#home-recent'), /Gamma Research[\s\S]*happy to have a chat/);
+
+  // Outreach: a chip per kind of answer, with counts, and the search box.
+  await page.click('#home-next li:has-text("bounced") button');
+  await page.waitForFunction(() => !document.querySelector('#outreach-view').hidden);
+  assert.equal(await page.getAttribute('#outreach-filters [data-filter="bounced"]', 'aria-checked'), 'true');
+  assert.deepEqual(await page.$$eval('#outreach .outreach-item', (li) => li.map((x) => x.dataset.id)), ['alpha']);
+  assert.ok(await page.$('#outreach .outreach-item[data-id="alpha"] button.try-again'), 'Try someone else');
+  assert.match(await page.textContent('#outreach .outreach-item[data-id="alpha"] .reply-snippet'), /Address not found/);
+  await page.click('#outreach-filters [data-filter="all"]');
+  assert.equal((await page.$$('#outreach .outreach-item')).length, 3);
+  assert.match(await page.textContent('#outreach-filters [data-filter="auto"]'), /Auto-reply\s*1/);
+  await page.fill('#outreach-search', 'gamma');
+  assert.deepEqual(await page.$$eval('#outreach .outreach-item', (li) => li.map((x) => x.dataset.id)), ['gamma']);
+  await page.fill('#outreach-search', '');
+
+  // Find firms: All and None for a group of kinds, and picking the top ten.
+  await page.click('#tab-find');
+  await page.click('#niches [data-group="tech"] .niche-all');
+  const tech = await page.$$eval('#niches [data-group="tech"] input', (is) => is.every((i) => i.checked));
+  assert.equal(tech, true, 'every tech kind ticked');
+  await page.click('#niches [data-group="tech"] .niche-none');
+  await page.click('#niches [data-group="finance"] .niche-none');
+  await page.check('#niches input[value="hedge"]');
+  assert.deepEqual(await page.$$eval('#niches input:checked', (is) => is.map((i) => i.value)), ['hedge']);
+  await page.selectOption('#place', 'any');
+  await page.selectOption('#size', 'any');
+  await page.click('#search');
+  await page.waitForSelector('#results .firm');
+  await page.click('#pick-top');
+  assert.equal(await page.textContent('#picked-count'), '10 firms selected');
+  assert.equal(await page.$$eval('#results .firm.picked', (li) => li.length), 10);
+  assert.equal(await page.isVisible('#watch-picked'), true);
+  await page.click('#pick-none');
+  assert.equal(await page.textContent('#picked-count'), 'None selected');
+  // Every registry firm was checked ahead of time: its way in shows before any check runs here.
+  assert.ok((await page.$$('#results .firm .glance')).length > 0, 'ways in from data/checks.json');
+
+  await h.context.unroute('https://api.us.nylas.com/**');
+  await h.bg(async () => {
+    const { store } = globalThis.JTF;
+    for (const id of ['alpha', 'beta', 'gamma']) await store.setOutreach(id, null);
+    await store.setNylas(null);
+  });
+  assert.deepEqual(errors, []);
+  await page.close();
 });
 
 test('settings: what Learn from this page saves while the page is open stays, through edits made there', async () => {

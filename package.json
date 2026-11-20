@@ -24,6 +24,7 @@
     "demo": "node tests/fixtures/serve.mjs",
     "icons": "node scripts/icons.mjs",
     "firms": "node scripts/firms.mjs",
+    "checks": "node scripts/firm-checks.mjs",
     "pagemap": "node scripts/pagemap.mjs",
     "bench": "node tests/bench/run.mjs",
     "eval": "node tests/eval/run.mjs",

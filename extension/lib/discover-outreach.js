@@ -1637,7 +1637,57 @@
     return { ...verifyPage(j, page, now), usage: addUsage({ tokens: 0 }, r && r.usage) };
   }
 
-  const discoverOutreach = { material, firmFacts, draft, followUp, dueFollowUps, sendTime, mailto, readPage };
+  /* --------------------------------------------------------------- replies */
+
+  // A mail server saying the email never arrived: Gmail's "Address not found", Outlook's "Undeliverable:".
+  const BOUNCE_FROM = /^(mailer-daemon|postmaster|mail-?daemon|bounces?|mail delivery (subsystem|system))\b/i;
+  const BOUNCE_TEXT =
+    /\b(delivery status notification|undeliverable|undelivered mail|mail delivery (failed|failure|subsystem)|returned mail|delivery has failed|address not found|wasn['’]t delivered|couldn['’]t be delivered|could not be delivered|message (was )?not delivered|recipient address rejected|user unknown|no such user|mailbox (unavailable|not found|does not exist)|does not exist|failure notice)\b/i;
+  // "Automatic reply: …", "I am out of the office until…", "This mailbox is not monitored".
+  const AUTO_TEXT =
+    /^(auto(matic)?[ -]?(reply|response)|out of (the )?office|ooo\b|abwesenheit|r[ée]ponse automatique)|\b(out of (the )?office|on (annual )?leave|away from (the office|my desk)|limited access to (my )?e-?mail|i am currently (away|travelling|traveling|on holiday)|this (mailbox|inbox|address) is (not|no longer) (monitored|in use)|this is an automated (reply|response|message)|thank you for your (e-?mail|message)[.,!] (it|this) has been received|we have received your (e-?mail|message|application) and will)/i;
+  // Sent to the website instead: Man Group's "we are unable to accept applications via email. Please apply directly".
+  const APPLY_TEXT =
+    /\b(apply (directly |online |formally )?(on|via|through|at) (our|the)\b|apply (directly|online)\b|(via|through|on) our (website|careers|careers page|careers site|portal|application portal)|submit (your|an) application (on|via|through)|application (portal|form) (on|at)|unable to accept (applications|cvs) (via|by) e-?mail|(don['’]t|do not|cannot|can['’]t) (accept|take) (applications|cvs|speculative) (via|by|over) e-?mail|programme (opens|will open)|applications (open|will open|are open))/i;
+  // "Unfortunately we don't have any positions", "not in a position to offer", "we wish you the best".
+  const DECLINE_TEXT =
+    /\b(unfortunately|regret(fully)?|not (currently )?(able|in a position) to (offer|take|hire|consider|help)|no (current )?(vacancies|openings|positions|opportunities|internships?|roles)|(don['’]t|do not|won['’]t|will not) (have|offer|run|be offering|be hiring|be recruiting)|not (currently )?(hiring|recruiting|taking on)|we('re| are) (fully staffed|unable)|wish you (the )?(best|every success|all the best|luck)|isn['’]t something we|keep your (cv|details) on (file|record))/i;
+  // "Happy to have a chat", "could you send your CV", "are you free on Tuesday".
+  const POSITIVE_TEXT =
+    /\b(happy to (chat|talk|speak|meet|help|have a)|would (love|be happy|be glad) to|keen to (chat|talk|speak|meet|hear)|let['’]?s (chat|talk|speak|set up|schedule|arrange|find a time)|(set up|arrange|schedule|book) (a|an) (call|chat|meeting|interview|time)|are you (free|available)|when (are|would) you (be )?(free|available)|(send|share) (me|us) your (cv|resume|transcript)|could you (send|share)|interview|calendly|next steps|(free|available) (on|for|next|this) (a )?(call|chat|monday|tuesday|wednesday|thursday|friday|week))/i;
+
+  /**
+   * What a message in an email's thread is, from its sender, subject and text (its snippet will do): 'bounced' (a mail
+   * server saying it never arrived), 'auto' (an out-of-office or an automatic acknowledgement: no one has read it yet),
+   * 'apply' (they point to their website or programme instead), 'declined', 'positive' (a call, a CV, an interview), or
+   * 'reply' when the words don't say. A hint for the Outreach tab, which the person can always change: a mixed answer
+   * ("unfortunately not now, but happy to chat") counts as positive.
+   */
+  function replyKind({ from = [], subject = '', snippet = '' } = {}) {
+    const sender = [].concat(from || []).map((f) => `${(f && f.name) || ''} ${(f && f.email) || ''}`.trim());
+    const text = `${str(subject)}\n${str(snippet)}`.replace(/\s+/g, ' ');
+    if (sender.some((s) => BOUNCE_FROM.test(s) || /^(mailer-daemon|postmaster)@/i.test(s.split(' ').pop())))
+      return 'bounced';
+    if (BOUNCE_TEXT.test(text) && /\b(deliver|recipient|address|mailbox|failure|undeliverable)/i.test(text))
+      return 'bounced';
+    if (AUTO_TEXT.test(str(subject).trim()) || AUTO_TEXT.test(text)) return 'auto';
+    if (POSITIVE_TEXT.test(text)) return 'positive';
+    if (APPLY_TEXT.test(text)) return 'apply';
+    if (DECLINE_TEXT.test(text)) return 'declined';
+    return 'reply';
+  }
+
+  const discoverOutreach = {
+    material,
+    firmFacts,
+    draft,
+    followUp,
+    dueFollowUps,
+    sendTime,
+    mailto,
+    readPage,
+    replyKind,
+  };
   JTF.discoverOutreach = discoverOutreach;
   if (typeof module === 'object' && module.exports) module.exports = discoverOutreach;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
