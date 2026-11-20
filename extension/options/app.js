@@ -12,36 +12,113 @@ import {
 import { group, sectionHead, table } from './controls.js';
 import { setupComplete, setupSteps } from './setup.js';
 
-const { store } = globalThis.JTF;
+const { store, tracker } = globalThis.JTF;
 
 /* ------------------------------------------------------------ history */
 
 function toCsv(history) {
   const cell = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
-  const header = ['Date', 'Title', 'URL', 'Site', 'Fields filled', 'Profile'];
-  const rows = history.map((h) => [new Date(h.date).toISOString(), h.title, h.url, h.host, h.filled, h.profile]);
+  const header = ['Date', 'Employer', 'Role', 'Stage', 'Title', 'URL', 'Site', 'Fields filled', 'Profile'];
+  const rows = history.map((h) => {
+    const e = tracker.employerOf(h);
+    const stage = tracker.settle({ ...h }).stage;
+    return [
+      new Date(h.date).toISOString(),
+      e.company,
+      e.role,
+      tracker.LABELS[stage],
+      h.title,
+      h.url,
+      h.host,
+      h.filled,
+      h.profile,
+    ];
+  });
   return [header, ...rows].map((r) => r.map(cell).join(',')).join('\n');
+}
+
+/** The application tracker page, brought forward when a tab already shows it. */
+async function openTracker() {
+  const url = api.runtime.getURL('tracker/tracker.html');
+  const open = api.runtime.getContexts ? await api.runtime.getContexts({ contextTypes: ['TAB'] }).catch(() => []) : [];
+  const there = open.find((c) => c.tabId >= 0 && String(c.documentUrl || '').split(/[?#]/)[0] === url);
+  const shown =
+    there &&
+    (await api.tabs.update(there.tabId, { active: true }).then(
+      () => true,
+      () => false,
+    ));
+  if (!shown) await api.tabs.create({ url });
+}
+
+/** Settings › Application log › "Follow my applications in my inbox": off unless switched on, and only with Nylas. */
+async function followGroup(settings) {
+  const nylas = await store.getNylas();
+  const inbox = !!(nylas && nylas.grantId);
+  return group(
+    'Follow my applications',
+    null,
+    el(
+      'label',
+      { className: 'check top' },
+      el('input', {
+        type: 'checkbox',
+        name: 'trackApplications',
+        checked: !!settings.trackApplications,
+        onchange: (e) => store.saveSettings({ trackApplications: e.target.checked }),
+      }),
+      el(
+        'span',
+        {},
+        el('strong', { textContent: 'Follow my applications in my inbox' }),
+        el('br'),
+        el('span', {
+          className: 'muted',
+          textContent:
+            'Reads the emails employers send you (“Thank you for applying”, “complete your online assessment”, “we’d like to invite you to interview”, “Unfortunately…”) through your Nylas connection every few hours, and moves each application on by itself: applied → test → interview → offer. It never sends, moves or deletes an email, what it reads stays in this browser, and nothing goes to the AI.',
+        }),
+      ),
+    ),
+    inbox
+      ? null
+      : el('p', { className: 'hint', textContent: 'Needs your inbox connected first: Settings › Email codes.' }),
+    el(
+      'div',
+      { className: 'row' },
+      el('button', {
+        type: 'button',
+        className: 'primary',
+        textContent: 'Open the application tracker',
+        onclick: openTracker,
+      }),
+    ),
+  );
 }
 
 export async function renderHistory({ refresh }) {
   const history = await store.getHistory();
-  const rows = history.map((h) =>
-    el(
+  const settings = await store.getSettings();
+  const rows = history.map((h) => {
+    const e = tracker.employerOf(h);
+    const stage = tracker.settle({ ...h }).stage;
+    return el(
       'tr',
       {},
       el('td', { textContent: new Date(h.date).toLocaleString() }),
+      el('td', { textContent: e.company || '' }),
       el(
         'td',
         {},
         /^https?:\/\//.test(h.url || '')
-          ? el('a', { href: h.url, target: '_blank', rel: 'noopener', textContent: h.title || h.url })
-          : h.title || '',
+          ? el('a', { href: h.url, target: '_blank', rel: 'noopener', textContent: e.role || h.title || h.url })
+          : e.role || h.title || '',
       ),
+      el('td', { textContent: tracker.LABELS[stage] || '' }),
       el('td', { className: 'mono', textContent: h.host }),
       el('td', { textContent: String(h.filled) }),
       el('td', { textContent: h.profile || '' }),
-    ),
-  );
+    );
+  });
   const clear = async () => {
     if (!confirm('Clear the application log?')) return;
     await store.clearHistory();
@@ -50,13 +127,14 @@ export async function renderHistory({ refresh }) {
   return [
     sectionHead(
       'Application log',
-      'Every job application page you filled, so you can keep track of where you applied. Stored only in this browser.',
+      'Every job application you filled, so you can keep track of where you applied, and with the tracker how far each got. Stored only in this browser.',
     ),
+    await followGroup(settings),
     group(
       plural(history.length, 'application'),
       null,
       rows.length
-        ? table(['When', 'Page', 'Site', 'Fields', 'Profile'], rows)
+        ? table(['When', 'Employer', 'Role', 'Stage', 'Site', 'Fields', 'Profile'], rows)
         : el('p', { className: 'empty', textContent: 'Nothing yet. Fill a job application and it will show up here.' }),
       el(
         'div',

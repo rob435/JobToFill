@@ -1,0 +1,321 @@
+/* JobToFill — the application tracker. */
+body {
+  min-height: 100vh;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.topbar h1 {
+  font-size: 15px;
+  white-space: nowrap;
+}
+.small {
+  font-size: 12.5px;
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.card h2 {
+  font-size: 15px;
+}
+.card p {
+  margin: 0;
+}
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.setup {
+  border-color: var(--primary);
+  background: var(--primary-weak);
+}
+.setup p {
+  max-width: 80ch;
+  margin-top: 4px;
+}
+.row-card {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+ul.plain,
+ol.plain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+blockquote {
+  margin: 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* How far they got: one box a stage, its bar the share of all applications. */
+.funnel {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  min-width: 0;
+}
+.stage .count {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.stage .label {
+  font-weight: 600;
+}
+.stage .bar {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+.stage .bar > span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+}
+.stage-offer .bar > span {
+  background: var(--ok);
+}
+@media (max-width: 720px) {
+  .funnel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.findings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.finding {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.finding.warn {
+  border-color: var(--warn);
+  background: var(--warn-weak);
+}
+.finding.ok {
+  border-color: var(--ok);
+  background: var(--ok-weak);
+}
+
+/* Emails to sort */
+.unsorted {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.unsorted-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.unsorted-item:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.unsorted-item select,
+.unsorted-item input {
+  width: auto;
+  max-width: 100%;
+}
+
+/* The list */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.filters input[type='search'] {
+  flex: 1 1 240px;
+  width: auto;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+}
+.chip[aria-pressed='true'] {
+  background: var(--primary-weak);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.table-wrap {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+th,
+td {
+  text-align: left;
+  vertical-align: top;
+  padding: 8px 8px;
+  border-bottom: 1px solid var(--border);
+}
+th {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+td.stage-cell {
+  min-width: 170px;
+}
+.yours {
+  margin-top: 3px;
+}
+.stage-pick select {
+  width: auto;
+  font-size: 12.5px;
+  padding: 4px 8px;
+}
+td.latest {
+  max-width: 320px;
+  overflow-wrap: anywhere;
+}
+tr.detail td {
+  background: var(--surface-2);
+}
+.detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.timeline li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.timeline li blockquote {
+  flex-basis: 100%;
+}
+.timeline li.ignored {
+  opacity: 0.6;
+}
+
+/* On a phone each application is a block of its own: employer and More, the role, the stage and date, the news. */
+@media (max-width: 640px) {
+  #apps thead {
+    display: none;
+  }
+  #apps tr.app {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: 'firm more' 'role role' 'stage when' 'latest latest';
+    gap: 2px 8px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  #apps tr.app td {
+    border: 0;
+    padding: 0;
+    min-width: 0;
+    max-width: none;
+  }
+  #apps td.firm {
+    grid-area: firm;
+  }
+  #apps td.more {
+    grid-area: more;
+  }
+  #apps td.role {
+    grid-area: role;
+  }
+  #apps td.stage-cell {
+    grid-area: stage;
+  }
+  #apps td.when {
+    grid-area: when;
+    color: var(--muted);
+  }
+  #apps td.latest {
+    grid-area: latest;
+  }
+  #apps tr.detail td {
+    display: block;
+  }
+}

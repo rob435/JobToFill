@@ -521,7 +521,12 @@ function openPageMap() {
  * than a second opened: the Review queue works in one tab at a time, and a second would show it as open elsewhere.
  */
 async function openDiscover(hash) {
-  const url = api.runtime.getURL('discover/discover.html');
+  return openPage('discover/discover.html', hash);
+}
+
+/** An extension page, brought forward when a tab already shows it (Discover, the application tracker). */
+async function openPage(path, hash) {
+  const url = api.runtime.getURL(path);
   const open = api.runtime.getContexts ? await api.runtime.getContexts({ contextTypes: ['TAB'] }).catch(() => []) : [];
   const there = open.find((c) => c.tabId >= 0 && String(c.documentUrl || '').split(/[?#]/)[0] === url);
   // Closed meanwhile: a new one, then.
@@ -689,6 +694,7 @@ async function init() {
   $('#learn').addEventListener('click', learn);
   $('#snapshot').addEventListener('click', snapshot);
   $('#discover').addEventListener('click', () => openDiscover());
+  $('#applications').addEventListener('click', () => openPage('tracker/tracker.html'));
   $('#pagemap').addEventListener('click', openPageMap);
   $('#watch-news-open').addEventListener('click', () => openDiscover('#watch'));
   $('#learn-save').addEventListener('click', saveLearned);

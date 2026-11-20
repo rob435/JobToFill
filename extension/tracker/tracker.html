@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Applications · JobToFill</title>
+    <link rel="icon" href="../icons/icon32.png" />
+    <link rel="stylesheet" href="../ui/theme.css" />
+    <link rel="stylesheet" href="tracker.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <img src="../icons/icon32.png" alt="" width="24" height="24" />
+      <h1>Applications</h1>
+      <span class="muted small">Every application you filled, and how far it got</span>
+    </header>
+
+    <div class="page">
+      <section id="setup" class="card setup" hidden>
+        <div>
+          <h2>Follow your applications in your inbox</h2>
+          <p class="muted">
+            JobToFill reads the emails employers send you (“Thank you for applying”, “complete your online assessment”, “we’d like to invite
+            you to interview”, “Unfortunately…”) and moves each application on by itself: applied → test → interview → offer. You then see
+            where you’re being cut. It reads your inbox through Nylas, the connection you set up for codes; it never sends, moves or deletes
+            an email, and nothing goes to the AI.
+          </p>
+        </div>
+        <label class="check">
+          <input id="track" type="checkbox" />
+          <span><strong>Follow my applications in my inbox</strong></span>
+        </label>
+        <p id="setup-inbox" class="muted small" hidden>
+          Connect your inbox first: Settings › Email codes.
+          <button id="open-email" class="link small" type="button">Open it</button>
+        </p>
+      </section>
+
+      <section id="status" class="card row-card" hidden>
+        <p id="status-text" class="muted small" role="status" aria-live="polite"></p>
+        <div class="row">
+          <button id="check" type="button">Check my inbox now</button>
+          <button id="stop-tracking" class="link small" type="button">Stop following</button>
+        </div>
+      </section>
+
+      <section id="overview" class="card">
+        <div class="card-head">
+          <h2>How far they got</h2>
+          <span id="totals" class="muted small"></span>
+        </div>
+        <ol id="funnel" class="funnel" aria-label="Stages"></ol>
+        <p id="rejections" class="small"></p>
+      </section>
+
+      <section id="diagnosis" class="card">
+        <h2>Where you’re being cut</h2>
+        <ul id="diagnosis-list" class="plain findings"></ul>
+      </section>
+
+      <section id="unsorted" class="card" hidden>
+        <div class="card-head">
+          <h2 id="unsorted-title">Emails to sort</h2>
+        </div>
+        <p class="muted small">News of an application that names no employer you applied to, or several: say which one it’s about.</p>
+        <ul id="unsorted-list" class="plain unsorted"></ul>
+      </section>
+
+      <section id="list" class="card">
+        <div class="card-head">
+          <h2>Your applications</h2>
+          <div class="row">
+            <button id="export" class="small" type="button">Export CSV</button>
+          </div>
+        </div>
+        <div class="filters">
+          <div id="chips" class="chips" role="group" aria-label="Show"></div>
+          <input id="search" type="search" placeholder="Search employers, roles, emails and notes" aria-label="Search applications" />
+        </div>
+        <div class="table-wrap">
+          <table id="apps">
+            <thead>
+              <tr>
+                <th>Employer</th>
+                <th>Role</th>
+                <th>Applied</th>
+                <th>Stage</th>
+                <th>Latest</th>
+                <th><span class="visually-hidden">More</span></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p id="empty" class="muted" hidden>Nothing yet. Fill a job application and it shows up here.</p>
+      </section>
+    </div>
+
+    <script src="../lib/util.js"></script>
+    <script src="../lib/geo.js"></script>
+    <script src="../lib/fields-values.js"></script>
+    <script src="../lib/fields-profile.js"></script>
+    <script src="../lib/fields-personal.js"></script>
+    <script src="../lib/fields-education.js"></script>
+    <script src="../lib/fields-documents.js"></script>
+    <script src="../lib/fields-availability.js"></script>
+    <script src="../lib/fields-work.js"></script>
+    <script src="../lib/fields-diversity.js"></script>
+    <script src="../lib/fields-compliance.js"></script>
+    <script src="../lib/fields-rules.js"></script>
+    <script src="../lib/fields.js"></script>
+    <script src="../lib/store.js"></script>
+    <script src="../lib/tracker.js"></script>
+    <script type="module" src="tracker.js"></script>
+  </body>
+</html>

@@ -47,7 +47,10 @@ extension/
     pagemap.js         page maps: the frames' maps merged into one page, and its text outline within a budget
     doctext.js         text from PDF and Word files (your CV, example letters), no dependencies
     otp.js             verification emails: the code or link in a message, and whether it is from the site asking
-    nylas.js           your email through Nylas: reads codes; saves or sends an outreach email when you press it
+    nylas.js           your email through Nylas: reads codes; saves or sends an outreach email when you press it; lists
+                       messages a page at a time and reads one in full, for the application tracker
+    tracker.js         the application tracker: an employer's email sorted (received, test, interview, offer, rejected),
+                       put on its application, the stages, the funnel and where you're being cut
     pdfdoc.js          PDF writer: TeX-style line breaking, embedded fonts, the letter and CV layouts
     cvcheck.js         the CV check: what a reader trips on, from the CV's own layout (lines ending on one word, the free
                        space) and words (grades, years, bullets without a number), no AI
@@ -65,6 +68,8 @@ extension/
                        check (its findings and the page's thumbnail) for the settings page and the studio
   popup/               toolbar popup
   map/                 the page map viewer: a tab's map to read, search, copy redacted, and click through to the page
+  tracker/             the Applications page: every application and how far it got, the funnel, where you're being cut,
+                       the emails to sort, stages set by hand and notes
   studio/              the cover letter page: find the job, write, check, preview, attach, tailor the CV
   discover/            Discover internships page: the Overview (control panel), search, careers and contact checks, email
                        drafts, the Review queue, outreach with replies sorted, watchlist
