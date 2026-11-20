@@ -700,9 +700,12 @@
 
   /* --------------------------------------------------------- careers pages */
 
-  // "Internal Communications" (Synthesia's blog) and "Work with an accountant" (FreeAgent's help centre) are not.
+  // "Internal Communications" (Synthesia's blog) and "Work with an accountant" (FreeAgent's help centre) are not. A
+  // link that only says "Hiring" (Alignment Research Center's) is one; "Hiring an IT administrator" (a blog post) isn't.
+  // Other languages: Aixtron's "Karriere bei AIXTRON", 99minutos' /unete-al-equipo, Access Games' "採用情報",
+  // 4Paradigm's "招贤纳士" ("採用" alone is also a product's "adoption", so only its recruiting phrases).
   const CAREER_LINK =
-    /career|\bjobs?\b|join[- ]?(us|our|the team)|opportunit|work(ing)?[- ]with[- ]us|work(ing)?[- ](for|at)[- ]|working[- ]here|vacanc|recruit|graduate|early[- ]careers|students?\b|campus|\bintern(ship)?s?\b|life[- ]at|people[- ]and[- ]culture|join\b|open (roles|positions)|openings|positions/i;
+    /career|\bjobs?\b|join[- ]?(us|our|the team)|opportunit|work(ing)?[- ]with[- ]us|work(ing)?[- ](for|at)[- ]|working[- ]here|vacanc|recruit|graduate|early[- ]careers|students?\b|campus|\bintern(ship)?s?\b|life[- ]at|people[- ]and[- ]culture|join\b|open (roles|positions)|openings|positions|^\s*(we['’]?re |we are |now )?hiring[\s!.]*$|karriere|stellenangebot|offene stellen|carri[eè]re|recrut|rejoignez[- ]nous|nous rejoindre|offres d['’]emploi|\bempleos?\b|bolsa de trabajo|trabaja con nosotros|[úu]nete al equipo|vacantes?\b|trabalhe conosco|\bvagas\b|carreira|lavora con noi|werken bij|vacature|採用情報|新卒採用|中途採用|キャリア採用|求人|招聘|招贤|加入我们|채용/i;
   // Pages that are something else unless their link says careers (a blog post, a help article).
   const NOT_CAREER =
     /\/(people|team|our-team|leadership|fund|funds|news|insights|press|media|contact|legal|privacy|cookie|investor|portfolio|post|blog|hc|articles?)(\/|$)|\.(pdf|jpg|png|zip)$|^mailto:|^tel:|^javascript:/i;
@@ -711,25 +714,45 @@
     /(credit|equity|equities|fund|funds|strategy|strategies|investment|investments|what-we-do|market|markets|income|bond|bonds)[-/][^/]*opportunit|opportunit[^/]*[-/](fund|strateg|credit|equit)/i;
   // Never a careers page, whatever the link says: Synthesia's "Join" leads to community.synthesia.io/sign_up.
   const NEVER_CAREER = /(^|\/)(sign[_-]?up|sign[_-]?in|log[_-]?in|register)(\/|$|[?.#])/i;
+  // A job board's "Powered by Teamtailor" leads to the vendor's own site.
   const NOT_CAREER_TEXT =
-    /\bjoin (the|our) (community|newsletter|mailing list|wait-?list|beta|webinar|conversation)\b/i;
+    /\bjoin (the|our) (community|newsletter|mailing list|wait-?list|beta|webinar|conversation)\b|\bpowered by\b/i;
   // A firm's subdomains that aren't about working there (support.freeagent.com, community.synthesia.io).
   const NOT_CAREER_HOST = /^(support|help|docs|community|status|shop|store)$/i;
+  // Without the slash: a site that wants one redirects there, but Squarespace answers 404 for AgentCollect's
+  // /careers/ and serves /careers (one key for the crawl, so only one of the two is ever asked for).
   const CAREER_PATHS = [
-    '/careers/',
     '/careers',
-    '/career/',
-    '/join-us/',
-    '/jobs/',
-    '/opportunities/',
-    '/students/',
-    '/early-careers/',
-    '/graduates/',
-    '/internships/',
+    '/career',
+    '/join-us',
+    '/jobs',
+    '/opportunities',
+    '/students',
+    '/early-careers',
+    '/graduates',
+    '/internships',
   ];
+  // A careers site on a host of its own: careers.222.place, jobs.alemhealth.com, careers.abb.
+  const CAREER_HOST = /^(careers?|jobs|karriere|join|talent|recruiting|work)\./i;
+  // Words a link to another of the firm's sites must start with, and its address must carry: ACD Systems'
+  // "Careers" → acdsee.com/en/about/careers/, AdHoc Studio's "CareersCareers" → careers.adhocla.com.
+  const CAREER_LABEL =
+    /^\s*(careers?|jobs\b|job openings|open (roles|positions)|vacancies|join (us|our team|the team)|work with us|we['’]?re hiring|karriere|stellenangebote|carri[eè]res?|empleos?|trabaja con nosotros|vagas|carreiras?|lavora con noi|werken bij|vacatures|採用情報|求人|招聘|招贤纳士|加入我们|채용)/i;
+  const CAREER_ADDRESS = /career|\bjobs?\b|karriere|recruit|talent|join|vacanc|hiring|empleo|vagas|stellen/i;
+  // A portfolio's job board isn't the firm's own careers page, nor are job sites and social networks.
+  const NOT_AWAY = /portfolio|network/i;
+  const NOT_AWAY_HOST = /(^|\.)(glassdoor\.[a-z.]+|indeed\.[a-z.]+|getro\.com|wellfound\.com|angel\.co)$/i;
+  // A section of the home page that is the careers page (a one-page site): 22cans' "Jobs", Adrian Lee & Partners'
+  // "CAREERS".
+  const CAREER_HEADING =
+    /^(careers?|jobs|join (us|our team|the team)|work with us|we['’]?re hiring|vacancies|open (roles|positions)|current openings|karriere|carri[eè]res|empleos?|trabaja con nosotros|vagas|carreiras|lavora con noi|werken bij|vacatures|採用情報|求人情報|招聘|加入我们|채용)[\s.!:]*$/i;
+  // A sitemap's careers page: the last segment of a short path (360 ONE's /wealth/careers), never a post under it
+  // nor a product's "work with us" (ams OSRAM's /products/full-service-foundry/work-with-us).
+  const SITEMAP_CAREER =
+    /^\/(?:[^/]+\/)?(careers?|jobs|join-us|joinus|join|vacancies|open-positions|hiring|karriere|carrieres|stellenangebote|empleos?|trabaja-con-nosotros|vagas|carreiras|recruit|recruitment|recrutement|early-careers|internships?|students|graduates?)(?:\.html?)?\/?$/i;
   // Hosts that belong to job boards rather than to the firm.
   const ATS_DOMAIN =
-    /(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|recruitee\.com|teamtailor\.com|personio\.(de|com)|bamboohr\.com|icims\.com|taleo\.net|successfactors\.(com|eu)|oraclecloud\.com|tal\.net|hibob\.com|pinpointhq\.com|jobvite\.com|rippling\.com|dayforcehcm\.com|beapplied\.com|eightfold\.ai|avature\.net|phenompeople\.com|jobs\.net|applytojob\.com|breezy\.hr|comeet\.(co|com)|workforcenow\.adp\.com)$/i;
+    /(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|recruitee\.com|teamtailor\.com|personio\.(de|com)|bamboohr\.com|icims\.com|taleo\.net|successfactors\.(com|eu)|oraclecloud\.com|tal\.net|hibob\.com|pinpointhq\.com|jobvite\.com|rippling\.com|dayforcehcm\.com|beapplied\.com|eightfold\.ai|avature\.net|phenompeople\.com|jobs\.net|applytojob\.com|breezy\.hr|comeet\.(co|com)|workforcenow\.adp\.com|workatastartup\.com|mokahr\.com)$/i;
 
   /**
    * An href that is markup or a template, not an address: Marshall Wace's commented-out `<a href="--><!--">` (cut at
@@ -804,19 +827,39 @@
 
   /**
    * Links on the firm's own pages that lead to its careers pages, likeliest first. domain: the firm's domain, or
-   * several (its registered one and the one its site moved to); its subdomains count, job boards too.
+   * several (its registered one and the one its site moved to); its subdomains count, job boards too. away: also a
+   * link to another of its sites that says careers in its words and its address (`away: true` on those).
    */
-  function careerLinks(html, base, domain) {
+  function careerLinks(html, base, domain, { away = false } = {}) {
     const own = [].concat(domain || domainOf(base)).filter(Boolean);
     return links(html, base)
       .filter((l) => {
         const d = domainOf(l.url);
         const ats = ATS_DOMAIN.test(d);
-        if (!own.includes(d) && !ats) return false;
         const u = parseUrl(l.url);
+        const path = u.pathname + u.search;
+        if (!own.includes(d) && !ats)
+          return (
+            away &&
+            l.text.length <= 40 &&
+            CAREER_LABEL.test(l.text) &&
+            !NOT_AWAY.test(l.text) &&
+            CAREER_ADDRESS.test(u.hostname.split('.')[0] + ' ' + u.pathname.replace(/[-_/]/g, ' ')) &&
+            !SOCIAL.test(u.hostname) &&
+            !NOT_AWAY_HOST.test(u.hostname) &&
+            !NOT_CAREER.test(path) &&
+            !NEVER_CAREER.test(path)
+          );
         const sub = u.hostname.toLowerCase().slice(0, -d.length).replace(/\.$/, '');
         if (!ats && NOT_CAREER_HOST.test(sub.split('.')[0])) return false;
-        const path = u.pathname + u.search;
+        // A board vendor's own site, not a board on it: careers.adhocla.com's logo link to
+        // www.teamtailor.com/en/?utm_campaign=poweredby.
+        if (
+          ats &&
+          /^(www)?$/.test(sub) &&
+          (/poweredby|powered_by/i.test(u.search) || /^\/([a-z]{2}(-[a-z]{2})?\/?)?$/i.test(u.pathname))
+        )
+          return false;
         if (NEVER_CAREER.test(path) || NOT_CAREER_TEXT.test(l.text)) return false;
         if (NOT_CAREER.test(path) && !CAREER_LINK.test(l.text)) return false;
         // A fund's "opportunities" is no careers page: TT International's /what-we-do/credit-opportunities/.
@@ -826,10 +869,14 @@
       })
       .map((l) => {
         const t = (l.text + ' ' + l.url).toLowerCase();
+        const d = domainOf(l.url);
         let w = 0;
         if (/\bintern(ship)?s?\b|student|graduate|campus|early/.test(t)) w += 3;
-        if (/career|job|vacanc|opening|opportunit|position|join/.test(t)) w += 2;
-        if (ATS_DOMAIN.test(domainOf(l.url))) w += 2;
+        if (/career|job|vacanc|opening|opportunit|position|join|karriere|carri[eè]re|stellen|recrut|empleo/.test(t))
+          w += 2;
+        if (ATS_DOMAIN.test(d)) w += 2;
+        // The firm's own careers page first, the group's after it.
+        if (!own.includes(d) && !ATS_DOMAIN.test(d)) return { ...l, weight: w - 1, away: true };
         return { ...l, weight: w };
       })
       .sort((a, b) => b.weight - a.weight);
@@ -1498,6 +1545,60 @@
       .every((w) => w.length < 2 || new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(head));
   }
 
+  /** A page's title. */
+  function titleOf(html) {
+    return textOf((String(html || '').match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '');
+  }
+
+  /** Is a section of the home page (not its menu or footer) headed as the careers page? 22cans' "Jobs". */
+  function careersSection(html) {
+    const body = String(html || '').replace(/<(nav|header|footer)\b[\s\S]*?<\/\1\s*>/gi, ' ');
+    for (const m of body.matchAll(/<h[1-6]\b[^>]*>([\s\S]*?)<\/h[1-6]\s*>/gi))
+      if (CAREER_HEADING.test(textOf(m[1]))) return true;
+    return false;
+  }
+
+  /**
+   * Does a page reached by guessing a host read as careers (its title or headings, or the words on it)? A careers.
+   * subdomain can be anything: careers.agentcollect.com is a "Secure payment" page.
+   */
+  function looksLikeCareers(html) {
+    const heads = [...String(html || '').matchAll(/<h[1-3]\b[^>]*>([\s\S]*?)<\/h[1-3]\s*>/gi)].map((m) => textOf(m[1]));
+    if ([titleOf(html), ...heads].some((t) => t.length <= 80 && CAREER_LINK.test(t))) return true;
+    return (
+      (textOf(html).match(/career|\bjobs?\b|vacanc|hiring|open (roles|positions)|join (us|our team)/gi) || []).length >=
+      2
+    );
+  }
+
+  /**
+   * Careers pages a site's sitemap lists (from a sitemap index, the child with its pages, else its first), shortest
+   * first: 360 ONE links /wealth/careers from no page but its sitemap. Two requests at most.
+   */
+  async function sitemapCareers(fetchFn, origin, own) {
+    const locs = (xml) =>
+      [...String(xml || '').matchAll(/<loc>\s*(?:<!\[CDATA\[)?\s*([^<\]\s]+)/gi)].map((m) => decode(m[1]));
+    const mine = (u) => {
+      const p = parseUrl(u);
+      return p && /^https?:$/.test(p.protocol) && own.includes(domainOf(p.hostname)) ? p : null;
+    };
+    let r = await get(fetchFn, origin + '/sitemap.xml', { retries: 0, timeout: 12000 });
+    if (!r.ok) return [];
+    if (/<sitemapindex\b/i.test(r.text)) {
+      const kids = locs(r.text).filter(mine);
+      const kid = kids.find((u) => /page/i.test(u)) || kids[0];
+      if (!kid) return [];
+      r = await get(fetchFn, kid, { retries: 0, timeout: 12000 });
+      if (!r.ok) return [];
+    }
+    const out = [];
+    for (const u of locs(r.text)) {
+      const p = mine(u);
+      if (p && SITEMAP_CAREER.test(p.pathname) && !out.some((x) => pageKey(x) === pageKey(p.href))) out.push(p.href);
+    }
+    return out.sort((a, b) => a.length - b.length).slice(0, 2);
+  }
+
   /**
    * Everything the firm's careers pages show for students: boards found on its site (or guessed and proved to
    * be its), the student roles on them, and programme sentences on plain pages.
@@ -1570,14 +1671,29 @@
     // The firm's own domains: links elsewhere aren't followed, nor pages that land elsewhere read (Speech Graphics'
     // "Careers Handbook" redirects to a PDF on static1.squarespace.com), whatever host a page itself is on.
     const own = [firm.domain, domainOf(site), ...given.map(domainOf)].filter(Boolean);
+    // Careers sites of the firm's group that its home page links to (Acres' acrescap.com/careers/): read wherever
+    // they land.
+    const away = new Set();
+    // Hosts tried on the off chance (careers.222.place): kept only when the page there reads as careers.
+    const hostGuesses = new Set();
+    let home = null;
     if (site) {
-      let home = guessedHome || (await get(fetchFn, site + '/'));
+      home = guessedHome || (await get(fetchFn, site + '/'));
       // Some firms only answer on www. (or only without it).
       if (!home.ok && !home.blocked) {
         const u = parseUrl(site);
         const other = u.hostname.startsWith('www.') ? u.hostname.slice(4) : 'www.' + u.hostname;
         const again = await get(fetchFn, `https://${other}/`, { retries: 0 });
         if (again.ok) home = again;
+      }
+      // A bot wall a browser gets through (Cloudflare's "Just a moment…" for AGW Capital, CloudFront's "Request
+      // blocked" for 2K) is no sign the site is gone.
+      if (!home.ok && /^(401|403|429)$/.test(String(home.status))) home = { ...home, blocked: true };
+      // A site whose https is broken but that answers on http (Access Games' accessgames.co.jp), when it names the
+      // firm there.
+      if (!home.ok && !home.blocked && (!home.status || home.status >= 500)) {
+        const plain = await get(fetchFn, site.replace(/^https:/, 'http:') + '/', { retries: 0, timeout: 12000 });
+        if (plain.ok && pageIsFirm(plain.text, firm)) home = plain;
       }
       if (!guessedHome)
         log.push({
@@ -1594,7 +1710,11 @@
           // A site that moved (its old address redirects to the new) is the firm's under its new domain too.
           own.push(domainOf(home.url));
           addBoards(detectBoards(home.text, home.url));
-          queue.push(...careerLinks(home.text, home.url, own).map((l) => l.url));
+          // The group's careers site only from a home page that names the firm (not an ISP's for ABA Games).
+          for (const l of careerLinks(home.text, home.url, own, { away: named })) {
+            queue.push(l.url);
+            if (l.away) away.add(l.url);
+          }
         }
       }
       // Sites without a careers link (or a menu built by script) usually still have /careers/.
@@ -1606,49 +1726,15 @@
         }
       }
     }
-    let fetched = 0;
-    while (queue.length && fetched < 6) {
-      const url = queue.shift();
-      const key = pageKey(url);
-      const guessed = guesses.has(url);
-      // Guessed paths only until one answers.
-      if (visited.has(key) || (guessed && result.pages.length)) continue;
-      visited.add(key);
-      // A link to a job board names the board: no need to load it.
-      const linked = detectBoards(url, url).filter((b) => boardRequest(b));
-      if (ATS_DOMAIN.test(domainOf(url)) && linked.length) {
-        addBoards(linked);
-        continue;
-      }
-      fetched++;
-      const r = await get(fetchFn, url, { retries: 0, timeout: 15000 });
-      if (!r.ok || r.blocked) {
-        if (!guessed) log.push({ url, outcome: r.blocked ? 'blocked' : `failed: ${r.status || r.error}` });
-        continue;
-      }
-      // A guessed path that lands back on the home page isn't a careers page, and nor is one that doesn't name the firm
-      // or says next to nothing: brookam.com/careers/ is a 114-byte redirect to a parking page.
-      if (guessed && parseUrl(r.url) && parseUrl(r.url).pathname.replace(/\/+$/, '') === '') continue;
-      if (guessed && (textOf(r.text).length < 200 || !pageIsFirm(r.text, firm))) {
-        log.push({ url: r.url, outcome: 'guessed page doesn’t name the firm, skipped' });
-        continue;
-      }
-      if (/^\s*%PDF/.test(r.text)) {
-        log.push({ url: r.url, outcome: 'PDF, not read' });
-        continue;
-      }
-      const landed = domainOf(r.url);
-      // A page the firm's own post links is its own wherever it lands; any other stays on its site or a job board.
-      if (given.includes(url)) own.push(landed);
-      else if (!own.includes(landed) && !ATS_DOMAIN.test(landed)) {
-        log.push({ url: r.url, outcome: 'not the firm’s site' });
-        continue;
-      }
-      // A page read already, reached again by a redirect.
-      const at = pageKey(r.url);
-      if (at !== key && result.pages.some((p) => pageKey(p) === at)) continue;
-      visited.add(at);
-      log.push({ url: r.url, outcome: 'careers page' });
+    // The home page's own address, as a guess that lands back on it is compared.
+    const bare = (x) => {
+      const u = parseUrl(x);
+      return u ? (u.hostname.replace(/^www\./, '') + u.pathname.replace(/\/+$/, '')).toLowerCase() : '';
+    };
+    const homeAt = home && home.ok ? bare(home.url) : '';
+    /** A careers page found: its boards, addresses and text. */
+    const keep = (r, outcome = 'careers page') => {
+      log.push({ url: r.url, outcome });
       result.pages.push(r.url);
       addBoards(detectBoards(r.text, r.url));
       result.emails.push(...emails(r.text));
@@ -1656,14 +1742,97 @@
       pageTexts.push(text);
       // What the page says, for the AI to read when there are no roles to show (a few pages, each clipped).
       if (result.texts.length < 3) result.texts.push({ url: r.url, text: tidyText(text).slice(0, 8000) });
-      // One level deeper: "Students", "Internships", "Open positions" (not on a site that isn't the firm's: only
-      // the pages its post links are read there).
-      if (!foreign && !ATS_DOMAIN.test(landed)) {
-        for (const l of careerLinks(r.text, r.url, own).slice(0, 4)) {
-          guesses.delete(l.url);
-          if (!visited.has(pageKey(l.url))) queue.push(l.url);
+    };
+    let fetched = 0;
+    const crawl = async (limit) => {
+      while (queue.length && fetched < limit) {
+        const url = queue.shift();
+        const key = pageKey(url);
+        const guessed = guesses.has(url);
+        // Guessed paths only until one answers.
+        if (visited.has(key) || (guessed && result.pages.length)) continue;
+        visited.add(key);
+        // A link to a job board names the board: no need to load it.
+        const linked = detectBoards(url, url).filter((b) => boardRequest(b));
+        if (ATS_DOMAIN.test(domainOf(url)) && linked.length) {
+          addBoards(linked);
+          continue;
+        }
+        fetched++;
+        const r = await get(fetchFn, url, { retries: 0, timeout: 15000 });
+        if (!r.ok || r.blocked) {
+          if (!guessed) log.push({ url, outcome: r.blocked ? 'blocked' : `failed: ${r.status || r.error}` });
+          continue;
+        }
+        const at = parseUrl(r.url);
+        // A guessed path that lands back on the home page (or on the root of a host that isn't a careers site) isn't
+        // a careers page, and nor is one that doesn't name the firm or says next to nothing without a title that
+        // says careers: brookam.com/careers/ is a 114-byte redirect to a parking page; jobs.alemhealth.com, "Jobs at
+        // AlemHealth", is a board drawn by script.
+        if (
+          guessed &&
+          (!at || bare(r.url) === homeAt || (!at.pathname.replace(/\/+$/, '') && !CAREER_HOST.test(at.hostname)))
+        )
+          continue;
+        if (
+          guessed &&
+          ((textOf(r.text).length < 200 && !CAREER_LINK.test(titleOf(r.text))) || !pageIsFirm(r.text, firm))
+        ) {
+          log.push({ url: r.url, outcome: 'guessed page doesn’t name the firm, skipped' });
+          continue;
+        }
+        if (hostGuesses.has(url) && !looksLikeCareers(r.text)) {
+          log.push({ url: r.url, outcome: 'guessed host isn’t a careers page, skipped' });
+          continue;
+        }
+        if (/^\s*%PDF/.test(r.text)) {
+          log.push({ url: r.url, outcome: 'PDF, not read' });
+          continue;
+        }
+        const landed = domainOf(r.url);
+        // A page the firm's own post links is its own wherever it lands, and so is the group careers site its home
+        // page links to or its /careers redirects to (ABB's careers.abb); any other stays on its site or a job board.
+        // Only a whole careers host becomes one of the firm's sites: from Aqua's page on ycombinator.com, YC's other
+        // companies' jobs are not Aqua's.
+        const elsewhere = away.has(url) || (guessed && CAREER_HOST.test(at.hostname));
+        if (given.includes(url) || (elsewhere && CAREER_HOST.test(at.hostname))) own.push(landed);
+        else if (!elsewhere && !own.includes(landed) && !ATS_DOMAIN.test(landed)) {
+          log.push({ url: r.url, outcome: 'not the firm’s site' });
+          continue;
+        }
+        // A page read already, reached again by a redirect.
+        const atKey = pageKey(r.url);
+        if (atKey !== key && result.pages.some((p) => pageKey(p) === atKey)) continue;
+        visited.add(atKey);
+        keep(r);
+        // One level deeper: "Students", "Internships", "Open positions" (not on a site that isn't the firm's: only
+        // the pages its post links are read there).
+        if (!foreign && !ATS_DOMAIN.test(landed) && own.includes(landed)) {
+          for (const l of careerLinks(r.text, r.url, own).slice(0, 4)) {
+            guesses.delete(l.url);
+            if (!visited.has(pageKey(l.url))) queue.push(l.url);
+          }
         }
       }
+    };
+    await crawl(6);
+    // Still nothing: the careers pages the sitemap lists, then the careers. and jobs. hosts, a few requests more.
+    if (homeAt && !foreign && !result.pages.length && !boards.some((b) => boardRequest(b))) {
+      const origin = parseUrl(home.url).origin;
+      const next = await sitemapCareers(fetchFn, origin, own);
+      for (const sub of ['careers', 'jobs']) {
+        const url = `https://${sub}.${domainOf(home.url)}/`;
+        if (bare(url) === homeAt) continue;
+        next.push(url);
+        guesses.add(url);
+        hostGuesses.add(url);
+      }
+      queue.unshift(...next);
+      await crawl(fetched + 4);
+    }
+    // A one-page site whose careers section is on the home page itself (22cans' "Jobs", with jobs@22cans.com).
+    if (homeAt && !foreign && !result.pages.length && !boards.length && careersSection(home.text)) {
+      keep(home, 'careers section on the home page');
     }
     // Known pages that all failed, with no site or board to go on, mean the firm couldn't be reached.
     if (!site && given.length && !result.pages.length && !boards.length) result.status = 'unreachable';
