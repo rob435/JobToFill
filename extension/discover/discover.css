@@ -194,10 +194,11 @@ legend {
   gap: 16px;
   align-items: start;
 }
+/* Under the bar, however tall it wraps (--bar is its height, kept by discover.js). */
 .filters {
   position: sticky;
-  top: 64px;
-  max-height: calc(100vh - 80px);
+  top: calc(var(--bar, 50px) + 14px);
+  max-height: calc(100vh - var(--bar, 50px) - 30px);
   overflow-y: auto;
   gap: 14px;
 }
@@ -654,10 +655,17 @@ details summary {
   text-align: center;
 }
 
-/* A phone-sized window: the tabs scroll under the title. */
+/* A phone-sized window: the five tabs wrap under the title, so none is out of sight. */
 @media (max-width: 640px) {
   .topbar {
     padding: 0 14px;
+  }
+  .tabs {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+  .tabs button {
+    padding: 10px 8px 8px;
   }
   .health {
     display: none;
@@ -712,8 +720,8 @@ a.button.big {
 }
 .queue-side {
   position: sticky;
-  top: 64px;
-  max-height: calc(100vh - 80px);
+  top: calc(var(--bar, 50px) + 14px);
+  max-height: calc(100vh - var(--bar, 50px) - 30px);
   overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border);

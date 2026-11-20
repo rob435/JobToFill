@@ -1507,7 +1507,7 @@ test('Discover: the Overview counts everything, replies are sorted (a bounce, an
   await page.waitForFunction(() => /1\s*Interested/.test(document.querySelector('#home-stats').textContent));
   const stats = await page.textContent('#home-stats');
   assert.match(stats, /1\s*Awaiting a reply/);
-  assert.match(stats, /1\s*Replied/);
+  assert.match(stats, /1\s*Answered/);
   assert.match(stats, /1\s*Bounced or stuck/);
   assert.match(stats, /3\s*Sent in all/);
   assert.match(await page.textContent('#home-next'), /1 email bounced/);
@@ -1526,6 +1526,36 @@ test('Discover: the Overview counts everything, replies are sorted (a bounce, an
   await page.fill('#outreach-search', 'gamma');
   assert.deepEqual(await page.$$eval('#outreach .outreach-item', (li) => li.map((x) => x.dataset.id)), ['gamma']);
   await page.fill('#outreach-search', '');
+
+  // Try someone else: the bounced firm goes back to Review, Drafted, and the address that bounced is never used again.
+  const was = await h.bg(async () => {
+    const { store } = globalThis.JTF;
+    const ai = (await store.getSettings()).ai;
+    await store.setAiKey('test-key', 'custom');
+    await store.saveAiSettings({ provider: 'custom', baseUrl: 'https://ai.test/v1', model: 'mock' });
+    return ai;
+  });
+  await page.waitForFunction(() => /AI: /.test(document.querySelector('#health').textContent));
+  // Its site and the job boards tried for its name, read as it's prepared: answered here, naming no one.
+  const elsewhere = /^https?:\/\/(?!api\.us\.nylas\.com\/)/;
+  await h.context.route(elsewhere, (route) =>
+    route.fulfill({ contentType: 'text/html', body: '<html><title>Alpha Capital</title><p>Alpha Capital.</p></html>' }),
+  );
+  await page.click('#outreach .outreach-item[data-id="alpha"] button.try-again');
+  await page.waitForFunction(() => !document.querySelector('#review-view').hidden);
+  await until(
+    async () => (await rec('alpha')).status === 'drafted',
+    () => true,
+    null,
+    10000,
+  );
+  assert.deepEqual((await rec('alpha')).bounced, ['jane@alpha.example']);
+  assert.match(await page.textContent('#review-queue'), /Alpha Capital/);
+  await h.bg(async (ai) => {
+    const { store } = globalThis.JTF;
+    await store.setAiKey('', 'custom');
+    await store.saveSettings({ ai });
+  }, was);
 
   // Find firms: All and None for a group of kinds, and picking the top ten.
   await page.click('#tab-find');
@@ -1550,10 +1580,12 @@ test('Discover: the Overview counts everything, replies are sorted (a bounce, an
   assert.ok((await page.$$('#results .firm .glance')).length > 0, 'ways in from data/checks.json');
 
   await h.context.unroute('https://api.us.nylas.com/**');
+  await h.context.unroute(elsewhere);
   await h.bg(async () => {
     const { store } = globalThis.JTF;
     for (const id of ['alpha', 'beta', 'gamma']) await store.setOutreach(id, null);
     await store.setNylas(null);
+    await store.setDiscoverCache({ queue: { items: [], at: 0 } });
   });
   assert.deepEqual(errors, []);
   await page.close();

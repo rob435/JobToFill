@@ -1245,4 +1245,41 @@ test('outreach: replyKind() tells a bounce, an out-of-office, a pointer to apply
   assert.equal(kind('Unfortunately nothing formal this summer, but I would be happy to chat next week.'), 'positive');
   assert.equal(kind('Good afternoon Robin, Hope you are well? Thank you for reaching out.'), 'reply');
   assert.equal(O.replyKind(), 'reply');
+  // A person back from leave, answering: not an out-of-office.
+  assert.equal(
+    kind(
+      'Hi Robin, apologies for the slow reply, I was on annual leave last week. Happy to have a chat - are you free Thursday?',
+    ),
+    'positive',
+  );
+  // A delay is not a bounce: Gmail goes on trying, and the address may well work.
+  assert.equal(
+    kind(
+      'Delivery incomplete. There was a temporary problem delivering your message to jane@acme.example. Gmail will retry for 47 more hours.',
+      [{ name: 'Mail Delivery Subsystem', email: 'mailer-daemon@googlemail.com' }],
+      'Delivery Status Notification (Delay)',
+    ),
+    'auto',
+  );
+  assert.equal(
+    kind('Delivery to these recipients is delayed.', [{ email: 'postmaster@acme.example' }], 'Delivery delayed: Hi'),
+    'auto',
+  );
+  // "does not exist" in a person's answer is no bounce.
+  assert.notEqual(
+    kind(
+      'Hi Robin, our summer programme does not exist any more, but please send your CV to the address on our website.',
+    ),
+    'bounced',
+  );
+  assert.equal(kind('Unfortunately we are not interviewing for interns this year.'), 'declined');
+  assert.equal(
+    kind('Please apply online via our careers page; shortlisted candidates will be invited to interview in January.'),
+    'apply',
+  );
+  assert.equal(
+    kind('Unfortunately we have no vacancies at the moment but would be happy to keep your CV on file.'),
+    'declined',
+  );
+  assert.equal(kind('We would like to invite you to an interview next Tuesday.'), 'positive');
 });

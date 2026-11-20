@@ -12,7 +12,7 @@
  * their addresses are still read live from the firm's pages, as before.
  *
  * Results are cached in .cache/checks/results.jsonl, one line per firm, so a run can stop and carry on.
- * Usage: npm run checks [-- --limit 200] [-- --refresh] [-- --prune] [-- --concurrency 24] [-- --only id,id]
+ * Usage: npm run checks [-- --limit 200] [-- --refresh] [-- --prune] [-- --concurrency 64] [-- --only id,id]
  *        [-- --again none,unreachable,timeout] (check the firms that ended so last time again) [-- --write-only]
  */
 import { createRequire } from 'node:module';
@@ -35,7 +35,7 @@ const value = (name, fallback) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : fallback;
 };
 const LIMIT = Number(value('limit', 0)) || Infinity;
-const CONCURRENCY = Number(value('concurrency', 24)) || 24;
+const CONCURRENCY = Number(value('concurrency', 64)) || 64;
 const ONLY = new Set(String(value('only', '')).split(',').filter(Boolean));
 // Statuses to check again (`--again none,unreachable,timeout`): a second look before a firm is called gone.
 const AGAIN = new Set(String(value('again', '')).split(',').filter(Boolean));
@@ -62,6 +62,9 @@ const fetchFn = (url, init = {}) =>
 const withTimeout = (p, ms) =>
   Promise.race([p, new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), ms))]);
 
+// The kinds of address the file keeps: a recruiting or a general mailbox, never a person's.
+const ROLE = new Set(['recruiting', 'general']);
+
 /** A careers check and a contacts check of one firm, cut to what the file keeps. */
 async function checkOne(D, C, firm) {
   const careers = await D.careers(firm, { fetch: fetchFn });
@@ -76,7 +79,7 @@ async function checkOne(D, C, firm) {
     if (a && /@/.test(a) && !mailboxes.some((m) => m.a === a)) mailboxes.push({ a, k: kind || '' });
   };
   for (const b of contacts.best || []) if (!b.name && !b.guessed) addMailbox(b.address, b.kind);
-  for (const e of careers.emails || []) addMailbox(e, 'careers page');
+  for (const e of careers.emails || []) if (ROLE.has(C.kindOf(e))) addMailbox(e, 'careers page');
   const pattern = contacts.pattern && contacts.pattern.pattern ? contacts.pattern : null;
   const teamPages = [
     ...new Set(
@@ -166,9 +169,11 @@ async function main() {
 
 /** checks.json from every result kept, and with --prune, firms.json without the dead. */
 async function write(D, firms, done, json) {
+  const { C } = libs();
   const out = {};
   const dead = [];
   const tally = {};
+  const ats = [];
   for (const f of firms) {
     const r = done.get(f.id);
     if (!r) continue;
@@ -180,13 +185,23 @@ async function write(D, firms, done, json) {
     }
     if (r.timedOut || r.error) continue;
     const kept = {};
+    // A person's address read before the filter above: a cached result is cleaned the same way.
+    const m = (r.m || []).filter((x) => ROLE.has(C.kindOf(x.a)));
     // The crawl's own bookkeeping (when, the home page failing, a parked page) stays in the cache.
-    for (const [key2, v] of Object.entries(r))
+    for (const [key2, v] of Object.entries({ ...r, m }))
       if (!['id', 'at', 'h', 'k'].includes(key2) && v != null && v !== 0 && !(Array.isArray(v) && !v.length))
         kept[key2] = v;
     out[r.id] = kept;
+    if (r.at) ats.push(r.at);
   }
-  const built = new Date().toISOString().slice(0, 10);
+  const built = new Date(ats.length ? Math.min(...ats) : Date.now()).toISOString().slice(0, 10);
+  // Firms found gone before and pruned since aren't in firms.json any more: they stay on the list, or the next
+  // `npm run firms` would bring them back.
+  if (existsSync(outFile)) {
+    const ids = new Set(firms.map((f) => f.id));
+    for (const id of JSON.parse(await readFile(outFile, 'utf8')).dead || [])
+      if (!ids.has(id) && !dead.includes(id)) dead.push(id);
+  }
   dead.sort();
   // One firm a line, as firms.json is kept: a rebuild's diff shows which firms changed.
   const lines = Object.entries(out).map(([id, v]) => `${JSON.stringify(id)}:${JSON.stringify(v)}`);
