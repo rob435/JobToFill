@@ -53,7 +53,8 @@ const state = {
   shown: PAGE,
   checks: {}, // firmId → { at, result } (careers())
   contacts: {}, // firmId → { at, result (findContacts()), read (readPage(), merged) }
-  research: {}, // firmId → { at, result (researchFirm()), error }
+  research: {}, // firmId → { at, result (researchFirm(), with the alumni search's in `alumni`), error }
+  typed: {}, // firmId → { at, list: [{ address, name }] }: addresses the person typed in to write to
   hooks: {}, // firmId → { at, common, result (discoverHooks.find()) }: reasons to write
   researching: new Set(),
   moved: {}, // firmId → { url, name }: where the web research found a firm whose site on file didn't load (GLG → man.com)
@@ -720,10 +721,31 @@ async function readPage(firm, consent) {
 
 const addressOf = (x) => String((x && (x.address || x.email)) || (typeof x === 'string' ? x : '')).trim();
 
+/** What the alumni search added to a person: the university in common, when they graduated, the common ground. */
+const alumniOf = (p) =>
+  p && p.alumni
+    ? {
+        alumni: true,
+        shared: p.shared || '',
+        graduated: p.graduated || 0,
+        years: p.years ?? null,
+        hook: p.hook || null,
+      }
+    : {};
+
+/** The addresses the person typed in for this firm: [{ address, name }]. */
+const typedOf = (firm) => ((state.typed[firm.id] || {}).list || []).filter((t) => t && t.address);
+
+/** How big the firm is (R.sizeOf: the registry's headcount or the one the web research found a source state). */
+const sizeOfFirm = (firm) => R.sizeOf(firm, (state.research[firm.id] || {}).result || null);
+
 /**
  * Everyone the card can offer to write to, best first, one line per address: the contacts check's picks, then what
- * the AI read on the page (verified there), the careers pages' addresses and the Hacker News post's.
- * Each: { address, name, title, kind, why, guessed, source: 'check'|'ai'|'page'|'hn' }.
+ * the AI read on the page (verified there), the careers pages' addresses and the Hacker News post's, the people the
+ * web research found (juniors and people from your university among them), any address you typed in, and last each
+ * person's address in the formats no source settled (`alt`), so anyone found can be written to.
+ * Each: { address, name, title, kind, why, guessed, level, group, alumni?, alt?, source: 'check'|'ai'|'page'|'hn'|
+ * 'web'|'typed' }.
  */
 function contactsOf(firm) {
   const c = state.contacts[firm.id] || {};
@@ -756,35 +778,147 @@ function contactsOf(firm) {
     if (p.address && p.level !== 'bad')
       add(
         { ...p, kind: 'person', why: p.why },
-        { guessed: p.how === 'format', source: 'web', level: p.level, url: p.url, group: p.group, check: p.verdict },
+        {
+          guessed: p.how === 'format',
+          source: 'web',
+          level: p.level,
+          url: p.url,
+          group: p.group,
+          check: p.verdict,
+          quote: p.quote || '',
+          ...alumniOf(p),
+        },
       );
   for (const e of (web && web.mailboxes) || [])
     add(e, { why: e.why, guessed: false, source: 'web', level: e.level || 'listed', url: e.url });
-  // Whoever runs recruiting first (a careers@ mailbox, then a named recruiter), then the heads of technology and
-  // research, then a small firm's partners, then info@; within each, the surest address first.
-  const order = out.map((p, i) => [rankOf(p), LEVEL_RANK[p.level || (p.guessed ? 'guessed' : 'listed')] ?? 3, i, p]);
+  for (const t of typedOf(firm))
+    add(
+      { address: t.address, name: t.name || '', kind: t.name ? 'person' : '' },
+      { why: 'Typed in by you: nothing has checked it', guessed: false, source: 'typed', level: 'unconfirmed' },
+    );
+  // Each person's address in a format no source settled (CMC Markets' f.last@ at 79% against first.last@ at 74.9%):
+  // theirs to choose, never chosen for them.
+  for (const p of (web && web.people) || [])
+    for (const a of p.alternatives || [])
+      add(
+        { name: p.name, title: p.title || '', kind: 'person', address: a.address },
+        {
+          why: `Another format, ${a.pattern}@${a.domain}: ${a.why}`,
+          guessed: true,
+          alt: true,
+          source: 'web',
+          level: 'guessed',
+          url: p.url,
+          group: p.group,
+          ...alumniOf(p),
+        },
+      );
+  // Ranked for the firm's size (rankOf); within each place, the surest address first.
+  const tier = sizeOfFirm(firm).tier;
+  const order = out.map((p, i) => [rankOf(p, tier), LEVEL_RANK[levelOf(p)] ?? 3, i, p]);
   order.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
   return order.map((x) => x[3]);
 }
 
+/** The contacts someone can be written to at without a second thought: not an address in a format no source settled. */
+const reachable = (firm) => contactsOf(firm).filter((p) => !p.alt);
+
 const LEVEL_RANK = { verified: 0, listed: 1, likely: 2, guessed: 3, unconfirmed: 4 };
 const GROUP_RANK = { recruiting: 1, technology: 2, research: 2, trading: 2, leadership: 3, other: 5 };
+/** How sure a contact's address is: 'verified', 'listed', 'likely', 'guessed' or 'unconfirmed'. */
+const levelOf = (p) => (p && p.level) || (p && p.guessed ? 'guessed' : 'listed');
+// Where someone from your university goes at a large firm, by how far into their career they are (H().careerOrder):
+// two to five years in first, a managing director who graduated in 1998 after the juniors.
+const ALUMNI_BIG = [-1, -0.75, -0.5, -0.25, 1];
 
-/** Where a contact goes in the list: recruiting mailbox 0, recruiter 1, department head 2, leader 3, info@ 4. */
-function rankOf(p) {
+/**
+ * Where a contact goes in the list, lowest first. Elsewhere than a large firm: a recruiting mailbox for students 0, a
+ * campus recruiter 0.5, someone from your university 0.4, careers@ 1, other recruiters 1.2, department heads 2, a
+ * small firm's partners 3, juniors 3.5, info@ 4. At a firm of 1,000 or more (tier 'big'), where juniors and alumni
+ * answer a student and careers@ says "apply online": your university's graduates two to five years in first, then
+ * other juniors, campus recruiters, the mailboxes, the heads, the leaders. An address you typed in leads; an address in
+ * a format no source settled comes after everything.
+ */
+function rankOf(p, tier = '') {
+  if (p.source === 'typed') return -5;
+  const base = baseRank(p, tier === 'big');
+  return p.alt ? base + 20 : base;
+}
+
+function baseRank(p, big) {
   // A mailbox or a recruiter for students comes first (internships@, Man Group's "Emerging Talent Partner"), then
   // careers@ and jobs@, then other recruiters, then HR's own mailboxes (hr@, Man Group's hrso@).
   const forStudents = /intern|grad|campus|student|early|emerging|university/i;
   if (!p.name) {
-    if (p.kind === 'general') return 4;
-    if (forStudents.test(p.address)) return 0;
-    return /career|recruit|job|talent|apply|cv|hiring/i.test(p.address) ? 1 : 1.5;
+    if (p.kind === 'general') return big ? 6 : 4;
+    const box = forStudents.test(p.address)
+      ? 0
+      : /career|recruit|job|talent|apply|cv|hiring/i.test(p.address)
+        ? 1
+        : 1.5;
+    return big ? 3 + box : box;
+  }
+  if (p.alumni) {
+    const stage = H() ? H().careerOrder(p) : 4;
+    return big ? ALUMNI_BIG[stage] : 0.4 + stage * 0.01;
   }
   const recruiting = p.group === 'recruiting' || (!p.group && p.role === 'recruiting');
-  if (recruiting) return forStudents.test(p.title || '') ? 0.5 : 1.2;
-  if (p.group) return GROUP_RANK[p.group] ?? 5;
-  if (p.role === 'leadership') return 3;
-  return p.source === 'check' ? 3 : 5;
+  if (recruiting) return forStudents.test(p.title || '') ? (big ? 2 : 0.5) : big ? 2.5 : 1.2;
+  if (p.group === 'junior') return big ? 0.5 : 3.5;
+  if (p.group) return (GROUP_RANK[p.group] ?? 5) + (big ? 3 : 0);
+  if (p.role === 'leadership') return big ? 6 : 3;
+  return p.source === 'check' ? (big ? 6 : 3) : big ? 8 : 5;
+}
+
+/**
+ * Who a contact is, as the lists group them: 'typed', 'alumni' (your university), 'junior', 'recruiting' (named),
+ * 'mailbox' (careers@, internships@), 'head' (of a team), 'leadership', 'general' (info@), 'other', 'alt' (another
+ * format).
+ */
+function whoKind(p) {
+  if (!p) return 'other';
+  if (p.source === 'typed') return 'typed';
+  if (p.alt) return 'alt';
+  if (p.alumni) return 'alumni';
+  if (!p.name) return p.kind === 'general' ? 'general' : 'mailbox';
+  if (p.group === 'junior') return 'junior';
+  if (p.group === 'recruiting' || (!p.group && p.role === 'recruiting')) return 'recruiting';
+  if (['technology', 'research', 'trading'].includes(p.group)) return 'head';
+  if (p.group === 'leadership' || p.role === 'leadership') return 'leadership';
+  return 'other';
+}
+
+const WHO_GROUPS = {
+  typed: 'Typed in by you',
+  alumni: 'From your university',
+  junior: 'Early in their careers',
+  recruiting: 'Recruiters',
+  mailbox: 'Recruiting mailboxes',
+  head: 'Heads of teams',
+  leadership: 'Founders, partners and leaders',
+  general: 'General mailboxes',
+  other: 'Others named',
+  alt: 'Other address formats (no source settled them)',
+};
+
+/** "University of Warwick, graduated 2022 (4 years in)": what the alumni search found of a person, or ''. */
+function alumniLine(p) {
+  if (!p || !p.alumni) return '';
+  const y = p.years;
+  const into = y == null ? '' : y < 0 ? ' (still studying)' : y === 0 ? ' (this year)' : ` (${plural(y, 'year')} in)`;
+  return `${p.shared || 'Your university'}${p.graduated ? `, graduated ${p.graduated}${into}` : ''}`;
+}
+
+/**
+ * What an email to this person asks for: someone early in their career, or from your university and not running
+ * recruiting or the firm, can't offer an internship or set a task, but answers a request for a 15-minute call; anyone
+ * else gets the ask chosen above the queue.
+ */
+function askFor(p) {
+  const ask = askChoice();
+  if (!p || !p.name) return ask;
+  const junior = whoKind(p) === 'junior' || (p.alumni && !['recruiting', 'leadership'].includes(p.group));
+  return junior ? 'call' : ask;
 }
 
 const KIND_LABEL = {
@@ -818,7 +952,7 @@ function wayOf(firm) {
   if (check.result.status === 'roles') return 0;
   if (check.result.status === 'programme' || (read.programmes || []).length) return 1;
   if (check.result.status === 'described' || (check.result.mentions || []).length) return 2;
-  const people = contactsOf(firm);
+  const people = reachable(firm);
   // careers@ or internships@ is a way to apply; info@ is only somewhere to write.
   if (people.some((p) => !p.name && !p.guessed && p.kind !== 'general')) return 3;
   if (people.some((p) => p.name)) return 4;
@@ -886,7 +1020,14 @@ function foundFor(firm) {
 }
 
 const firmRef = (firm) => ({ id: firm.id, name: firm.name, domain: firm.domain || '', site: firm.site || '' });
-const contactRef = (p) => ({ name: p.name || '', title: p.title || '', email: p.address, guessed: !!p.guessed });
+// Who an email went to, as the outreach record keeps it; `who` (whoKind) is what "What gets replies" counts by.
+const contactRef = (p) => ({
+  name: p.name || '',
+  title: p.title || '',
+  email: p.address,
+  guessed: !!p.guessed,
+  ...(p.address && (p.name || p.kind || p.source) ? { who: whoKind(p) } : {}),
+});
 const sameAddress = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
 
 /** The email drawer of a firm: { open, to (the address chosen under “To”), kind, instruction, subject, body, … }. */
@@ -951,6 +1092,52 @@ function withGreeting(body, greeting) {
   return GREETING_LINE.test(first.trim()) ? [greeting, ...rest].join('\n') : body;
 }
 
+/** The drawer's box for an address typed in: kept for the firm, then chosen under “To” (greeted by name). */
+function drawerTyped(firm, d) {
+  const use = async () => {
+    const t = await addTyped(firm, d.typing.text);
+    if (!t) {
+      d.typing.error = 'That isn’t an email address: type jane.smith@acme.com, or Jane Smith <jane.smith@acme.com>.';
+      return rerender(firm.id);
+    }
+    d.typing = null;
+    d.to = t.address;
+    if (d.result) d.body = withGreeting(d.body, greetingFor({ name: t.name, kind: t.name ? 'person' : '' }, firm));
+    rerender(firm.id);
+  };
+  return el(
+    'div',
+    { className: 'field wide typed-to' },
+    el('span', { textContent: 'Address to write to' }),
+    el(
+      'div',
+      { className: 'row' },
+      el('input', {
+        type: 'email',
+        name: 'typed-to',
+        value: d.typing.text,
+        placeholder: 'Jane Smith <jane.smith@acme.com>',
+        autocomplete: 'off',
+        spellcheck: false,
+        oninput: (e) => (d.typing.text = e.target.value),
+        onkeydown: (e) => {
+          if (e.key !== 'Enter') return;
+          e.preventDefault();
+          use();
+        },
+      }),
+      el('button', { type: 'button', className: 'small', textContent: 'Use it', onclick: use }),
+      el('button', {
+        type: 'button',
+        className: 'ghost small',
+        textContent: 'Cancel',
+        onclick: () => ((d.typing = null), rerender(firm.id)),
+      }),
+    ),
+    d.typing.error ? el('p', { className: 'small error', textContent: d.typing.error }) : null,
+  );
+}
+
 async function draftEmail(firm, consent) {
   const d = drawerOf(firm);
   const contact = recipientOf(d, offeredTo(firm, d));
@@ -982,6 +1169,8 @@ async function draftEmail(firm, consent) {
       kind,
       role,
       today: Date.now(),
+      // A junior, or someone from your university, is asked for a 15-minute call.
+      ...(askFor(contact) === 'call' ? { ask: 'call' } : {}),
     });
     // r.body is the whole email (greeting to contact line); a 'role' email with no role found comes back speculative.
     Object.assign(d, {
@@ -1104,7 +1293,7 @@ function visible() {
   if (hide) list = list.filter((r) => !writtenTo(r.firm, written));
   state.hidden = state.results.length - list.length;
   if ($('#only-open').checked) list = list.filter((r) => hasOpen((state.checks[r.firm.id] || {}).result));
-  if ($('#only-contact').checked) list = list.filter((r) => contactsOf(r.firm).length);
+  if ($('#only-contact').checked) list = list.filter((r) => reachable(r.firm).length);
   // A firm whose site showed nothing (no careers page, no board, no address) goes after the rest, in the search's
   // order: it's still a real firm (the web search may find someone), just not the first to write to.
   const empty = (r) => wayOf(r.firm) === WAYS.length - 1;
@@ -1291,14 +1480,17 @@ function readView(read) {
   ];
 }
 
-/** "Who to email": the best few contacts (all on request), the address pattern, or where to look instead. */
+/**
+ * "Who to email": the best few contacts, or everyone found on request (grouped: from your university, early in their
+ * careers, recruiters, mailboxes, heads of teams, leaders, other formats), each with a button to write to them; how
+ * the firm's size ranks them; the address pattern; or where to look instead.
+ */
 function whoView(firm) {
   const c = state.contacts[firm.id];
   if (!c || !c.result)
     return el('p', { className: 'small muted', textContent: 'Press “Check again” to look for who to email.' });
   const people = contactsOf(firm);
   const all = state.showAll.has(firm.id);
-  const shown = all ? people : people.slice(0, SHOWN_CONTACTS);
   const pattern = c.result.pattern && c.result.pattern.pattern;
   // Where its examples were seen, and how many: the guesses rest on them, often on a single address.
   const domain = (c.result.pattern && c.result.pattern.domain) || firm.domain || '';
@@ -1308,26 +1500,55 @@ function whoView(firm) {
   // Named on the firm's own site with no address (HBK's Head of Recruitment), unless the web research gave them one.
   const withAddress = new Set(people.filter((p) => p.name).map((p) => p.name.toLowerCase()));
   const onSite = (c.result.named || []).filter((p) => p.name && !withAddress.has(p.name.toLowerCase()));
+  const row = (p) =>
+    el(
+      'li',
+      {},
+      el('span', { className: 'who', textContent: whoLabel(p), title: p.quote ? `“${p.quote}”` : '' }),
+      el('a', { href: 'mailto:' + p.address, textContent: p.address }),
+      p.source === 'ai' ? aiPill() : levelPill(p),
+      whoPill(p),
+      p.why ? el('span', { className: 'why', textContent: p.why }) : null,
+      p.url ? link(p.url, sourceName(p.url), { className: 'source small' }) : null,
+      aiReady()
+        ? el('button', {
+            className: 'ghost small write-to',
+            type: 'button',
+            textContent: 'Write to them',
+            title: `Open the email drawer with ${p.address} under “To”`,
+            onclick: () => {
+              const d = drawerOf(firm);
+              d.to = p.address;
+              d.open = true;
+              rerender(firm.id);
+            },
+          })
+        : null,
+    );
+  // Everyone, under a heading per kind, the kinds in the order their best person ranks.
+  const grouped = () => {
+    const kinds = [...new Set(people.map(whoKind))];
+    return kinds.map((kind) =>
+      el(
+        'div',
+        { className: 'who-group' },
+        el('h4', {
+          className: 'small',
+          textContent: `${WHO_GROUPS[kind]} (${people.filter((p) => whoKind(p) === kind).length})`,
+        }),
+        el('ul', { className: 'plain contact-list' }, people.filter((p) => whoKind(p) === kind).map(row)),
+      ),
+    );
+  };
   return el(
     'div',
     { className: 'contacts' },
     el('h3', { textContent: 'Who to email' }),
+    sizeNote(firm),
     people.length
-      ? el(
-          'ul',
-          { className: 'plain contact-list' },
-          shown.map((p) =>
-            el(
-              'li',
-              {},
-              el('span', { className: 'who', textContent: whoLabel(p) }),
-              el('a', { href: 'mailto:' + p.address, textContent: p.address }),
-              p.source === 'ai' ? aiPill() : levelPill(p),
-              p.why ? el('span', { className: 'why', textContent: p.why }) : null,
-              p.url ? link(p.url, sourceName(p.url), { className: 'source small' }) : null,
-            ),
-          ),
-        )
+      ? all
+        ? grouped()
+        : el('ul', { className: 'plain contact-list' }, people.slice(0, SHOWN_CONTACTS).map(row))
       : el(
           'p',
           { className: 'small' },
@@ -1359,7 +1580,7 @@ function whoView(firm) {
       ? el('button', {
           className: 'link small',
           type: 'button',
-          textContent: all ? 'Show fewer' : `Show all ${people.length}`,
+          textContent: all ? 'Show the first few' : `Show everyone found (${people.length})`,
           onclick: () => (all ? state.showAll.delete(firm.id) : state.showAll.add(firm.id), rerender(firm.id)),
         })
       : null,
@@ -1370,6 +1591,37 @@ function whoView(firm) {
         })
       : null,
   );
+}
+
+/**
+ * How the firm's size orders who to write to, and whether people from your university were looked for: "About
+ * 10,001 staff (linkedin.com): people from your university and juniors first, the ones who answer a student at a firm
+ * this size."
+ */
+function sizeNote(firm) {
+  const size = sizeOfFirm(firm);
+  const r = (state.research[firm.id] || {}).result || null;
+  const staff = size.staff
+    ? `About ${size.staff.toLocaleString('en-GB')} staff${size.from === 'web' && r && r.staff ? ` (${sourceName(r.staff.url)})` : ''}`
+    : '';
+  const lines = [];
+  if (size.tier === 'big')
+    lines.push(
+      `${staff}: people from your university and juniors first, the ones who answer a student at a firm this size; they’re asked for a 15-minute call.`,
+    );
+  else if (staff) lines.push(`${staff}.`);
+  const alumni = r && r.alumni;
+  if (alumni && alumni.error) lines.push(`Couldn’t look for people from your university: ${alumni.error}`);
+  else if (alumni && alumni.key) {
+    const n = (alumni.people || []).length;
+    lines.push(
+      n
+        ? `${plural(n, 'person', 'people')} here from ${alumni.key.split('|').join(' or ')}.`
+        : `No one here from ${alumni.key.split('|').join(' or ')} was borne out by a source.`,
+    );
+  } else if (r && canSearch() && settingOf('commonGround', false) !== true && size.tier === 'big')
+    lines.push('Tick Look for common ground (above the Review queue) to look for people here from your university.');
+  return lines.length ? el('p', { className: 'small muted size-note', textContent: lines.join(' ') }) : null;
 }
 
 const LEVEL_PILL = {
@@ -1438,12 +1690,72 @@ async function researchFirm(firm, consent) {
       }
     }
     await settled(state.running, firm.id);
-    const found = await addressesFor(firm, web);
-    entry.result = { ...(web || {}), ...found, usage: web && web.usage, at: Date.now() };
+    // People from your university, with Look for common ground ticked (only its name goes, never yours).
+    const alumni = useAi ? await searchAlumni(firm).catch((err) => ({ error: errorText(err) })) : null;
+    const found = await addressesFor(firm, web, alumni);
+    entry.result = { ...(web || {}), ...found, alumni, raw: rawOf(web), usage: web && web.usage, at: Date.now() };
     entry.at = Date.now();
     await store.setDiscoverCache({ research: { [firm.id]: { at: entry.at, result: entry.result } } });
   } catch (err) {
     entry.error = errorText(err);
+  } finally {
+    state.researching.delete(firm.id);
+    rerender(firm.id);
+  }
+}
+
+/** The candidate's universities, for the alumni search: [] unless Look for common ground is ticked. */
+async function universities() {
+  if (settingOf('commonGround', false) !== true || !H()) return [];
+  const { profile } = await store.getActive();
+  return H()
+    .institutions(profile)
+    .filter((x) => x.kind === 'university');
+}
+
+/** Which universities an alumni search was for, so a change (a new university, common ground off) asks again. */
+const alumniKey = (list) =>
+  list
+    .map((x) => x.name)
+    .sort()
+    .join('|');
+
+/**
+ * People at the firm from the candidate's university (H().alumni: the AI searches the web with the firm's name and the
+ * university's, every one held to a source), or null with common ground off, no university, or no web search.
+ */
+async function searchAlumni(firm) {
+  const own = await universities();
+  if (!own.length || !canSearch()) return null;
+  state.config = await store.discoverAiConfig();
+  const r = await H().alumni((messages, options) => ai.search(state.config, { messages, ...options }), {
+    firm: nowAt(firm),
+    institutions: own,
+    fetch: fetchFn,
+  });
+  return { ...r, key: alumniKey(own) };
+}
+
+/**
+ * The alumni search for a firm whose people were found before it was asked for (common ground ticked since, or a new
+ * university): the search, then everyone's addresses again with them in. Nothing when it's done for these universities.
+ */
+async function alumniFor(firm) {
+  const entry = state.research[firm.id];
+  const r = entry && entry.result;
+  if (!r || state.researching.has(firm.id)) return;
+  const own = await universities();
+  if (!own.length || !canSearch()) return;
+  if (r.alumni && r.alumni.key === alumniKey(own)) return;
+  state.researching.add(firm.id);
+  rerender(firm.id);
+  try {
+    const alumni = await searchAlumni(firm).catch((err) => ({ error: errorText(err), key: alumniKey(own) }));
+    const web = rawWeb(r);
+    const found = await addressesFor(firm, web, alumni, r);
+    entry.result = { ...r, ...found, alumni, raw: rawOf(web), at: Date.now() };
+    entry.at = Date.now();
+    await store.setDiscoverCache({ research: { [firm.id]: { at: entry.at, result: entry.result } } });
   } finally {
     state.researching.delete(firm.id);
     rerender(firm.id);
@@ -1462,16 +1774,38 @@ function mailDomain(firm) {
   );
 }
 
-/** Every person found, each with the surest address there is, checked (R.addresses with this page's keys). */
-function addressesFor(firm, web) {
+/**
+ * Every person found (the alumni search's too), each with the surest address there is, checked (R.addresses with this
+ * page's keys); Hunter's few mailbox checks go to the people ranked first for the firm's size.
+ */
+function addressesFor(firm, web, alumni, prior) {
+  const tier = R.sizeOf(firm, web).tier;
   return R.addresses(web, {
     firm,
     contacts: (state.contacts[firm.id] || {}).result || {},
     domain: mailDomain(firm),
     hunterKey: state.finderKeys.hunter || '',
+    // What Hunter's directory gave last time, not asked for again (each search is a credit on the person's key).
+    hunterFound: (prior && prior.hunterFound) || null,
     fetch: fetchFn,
+    alumni: (alumni && alumni.people) || [],
+    prefer: (p) => rankOf({ ...p, kind: 'person', source: 'web' }, tier),
   });
 }
+
+/** What the web research found before its addresses were worked out, to work them out again (alumniFor). */
+function rawWeb(r) {
+  if (r.raw) return { ...r, ...r.raw };
+  // Kept before this was stored: the people the search named, as it named them.
+  const people = (r.people || [])
+    .filter((p) => !p.site && p.how !== 'finder' && !p.alumni)
+    .map((p) => ({ name: p.name, title: p.title, group: p.group, url: p.url, quote: p.quote, kind: p.kind }));
+  return { ...r, people };
+}
+
+/** The web research's own findings, kept beside the addresses made from them. */
+const rawOf = (web) =>
+  web ? { people: web.people || [], emails: web.emails || [], formats: web.formats || [] } : null;
 
 /** The web research's part of a card: what it found that the site didn't say, and what it dropped. */
 function researchView(firm) {
@@ -1479,7 +1813,9 @@ function researchView(firm) {
   const running = state.researching.has(firm.id);
   if (!entry && !running) return null;
   const r = (entry && entry.result) || null;
-  const noAddress = r ? (r.people || []).filter((p) => !p.address) : [];
+  // (One with an address in a format no source settled is listed under Who to email with the rest.)
+  const noAddress = r ? (r.people || []).filter((p) => !p.address && !(p.alternatives || []).length) : [];
+  const dropped = r ? [...(r.dropped || []), ...((r.alumni && r.alumni.dropped) || [])] : [];
   return el(
     'div',
     { className: 'research small' },
@@ -1545,15 +1881,15 @@ function researchView(firm) {
           textContent: `Web search: ${plural(r.searches || 0, 'search', 'searches')}, ${usageLine(state.config, r.usage)}`,
         })
       : null,
-    r && (r.dropped || []).length
+    dropped.length
       ? el(
           'details',
           {},
-          el('summary', { textContent: `Left out: ${plural(r.dropped.length, 'claim')} no source bore out` }),
+          el('summary', { textContent: `Left out: ${plural(dropped.length, 'claim')} no source bore out` }),
           el(
             'ul',
             { className: 'plain log' },
-            r.dropped.map((d) => el('li', { textContent: `${d.what}: ${d.why}` })),
+            dropped.map((d) => el('li', { textContent: `${d.what}: ${d.why}` })),
           ),
         )
       : null,
@@ -1703,6 +2039,13 @@ function drawerView(firm) {
     });
   /** Another “To”: the link goes there, and a draft greets them (the card isn't drawn again, so focus stays). */
   const chooseTo = (address) => {
+    if (address === TYPE_ONE) {
+      d.typing = { text: '', error: '' };
+      rerender(firm.id);
+      const box = document.querySelector(`#results .firm[data-id="${CSS.escape(firm.id)}"] input[name="typed-to"]`);
+      if (box) box.focus();
+      return;
+    }
     const p = people.find((x) => x.address === address);
     if (!p) return;
     d.to = p.address;
@@ -1724,21 +2067,9 @@ function drawerView(firm) {
         'label',
         { className: 'field' },
         el('span', { textContent: 'To' }),
-        el(
-          'select',
-          {
-            name: 'contact',
-            onchange: (e) => chooseTo(e.target.value),
-          },
-          people.map((p) =>
-            el('option', {
-              value: p.address,
-              selected: p.address === d.to,
-              textContent: `${whoLabel(p)} <${p.address}>${p.guessed ? ' (guessed)' : ''}`,
-            }),
-          ),
-        ),
+        pickerOf(people, d.to, chooseTo, 'contact'),
       ),
+      d.typing ? drawerTyped(firm, d) : null,
       el(
         'fieldset',
         { className: 'field kinds' },
@@ -2232,7 +2563,7 @@ function writeButton(firm) {
 function glanceView(firm) {
   const way = wayOf(firm);
   if (way == null) return null;
-  const first = contactsOf(firm)[0];
+  const first = reachable(firm)[0];
   return el(
     'div',
     { className: 'glance' },
@@ -2396,7 +2727,7 @@ function renderResults() {
   $('#results-card').hidden = false;
   $('#results-empty').hidden = true;
   $('#results-title').textContent = plural(list.length, 'firm');
-  const ready = list.filter((r) => contactsOf(r.firm).length).length;
+  const ready = list.filter((r) => reachable(r.firm).length).length;
   $('#results-note').textContent = [
     list.length && `${ready} with someone to write to`,
     state.hidden && `${plural(state.hidden, 'firm')} you’ve written to left out`,
@@ -2417,6 +2748,7 @@ function renderResults() {
   );
   $('#more').hidden = list.length <= state.shown;
   $('#results-export').disabled = !list.length;
+  $('#people-export').disabled = !list.some((r) => contactsOf(r.firm).length);
   const next = nextToWrite();
   const started = review.items.some((i) => i.type === 'first');
   $('#write-top').textContent = next.length
@@ -2474,7 +2806,7 @@ function exportResults() {
   ];
   for (const r of visible()) {
     const check = state.checks[r.firm.id];
-    const p = contactsOf(r.firm)[0] || {};
+    const p = reachable(r.firm)[0] || {};
     const rec = state.outreach[r.firm.id];
     rows.push([
       r.firm.name,
@@ -2490,6 +2822,48 @@ function exportResults() {
     ]);
   }
   saveCsv(rows, 'firms');
+}
+
+/**
+ * Everyone found at the firms shown, one row per address, ranked as Who to email ranks them: who they are, their title
+ * and kind, the address and how sure it is, why, the year they graduated from your university, the source and the
+ * words it says them in. Every person the checks and the web research turned up, not just the best one.
+ */
+function exportPeople() {
+  const rows = [
+    [
+      'Firm',
+      'Rank',
+      'Name',
+      'Title',
+      'Kind',
+      'Email',
+      'How sure',
+      'Why',
+      'Your university',
+      'Graduated',
+      'Source',
+      'Source says',
+    ],
+  ];
+  for (const r of visible())
+    contactsOf(r.firm).forEach((p, i) =>
+      rows.push([
+        r.firm.name,
+        i + 1,
+        p.name || '',
+        p.title || '',
+        WHO_GROUPS[whoKind(p)] || '',
+        p.address,
+        (LEVEL_PILL[levelOf(p)] || LEVEL_PILL.unconfirmed)[1],
+        p.why || '',
+        p.alumni ? p.shared || '' : '',
+        p.alumni && p.graduated ? p.graduated : '',
+        p.url || '',
+        p.quote || '',
+      ]),
+    );
+  saveCsv(rows, 'people');
 }
 
 /** The Outreach list as a spreadsheet, with a note typed a moment ago (its box left by the click) in it. */
@@ -3236,6 +3610,7 @@ const review = {
   shownAt: 0,
   undoneAt: 0, // the last Undo: a second one straight after (a double click) isn't for the email before
   typedAt: 0, // the last key typed into the card's boxes
+  typing: null, // { id, text, error }: an address being typed in for the card shown (kept through a redraw)
   dropped: false, // the card was drawn again under the cursor (its email finished elsewhere) mid-word
   cleared: [], // firm ids cleared from the queue, so Write to the next 10 doesn't bring them back
   declined: {}, // firm id → the sentAt of the email whose follow-up was skipped: not offered again
@@ -3751,13 +4126,20 @@ async function prepare(item) {
       await researchFirm(firm, null);
     }
     await settled(state.researching, firm.id);
+    // People found before common ground was ticked: the ones from your university are looked for now.
+    if (canSearch() && state.research[firm.id] && state.research[firm.id].result) {
+      step('people');
+      await alumniFor(firm);
+    }
     await checking;
     await settled(state.running, firm.id);
     if (!going()) return;
     const people = writable(firm);
+    // An address in a format no source settled is never written to on its own: a firm with only those has no one.
+    const primary = people.filter((p) => !p.alt);
     const searchError = (state.research[firm.id] || {}).error;
-    if (!people.length && searchError) throw new Error(`Couldn’t search the web for people: ${searchError}`);
-    if (!people.length) {
+    if (!primary.length && searchError) throw new Error(`Couldn’t search the web for people: ${searchError}`);
+    if (!primary.length) {
       // Nothing to write to after the site and the web were both read: left out, and never offered again.
       item.status = 'skipped';
       item.nobody = true;
@@ -3765,17 +4147,17 @@ async function prepare(item) {
       review.cleared = [...new Set([...review.cleared, firm.id])].slice(-2000);
       return;
     }
-    const sure = people.find((p) => !p.guessed && !['guessed', 'unconfirmed'].includes(p.level));
-    choose(item, people.find((p) => sameAddress(p.address, item.to)) || sure || people[0]);
+    choose(item, people.find((p) => sameAddress(p.address, item.to)) || firstChoice(firm, primary));
+    const chosen = people.find((p) => sameAddress(p.address, item.to));
     if (canSearch() && H()) {
       step('hooks');
-      const chosen = people.find((p) => sameAddress(p.address, item.to));
       let hookError = '';
-      const hooks = await reasonsFor(firm, chosen, people).catch((err) => {
+      const found = await reasonsFor(firm, chosen, primary).catch((err) => {
         hookError = errorText(err);
         return [];
       });
       if (!going()) return;
+      const hooks = hooksFor(found, chosen);
       Object.assign(item, { hooks, hook: hooks.length ? 0 : -1, hookError });
     } else item.hook = -1;
     if (!going()) return;
@@ -3824,6 +4206,50 @@ function choose(item, p) {
 }
 
 /**
+ * Who Review writes to unless told otherwise: the first person ranked (contactsOf) whose address is sure enough. At a
+ * large firm that takes an address made from a confirmed format ('likely': nobody prints a junior analyst's address,
+ * and the careers@ that is printed answers "apply online"); elsewhere only one printed or checked. Never one you
+ * typed in for another email, nor one in a format no source settled.
+ */
+function firstChoice(firm, people) {
+  const big = sizeOfFirm(firm).tier === 'big';
+  const ok = (p) =>
+    !p.alt &&
+    p.source !== 'typed' &&
+    (big
+      ? ['verified', 'listed', 'likely'].includes(levelOf(p))
+      : !p.guessed && !['guessed', 'unconfirmed'].includes(p.level));
+  return people.find(ok) || people.find((p) => !p.alt && p.source !== 'typed') || people[0];
+}
+
+/**
+ * The reasons to write, best first for `contact` (H().rank): their own common ground from the alumni search leads
+ * ("Education: University of Warwick · 2019 – 2022"), then what was found for the firm.
+ */
+function hooksFor(found, contact) {
+  const own = contact && contact.alumni && contact.hook ? [contact.hook] : [];
+  const same = (a, b) => a.url === b.url && a.quote === b.quote;
+  const rest = (found || []).filter((h) => h && !own.some((o) => same(o, h)));
+  const to = contact && contact.name ? { name: contact.name, title: contact.title || '' } : null;
+  return H() ? H().rank([...own, ...rest], { contact: to }) : [...own, ...rest];
+}
+
+/**
+ * Another person chosen for an item's email: the reasons ranked again for them, their own common ground leading when
+ * they have it, else the reason used before kept (or none, if none was).
+ */
+function rehook(item, p) {
+  const was = item.hook >= 0 ? (item.hooks || [])[item.hook] : null;
+  item.hooks = hooksFor(item.hooks || [], p);
+  const own =
+    p && p.alumni && p.hook ? item.hooks.findIndex((h) => h.url === p.hook.url && h.quote === p.hook.quote) : -1;
+  item.hook = own >= 0 ? own : was ? item.hooks.indexOf(was) : -1;
+}
+
+/** The contact an item writes to now, among the firm's (or null: an address no longer found). */
+const contactFor = (item) => writable(item.firm).find((x) => sameAddress(x.address, item.to)) || null;
+
+/**
  * Reasons to write to this firm (discoverHooks.find: common ground, their recent work, a way to show it, each borne
  * out by a source), best first for `contact`; kept for a week per firm, and looked for again when common ground is
  * switched on or off.
@@ -3867,7 +4293,8 @@ async function writeDraft(item, job) {
   const { profile } = await store.getActive();
   const kit = await store.getKit(profile.id);
   const cvText = await readCv(profile, kit);
-  const ask = askChoice();
+  // A junior, or someone from your university, is asked for a 15-minute call whatever is chosen above the queue.
+  const ask = askFor(contact);
   const role = ask === 'internship' ? roleOf(firm) : '';
   const hook = item.hook >= 0 ? item.hooks[item.hook] || null : null;
   const r = await O.draft(aiChat(), {
@@ -4024,9 +4451,13 @@ function doubtsOf(item) {
   const p = first ? contactsOf(item.firm).find((x) => sameAddress(x.address, item.to)) : null;
   const level = p ? p.level || (p.guessed ? 'guessed' : 'listed') : item.toLevel;
   return [
-    first && ['likely', 'guessed', 'unconfirmed'].includes(level)
-      ? `${item.to} is made from the firm’s address format, not seen written anywhere: it may bounce.`
-      : '',
+    first && p && p.source === 'typed'
+      ? `You typed ${item.to} in yourself and nothing has checked it: it may bounce.`
+      : first && p && p.alt
+        ? `${item.to} is in a format no source settled (${clip(p.why.replace(/^Another format, /, ''), 120)}): it may well bounce.`
+        : first && ['likely', 'guessed', 'unconfirmed'].includes(level)
+          ? `${item.to} is made from the firm’s address format, not seen written anywhere: it may bounce.`
+          : '',
     first && !p ? `${item.to} is no longer among the firm’s contacts found: check it before sending.` : '',
     item.result && item.result.ok === false
       ? 'Some of the draft’s checks failed (listed above): read it through first.'
@@ -4034,7 +4465,7 @@ function doubtsOf(item) {
     item.draftedFor &&
     (!sameAddress(item.draftedFor.address, item.to) ||
       item.draftedFor.hook !== item.hook ||
-      item.draftedFor.ask !== askChoice())
+      item.draftedFor.ask !== askFor(p || contactFor(item)))
       ? 'You changed who it goes to, the reason or the ask since it was written: press Write it again first, or send it as it is.'
       : '',
     first && !state.cvName && /\bCV\b|résumé|resume|attached/i.test(item.body)
@@ -4614,8 +5045,17 @@ function otherContact(item) {
   const people = writable(item.firm);
   if (people.length < 2) return;
   const i = people.findIndex((p) => sameAddress(p.address, item.to));
-  const p = people[(i + 1) % people.length];
+  pickContact(item, people[(i + 1) % people.length].address);
+}
+
+/** Write to this address instead (picked from the list, Someone else, or typed in): greeted by name, reasons re-ranked. */
+function pickContact(item, address) {
+  if (frozen()) return;
+  if (!item || item.status !== 'ready' || item.type === 'follow') return;
+  const p = writable(item.firm).find((x) => sameAddress(x.address, address));
+  if (!p || sameAddress(p.address, item.to)) return;
   choose(item, p);
+  rehook(item, p);
   item.body = withGreeting(item.body, greetingFor(p, item.firm));
   item.armed = false;
   renderReview(true);
@@ -4770,7 +5210,7 @@ function reasonView(item) {
   );
 }
 
-/** Who it goes to, how sure the address is, and the next person at the firm. */
+/** Who it goes to, how sure the address is, everyone else found at the firm to pick from, or an address typed in. */
 function toView(item) {
   const people = item.type === 'follow' ? [] : writable(item.firm);
   const p =
@@ -4779,24 +5219,162 @@ function toView(item) {
   const rec = state.outreach[item.firm.id];
   const name = p ? whoLabel(p) : (rec && rec.contact && rec.contact.name) || '';
   const level = p || (item.type === 'first' && item.toLevel ? { level: item.toLevel } : null);
+  const typing = review.typing && review.typing.id === item.id ? review.typing : null;
+  const asks = item.type === 'first' && p ? askFor(p) : '';
   return el(
     'div',
-    { className: 'to-line' },
-    el('span', { className: 'muted', textContent: 'To' }),
-    el('strong', { textContent: name || item.to }),
-    name ? el('span', { className: 'address', textContent: item.to }) : null,
-    level ? levelPill(level) : null,
-    p && p.url ? link(p.url, sourceName(p.url), { className: 'small' }) : null,
-    people.length > 1
-      ? el('button', {
-          className: 'ghost',
-          type: 'button',
-          title: 'C',
-          textContent: `Someone else (${people.length - 1} more)`,
-          onclick: () => otherContact(item),
+    { className: 'to-block' },
+    el(
+      'div',
+      { className: 'to-line' },
+      el('span', { className: 'muted', textContent: 'To' }),
+      el('strong', { textContent: name || item.to }),
+      name ? el('span', { className: 'address', textContent: item.to }) : null,
+      level ? levelPill(level) : null,
+      whoPill(p),
+      p && p.url ? link(p.url, sourceName(p.url), { className: 'small' }) : null,
+      people.length > 1
+        ? el('button', {
+            className: 'ghost',
+            type: 'button',
+            title: 'C',
+            textContent: `Someone else (${people.length - 1} more)`,
+            onclick: () => otherContact(item),
+          })
+        : null,
+    ),
+    people.length && item.status === 'ready'
+      ? el(
+          'label',
+          { className: 'to-pick small' },
+          el('span', { className: 'muted', textContent: 'Or choose anyone found' }),
+          pickerOf(people, item.to, (value) => {
+            if (value !== TYPE_ONE) return pickContact(item, value);
+            review.typing = { id: item.id, text: '', error: '' };
+            renderReview(true);
+            const box = $('#review-card input[name="typed-to"]');
+            if (box) box.focus();
+          }),
+        )
+      : null,
+    typing ? typedRow(item, typing) : null,
+    asks && asks !== askChoice()
+      ? el('p', {
+          className: 'small muted',
+          textContent: `Asks for ${ASK_LABEL[asks]}: ${p.alumni ? 'someone from your university' : 'someone early in their career'} can’t offer an internship, but answers a student who asks for a chat.`,
         })
       : null,
   );
+}
+
+const ASK_LABEL = { internship: 'an internship', call: 'a 15-minute call', project: 'a trial task' };
+const TYPE_ONE = '\u0000type';
+
+/** A pill for who someone is when it matters for the ask: from your university (with when), or early in a career. */
+function whoPill(p) {
+  if (!p) return null;
+  if (p.alumni) return el('span', { className: 'pill alumni', textContent: alumniLine(p), title: WHO_GROUPS.alumni });
+  if (whoKind(p) === 'junior') return el('span', { className: 'pill', textContent: 'Early in their career' });
+  if (p.source === 'typed') return el('span', { className: 'pill', textContent: 'Typed in' });
+  return null;
+}
+
+/**
+ * Everyone an email can go to, grouped as whoKind() sorts them and in the order they rank (contactsOf), each with how
+ * sure their address is; and, last, "Type another address…".
+ */
+function pickerOf(people, current, onpick, name = 'to-pick') {
+  const groups = Object.keys(WHO_GROUPS)
+    .map((kind) => [kind, people.filter((p) => whoKind(p) === kind)])
+    .filter(([, list]) => list.length);
+  // Groups in the order their best person ranks: at a bank, your university's graduates before the recruiters.
+  groups.sort((a, b) => people.indexOf(a[1][0]) - people.indexOf(b[1][0]));
+  const option = (p) =>
+    el('option', {
+      value: p.address,
+      selected: sameAddress(p.address, current),
+      textContent: `${whoLabel(p)} · ${p.address} · ${(LEVEL_PILL[levelOf(p)] || LEVEL_PILL.unconfirmed)[1]}${p.alumni && p.graduated ? ` · graduated ${p.graduated}` : ''}`,
+    });
+  return el(
+    'select',
+    { name, onchange: (e) => onpick(e.target.value) },
+    groups.map(([kind, list]) => el('optgroup', { label: WHO_GROUPS[kind] }, list.map(option))),
+    el('option', { value: TYPE_ONE, textContent: 'Type another address…' }),
+  );
+}
+
+/** The box an address is typed into: "Jane Smith <jane.smith@acme.com>" or just the address; Enter uses it. */
+function typedRow(item, typing) {
+  const use = () => useTyped(item, typing.text);
+  return el(
+    'div',
+    { className: 'typed-to row' },
+    el('input', {
+      type: 'email',
+      name: 'typed-to',
+      value: typing.text,
+      placeholder: 'Jane Smith <jane.smith@acme.com>',
+      autocomplete: 'off',
+      spellcheck: false,
+      attrs: { 'aria-label': 'Address to write to' },
+      oninput: (e) => (typing.text = e.target.value),
+      onkeydown: (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          use();
+        } else if (e.key === 'Escape') {
+          review.typing = null;
+          renderReview(true);
+        }
+      },
+    }),
+    el('button', { type: 'button', className: 'small', textContent: 'Write to them', onclick: use }),
+    el('button', {
+      type: 'button',
+      className: 'ghost small',
+      textContent: 'Cancel',
+      onclick: () => ((review.typing = null), renderReview(true)),
+    }),
+    typing.error ? el('p', { className: 'small error', textContent: typing.error }) : null,
+  );
+}
+
+/** "Jane Smith <jane.smith@acme.com>", "jane.smith@acme.com" → { name, address }, or null for anything else. */
+function parseTyped(text) {
+  const t = String(text || '').trim();
+  const m = t.match(/^(.*?)\s*<\s*([^<>\s]+)\s*>$/);
+  const address = (m ? m[2] : t).replace(/^mailto:/i, '').trim();
+  if (!/^[^\s@,;<>"]+@[^\s@,;<>"]+\.[a-z]{2,}$/i.test(address)) return null;
+  const name = m ? m[1].replace(/^["'“]|["'”]$/g, '').trim() : '';
+  return { name: name.length <= 80 && !/@/.test(name) ? name : '', address };
+}
+
+/** Keep an address the person typed in for this firm, so it's among its contacts from now on: → { name, address }. */
+async function addTyped(firm, text) {
+  const t = parseTyped(text);
+  if (!t) return null;
+  const list = [t, ...typedOf(firm).filter((x) => !sameAddress(x.address, t.address))].slice(0, 10);
+  state.typed[firm.id] = { at: Date.now(), list };
+  await store.setDiscoverCache({ typed: { [firm.id]: state.typed[firm.id] } }).catch(() => null);
+  return t;
+}
+
+/** Write the item's email to the address typed in: kept for the firm, then chosen like anyone found. */
+async function useTyped(item, text) {
+  if (frozen()) return;
+  const t = await addTyped(item.firm, text);
+  if (!t) {
+    review.typing = {
+      ...(review.typing || { id: item.id }),
+      text,
+      error: 'That isn’t an email address: type jane.smith@acme.com, or Jane Smith <jane.smith@acme.com>.',
+    };
+    return renderReview(true);
+  }
+  review.typing = null;
+  if (sameAddress(t.address, item.to)) return renderReview(true);
+  pickContact(item, t.address);
+  renderReview(true);
 }
 
 /** The firm's name and what it is, the way in, and its website. */
@@ -5191,6 +5769,16 @@ const ASK_KINDS = {
   call: 'asking for a call',
   project: 'offering a trial task',
 };
+const WHO_KINDS = {
+  alumni: 'to someone from your university',
+  junior: 'to a junior',
+  recruiting: 'to a recruiter',
+  mailbox: 'to a recruiting mailbox',
+  head: 'to a head of team',
+  leadership: 'to a founder or partner',
+  general: 'to a general mailbox',
+  typed: 'to an address you typed',
+};
 
 /**
  * Replies so far to emails sent from Review, overall and by the reason and the ask they used ("common ground 2 of 4"):
@@ -5207,7 +5795,17 @@ function replyStats() {
       .map(([k, label]) => [label, sent.filter((r) => r[key] === k)])
       .filter(([, list]) => list.length)
       .map(([label, list]) => `${label} ${rate(list)}`);
-  return [`Replies so far: ${rate(sent)}`, ...by('reasonKind', REASON_KINDS), ...by('ask', ASK_KINDS)].join(' · ');
+  // Who it went to, as the record keeps it (contactRef's `who`): emails from before that was kept count nowhere here.
+  const who = Object.entries(WHO_KINDS)
+    .map(([k, label]) => [label, sent.filter((r) => r.contact && r.contact.who === k)])
+    .filter(([, list]) => list.length)
+    .map(([label, list]) => `${label} ${rate(list)}`);
+  return [
+    `Replies so far: ${rate(sent)}`,
+    ...by('reasonKind', REASON_KINDS),
+    ...by('ask', ASK_KINDS),
+    ...(who.length > 1 ? who : []),
+  ].join(' · ');
 }
 
 /** How the queue stands: { ready, working (being prepared), held (not prepared yet), needYou, done }. */
@@ -6580,6 +7178,7 @@ async function start() {
   });
   $('#research-top').addEventListener('click', researchTop);
   $('#results-export').addEventListener('click', exportResults);
+  $('#people-export').addEventListener('click', exportPeople);
   $('#outreach-export').addEventListener('click', exportOutreach);
   // Leaving a note box draws what changed while it had the focus (a reply noted, a firm removed in another tab); left
   // by a press on a button or select in the list, once the press is over, so the row isn't replaced under it.
@@ -6637,7 +7236,8 @@ async function start() {
         (c) => (
           (state.checks = c.careers || {}),
           (state.contacts = c.contacts || {}),
-          (state.research = c.research || {})
+          (state.research = c.research || {}),
+          (state.typed = c.typed || {})
         ),
       ),
     store.getNylas().then((n) => (state.nylas = n)),

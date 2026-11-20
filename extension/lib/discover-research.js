@@ -1,8 +1,9 @@
 /*
  * JobToFill — Discover's research: what the web says about a firm beyond its own site. The person's AI model searches
  * the web (Claude's web search, or OpenRouter's web plugin) for the firm's current website, its careers pages and
- * student programmes, the people a student could write to (whoever runs recruiting, and at a small firm its founders
- * and partners, and the heads of technology and research) and the shape of its email addresses. Nothing the model
+ * student programmes, the people a student could write to (whoever runs recruiting, at a small firm its founders and
+ * partners, the heads of technology and research, and juniors two to five years in, who answer a student at a large
+ * firm), how many people it employs, and the shape of its email addresses. Nothing the model
  * says is kept on its word: a person stays only when a search result or a page the search returned names them with
  * the firm, their title only when the same source gives it, an address only when a source prints it, and an address
  * format only when a source states it or shows an address in it. Pure logic plus fetches through an injected fetch;
@@ -13,8 +14,10 @@
  *   confirmPerson(person, evidence, firm)→ { name, title, url, quote } or { why } (why it was dropped)
  *   research(search, { firm, found, contacts, fetch, now, signal }) → { website, careers, programmes, people,
  *                                           emails, formats, dropped, usage, searches, at }
- *   addresses(web, { firm, contacts, domain, hunterKey, fetch }) → { people (each with its surest address, checked),
- *                                           mailboxes, formats, format, hunter, mx }  (uses JTF.discoverFinder)
+ *   addresses(web, { firm, contacts, domain, hunterKey, fetch, alumni, prefer }) → { people (each with its surest
+ *                                           address, checked, and its address in every other format), mailboxes,
+ *                                           formats, format, hunter, mx }  (uses JTF.discoverFinder)
+ *   sizeOf(firm, web)                    → { staff, tier: 'small'|'mid'|'big'|'' }  who answers a student there
  *
  * The prompt carries the firm and what the rules found on its site, never anything about the person.
  */
@@ -28,7 +31,8 @@
   // robots away, so their search results' own titles and passages have to do.
   const MAX_READS = 4;
   const UNREADABLE = /(^|\.)(linkedin\.com|rocketreach\.co|zoominfo\.com|apollo\.io|signalhire\.com|contactout\.com)$/i;
-  const MAX_PEOPLE = 12;
+  // Everyone found is kept and ranked (the person chooses whom to write to): the prompt asks for 25.
+  const MAX_PEOPLE = 40;
   // How close a name, its title and the firm must sit in a long page to belong together.
   const NEAR = 240;
 
@@ -399,9 +403,10 @@
     'Find:',
     '1. The firm’s current official website. Firms rename and merge (GLG Partners is part of Man Group, at man.com): give the site of the firm as it is today, and say in "website_note" if it changed.',
     '2. Its careers pages and any student programme (internship, summer analyst, off-cycle, spring or insight week, graduate scheme), each with its URL.',
-    '3. People a student could write to, at most 10, each with their exact current title and the URL of the page or search result that says so (a LinkedIn profile is fine): first whoever runs recruiting, talent, HR, campus or early careers; then the heads of technology, engineering, quantitative research and trading; then, at a firm of a few hundred people or fewer, its founders, managing partners, CIO and COO.',
+    '3. People a student could write to, at most 25, each with their exact current title and the URL of the page or search result that says so (a LinkedIn profile is fine): whoever runs recruiting, talent, HR, campus or early careers; the heads of technology, engineering, quantitative research and trading; at a firm of a few hundred people or fewer, its founders, managing partners, CIO and COO; and, at any firm, up to 10 people two to five years into their careers in the teams a student would join (analysts, associates, software engineers, quantitative researchers, traders): at a large firm they are the ones who answer a student.',
     '4. Email addresses published for the firm anywhere (careers@, recruiting@, a person’s own address in a filing, a press release or a page), each with the page it is on.',
     '5. The firm’s email address format (for example first.last@firm.com), with the page that states it or shows an example.',
+    '6. How many people the firm employs, as a source states it (“10,001+ employees”, “over 45,000 people”), with the page and its exact words.',
     '',
     'Rules:',
     '- Report only what a search result or a page you read says, and quote its exact words in "quote". Never guess an address or a format, and never complete a name or a title from memory.',
@@ -410,7 +415,7 @@
     '- If you find nothing for a part, leave its list empty.',
     '',
     'Reply with JSON only:',
-    '{"website": "https://…", "website_note": "", "careers": [{"url": "", "title": ""}], "programmes": [{"name": "", "url": "", "quote": ""}], "people": [{"name": "", "title": "", "group": "recruiting|technology|research|trading|leadership|other", "url": "", "quote": ""}], "emails": [{"address": "", "url": "", "quote": ""}], "format": {"pattern": "", "example": "", "url": "", "quote": ""}}',
+    '{"website": "https://…", "website_note": "", "careers": [{"url": "", "title": ""}], "programmes": [{"name": "", "url": "", "quote": ""}], "people": [{"name": "", "title": "", "group": "recruiting|technology|research|trading|leadership|junior|other", "url": "", "quote": ""}], "emails": [{"address": "", "url": "", "quote": ""}], "format": {"pattern": "", "example": "", "url": "", "quote": ""}, "staff": {"count": "", "url": "", "quote": ""}}',
   ].join('\n');
 
   /** What the model is told about the firm: its names, place, size, site and what the rules found there. */
@@ -439,7 +444,7 @@
   /* -------------------------------------------------------------- research */
 
   // Groups the model may put a person in, and the role ranking the cards use.
-  const GROUPS = new Set(['recruiting', 'technology', 'research', 'trading', 'leadership', 'other']);
+  const GROUPS = new Set(['recruiting', 'technology', 'research', 'trading', 'leadership', 'junior', 'other']);
   const TITLE_GROUP = [
     [
       'recruiting',
@@ -461,12 +466,80 @@
   const SENIOR =
     /\b(head|chief|director|cto|cio|lead|leader|partner|principal|founder|co-?founder|vp|vice president|president|manager|managing)\b/i;
 
-  /** The group a confirmed title puts someone in (the model's own group only when the title is silent). */
+  // Early in a career, the people who answer a student at a large firm: "Analyst", "Investment Banking Associate",
+  // "Software Engineer", "Quantitative Researcher", "Graduate Trader".
+  const JUNIOR =
+    /\b(analysts?|associates?|engineers?|developers?|programmers?|researchers?|traders?|scientists?|consultants?|quants?|strategists?|structurers?)\b/i;
+  // A recruiter whose title says analyst or associate is still a recruiter: "Campus Recruiting Associate", "HR Analyst".
+  const RECRUITER =
+    /recruit|talent|\bhr\b|human resources|people partner|campus|early careers|university relations|hiring/i;
+
+  /**
+   * The group a confirmed title puts someone in (the model's own group only when the title is silent). A department
+   * counts only through whoever heads it; anyone else there with a role a graduate joins as is 'junior' ("Graduate
+   * Analyst" is on the scheme, "Graduate Recruitment Manager" runs it).
+   */
   function groupOf(title, said) {
+    const t = title || '';
+    const junior = JUNIOR.test(t) && !SENIOR.test(t) && !RECRUITER.test(t);
+    if (junior) return 'junior';
     for (const [g, re] of TITLE_GROUP)
-      if (re.test(title || ''))
-        return ['technology', 'research', 'trading'].includes(g) && !SENIOR.test(title) ? 'other' : g;
-    return title ? 'other' : GROUPS.has(said) ? said : 'other';
+      if (re.test(t)) return ['technology', 'research', 'trading'].includes(g) && !SENIOR.test(t) ? 'other' : g;
+    return t ? 'other' : GROUPS.has(said) ? said : 'other';
+  }
+
+  /* ------------------------------------------------------------------ size */
+
+  const STAFF_WORD = '(?:employees|staff|people|professionals|colleagues|workforce|team members|personnel|headcount)';
+  const NUMBER = '(\\d{1,3}(?:,\\d{3})+|\\d+(?:\\.\\d+)?\\s*k\\b|\\d+)';
+  // "10,001+ employees" (LinkedIn), "1,001-5,000 employees", "over 45,000 people", "3k staff".
+  const STAFF_BEFORE = new RegExp(
+    `${NUMBER}\\s*(?:[-–]\\s*[\\d,]+\\s*)?\\+?\\s*((?:[a-z-]+\\s+){0,2})${STAFF_WORD}\\b`,
+    'i',
+  );
+  // "employs about 2,000", "a headcount of 1,500".
+  const STAFF_AFTER = new RegExp(
+    `\\b(?:employs|employing|headcount of|workforce of|staff of|team of)\\s+(?:about|around|over|more than|nearly|some|approximately|roughly)?\\s*${NUMBER}`,
+    'i',
+  );
+  // What a number before "people" may count instead: "3 million people", "500 clients and their people".
+  const NOT_STAFF = /\b(million|billion|thousand|clients?|customers?|users?|students?|investors?|members?)\b/i;
+
+  /** "45,000" → 45000, "3k" → 3000. */
+  const countOf = (n) => {
+    const s = String(n).replace(/,/g, '').trim();
+    return /k$/i.test(s) ? Math.round(parseFloat(s) * 1000) : parseInt(s, 10);
+  };
+
+  /**
+   * How many people the firm employs, as a source states it in the words the model quoted: { count, url, quote } or
+   * null. A count only decides whom a student writes to first, never anything said to the firm.
+   */
+  function staffOf(said, evidence) {
+    const quote = str(said && said.quote).slice(0, 300);
+    const q = ascii(quote);
+    if (q.length < 8) return null;
+    const item = evidence.find((e) => e.said.includes(q));
+    if (!item) return null;
+    const before = quote.match(STAFF_BEFORE);
+    const m = before && !NOT_STAFF.test(before[2] || '') ? before : quote.match(STAFF_AFTER);
+    const count = m ? countOf(m[1]) : 0;
+    return count > 0 && count < 5000000 ? { count, url: item.url, quote } : null;
+  }
+
+  /**
+   * How big the firm is: its headcount (the registry's or the one a source states, whichever is larger: Merrill's
+   * advisory arm files 61 staff with the SEC) and its tier: 'big' at 1,000 or more, where juniors and alumni answer a
+   * student and a careers@ mailbox says "apply online"; 'small' under 150, where the partners read the CVs; 'mid'
+   * between; '' when nothing says.
+   */
+  function sizeOf(firm, web) {
+    const f = firm || {};
+    const own = Number.isFinite(f.employees) ? f.employees : 0;
+    const stated = (web && web.staff && Number(web.staff.count)) || 0;
+    const staff = Math.max(own, stated);
+    const tier = staff >= 1000 ? 'big' : staff >= 150 ? 'mid' : staff > 0 ? 'small' : '';
+    return { staff, tier, from: staff ? (stated > own ? 'web' : 'registry') : '' };
   }
 
   /** Read a page for the evidence, as text: [{ url, text }] (or nothing when it fails). */
@@ -587,7 +660,7 @@
 
     // People.
     const people = [];
-    for (const p of (j.people || []).slice(0, 20)) {
+    for (const p of (j.people || []).slice(0, MAX_PEOPLE)) {
       if (!p || typeof p !== 'object') continue;
       const ok = confirmPerson(p, evidence, firmLike);
       const label = [str(p.name), str(p.title)].filter(Boolean).join(', ');
@@ -688,8 +761,13 @@
       else dropped.push({ what: str(p.name) || quote.slice(0, 60), why: 'its words aren’t in any source' });
     }
 
+    const staff = staffOf(j.staff, evidence);
+    if (j.staff && str(j.staff.count) && !staff)
+      dropped.push({ what: `a headcount of ${str(j.staff.count)}`, why: 'no source states it' });
+
     return {
       website,
+      staff,
       careers: careers.slice(0, 5),
       programmes: programmes.slice(0, 5),
       people: people.slice(0, MAX_PEOPLE),
@@ -717,14 +795,35 @@
    * in a source, seen by Hunter on the web, or made from the firm's best confirmed format; then each address checked
    * (MX for every domain; with a key, Hunter's mailbox check of the first three not printed anywhere). web: research()
    * or null; contacts: findContacts() for the firm (its site's format); domain: the domain people's addresses are on.
-   * → { people: [{ …person, address, how: 'listed'|'finder'|'format', level, verdict, why }], mailboxes, formats,
-   * format, hunter: { searched, count } | { error }, mx }
+   * alumni: the people discoverHooks.alumni() found from the candidate's university (one entry per person, marked
+   * `alumni` with the institution, the year they graduated and the common ground). prefer(person) → a number, lowest
+   * first: who gets Hunter's few mailbox checks. Each person also gets `alternatives`: their address in every other
+   * format a source gave (one the directories dispute, a minority one), never chosen for them but theirs to pick.
+   * → { people: [{ …person, address, how: 'listed'|'finder'|'format', level, verdict, why, alternatives }],
+   * mailboxes, formats, format, hunter: { searched, count } | { error }, mx }
    */
-  async function addresses(web, { firm, contacts = {}, domain, hunterKey = '', fetch: fetchFn } = {}) {
+  async function addresses(
+    web,
+    {
+      firm,
+      contacts = {},
+      domain,
+      hunterKey = '',
+      hunterFound = null,
+      fetch: fetchFn,
+      alumni = [],
+      prefer = null,
+    } = {},
+  ) {
     const F = JTF.discoverFinder;
     const out = { people: [], mailboxes: [], formats: [], format: null, hunter: null, mx: null, disputed: [] };
     let found = null;
-    if (hunterKey && domain) {
+    // Hunter's answer from a run before (`hunterFound`, as out.hunterFound gives it), not asked for again.
+    if (hunterKey && hunterFound && hunterFound.asked === domain && Array.isArray(hunterFound.emails)) {
+      found = hunterFound;
+      out.hunterFound = hunterFound;
+      out.hunter = { searched: true, count: found.emails.length };
+    } else if (hunterKey && domain) {
       try {
         found = await F.hunter.domain(hunterKey, domain, {
           fetch: fetchFn,
@@ -732,6 +831,7 @@
           departments: ['hr', 'executive', 'management', 'it'],
         });
         out.hunter = { searched: true, count: found.emails.length };
+        out.hunterFound = { ...found, asked: domain };
       } catch (err) {
         out.hunter = { error: (err && err.message) || String(err) };
       }
@@ -803,6 +903,29 @@
     out.format = out.formats[0] || null;
 
     const people = ((web && web.people) || []).map((p) => ({ ...p }));
+    // Found again by the alumni search: the same person, now with the university in common.
+    for (const a of alumni || []) {
+      if (!a || !a.name) continue;
+      const fields = {
+        alumni: true,
+        shared: a.shared || '',
+        graduated: a.graduated || 0,
+        years: Number.isFinite(a.years) ? a.years : null,
+        hook: a.hook || null,
+      };
+      const had = people.find((p) => C().samePerson(p.name, a.name));
+      if (had) Object.assign(had, fields, { title: had.title || a.title || '' });
+      else
+        people.push({
+          name: a.name,
+          title: a.title || '',
+          group: groupOf(a.title, 'junior'),
+          url: a.url || '',
+          quote: a.quote || '',
+          kind: a.kind || 'result',
+          ...fields,
+        });
+    }
     // People the firm's own site names with no address there (HBK's Head of Recruitment): a format can give them one.
     for (const p of contacts.named || []) {
       if (!p || !p.name || people.some((q) => C().samePerson(q.name, p.name))) continue;
@@ -839,6 +962,34 @@
       const made = C().guess(p, out.format.pattern, out.format.domain);
       if (made) Object.assign(p, { address: made, how: 'format' });
     }
+    // Every format a source gave beyond the one used, with why it wasn't (CMC Markets' f.last at 79% when another
+    // directory says first.last at 74.9%; TT International's f.last at 3.4%), so a person can still be written to in it.
+    const notes = (f) =>
+      [
+        f.source === 'addresses'
+          ? `addresses printed on ${sourceName(f.url) || 'the web'}`
+          : `stated on ${sourceName(f.url) || 'the web'}${f.share ? `, ${f.share}% of its addresses` : ''}`,
+        disputed(f) ? 'the directories disagree' : '',
+        f.share > 0 && f.share < 25 ? 'a minority format' : '',
+      ]
+        .filter(Boolean)
+        .join('; ');
+    const spare = [
+      ...out.formats.slice(1),
+      ...all
+        .filter((f) => f.pattern !== 'unknown')
+        .map((f) => ({ pattern: f.pattern, domain: f.domain, why: notes(f) })),
+    ].filter(
+      (f, i, list) =>
+        !(out.format && f.pattern === out.format.pattern && f.domain === out.format.domain) &&
+        list.findIndex((g) => g.pattern === f.pattern && g.domain === f.domain) === i,
+    );
+    for (const p of people)
+      p.alternatives = spare
+        .map((f) => ({ address: C().guess(p, f.pattern, f.domain), pattern: f.pattern, domain: f.domain, why: f.why }))
+        .filter((a) => a.address && String(a.address).toLowerCase() !== String(p.address || '').toLowerCase())
+        .filter((a, i, list) => list.findIndex((b) => b.address === a.address) === i)
+        .slice(0, 4);
     // Mailboxes a page or Hunter printed (careers@), beyond the site's own.
     for (const e of (web && web.emails) || [])
       if (e.kind !== 'person')
@@ -857,16 +1008,23 @@
     const domainOf = (a) => String(a || '').split('@')[1] || '';
     const domains = [
       ...new Set(
-        [domain, ...people.map((p) => domainOf(p.address)), ...out.mailboxes.map((m) => domainOf(m.address))].filter(
-          Boolean,
-        ),
+        [
+          domain,
+          ...people.map((p) => domainOf(p.address)),
+          ...people.flatMap((p) => p.alternatives.map((a) => domainOf(a.address))),
+          ...out.mailboxes.map((m) => domainOf(m.address)),
+        ].filter(Boolean),
       ),
     ];
     const mx = {};
     for (const d of domains) mx[d] = await F.mx(d, { fetch: fetchFn });
     out.mx = mx[domain] || null;
     let checks = 0;
-    for (const p of people) {
+    // Hunter's few mailbox checks go to the people most worth writing to (prefer), in the order they'll be offered.
+    const order = prefer ? people.map((p, i) => [prefer(p), i, p]).sort((a, b) => a[0] - b[0] || a[1] - b[1]) : null;
+    for (const p of order ? order.map((x) => x[2]) : people) {
+      // An alternative on a domain that takes no email is no address at all.
+      p.alternatives = p.alternatives.filter((a) => !mx[domainOf(a.address)] || mx[domainOf(a.address)].ok !== false);
       if (!p.address) continue;
       const m = mx[domainOf(p.address)];
       let check = p.finder && p.finder.status ? { status: p.finder.status } : null;
@@ -884,6 +1042,7 @@
       p.verdict = v.text;
       const seen = p.finder ? p.finder.sources.length : 0;
       p.why = [
+        p.alumni && p.shared ? `studied at ${p.shared}${p.graduated ? `, graduated ${p.graduated}` : ''}` : '',
         p.title
           ? `${p.title}, ${sourceName(p.url || '') === 'LinkedIn' ? 'on LinkedIn' : `on ${sourceName(p.url || '') || 'the web'}`}`
           : '',
@@ -923,6 +1082,8 @@
     evidenceOf,
     confirmPerson,
     groupOf,
+    staffOf,
+    sizeOf,
     newName,
     brief,
     research,

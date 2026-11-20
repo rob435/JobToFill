@@ -110,7 +110,8 @@ export function download(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+/** "1 firm", "3 firms"; "2 people" with the plural given. */
+export const plural = (n, word, many) => `${n} ${n === 1 ? word : many || `${word}s`}`;
 
 /* ------------------------------------------------------------ site access */
 

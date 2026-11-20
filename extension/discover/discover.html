@@ -227,6 +227,14 @@
                   <button id="check-top" class="small ghost" type="button">Check the top 10</button>
                   <button id="research-top" class="small ghost" type="button" hidden>Find people for the top 10</button>
                   <button id="results-export" class="small ghost" type="button">Export CSV</button>
+                  <button
+                    id="people-export"
+                    class="small ghost"
+                    type="button"
+                    title="Everyone found at the firms shown, one row per address, with where each was found"
+                  >
+                    Export everyone found
+                  </button>
                 </div>
               </div>
               <ol id="results" class="firms"></ol>
@@ -261,8 +269,8 @@
                 <span
                   >Look for common ground
                   <span class="muted"
-                    >(sends the names of your university, school, past employers and home town to your AI’s web search, never your
-                    name)</span
+                    >(sends the names of your university, school, past employers and home town to your AI’s web search, never your name;
+                    also looks for people at each firm who studied at your university)</span
                   ></span
                 ></label
               >

@@ -14,6 +14,9 @@ const ai = require('../../extension/lib/ai.js');
 
 const PAD = `<p>${'HBK is a global investment firm with offices in Dallas, New York and London. '.repeat(8)}</p>`;
 
+/** A source as the search gives it. */
+const src = (url, title, text = '', kind = 'result') => ({ url, title, text, kind });
+
 /** A fetch that serves fixed bodies by URL, and records what was asked for. */
 function mockFetch(routes, log = []) {
   return async (url, init = {}) => {
@@ -540,6 +543,14 @@ test('research: two directories that disagree on the format settle nothing', asy
   assert.equal(found.format, null);
   assert.deepEqual(found.disputed, ['first.last@cmcmarkets.com', 'f.last@cmcmarkets.com']);
   assert.equal(found.people[0].address, undefined, 'no address made from a disputed format');
+  // Still hers to write to in either, if the person chooses: each with why it wasn't used.
+  assert.deepEqual(
+    found.people[0].alternatives.map((a) => [a.address, a.why]),
+    [
+      ['meghan.squirrell@cmcmarkets.com', 'stated on prospeo.io, 74.9% of its addresses; the directories disagree'],
+      ['m.squirrell@cmcmarkets.com', 'stated on leadiq.com, 79% of its addresses; the directories disagree'],
+    ],
+  );
 });
 
 test('research: a site on file that now redirects to its new owner, who turns robots away, has moved there', async () => {
@@ -775,4 +786,114 @@ test('research: a sending subdomain shows no format, nor does a directory’s mi
   });
   const found = await R.addresses(web, { firm, contacts: {}, domain: 'trigger.dev', fetch: fetchFn });
   assert.equal(found.format, null, 'first@ at 28.6% is the minority, whatever the 71.4% is');
+});
+
+test('research: juniors at a large firm, its headcount as a source states it, and alumni merged in', async () => {
+  const firm = {
+    name: 'Goldman Sachs',
+    domain: 'goldmansachs.com',
+    site: 'https://www.goldmansachs.com',
+    employees: 61,
+  };
+  const reply = {
+    people: [
+      {
+        name: 'Priya Shah',
+        title: 'Investment Banking Analyst',
+        group: 'junior',
+        url: 'https://uk.linkedin.com/in/ps',
+      },
+      {
+        name: 'Joe Bloggs',
+        title: 'Head of Campus Recruiting',
+        group: 'recruiting',
+        url: 'https://uk.linkedin.com/in/jb',
+      },
+      { name: 'Mo Khan', title: 'Graduate Software Engineer', url: 'https://uk.linkedin.com/in/mk' },
+    ],
+    format: { pattern: 'first.last', url: 'https://rocketreach.co/gs' },
+    staff: { count: '10001', url: 'https://uk.linkedin.com/company/gs', quote: 'Goldman Sachs · 10,001+ employees' },
+  };
+  const sources = [
+    src('https://uk.linkedin.com/in/ps', 'Priya Shah - Investment Banking Analyst - Goldman Sachs | LinkedIn'),
+    src('https://uk.linkedin.com/in/jb', 'Joe Bloggs - Head of Campus Recruiting - Goldman Sachs | LinkedIn'),
+    src('https://uk.linkedin.com/in/mk', 'Mo Khan - Graduate Software Engineer - Goldman Sachs | LinkedIn'),
+    src(
+      'https://uk.linkedin.com/company/gs',
+      'Goldman Sachs | LinkedIn',
+      'Goldman Sachs · 10,001+ employees · New York',
+    ),
+    src(
+      'https://rocketreach.co/gs',
+      'Goldman Sachs Email Format',
+      'The most common Goldman Sachs email format is [first].[last] (ex. jane.doe@goldmansachs.com), used 91% of the time',
+    ),
+  ];
+  const search = async () => ({ json: reply, sources, searches: 5 });
+  const web = await R.research(search, { firm, found: {}, contacts: {}, fetch: mockFetch({}) });
+  assert.deepEqual(
+    web.people.map((p) => [p.name, p.group]),
+    [
+      ['Priya Shah', 'junior'],
+      ['Joe Bloggs', 'recruiting'],
+      ['Mo Khan', 'junior'],
+    ],
+  );
+  assert.equal(web.staff.count, 10001);
+  // The registry's 61 is its advisory arm's filing with the SEC: the larger count decides.
+  assert.deepEqual(R.sizeOf(firm, web), { staff: 10001, tier: 'big', from: 'web' });
+  assert.deepEqual(R.sizeOf({ employees: 40 }, null).tier, 'small');
+  assert.deepEqual(R.sizeOf({}, null).tier, '');
+  // A count no source gives is dropped.
+  const made = await R.research(async () => ({ json: { staff: { count: '50000', quote: 'about 50,000 people' } } }), {
+    firm,
+    fetch: mockFetch({}),
+  });
+  assert.equal(made.staff, null);
+  assert.ok(made.dropped.some((d) => d.what === 'a headcount of 50000'));
+
+  const alumni = [
+    {
+      name: 'Priya Shah',
+      title: '',
+      shared: 'University of Warwick',
+      graduated: 2022,
+      years: 4,
+      hook: {
+        kind: 'common',
+        about: 'Priya Shah',
+        shared: 'University of Warwick',
+        quote: 'Education: University of Warwick',
+      },
+    },
+    { name: 'Sam Patel', title: 'Software Engineer', shared: 'University of Warwick', graduated: 0, years: null },
+  ];
+  const fetchFn = mockFetch({
+    'https://dns.google/resolve?name=goldmansachs.com&type=MX': JSON.stringify({
+      Status: 0,
+      Answer: [{ type: 15, data: '10 mx.gs.com.' }],
+    }),
+  });
+  const order = [];
+  const verify = (p) => (p.alumni ? 0 : p.group === 'junior' ? 1 : 2);
+  const found = await R.addresses(web, {
+    firm,
+    contacts: {},
+    domain: 'goldmansachs.com',
+    fetch: fetchFn,
+    alumni,
+    prefer: (p) => (order.push(p.name), verify(p)),
+  });
+  assert.deepEqual(
+    found.people.map((p) => [p.name, p.address, p.group, !!p.alumni, p.graduated || 0]),
+    [
+      ['Priya Shah', 'priya.shah@goldmansachs.com', 'junior', true, 2022],
+      ['Joe Bloggs', 'joe.bloggs@goldmansachs.com', 'recruiting', false, 0],
+      ['Mo Khan', 'mo.khan@goldmansachs.com', 'junior', false, 0],
+      ['Sam Patel', 'sam.patel@goldmansachs.com', 'junior', true, 0],
+    ],
+  );
+  assert.match(found.people[0].why, /^studied at University of Warwick, graduated 2022; Investment Banking Analyst/);
+  assert.equal(found.people[0].hook.kind, 'common');
+  assert.ok(order.length >= 4, 'each person is ranked for the checks');
 });

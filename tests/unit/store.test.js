@@ -222,6 +222,7 @@ test('store: the Discover cache keeps the lists whole and checks per firm, the n
     contacts: {},
     research: {},
     hooks: {},
+    typed: {},
     queue: null,
   });
   const hn = { posts: [{ id: 1 }], threads: [{ id: 9, title: 'Ask HN: Who is hiring? (November 2026)' }], at: 5 };
@@ -237,6 +238,9 @@ test('store: the Discover cache keeps the lists whole and checks per firm, the n
   assert.deepEqual(Object.keys(cache.careers), ['a']);
   await store.setDiscoverCache({ research: { a: { at: 4, result: { people: [] } } } });
   assert.deepEqual((await store.getDiscoverCache()).research, { a: { at: 4, result: { people: [] } } });
+  // Addresses typed in to write to, per firm.
+  await store.setDiscoverCache({ typed: { a: { at: 4, list: [{ address: 'jane@acme.com', name: 'Jane' }] } } });
+  assert.deepEqual((await store.getDiscoverCache()).typed.a.list, [{ address: 'jane@acme.com', name: 'Jane' }]);
   // Reasons to write are kept per firm too; the review queue is kept whole, and an empty one clears it.
   await store.setDiscoverCache({
     hooks: { a: { at: 5, result: { hooks: [] } } },

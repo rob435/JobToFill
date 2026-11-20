@@ -519,6 +519,17 @@ legend {
   color: var(--muted);
   font-size: 12px;
 }
+.contact-list .write-to {
+  margin-left: auto;
+}
+.who-group h4 {
+  margin: 8px 0 4px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.contacts .size-note {
+  margin: 0;
+}
 .hn-post {
   display: flex;
   flex-direction: column;
@@ -962,6 +973,43 @@ a.button.big {
 }
 .to-line .ghost {
   margin-left: auto;
+}
+.to-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.to-block > p {
+  margin: 0;
+}
+.to-pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.to-pick select {
+  max-width: 100%;
+  min-width: 0;
+  flex: 1 1 280px;
+}
+.typed-to.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.typed-to input {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.typed-to .error {
+  flex-basis: 100%;
+  margin: 0;
+}
+.pill.alumni {
+  background: var(--ok-weak);
+  color: var(--ok);
 }
 .review-body input.subject {
   font-size: 16px;

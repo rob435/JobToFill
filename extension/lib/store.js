@@ -31,7 +31,8 @@
  *                 hiring" posts, discoverSources.hnHiring), careers: { [firmId]: { at, result } } (careers checks) and
  *                 contacts: { [firmId]: { at, result } } (discoverContacts.findContacts) and research: { [firmId]: { at, result } }
  *                 (discoverResearch.research and the address checks) and hooks: { [firmId]: { at, result } }
- *                 (discoverHooks.find: reasons to write) and queue: { items, at, cleared, declined, alerts, savedAt } (the review
+ *                 (discoverHooks.find: reasons to write) and typed: { [firmId]: { at, list: [{ address, name }] } } (addresses
+ *                 the person typed in to write to) and queue: { items, at, cleared, declined, alerts, savedAt } (the review
  *                 queue: the firms an email is being prepared for, with the drafts, the ids of those cleared from it,
  *                 and the follow-ups skipped: { [firmId]: the sentAt of the email followed up }) }; never in a backup
  *   outreach      emails to firms, written on the Discover page: { [firmId]: { firm: { id, name, domain, site },
@@ -869,6 +870,7 @@
       contacts: cache.contacts || {},
       research: cache.research || {},
       hooks: cache.hooks || {},
+      typed: cache.typed || {},
       queue: cache.queue && Array.isArray(cache.queue.items) ? cache.queue : null,
     });
   }
@@ -885,6 +887,7 @@
     contacts,
     research,
     hooks,
+    typed,
     queue,
   }) {
     const cache = await getDiscoverCache();
@@ -908,9 +911,10 @@
       ['contacts', contacts],
       ['research', research],
       ['hooks', hooks],
+      ['typed', typed],
     ]) {
       if (!add) continue;
-      cache[key] = Object.assign(cache[key], add);
+      cache[key] = Object.assign(cache[key] || {}, add);
       const ids = Object.keys(cache[key]).sort((a, b) => (cache[key][b].at || 0) - (cache[key][a].at || 0));
       for (const id of ids.slice(CAREERS_CACHE_LIMIT)) delete cache[key][id];
     }

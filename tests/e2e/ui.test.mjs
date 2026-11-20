@@ -1003,6 +1003,270 @@ test('Discover: Find people searches the web, keeps what the results show, and S
   await page.close();
 });
 
+test('Discover: at a large firm Review writes to someone from your university, asks for a call, and lets you pick anyone', async () => {
+  await h.bg(() =>
+    globalThis.JTF.store.setDiscoverCache({
+      trackr: { names: [], domains: [], at: Date.now(), answered: 1 },
+      listed: { names: [], domains: [], roles: [], at: Date.now(), answered: 1, asked: 1 },
+    }),
+  );
+  const page = await openExt('discover/discover.html');
+  const ready = () =>
+    page.waitForFunction(() => /firms in the registry/.test(document.querySelector('#registry-info').textContent));
+  await ready();
+  await page.selectOption('#place', 'any');
+  await page.selectOption('#size', 'any');
+  await page.click('#search');
+  await page.waitForSelector('#results .firm');
+  const id = await page.$eval('#results .firm', (li) => li.dataset.id);
+  const card = `#results .firm[data-id="${id}"]`;
+  const name = (await page.textContent(`${card} .firm-name`)).trim();
+  const found = await page.evaluate(
+    async ([home, base]) => {
+      const { discover: D, discoverContacts: C } = globalThis.JTF;
+      const fetchFn = (u, init) => {
+        const url = new URL(u);
+        if (/(^|\.)quiet\.example$/.test(url.hostname) && url.pathname === '/') return fetch(home, init);
+        if (/^discover-(home|team|careers)\.html$/.test(url.pathname.slice(1)) && u.startsWith(base))
+          return fetch(u, init);
+        return Promise.resolve(new Response('Not found', { status: 404 }));
+      };
+      const firm = {
+        id: 'x',
+        name: 'Quiet Capital',
+        aliases: [],
+        domain: 'quiet.example',
+        site: 'https://quiet.example',
+      };
+      const result = await D.careers({ ...firm, cities: ['London'], tags: [] }, { fetch: fetchFn, guess: false });
+      const contacts = await C.findContacts(firm, { fetch: fetchFn, pages: result.pages });
+      return { result, contacts };
+    },
+    [h.url('discover-home.html'), h.url('')],
+  );
+  // The web search: a junior analyst on LinkedIn, the firm's headcount and its address format. The alumni search: a
+  // software engineer who graduated from Warwick three years ago. No reason to write beyond that.
+  const reply = (results, cited, json) => ({
+    model: 'claude-sonnet-5-5',
+    stop_reason: 'end_turn',
+    content: [
+      { type: 'server_tool_use', id: 's1', name: 'web_search', input: { query: name } },
+      {
+        type: 'web_search_tool_result',
+        tool_use_id: 's1',
+        content: results.map(([url, title]) => ({ type: 'web_search_result', url, title, encrypted_content: 'x' })),
+      },
+      {
+        type: 'text',
+        text: JSON.stringify(json),
+        citations: cited.map(([url, title, text]) => ({
+          type: 'web_search_result_location',
+          url,
+          title,
+          cited_text: text,
+        })),
+      },
+    ],
+    usage: { input_tokens: 1000, output_tokens: 200, server_tool_use: { web_search_requests: 1 } },
+  });
+  const RESEARCH = reply(
+    [['https://uk.linkedin.com/in/omar-haddad', `Omar Haddad - Investment Banking Analyst - ${name} | LinkedIn`]],
+    [
+      [
+        'https://uk.linkedin.com/company/quiet',
+        `${name} | LinkedIn`,
+        `${name} · Financial Services · 10,001+ employees`,
+      ],
+      [
+        'https://rocketreach.co/quiet-capital-email-format',
+        'Quiet Capital Email Format',
+        'The most common Quiet Capital email format is [first].[last] (ex. jane.doe@quiet.example), used 91% of the time.',
+      ],
+    ],
+    {
+      people: [
+        {
+          name: 'Omar Haddad',
+          title: 'Investment Banking Analyst',
+          group: 'junior',
+          url: 'https://uk.linkedin.com/in/omar-haddad',
+        },
+      ],
+      emails: [],
+      format: { pattern: 'first.last' },
+      staff: {
+        count: '10001',
+        url: 'https://uk.linkedin.com/company/quiet',
+        quote: `${name} · Financial Services · 10,001+ employees`,
+      },
+    },
+  );
+  const ALUMNI = reply(
+    [['https://uk.linkedin.com/in/sam-patel', `Sam Patel - Software Engineer - ${name} | LinkedIn`]],
+    [
+      [
+        'https://uk.linkedin.com/in/sam-patel',
+        `Sam Patel - Software Engineer - ${name} | LinkedIn`,
+        `Sam Patel. Software Engineer at ${name}. Education: University of Warwick · BSc Computer Science · 2020 – 2023.`,
+      ],
+    ],
+    {
+      people: [
+        {
+          name: 'Sam Patel',
+          title: 'Software Engineer',
+          university: 'University of Warwick',
+          graduated: '2023',
+          url: 'https://uk.linkedin.com/in/sam-patel',
+          quote: `Software Engineer at ${name}. Education: University of Warwick`,
+        },
+      ],
+    },
+  );
+  const asked = [];
+  await h.context.route('https://api.anthropic.com/**', async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    asked.push(body);
+    const said = JSON.stringify(body.system || '') + JSON.stringify(body.messages || '');
+    const out = !body.tools
+      ? {
+          model: 'claude-sonnet-5-5',
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: JSON.stringify(DRAFT) }],
+          usage: { input_tokens: 10, output_tokens: 10 },
+        }
+      : /You research one employer/.test(said)
+        ? RESEARCH
+        : /work at one employer now and studied/.test(said)
+          ? ALUMNI
+          : reply([], [], { hooks: [] });
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(out) });
+  });
+  await h.context.route('https://dns.google/**', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ Status: 0, Answer: [{ type: 15, data: '10 mx.quiet.example.' }] }),
+    }),
+  );
+  // What an earlier test found at this firm (its web research, its reasons to write) is forgotten, here and after.
+  const forget = (firmId) =>
+    h.bg(async (i) => {
+      const area = globalThis.JTF.api.storage.local;
+      const cache = (await area.get('discoverCache')).discoverCache || {};
+      for (const key of ['research', 'hooks', 'typed']) if (cache[key]) delete cache[key][i];
+      await area.set({ discoverCache: cache });
+    }, firmId);
+  await forget(id);
+  const before = await h.bg(
+    async ([firmId, f]) => {
+      const { store } = globalThis.JTF;
+      await store.setDiscoverCache({
+        careers: { [firmId]: { at: Date.now(), result: f.result } },
+        contacts: { [firmId]: { at: Date.now(), result: f.contacts } },
+      });
+      const { profile } = await store.getActive();
+      const settings = await store.getSettings();
+      const was = { ai: settings.ai, discoverAi: settings.discoverAi, profile: JSON.parse(JSON.stringify(profile)) };
+      profile.personal.firstName = 'Ada';
+      profile.personal.lastName = 'Lovelace';
+      profile.education = [{ school: 'University of Warwick', degree: 'BSc', field: 'Computer Science' }];
+      await store.saveProfile(profile);
+      await store.saveKit(profile.id, {
+        notes: 'Built a reconciliation tool in Python that checks 40,000 trades a night.',
+      });
+      await store.setAiKey('sk-ant-e2e', 'anthropic');
+      await store.saveAiSettings({ provider: 'anthropic', model: 'claude-sonnet-5-5' });
+      await store.saveSettings({
+        discoverAi: { ...settings.discoverAi, commonGround: true, ask: 'internship', theirMorning: false },
+      });
+      return was;
+    },
+    [id, found],
+  );
+  await page.reload();
+  await ready();
+  await page.selectOption('#place', 'any');
+  await page.selectOption('#size', 'any');
+  await page.click('#search');
+  await page.waitForSelector(`${card} .contacts`);
+  await page.click(`${card} button.write-go`);
+  const box = '#review-card textarea.body';
+  await page.waitForSelector(`#review-view:not([hidden]) ${box}`);
+
+  // A firm of 10,001 people: the Warwick graduate three years in leads, ahead of the analyst, the recruiters and
+  // the careers@ mailbox, and the email opens with what they share and asks for a call, not an internship.
+  const to = await page.textContent('#review-card .to-line');
+  assert.match(to, /Sam Patel, Software Engineer[\s\S]*sam\.patel@quiet\.example/);
+  assert.match(to, /University of Warwick, graduated 2023 \(3 years in\)/);
+  assert.match(await page.inputValue(box), /^Dear Sam,\n\n/);
+  assert.match(await page.textContent('#review-card .reason'), /Common ground: University of Warwick/);
+  assert.match(await page.textContent('#review-card .reason'), /Education: University of Warwick/);
+  assert.match(await page.textContent('#review-card .to-block'), /Asks for a 15-minute call/);
+  const draft = asked.filter((b) => !b.tools).pop();
+  assert.match(JSON.stringify(draft), /ask for a 15-minute call/);
+  // The alumni search had the firm and the university, never the person.
+  const alumni = asked.find((b) => b.tools && /work at one employer now/.test(JSON.stringify(b.system)));
+  assert.match(JSON.stringify(alumni.messages), /University of Warwick/);
+  assert.doesNotMatch(JSON.stringify(alumni.messages), /Ada|Lovelace|reconciliation/);
+
+  // Everyone found, grouped as they rank at a firm this size, any of them a click away.
+  const picker = '#review-card select[name="to-pick"]';
+  const groups = await page.$$eval(`${picker} optgroup`, (gs) => gs.map((g) => g.label));
+  assert.deepEqual(groups.slice(0, 2), ['From your university', 'Early in their careers']);
+  assert.ok(groups.includes('Recruiting mailboxes'), groups.join(', '));
+  await page.selectOption(picker, 'omar.haddad@quiet.example');
+  assert.match(await page.textContent('#review-card .to-line'), /Omar Haddad, Investment Banking Analyst/);
+  assert.match(await page.inputValue(box), /^Dear Omar,\n\n/);
+  // Or an address typed in: kept for the firm, and greeted by name.
+  await page.selectOption(picker, { label: 'Type another address…' });
+  await page.fill('#review-card input[name="typed-to"]', 'not an address');
+  await page.press('#review-card input[name="typed-to"]', 'Enter');
+  await page.waitForSelector('#review-card .typed-to .error');
+  await page.fill('#review-card input[name="typed-to"]', 'Kim Lee <kim.lee@quiet.example>');
+  await page.press('#review-card input[name="typed-to"]', 'Enter');
+  await page.waitForFunction(() =>
+    /kim\.lee@quiet\.example/.test(document.querySelector('#review-card .to-line').textContent),
+  );
+  assert.match(await page.textContent('#review-card .to-line'), /Kim Lee[\s\S]*Typed in/);
+  assert.match(await page.inputValue(box), /^Dear Kim,\n\n/);
+  const typed = await h.bg(async (i) => (await globalThis.JTF.store.getDiscoverCache()).typed[i], id);
+  assert.deepEqual(typed.list, [{ name: 'Kim Lee', address: 'kim.lee@quiet.example' }]);
+  assert.match(await page.getAttribute('#review-card a.open-mail', 'href'), /^mailto:kim\.lee@quiet\.example\?/);
+
+  // Everyone found, as raw as it comes: one row per address, ranked, with the source's own words.
+  await page.click('#tab-find');
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('#people-export')]);
+  const csv = await readFile(await download.path(), 'utf8');
+  const lines = csv.trim().split(/\r\n/);
+  assert.match(
+    lines[0],
+    /^\uFEFF?Firm,Rank,Name,Title,Kind,Email,How sure,Why,Your university,Graduated,Source,Source says$/,
+  );
+  const kim = lines.findIndex((l) => /kim\.lee@quiet\.example/.test(l));
+  const sam = lines.findIndex((l) => /sam\.patel@quiet\.example/.test(l));
+  assert.ok(kim > 0 && sam > kim, 'typed in first, then your university');
+  assert.match(lines[sam], /From your university.*University of Warwick.*2023.*linkedin\.com\/in\/sam-patel/);
+
+  assert.deepEqual(errors, []);
+  // The page closed first: it stores its queue as it goes, so the queue is emptied after that.
+  await page.close();
+  await h.context.unroute('https://api.anthropic.com/**');
+  await h.context.unroute('https://dns.google/**');
+  await h.bg(
+    async ([i, was]) => {
+      const { store } = globalThis.JTF;
+      await store.removeOutreach(i);
+      await store.setAiKey('', 'anthropic');
+      await store.saveSettings({ ai: was.ai, discoverAi: was.discoverAi });
+      await store.saveProfile(was.profile);
+      await store.saveKit(was.profile.id, { notes: '' });
+      await store.setDiscoverCache({ queue: { items: [], at: 0, savedAt: Date.now() } });
+    },
+    [id, before],
+  );
+  await forget(id);
+});
+
 test('Discover: Review prepares a firm’s email by itself, shows it with big buttons and keys, sends it after five seconds, and offers a follow-up', async () => {
   await h.bg(() =>
     globalThis.JTF.store.setDiscoverCache({

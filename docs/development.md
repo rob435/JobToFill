@@ -32,7 +32,10 @@ extension/
     discover-contacts.js  who to email at a firm: mailboxes, people and titles on its team and contact pages, the address pattern
     discover-sources.js   live sources: Hacker News "Who is hiring" posts, Simplify's internship lists (to leave out)
     discover-outreach.js  the speculative email the AI drafts and the checks it must pass; the AI reading a careers page, verified
-    discover-research.js  the web research: people, addresses and format a search returns, each held to the sources; the addresses made from them
+    discover-research.js  the web research: people (juniors too), headcount, addresses and format a search returns, each held to the
+                          sources; the addresses made from them, in every format a source gave
+    discover-hooks.js     a reason to write (common ground, their work, a way to show it) and the people at a firm from your
+                          university, each held to a source
     discover-finder.js    address checks: MX through DNS over HTTPS, and Hunter.io with your key (domain search, finder, mailbox check)
     ai.js              chat client: Claude (Anthropic's Messages API, cached) and OpenAI-compatible (OpenRouter,
                        DeepSeek, custom); the providers' suggested models, JSON, retries, fallback, errors; a reply

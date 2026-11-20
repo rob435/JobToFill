@@ -1000,3 +1000,144 @@ test('hooks: ranked by how much they say to the reader, and one line for the ema
     'Reason to write, found on hbk.com (March 2026): “HBK opened in Singapore”',
   );
 });
+
+/* ---------------------------------------------------------------- alumni */
+
+const bank = {
+  name: 'Goldman Sachs',
+  aliases: ['Goldman Sachs & Co. LLC'],
+  domain: 'goldmansachs.com',
+  site: 'https://www.goldmansachs.com',
+  cities: ['London', 'New York'],
+  country: 'US',
+};
+const ALUMNI_SOURCES = [
+  src(
+    'https://uk.linkedin.com/in/priya-shah',
+    'Priya Shah - Investment Banking Analyst - Goldman Sachs | LinkedIn',
+    'Priya Shah. Investment Banking Analyst at Goldman Sachs. Education: University of Warwick · BSc Economics · 2019 – 2022. London, England.',
+  ),
+  src(
+    'https://uk.linkedin.com/in/tom-reed',
+    'Tom Reed - Managing Director - Goldman Sachs | LinkedIn',
+    'Tom Reed. Managing Director at Goldman Sachs. Education: University of Warwick, BA History, 1994 – 1997.',
+  ),
+  src(
+    'https://uk.linkedin.com/in/sam-patel',
+    'Sam Patel - Software Engineer - Goldman Sachs | LinkedIn',
+    'Sam Patel. Software Engineer at Goldman Sachs. Education: University of Warwick, MEng Computer Science.',
+  ),
+  src(
+    'https://uk.linkedin.com/in/lucy-wong',
+    'Lucy Wong - Analyst - Morgan Stanley | LinkedIn',
+    'Lucy Wong. Analyst at Morgan Stanley. Education: University of Warwick 2020 – 2023.',
+  ),
+  src(
+    'https://warwick.example.ac.uk/careers/fair',
+    'Careers fair 2026 | University of Warwick',
+    'Ben Hall of Goldman Sachs spoke at the University of Warwick careers fair about the spring week.',
+  ),
+];
+const ALUMNI_REPLY = {
+  people: [
+    {
+      name: 'Tom Reed',
+      title: 'Managing Director',
+      university: 'University of Warwick',
+      graduated: '1997',
+      url: 'https://uk.linkedin.com/in/tom-reed',
+      quote: 'Managing Director at Goldman Sachs. Education: University of Warwick',
+    },
+    {
+      name: 'Priya Shah',
+      title: 'Investment Banking Analyst',
+      university: 'Warwick',
+      graduated: '2021',
+      url: 'https://uk.linkedin.com/in/priya-shah',
+      quote: 'Investment Banking Analyst at Goldman Sachs. Education: University of Warwick',
+    },
+    {
+      name: 'Sam Patel',
+      title: 'Software Engineer',
+      university: 'University of Warwick',
+      graduated: '',
+      url: 'https://uk.linkedin.com/in/sam-patel',
+      quote: 'Software Engineer at Goldman Sachs. Education: University of Warwick',
+    },
+    {
+      name: 'Lucy Wong',
+      title: 'Analyst',
+      university: 'University of Warwick',
+      graduated: '2023',
+      url: 'https://uk.linkedin.com/in/lucy-wong',
+      quote: 'Analyst at Morgan Stanley. Education: University of Warwick',
+    },
+    {
+      name: 'Ben Hall',
+      title: 'Vice President',
+      university: 'University of Warwick',
+      url: 'https://warwick.example.ac.uk/careers/fair',
+      quote: 'Ben Hall of Goldman Sachs spoke at the University of Warwick careers fair',
+    },
+    {
+      name: 'Ada Bloom',
+      title: 'Analyst',
+      university: 'Bloomberg',
+      url: 'https://uk.linkedin.com/in/priya-shah',
+      quote: 'Investment Banking Analyst at Goldman Sachs. Education: University of Warwick',
+    },
+  ],
+};
+
+test('alumni: people at the firm from the candidate’s university, held to the source, two to five years in first', async () => {
+  const calls = [];
+  const search = async (messages, options) => {
+    calls.push({ messages, options });
+    return { json: ALUMNI_REPLY, sources: ALUMNI_SOURCES, searches: 4, usage: { cost: 0.05 } };
+  };
+  const r = await H.alumni(search, { firm: bank, institutions, now: NOW, fetch: mockFetch({}) });
+  // Only the universities go, never the school, the employers or the town, and nothing about the candidate.
+  const user = calls[0].messages[1].content;
+  assert.match(user, /FIRM: Goldman Sachs/);
+  assert.match(user, /- University of Warwick/);
+  assert.doesNotMatch(user, /Camp Hill|Bloomberg|Birmingham|Ada|Lovelace|ada@example|3\.9|2005/);
+  assert.equal(calls[0].messages[0].content, H.ALUMNI_SYSTEM);
+  assert.deepEqual(
+    r.people.map((p) => [p.name, p.title, p.shared, p.graduated, p.years]),
+    [
+      // 2022 is what the source says, not the model's 2021.
+      ['Priya Shah', 'Investment Banking Analyst', 'University of Warwick', 2022, 4],
+      ['Sam Patel', 'Software Engineer', 'University of Warwick', 0, null],
+      ['Tom Reed', 'Managing Director', 'University of Warwick', 1997, 29],
+    ],
+  );
+  assert.equal(r.people[0].hook.kind, 'common');
+  assert.equal(r.people[0].hook.about, 'Priya Shah');
+  assert.match(r.people[0].hook.quote, /Education: University of Warwick/);
+  const why = Object.fromEntries(r.dropped.map((d) => [d.what.replace(/:.*$/, ''), d.why]));
+  assert.equal(why['Priya Shah graduating in 2021'], 'the source gives 2022');
+  assert.equal(
+    why['Common ground (Lucy Wong, University of Warwick)'],
+    'the source doesn’t name Lucy Wong with the firm',
+  );
+  assert.match(why['Common ground (Ben Hall, University of Warwick)'], /beside Ben Hall/);
+  assert.equal(why['Common ground (Ada Bloom, Bloomberg)'], 'Bloomberg isn’t one of the candidate’s institutions');
+  // Without a university there's nothing to look for, and no search is made.
+  const none = await H.alumni(search, {
+    firm: bank,
+    institutions: institutions.filter((x) => x.kind !== 'university'),
+  });
+  assert.deepEqual(none.people, []);
+  assert.equal(calls.length, 1);
+});
+
+test('alumni: how far into a career decides who comes first', () => {
+  const order = (p) => H.careerOrder(p);
+  assert.equal(order({ years: 3, title: 'Managing Director' }), 0);
+  assert.equal(order({ years: null, title: 'Quantitative Researcher' }), 1);
+  assert.equal(order({ years: 1, title: 'Analyst' }), 2);
+  assert.equal(order({ years: 8, title: 'Vice President' }), 3);
+  assert.equal(order({ years: 25, title: 'Managing Director' }), 4);
+  assert.equal(order({ years: -1, title: 'Intern' }), 4);
+  assert.equal(order({ years: null, title: 'Managing Director' }), 4);
+});
