@@ -225,6 +225,63 @@ test('questions the AI may also answer: each switch saves, and “All of them”
   await page.close();
 });
 
+test('Check my CV: the LaTeX CV set as its PDF is, its page drawn, what to fix; without it, the CV file’s text', async () => {
+  const page = await openExt('options/options.html#letters');
+  await page.waitForSelector('button[name="cv-check"]');
+  await page.click('text=Insert example');
+  await page.click('button[name="cv-check"]');
+  await page.waitForSelector('.cv-check .cv-headline');
+  assert.match(
+    await page.textContent('.cv-check .cv-headline'),
+    /^One page at 10\.95pt · \d+ lines \(\d+ mm\) free · 1 to fix, \d+ notes?$/,
+  );
+  const findings = await page.$$eval('.cv-findings > li', (lis) =>
+    lis.map((li) => `${li.className}: ${li.querySelector('.what').textContent}`),
+  );
+  assert.equal(findings[0], 'warn: Education › University of Example gives no grades.');
+  assert.ok(findings.includes('info: The contact line has no LinkedIn link.'), findings.join('\n'));
+  assert.ok(findings.some((f) => /^info: One page, with \d+ lines/.test(f)));
+  // The page as bars, the Glasgow-style entry without grades marked, the free space shaded.
+  assert.ok((await page.$$('svg.cv-thumb rect.bar')).length > 10);
+  assert.ok(await page.$('svg.cv-thumb rect.bar.warn'));
+  assert.ok(await page.$('svg.cv-thumb rect.free'));
+  assert.match(await page.getAttribute('svg.cv-thumb', 'aria-label'), /^One page, \d+ lines free, \d+ lines? flagged$/);
+  const id = (await profile()).id;
+  assert.equal((await h.bg((pid) => globalThis.JTF.store.getKit(pid), id)).cvMaster, null, 'checking saves nothing');
+
+  // No LaTeX: the uploaded file's text, its grades, years and bullets only.
+  const text = [
+    'Ada Lovelace',
+    'EDUCATION',
+    'University of Leeds   Sep 2024 – Jun 2027',
+    'BSc Mathematics',
+    'EXPERIENCE',
+    '• Responsible for the weekly report.',
+    '• Built a tool that checks 2,000 listings a day.',
+    '• Wrote the onboarding guide.',
+  ].join('\n');
+  await h.bg(
+    ({ pid, dataUrl }) =>
+      globalThis.JTF.store.setDoc(pid, 'resume', { name: 'ada-cv.txt', type: 'text/plain', size: 200, dataUrl }),
+    { pid: id, dataUrl: `data:text/plain;base64,${Buffer.from(text).toString('base64')}` },
+  );
+  await page.fill('textarea[name="cv-tex"]', '');
+  await page.click('button[name="cv-check"]');
+  await page.waitForFunction(() =>
+    /From the text of ada-cv\.txt/.test(document.querySelector('.cv-check-out').textContent),
+  );
+  assert.equal(await page.$('svg.cv-thumb'), null, 'no layout to draw');
+  const fromFile = await page.$$eval('.cv-findings > li .what', (els) => els.map((e) => e.textContent));
+  assert.deepEqual(fromFile, [
+    'The EDUCATION section gives no grades.',
+    '2 of 3 bullets under EXPERIENCE have no number.',
+    '1 bullet opens with what you were given, not what you did.',
+  ]);
+  await h.bg((pid) => globalThis.JTF.store.removeDoc(pid, 'resume'), id);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
 test('backup downloads a JobToFill JSON file, with passwords and cards unless left out', async () => {
   const { readFile } = await import('node:fs/promises');
   const page = await openExt('options/options.html#backup');

@@ -15,8 +15,9 @@ import {
   requestAiConsent,
   requestSiteAccess,
 } from '../ui/common.js';
+import { cvHeadline, cvReport } from '../ui/cvcheck.js';
 
-const { store, ai, letter: L, jobpage, doctext, pdfdoc, cvtex, util } = globalThis.JTF;
+const { store, ai, letter: L, jobpage, doctext, pdfdoc, cvtex, cvcheck, util } = globalThis.JTF;
 
 const params = new URLSearchParams(location.search);
 const tabId = params.has('tab') ? Number(params.get('tab')) : null;
@@ -822,12 +823,30 @@ function showTailoredCv({ result, pdf, tex }) {
     ].map(([cls, text]) => el('li', { className: cls, textContent: text })),
   );
   $('#cv-changes').replaceChildren(...result.cv.changes.map((c) => el('li', { textContent: c })));
+  reviewCv(result.cv).catch(() => {});
   $('#cv-result').hidden = false;
   $('#cv-use-wrap').hidden = false;
   $('#cv-download').hidden = false;
   $('#cv-download-tex').hidden = false;
   $('#tab-cv').hidden = false;
   showPreview('cv');
+}
+
+/**
+ * The tailored CV checked as its PDF is set (lib/cvcheck.js): what to fix goes into the CV's checks (a bullet ending on
+ * one word, a CV squeezed to fit, a degree without grades), and the whole check, page thumbnail and all, below them.
+ */
+async function reviewCv(cv) {
+  const result = cvcheck.check(cv, { fonts: await fonts(), paper: state.kit.paper || 'a4', now: Date.now() });
+  // A CV tailored again meanwhile has its own check.
+  if (!state.cv || state.cv.result.cv !== cv) return;
+  const list = $('#cv-checks');
+  for (const li of list.querySelectorAll('li.review')) li.remove();
+  for (const f of result.findings.filter((x) => x.severity === 'warn'))
+    list.append(el('li', { className: 'warn review', textContent: `${f.text} ${f.fix}` }));
+  $('#cv-review').hidden = false;
+  $('#cv-review').querySelector('summary').textContent = `Page and wording check: ${cvHeadline(result)}`;
+  $('#cv-review-body').replaceChildren(cvReport(result));
 }
 
 /** "Tailor my CV": on its own controller, so it can run while the letter is still being written. */

@@ -231,6 +231,13 @@ test('studio: finds the job, writes a checked letter, attaches it and a tailored
     /VBA/,
     'a missing skill is reported, not added',
   );
+  // The tailored CV checked as its PDF is set: the page drawn, what to fix listed.
+  await until(call, () => !!document.querySelector('#cv-review-body .cv-headline'), null, 10000);
+  assert.match(
+    await call(() => document.querySelector('#cv-review summary').textContent),
+    /^Page and wording check: (One page at [\d.]+pt|\d+ pages)/,
+  );
+  assert.ok(await call(() => !!document.querySelector('#cv-review-body svg.cv-thumb')));
   await call(() => {
     document.querySelector('#cv-use').checked = true;
     document.querySelector('#cv-use').dispatchEvent(new Event('change'));

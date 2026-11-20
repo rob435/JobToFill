@@ -1,8 +1,9 @@
 /* JobToFill settings — cover letters: the AI model, what to write about, example letters, layout. */
 import { api, download, el, modelPicker, plural, requestAiConsent } from '../ui/common.js';
 import { control, grid, group, sectionHead, table } from './controls.js';
+import { cvFonts, cvReport } from '../ui/cvcheck.js';
 
-const { store, ai, doctext, letter: L, cvtex } = globalThis.JTF;
+const { store, ai, doctext, letter: L, cvtex, cvcheck } = globalThis.JTF;
 
 const MAX_SAMPLE_BYTES = 5 * 1024 * 1024;
 
@@ -234,7 +235,22 @@ const EXAMPLE_CV = {
   ],
 };
 
-function cvGroup(kit, saveKit) {
+/** The text of the uploaded CV file, read once per file and kept with the cover letter material (as the studio does). */
+async function cvFileText(profile, kit, saveKit) {
+  const doc = await store.getDoc(profile.id, 'resume');
+  if (!doc) return null;
+  if (kit.cv && kit.cv.updatedAt === doc.updatedAt && kit.cv.name === doc.name)
+    return { name: doc.name, text: kit.cv.text || '' };
+  try {
+    const out = await doctext.fromDataUrl(doc.dataUrl, { type: doc.type, name: doc.name });
+    await saveKit({ cv: { name: doc.name, updatedAt: doc.updatedAt, text: out.text } });
+    return { name: doc.name, text: out.text };
+  } catch (err) {
+    return { name: doc.name, text: '', error: err.message };
+  }
+}
+
+function cvGroup(kit, saveKit, profile) {
   const box = el('textarea', {
     name: 'cv-tex',
     className: 'mono',
@@ -245,6 +261,48 @@ function cvGroup(kit, saveKit) {
   });
   const status = el('span', { className: 'muted', attrs: { 'aria-live': 'polite' } });
   const report = el('div', { className: 'stack', attrs: { 'aria-live': 'polite' } });
+  const checked = el('div', { className: 'cv-check-out', attrs: { 'aria-live': 'polite' } });
+  const checkButton = el('button', { type: 'button', textContent: 'Check my CV', name: 'cv-check' });
+  // The check of the LaTeX in the box (or the CV saved), set as its PDF would be; with none, the uploaded file's text.
+  const runCheck = async () => {
+    checkButton.disabled = true;
+    checked.replaceChildren(el('p', { className: 'muted', textContent: 'Checking…' }));
+    try {
+      // Read again: a Save or Remove since this section was drawn changed it.
+      kit = await store.getKit(profile.id);
+      const cv = box.value.trim() ? read().cv : kit.cvMaster;
+      if (cv && cv.sections && cv.sections.length) {
+        const result = cvcheck.check(cv, { fonts: await cvFonts(), paper: kit.paper || 'a4', now: Date.now() });
+        checked.replaceChildren(cvReport(result));
+        return;
+      }
+      const file = await cvFileText(profile, kit, saveKit);
+      if (!file)
+        return checked.replaceChildren(
+          el('p', {
+            className: 'muted',
+            textContent: 'No CV to check: paste it as LaTeX above, or upload it under Settings › Resume & files.',
+          }),
+        );
+      if (!file.text)
+        return checked.replaceChildren(
+          el('p', {
+            className: 'error',
+            textContent: `Couldn’t read ${file.name}${file.error ? `: ${file.error}` : ''}.`,
+          }),
+        );
+      checked.replaceChildren(
+        cvReport(cvcheck.checkText(file.text, { now: Date.now() }), {
+          note: `From the text of ${file.name}: its grades, years and bullets only. Paste your CV as LaTeX above to check its layout too (lines that end on one word, the space left on the page).`,
+        }),
+      );
+    } catch (err) {
+      checked.replaceChildren(el('p', { className: 'error', textContent: `Couldn’t check your CV: ${err.message}` }));
+    } finally {
+      checkButton.disabled = false;
+    }
+  };
+  checkButton.addEventListener('click', runCheck);
   const show = (cv, warnings) => {
     report.replaceChildren(
       el(
@@ -285,11 +343,13 @@ function cvGroup(kit, saveKit) {
     }
     await saveKit({ cvTex: box.value, cvMaster: out.cv });
     status.textContent = `Saved. Tailoring now edits this CV (${out.cv.sections.length} sections) instead of reading your PDF.`;
+    await runCheck();
   };
   const clear = async () => {
     await saveKit({ cvTex: '', cvMaster: null });
     box.value = '';
     report.replaceChildren();
+    checked.replaceChildren();
     status.textContent = 'Removed. Tailoring reads your uploaded CV file again.';
   };
   const downloadTex = () => {
@@ -309,6 +369,7 @@ function cvGroup(kit, saveKit) {
       { className: 'row spaced' },
       el('button', { type: 'button', textContent: 'Parse', onclick: parse }),
       el('button', { type: 'button', className: 'primary', textContent: 'Save', onclick: save }),
+      checkButton,
       el('button', { type: 'button', textContent: 'Download .tex', onclick: downloadTex }),
       el('button', {
         type: 'button',
@@ -324,6 +385,12 @@ function cvGroup(kit, saveKit) {
       status,
     ),
     report,
+    el('p', {
+      className: 'hint',
+      textContent:
+        'Check my CV sets it exactly as its PDF is drawn and points out what a reader trips on: a bullet whose last line is one or two words (with how many characters to cut to pull it up), the space left at the foot of the page, an education entry without a year or grades, bullets without a number, and weak openers like “Responsible for”. Nothing is sent anywhere.',
+    }),
+    checked,
   );
 }
 
@@ -736,7 +803,7 @@ export async function renderLetters({ state, refresh }) {
       'On any job application, “Write cover letter” in the popup finds the job description, writes a letter in your style from your CV, checks every fact, and attaches the PDF to the form. It can tailor your CV to the job too. The same model answers the questions a fill leaves empty.',
     ),
     await aiGroup(),
-    cvGroup(kit, saveKit),
+    cvGroup(kit, saveKit, profile),
     aboutGroup(),
     await answersGroup(kit, saveKit, settings, profile, refresh),
     samplesGroup(kit, saveKit, refresh),

@@ -49,6 +49,8 @@ extension/
     otp.js             verification emails: the code or link in a message, and whether it is from the site asking
     nylas.js           your email through Nylas: reads codes; saves or sends an outreach email when you press it
     pdfdoc.js          PDF writer: TeX-style line breaking, embedded fonts, the letter and CV layouts
+    cvcheck.js         the CV check: what a reader trips on, from the CV's own layout (lines ending on one word, the free
+                       space) and words (grades, years, bullets without a number), no AI
   fonts/               Latin Modern (GUST font licence) as TrueType subsets, and English hyphenation patterns
   offscreen/           Chromium only: reads job pages' HTML for the background (its service worker has no DOMParser)
   content/             injected on demand into every frame
@@ -59,7 +61,8 @@ extension/
     pagemap.js         a frame's page map (injected only when one is asked for), and its refs drawn for screenshots
     snapshot.js        "Save a snapshot for a bug report": the frame's form with your details taken out, and a trace
     otp.js             the code-box watcher, injected on its own into secure pages once Nylas is connected
-  ui/                  shared styles and helpers for the popup and settings page (ES modules)
+  ui/                  shared styles and helpers for the popup and settings page (ES modules); cvcheck.js draws the CV
+                       check (its findings and the page's thumbnail) for the settings page and the studio
   popup/               toolbar popup
   map/                 the page map viewer: a tab's map to read, search, copy redacted, and click through to the page
   studio/              the cover letter page: find the job, write, check, preview, attach, tailor the CV

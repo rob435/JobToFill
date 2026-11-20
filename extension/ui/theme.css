@@ -269,6 +269,111 @@ kbd {
   color: var(--danger);
 }
 
+/* The CV check (ui/cvcheck.js): the page as bars beside what to fix. */
+.cv-check {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cv-check .small {
+  font-size: 12.5px;
+}
+.cv-headline {
+  margin: 0;
+  font-weight: 600;
+}
+.cv-check-body {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.cv-thumb {
+  flex: none;
+  width: 170px;
+  height: auto;
+}
+.cv-thumb .sheet {
+  fill: var(--surface);
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+.cv-thumb .free {
+  fill: var(--ok-weak);
+}
+.cv-thumb .edge {
+  stroke: var(--danger);
+  stroke-width: 1.2;
+  stroke-dasharray: 4 3;
+}
+.cv-thumb .bar {
+  fill: var(--muted);
+  opacity: 0.45;
+}
+.cv-thumb .bar.name,
+.cv-thumb .bar.section,
+.cv-thumb .bar.rule {
+  fill: var(--text);
+  opacity: 0.7;
+}
+.cv-thumb .bar.info {
+  fill: var(--primary);
+  opacity: 0.75;
+}
+.cv-thumb .bar.warn {
+  fill: var(--warn);
+  opacity: 1;
+}
+.cv-thumb .bar.over {
+  fill: var(--danger);
+  opacity: 0.9;
+}
+.cv-findings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+.cv-findings > li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 18px;
+  position: relative;
+}
+.cv-findings > li::before {
+  position: absolute;
+  left: 0;
+  font-weight: 700;
+}
+.cv-findings > li.warn::before {
+  content: '!';
+  color: var(--warn);
+}
+.cv-findings > li.info::before {
+  content: 'i';
+  color: var(--primary);
+}
+.cv-findings .what {
+  font-weight: 600;
+}
+.cv-findings .fix {
+  color: var(--muted);
+}
+.cv-findings ul {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  color: var(--muted);
+}
+@media (max-width: 560px) {
+  .cv-check-body {
+    flex-direction: column;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   ::before,
