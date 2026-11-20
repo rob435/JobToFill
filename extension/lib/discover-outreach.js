@@ -911,6 +911,10 @@
   const NO_FLATTERY =
     'No flattery: never “I have long admired”, “prestigious”, “esteemed”, “I am writing to express my interest”.';
 
+  // With Your story filled in: what the email picks from it, as the candidate's advocate.
+  const DRAFT_STORY =
+    '   Pick those things for this firm: go through the part of CANDIDATE MATERIAL headed “About the candidate, in their own words” and choose the project, result or moment that connects most closely to what this firm does; the candidate’s own reasons for wanting this kind of work can carry the why. Your aim is a reply: every sentence has to earn it, calm and confident, never eager or pleading.';
+
   function draftSystem(o) {
     const { ask, example } = askLines(o);
     const why = o.hook
@@ -930,6 +934,7 @@
       'The body: three short paragraphs, 90–150 words in all, with a blank line between them.',
       why,
       '2. What the candidate brings: who they are now (degree, university, year) and one or two concrete things they did, from CANDIDATE MATERIAL, with numbers only where the material has them.',
+      ...(o.story ? [DRAFT_STORY] : []),
       `3. The ask: ${ask}`,
       '',
       'Rules:',
@@ -1014,6 +1019,7 @@
     return {
       mat,
       lang: spelling(f, kit),
+      story: L().hasStory(profile),
       ctx: {
         aliases: firmAliases(f),
         firmName: displayName(f.name) || 'the firm',
@@ -1095,7 +1101,7 @@
     const ask = askOf(input.ask);
     const facts = firmFacts({ firm, found, contact, role, hook });
     const kind = role ? 'role' : 'speculative';
-    const { mat, lang } = w;
+    const { mat, lang, story } = w;
     const sources = mat.text + (said ? `\n\nThe candidate also says: ${said}` : '');
     const ctx = { ...w.ctx, facts: facts.text, sources, role, askPhrase: ASK_PHRASES[ask], hook };
     if (hook) {
@@ -1114,7 +1120,7 @@
       ...(said ? ['', 'THE CANDIDATE ALSO ASKS:', said] : []),
     ].join('\n');
     const { name, greeting, closing } = ctx;
-    const system = draftSystem({ name, lang, kind, role, firm: ctx.firmName, greeting, closing, hook, ask });
+    const system = draftSystem({ name, lang, kind, role, firm: ctx.firmName, greeting, closing, hook, ask, story });
     const messages = [
       { role: 'system', content: system },
       { role: 'user', content: user },
@@ -1165,6 +1171,9 @@
         };
   }
 
+  const FOLLOW_STORY =
+    '   Look for it first in the part of CANDIDATE MATERIAL headed “About the candidate, in their own words”, and pick what connects most closely to what this firm does.';
+
   function followSystem(o) {
     return [
       `You write a short follow-up for ${o.name || 'a student'} to a firm that hasn’t answered their email about work experience, in ${o.lang === 'en-US' ? 'American' : 'British'} English. It goes in the same thread as the first email.`,
@@ -1179,6 +1188,7 @@
       '',
       `The body: two short paragraphs, ${FOLLOW_SIZE.aim} words in all, with a blank line between them.`,
       `1. One line saying you’re following up on your email ${o.sent ? `of ${o.sent} ` : ''}about ${o.about}, naming ${o.firm}. Then ONE concrete thing from CANDIDATE MATERIAL that ${o.first ? 'the first email didn’t mention' : 'shows what the candidate can do'} (a project, a result, a skill), with numbers only where the material has them.`,
+      ...(o.story ? [FOLLOW_STORY] : []),
       `2. The same ask, in a sentence: ${o.again} Then thank them for their time.`,
       '',
       'Rules:',
@@ -1204,7 +1214,7 @@
     const firm = input.firm || rec.firm || {};
     const contact = input.contact || rec.contact || null;
     const w = writer({ ...input, firm, contact });
-    const { mat, lang } = w;
+    const { mat, lang, story } = w;
     const ask = askOf(rec.ask);
     const role = flat(rec.role) || null;
     const facts = firmFacts({ firm, contact, role });
@@ -1241,7 +1251,7 @@
       mat.text,
     ].join('\n');
     const { about, again } = askAgain(ask, ctx.firmName, role);
-    const system = followSystem({ ...ctx, lang, firm: ctx.firmName, sent, about, again, first: !!body });
+    const system = followSystem({ ...ctx, lang, firm: ctx.firmName, sent, about, again, first: !!body, story });
     const messages = [
       { role: 'system', content: system },
       { role: 'user', content: user },

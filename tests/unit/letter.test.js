@@ -923,6 +923,147 @@ test('letter: tailor() edits the master CV, keeps frozen fields byte-identical a
   assert.deepEqual(cvtex.parse(cvtex.render(result.cv)).cv, cvtex.normalize(result.cv));
 });
 
+test('letter: with Your story the writer is its advocate and mines it; without one the prompt is as it was', async () => {
+  const analysis = L.cleanAnalysis({ company: 'Acme Capital', role: 'Operations Summer Analyst' }, posting, {});
+  const run = async (p) => {
+    const { chat, calls } = scripted([good, { unsupported: [] }]);
+    await L.write(chat, { profile: p, kit, cvText: '', posting, analysis, today: Date.parse('2025-10-01') });
+    return calls[0].messages;
+  };
+  const plain = await run(profile);
+  const moments = 'Found the bug in our group project’s import a week before the deadline.';
+  const told = await run({ ...profile, story: { ...profile.story, moments } });
+  assert.doesNotMatch(plain[0].content, /Your aim/);
+  assert.match(
+    told[0].content,
+    /\n\nYour aim is to get the candidate an interview for this job\. Read all of CANDIDATE MATERIAL, above all the part of the candidate’s material headed “About the candidate, in their own words”/,
+  );
+  assert.match(told[0].content, /even when it isn’t on the CV/);
+  assert.equal(told[0].content.replace(/\n\nYour aim[\s\S]*?pleading\./, ''), plain[0].content, 'nothing else changes');
+  assert.match(
+    told[1].content,
+    /About the candidate, in their own words:\nMoments that show how they work:\nFound the bug/,
+  );
+});
+
+// Your story as the CV tests give it: two projects, only one of them on the master CV.
+const STORY = {
+  projects:
+    'Trading engine (Rust, Python; April 2026 to now). Replays any day byte for byte; 3,643 tests; the engine’s own share of tick-to-trade is 0.42 ms.\n\nMarket Tape: records 500 crypto futures markets.',
+  motivation: 'I like work where the answer can be checked.',
+};
+const ENGINE = {
+  heading: 'Trading engine',
+  tagline: 'live trading system',
+  right: 'Rust, Python',
+  bullets: ['Built an engine that replays any day byte for byte, with 3,643 tests', 'Its own tick-to-trade is 0.42 ms'],
+};
+/** The master as the model sends it back with the engine in eBaySpy's place among the projects. */
+const swapped = (entry = ENGINE) => {
+  const cv = structuredClone(MASTER);
+  const projects = cv.sections.find((s) => s.title === 'Projects');
+  projects.entries = [entry, ...projects.entries.filter((e) => e.heading !== 'eBaySpy')];
+  return { sections: cv.sections, changes: ['Projects: added Trading engine in place of eBaySpy'] };
+};
+const engineerJob = { company: 'Acme', role: 'Software Engineer', keywords: ['Rust', 'testing'], requirements: [] };
+
+test('letter: tailor() brings a project from Your story onto the master CV in place of the least relevant one', async () => {
+  const { chat, calls } = scripted([swapped()]);
+  const p = { ...profile, story: { ...profile.story, ...STORY } };
+  const result = await L.tailor(chat, {
+    profile: p,
+    kit: { ...kit, cvMaster: MASTER },
+    cvText: '',
+    analysis: engineerJob,
+  });
+  const projects = result.cv.sections.find((s) => s.title === 'Projects');
+  assert.deepEqual(
+    projects.entries.map((e) => e.heading),
+    ['Trading engine', 'Market Tape'],
+  );
+  assert.deepEqual(projects.entries[0], ENGINE);
+  assert.deepEqual(result.fromStory, { added: ['Trading engine'], dropped: ['eBaySpy'] });
+  assert.deepEqual(result.check.errors, [], 'its numbers and tools are from Your story, and eBaySpy only made room');
+  assert.match(calls[0].messages[0].content, /You may also bring in up to two projects from it/);
+  assert.match(calls[0].messages[1].content, /About the candidate, in their own words:\nProjects:\nTrading engine/);
+  // Every other frozen part of the CV is the master's.
+  for (const title of ['Education', 'Experience', 'Achievements', 'Skills'])
+    assert.deepEqual(
+      result.cv.sections.find((s) => s.title === title),
+      MASTER.sections.find((s) => s.title === title),
+    );
+});
+
+test('letter: a new CV entry stays out without Your story, or when the story names no such project', async () => {
+  const run = async (p, reply) => {
+    const { chat } = scripted([reply, reply, reply]);
+    return L.tailor(chat, { profile: p, kit: { ...kit, cvMaster: MASTER }, cvText: '', analysis: engineerJob });
+  };
+  const without = await run(profile, swapped());
+  const headings = (r) => r.cv.sections.find((s) => s.title === 'Projects').entries.map((e) => e.heading);
+  assert.deepEqual(headings(without), ['Market Tape', 'eBaySpy']);
+  assert.ok(without.restored.some((x) => /Removed “Trading engine”/.test(x)));
+  assert.deepEqual(without.fromStory, { added: [], dropped: [] });
+  const told = { ...profile, story: { ...profile.story, ...STORY } };
+  const invented = await run(told, swapped({ ...ENGINE, heading: 'Quant fund' }));
+  assert.deepEqual(headings(invented), ['Market Tape', 'eBaySpy']);
+  assert.ok(invented.restored.some((x) => /Removed “Quant fund”/.test(x)));
+  // Not a job or a school: only a projects section takes one.
+  const job = swapped();
+  job.sections.find((s) => s.title === 'Experience').entries.push(ENGINE);
+  const intoJobs = await run(told, job);
+  assert.deepEqual(
+    intoJobs.cv.sections.find((s) => s.title === 'Experience').entries.map((e) => e.heading),
+    ['Barclays'],
+  );
+});
+
+test('letter: a CV rebuilt from its file may take a project from Your story too, and says so', async () => {
+  const cvText =
+    'Ada Lovelace\nExperience\nNorthwind, Data intern, 2025\nCleaned 12,000 customer records in Python and SQL.\n'.repeat(
+      8,
+    );
+  const reply = {
+    sections: [
+      {
+        title: 'Experience',
+        entries: [
+          {
+            heading: 'Northwind',
+            right: '2025',
+            subheading: 'Data intern',
+            bullets: ['Cleaned 12,000 customer records in Python and SQL'],
+          },
+        ],
+      },
+      {
+        title: 'Projects',
+        entries: [{ heading: 'Trading engine', tagline: 'live trading system', bullets: ENGINE.bullets }],
+      },
+    ],
+  };
+  const { chat, calls } = scripted([reply]);
+  const p = { ...profile, story: { ...profile.story, ...STORY } };
+  const result = await L.tailor(chat, { profile: p, kit, cvText, analysis: engineerJob });
+  assert.match(calls[0].messages[0].content, /You may also bring in up to two projects from it/);
+  assert.deepEqual(result.check.errors, []);
+  assert.deepEqual(result.fromStory, { added: ['Trading engine'], dropped: [] });
+});
+
+test('letter: the CV writer reads all of Your story, not the 6,000 characters the rest of the material gets', async () => {
+  const long = { ...profile.story, ...STORY, moments: 'Fixed the import before the deadline. '.repeat(120) };
+  const { chat, calls } = scripted([swapped()]);
+  const p = { ...profile, story: long };
+  await L.tailor(chat, { profile: p, kit: { ...kit, cvMaster: MASTER }, cvText: '', analysis: engineerJob });
+  const user = calls[0].messages[1].content;
+  assert.match(
+    user,
+    /\nWhy this kind of work:\nI like work where the answer can be checked\./,
+    'the last box still arrives',
+  );
+  assert.match(user, /Name: Ada Lovelace/);
+});
+
 test('letter: tailor() without a master still rebuilds the CV from the file text', async () => {
   const cvText = 'Ada Lovelace\n'.repeat(1) + 'Skills: Python, SQL, Excel\n'.repeat(30);
   const { chat, calls } = scripted([

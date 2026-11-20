@@ -793,6 +793,14 @@ async function buildTailoredCv({ instructions = '', signal } = {}) {
   return { result, pdf, tex: cvtex.render(result.cv) };
 }
 
+/** "Added from Your story: Trading engine, in place of OutlierDetector.", as a check line, when it brought one in. */
+function storyLines(fromStory) {
+  const { added = [], dropped = [] } = fromStory || {};
+  if (!added.length) return [];
+  const list = (xs) => xs.map((x) => `“${x}”`).join(' and ');
+  return [['ok', `Added from Your story: ${list(added)}${dropped.length ? `, in place of ${list(dropped)}` : ''}.`]];
+}
+
 /** Keep a built CV as the current one and show it (preview, keywords, checks, changes). */
 function showTailoredCv({ result, pdf, tex }) {
   if (state.cv && state.cv.pdf.url) URL.revokeObjectURL(state.cv.pdf.url);
@@ -813,7 +821,13 @@ function showTailoredCv({ result, pdf, tex }) {
     ...[
       ...(check.errors.length
         ? check.errors.map((t) => ['bad', t])
-        : [['ok', 'No new facts: every number, skill and organisation is from your CV.']]),
+        : [
+            [
+              'ok',
+              `No new facts: every number, skill and organisation is from your CV${L.hasStory(state.profile) ? ' or Your story' : ''}.`,
+            ],
+          ]),
+      ...storyLines(result.fromStory),
       ...check.warnings.map((t) => ['warn', t]),
       ...(result.restored && result.restored.length
         ? [['ok', `Kept your names, dates, places and titles exactly (${result.restored.length} edit(s) undone).`]]

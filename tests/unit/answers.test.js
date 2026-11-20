@@ -513,8 +513,9 @@ test('withheld: passwords, cards and bank details, and marketing opt-ins, never 
 });
 
 /** A whole run with every message it sends (the answers, then the fact-check), as recorded before the change. */
-async function defaultRun(allow) {
+async function defaultRun(allow, story) {
   const p = profile();
+  if (story) Object.assign(p.story, story);
   p.personal.dob = '2004-03-09';
   Object.assign(p.eeo, { gender: 'Male', schoolType: 'State school (non-selective)' });
   Object.assign(p.compliance, { criminal: 'No', relatives: 'No' });
@@ -613,6 +614,21 @@ test('prompt: with nothing allowed, every message is byte for byte the one the e
     );
   }
   assert.notEqual(sha(A.systemPrompt({ name: 'Alex Morgan', lang: 'en-GB', allow: only('health') })), GB);
+});
+
+test('prompt: with Your story, motivation and experience questions are told to draw on it first', async () => {
+  const line =
+    /^- Motivation and experience questions \([^\n]*draw first on the part of CANDIDATE MATERIAL headed “About the candidate, in their own words”[^\n]*Your aim is to get them to interview\.$/m;
+  assert.doesNotMatch(A.systemPrompt({ name: 'Alex Morgan', lang: 'en-GB' }), line);
+  assert.match(A.systemPrompt({ name: 'Alex Morgan', lang: 'en-GB', story: true }), line);
+  const run = await defaultRun(undefined, {
+    moments: 'Found the bug in our group project’s import a week before the deadline.',
+  });
+  assert.match(run.seen[0], line);
+  assert.match(
+    run.seen[0],
+    /About the candidate, in their own words:\nMoments that show how they work:\nFound the bug/,
+  );
 });
 
 test('prompt: each kind’s rules only when it is allowed, and the default rules drop what it answers', () => {
