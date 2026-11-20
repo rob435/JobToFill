@@ -112,7 +112,7 @@
   const WATCH_LIMIT = 200;
   const SEEN_LIMIT = 1000;
   const CAREERS_CACHE_LIMIT = 300;
-  const OUTREACH_LIMIT = 500;
+  const OUTREACH_LIMIT = 2000;
   const OUTREACH_STATUSES = ['drafted', 'sent', 'replied', 'closed'];
   const area = () => JTF.api.storage.local;
 
@@ -926,8 +926,10 @@
   }
 
   /**
-   * The records worth keeping from a stored or imported outreach object, the newest OUTREACH_LIMIT. Times are made
-   * numbers: an imported record without updatedAt is dated now (and at with it), and a sentAt that isn't a time goes.
+   * The records worth keeping from a stored or imported outreach object, the newest OUTREACH_LIMIT. Past the limit a
+   * draft nobody wrote a note on goes before a firm written to (that one stays left out of searches and followed up).
+   * Times are made numbers: an imported record without updatedAt is dated now (and at with it), and a sentAt that
+   * isn't a time goes.
    */
   function outreachOf(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
@@ -943,8 +945,16 @@
         else delete rec.sentAt;
         return [id, rec];
       });
-    entries.sort(([, a], [, b]) => b.updatedAt - a.updatedAt);
-    return Object.fromEntries(entries.slice(0, OUTREACH_LIMIT));
+    const newest = ([, a], [, b]) => b.updatedAt - a.updatedAt;
+    const written = (r) =>
+      !!(r.sentAt || r.status === 'sent' || r.status === 'replied' || String(r.notes || '').trim());
+    if (entries.length > OUTREACH_LIMIT)
+      entries.splice(
+        0,
+        entries.length,
+        ...entries.sort((a, b) => written(b[1]) - written(a[1]) || newest(a, b)).slice(0, OUTREACH_LIMIT),
+      );
+    return Object.fromEntries(entries.sort(newest));
   }
 
   /** Every firm written to (or drafted for): { [firmId]: record }. */

@@ -78,7 +78,7 @@ test('store: Discover’s AI follows Settings until a provider with a key is cho
   });
 });
 
-test('store: outreach records are created, merged, removed and kept to the newest 500', async () => {
+test('store: outreach records are created, merged, removed and kept to the newest 2000, drafts going first', async () => {
   const firm = { id: 'crd:1', name: 'Quiet Capital', domain: 'quiet.example', site: 'https://quiet.example', aum: 3 };
   const first = await store.setOutreach(firm.id, {
     firm,
@@ -103,15 +103,30 @@ test('store: outreach records are created, merged, removed and kept to the newes
   await store.removeOutreach('a');
   assert.deepEqual(await store.getOutreach(), {});
 
-  // 501 records: the one changed longest ago goes.
+  // 2001 records, all written to: the one changed longest ago goes.
   const many = {};
-  for (let i = 0; i < 501; i++)
+  for (let i = 0; i < 2001; i++)
     many['f' + i] = { firm: { id: 'f' + i, name: 'Firm ' + i }, status: 'sent', updatedAt: 1000 + i, at: 1 };
   await chrome.storage.local.set({ outreach: many });
-  await store.setOutreach('f500', { notes: 'x' });
+  await store.setOutreach('f2000', { notes: 'x' });
   all = await store.getOutreach();
-  assert.equal(Object.keys(all).length, 500);
-  assert.ok(!all.f0 && all.f1 && all.f500);
+  assert.equal(Object.keys(all).length, 2000);
+  assert.ok(!all.f0 && all.f1 && all.f2000);
+  assert.deepEqual(Object.keys(all).slice(0, 2), ['f2000', 'f1999'], 'newest first');
+
+  // A draft goes before a firm written to, however old that is: one with a note, or replied, or closed after sending, stays.
+  delete many.f2000;
+  Object.assign(many.f1, { status: 'drafted' });
+  Object.assign(many.f2, { status: 'drafted', notes: 'Call Jane' });
+  Object.assign(many.f3, { status: 'closed', sentAt: 5 });
+  await chrome.storage.local.set({ outreach: many });
+  await store.setOutreach('new', { firm: { id: 'new', name: 'Newco' }, status: 'drafted' });
+  all = await store.getOutreach();
+  assert.equal(Object.keys(all).length, 2000);
+  assert.deepEqual(
+    ['f0', 'f1', 'f2', 'f3', 'new'].map((id) => !!all[id]),
+    [true, false, true, true, true],
+  );
 });
 
 test('store: outreach travels in backups, imported only when it names its firms', async () => {
