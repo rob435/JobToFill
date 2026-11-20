@@ -1660,7 +1660,7 @@ test('Your story: its boxes save to the profile, its notes to the letter materia
   const page = await openExt('options/options.html#story');
   await page.waitForSelector('textarea[name="story.projects"]');
   for (const key of ['projects', 'achievements', 'motivation', 'moments', 'interests'])
-    assert.ok(await page.$(`textarea[name="story.${key}"]`), key);
+    assert.equal(await page.locator(`textarea[name="story.${key}"]`).count(), 1, key);
   await page.fill('textarea[name="story.projects"]', 'eBay deal finder: 0.97 precision on 2,432 listings.');
   await page.fill('textarea[name="story.interests"]', 'Chess, swimming.');
   await page.fill('textarea[name="kit.notes"]', 'Taking a Rust course this term.');
@@ -1675,10 +1675,11 @@ test('Your story: its boxes save to the profile, its notes to the letter materia
     const { profile: me } = await globalThis.JTF.store.getActive();
     return (await globalThis.JTF.store.getKit(me.id)).notes === 'Taking a Rust course this term.';
   });
-  // Cover letters & AI no longer has the notes box, only the way to Your story.
+  // Cover letters & AI no longer has the notes box, only the way to Your story. (Counted, not compared: a failed
+  // assertion on an element handle prints the whole Playwright connection.)
   await page.click('#nav a[href="#letters"]');
-  await page.waitForSelector('a[href="#story"]');
-  assert.equal(await page.$('#sections textarea[name="kit.notes"]'), null);
+  await page.waitForSelector('#sections[data-section="letters"] a[href="#story"]');
+  assert.equal(await page.locator('#sections textarea[name="kit.notes"]').count(), 0);
   await page.click('#sections a[href="#story"]');
   await page.waitForFunction(() => document.querySelector('#sections').dataset.section === 'story');
   assert.equal(await page.inputValue('textarea[name="kit.notes"]'), 'Taking a Rust course this term.');
