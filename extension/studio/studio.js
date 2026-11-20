@@ -1032,7 +1032,7 @@ async function run(from = 'job') {
         throw new Error('Add your name in Settings › Personal & contact first: it goes at the top of the letter.');
       if (!L.hasSubstance(state.profile, state.kit, state.cvText))
         throw new Error(
-          'There isn’t enough about you to write from yet. Upload your CV (Settings › Resume & files) or add notes in Settings › Cover letters & AI.',
+          'There isn’t enough about you to write from yet. Upload your CV (Settings › Resume & files) or fill in Settings › Your story.',
         );
     }
 
@@ -1202,7 +1202,7 @@ async function quickApply() {
       throw new Error('Add your name in Settings › Personal & contact first: it goes at the top of the letter.');
     if (!L.hasSubstance(state.profile, state.kit, state.cvText))
       throw new Error(
-        'There isn’t enough about you to write from yet. Upload your CV (Settings › Resume & files) or add notes in Settings › Cover letters & AI.',
+        'There isn’t enough about you to write from yet. Upload your CV (Settings › Resume & files) or fill in Settings › Your story.',
       );
 
     current = 'analyse';

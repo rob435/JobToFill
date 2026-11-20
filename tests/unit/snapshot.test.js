@@ -108,6 +108,9 @@ test('email, address, postcode, date of birth, links, files, employers and writt
   assert.equal(r.text('Ada Lovelace CV.pdf'), '[resume file]');
   assert.equal(r.text('Analytical Engines Inc; Analytical Engines'), '[employer]; [employer]');
   assert.equal(r.text('I would love to join your summer analyst programme in London.'), '[your text]');
+  // A page showing back an answer written from Your story.
+  const told = redactor({ story: { moments: 'Found the bug in the import a week before the deadline. Short.' } });
+  assert.equal(told.text('Found the bug in the import a week before the deadline.'), '[your text]');
   // What a form lists as options stays.
   assert.equal(
     r.text('San Francisco, United States, University of Cambridge, Bachelor of Science'),

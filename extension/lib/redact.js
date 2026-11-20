@@ -188,6 +188,9 @@
       p.job && p.job.otherOffers,
     ]))
       add(literal(s), '[your text]', { long: true });
+    // Your story's sentences on top (a page that shows back an answer written from it), never in place of those above.
+    for (const s of sentences(Object.values(p.story || {})).slice(0, 100))
+      add(literal(s), '[your text]', { long: true });
 
     // Your email and your university's.
     for (const email of [clean(contact.email), clean(contact.schoolEmail)]) {

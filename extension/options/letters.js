@@ -186,22 +186,17 @@ async function aiGroup() {
   );
 }
 
-function aboutGroup(kit, saveKit) {
+/** Where the AI's material about you lives now: Your story (its notes box was here). */
+function aboutGroup() {
   return group(
     'What to write about',
-    'Facts the AI may use besides your CV and profile: projects, results with numbers, awards, why you want this kind of role. It never adds facts that aren’t here, in your CV or in your example letters.',
-    control(
-      {
-        path: 'kit.notes',
-        type: 'textarea',
-        rows: 8,
-        label: 'Notes about you',
-        placeholder:
-          'e.g. Built a price tracker that checks 2,000 listings a day, with 120 automated tests.\nRan the university investment society’s research team (12 people).\nWhy operations: I like finding and fixing what breaks.',
-        wide: true,
-      },
-      kit.notes,
-      (v) => saveKit({ notes: v }),
+    null,
+    el(
+      'p',
+      { className: 'hint' },
+      'The AI writes from your CV, your profile and ',
+      el('a', { href: '#story', textContent: 'Your story' }),
+      ': your projects, achievements, why you want this kind of work, moments that show how you work, and life outside work. It never adds facts that aren’t there or in your example letters.',
     ),
   );
 }
@@ -742,7 +737,7 @@ export async function renderLetters({ state, refresh }) {
     ),
     await aiGroup(),
     cvGroup(kit, saveKit),
-    aboutGroup(kit, saveKit),
+    aboutGroup(),
     await answersGroup(kit, saveKit, settings, profile, refresh),
     samplesGroup(kit, saveKit, refresh),
     layoutGroup(kit, saveKit, profile),

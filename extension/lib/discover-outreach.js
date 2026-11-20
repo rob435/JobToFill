@@ -37,6 +37,8 @@
   const D = () => JTF.discover;
 
   const MATERIAL_LIMIT = 7000;
+  // Your story's room on top of that (letter.storyText's fair share per box), so a long one never pushes the CV out.
+  const STORY_LIMIT = 8000;
   // Careers-page text in the firm facts, every page together: enough for a concrete reason, not a second CV's worth.
   const PAGE_TEXT_LIMIT = 1500;
   const READ_LIMIT = 12000;
@@ -166,12 +168,16 @@
   /**
    * What a draft may use about the candidate: letter.materials() (name, contact line, education, experience, skills,
    * summary, notes; never the voluntary disclosures, date of birth, IDs, passwords or cards), every link, and the CV
-   * in the room left under 7,000 characters. ctx is what the checks hold the draft to.
+   * in the room left under 7,000 characters, then Your story in up to 8,000 more. ctx is what the checks hold the
+   * draft to.
    */
   function material({ profile, kit, cvText } = {}) {
     const p = profile || {};
     const k = kit || {};
-    const own = L().materials(p, k, '').replace(PRIVATE, '');
+    // Your story goes last, in a room of its own.
+    const story = L().storyText(p, STORY_LIMIT).replace(PRIVATE, '');
+    const rest = { ...p, story: null };
+    const own = L().materials(rest, k, '').replace(PRIVATE, '');
     const links = [
       ...new Set(
         Object.values(p.links || {})
@@ -184,6 +190,7 @@
     const room = MATERIAL_LIMIT - head.length - 8;
     let text = cv && room > 300 ? `${head}\n\nCV:\n${L().clip(cv, room - 6)}`.trim() : head;
     if (text.length > MATERIAL_LIMIT) text = L().clip(text, MATERIAL_LIMIT - 6);
+    if (story) text = `${text}\n\n${story}`;
     const contact = L().contactLine(p, k);
     const c = p.contact || {};
     const emails = [...new Set([c.email, c.schoolEmail, ...contact].flatMap(emailsIn))];
@@ -606,10 +613,10 @@
     return holds(p, whom.name) || (words.length > 1 && holds(p, words[words.length - 1]));
   }
 
-  // The material's own section labels (letter.materials() writes "Skills:", "Notes from the candidate:"): a heading,
-  // not something the candidate did.
+  // The material's own section labels (letter.materials() writes "Skills:", "Notes from the candidate:", and Your
+  // story's labels, letter.STORY): a heading, not something the candidate did.
   const LABEL =
-    /^[ \t]*(?:name|contact|lives in|education|experience|skills|languages|summary|notes from the candidate|extra details from the candidate|links|cv):[ \t]*/gim;
+    /^[ \t]*(?:name|contact|lives in|education|experience|skills|languages|summary|notes from the candidate|extra details from the candidate|links|cv|about the candidate, in their own words|projects|achievements|why this kind of work|moments that show how they work|outside work):[ \t]*/gim;
   // Words a CV and a nudge both have without saying anything new: its headings and filler ("my skills", "more details").
   // prettier-ignore
   const VAGUE = new Set([

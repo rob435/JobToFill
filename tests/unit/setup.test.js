@@ -17,12 +17,12 @@ test('a new profile has every step left, the AI key and inbox optional', async (
   const steps = setupSteps({ profile: fields.createProfile('Me'), pinned: false });
   assert.deepEqual(
     steps.map((s) => s.id),
-    ['contact', 'cv', 'education', 'ai', 'inbox', 'toolbar'],
+    ['contact', 'cv', 'education', 'story', 'ai', 'inbox', 'toolbar'],
   );
   assert.ok(steps.every((s) => !s.done));
   assert.deepEqual(
     steps.filter((s) => s.optional).map((s) => s.id),
-    ['ai', 'inbox'],
+    ['story', 'ai', 'inbox'],
   );
   assert.ok(steps.filter((s) => s.href).every((s) => /^#[a-z]+$/.test(s.href)));
   assert.equal(setupComplete(steps), false);
@@ -37,8 +37,17 @@ test('steps are done as the profile and settings fill in', async () => {
   profile.personal.lastName = 'Lovelace';
   profile.education = [fields.blankEducation(), { ...fields.blankEducation(), school: 'University of Glasgow' }];
   let steps = setupSteps({ profile, resume: true, pinned: true });
-  assert.deepEqual(doneOf(steps), { contact: true, cv: true, education: true, ai: false, inbox: false, toolbar: true });
+  assert.deepEqual(doneOf(steps), {
+    contact: true,
+    cv: true,
+    education: true,
+    story: false,
+    ai: false,
+    inbox: false,
+    toolbar: true,
+  });
   assert.equal(setupComplete(steps), true, 'the optional steps can wait');
+  profile.story.moments = 'Found the bug in our group project’s import a week before the deadline. '.repeat(3);
   steps = setupSteps({ profile, resume: true, aiKey: true, inbox: true, pinned: true });
   assert.ok(steps.every((s) => s.done));
   profile.personal.firstName = '   ';
@@ -56,4 +65,14 @@ test('when the browser can’t tell whether the button is pinned, that step does
   assert.equal(unknown.find((s) => s.id === 'toolbar').optional, true);
   assert.equal(setupComplete(unknown), true);
   assert.equal(setupComplete(setupSteps({})), false, 'nothing loaded yet');
+});
+
+test('Your story is done once its boxes hold 30 words, whichever boxes they are in', async () => {
+  const { setupSteps } = await setup();
+  const profile = fields.createProfile('Me');
+  profile.story.projects = 'A price tracker in Python.';
+  assert.equal(doneOf(setupSteps({ profile })).story, false, 'a line is a start, not a story');
+  profile.story.interests = 'Chess club captain, rowing, and cooking for friends on Sundays. '.repeat(3);
+  assert.equal(doneOf(setupSteps({ profile })).story, true);
+  assert.equal(doneOf(setupSteps({ profile: {} })).story, false, 'a profile from before Your story');
 });

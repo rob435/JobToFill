@@ -56,6 +56,8 @@ Without an AI key, JobToFill fills from your profile alone. With one, it also an
 
 **What the AI is used for.** Answers to the questions a fill leaves empty, cover letters, tailored CVs, a second look when JobToFill isn’t sure it found the right job, and, in Discover, _Ask the AI for more ideas_, _Ask the AI to read the page_ and _Draft an email_ (Discover can use a model of its own: _AI model for this page_). What each of these sends is listed under [Privacy and security](privacy.md).
 
+**Give it more to write about.** Your CV is one page. Settings › _Your story_ takes the rest: projects with their numbers, achievements, why you want this kind of work, two or three moments that show how you work, and life outside work. Letters, tailored CVs, Discover emails and answers all draw on it.
+
 **Help it answer.** Settings › _Cover letters & AI_ › _Answer guidance_ holds facts and rules the AI may rely on for questions your CV doesn’t settle (“I have no criminal convictions and no regulatory history.”), and Settings › _Skills & writing_ › _Extra details_ anything else an application might ask. Diversity questions, declarations and ID numbers are held back from the AI, and legal and health questions until you’ve written answer guidance, unless you switch them on under _Questions the AI may also answer_ (see the [settings reference](settings.md)).
 
 **More than one provider.** Each provider keeps its own key and model, so you can switch back and forth. With keys for more than one, another takes over when the one you chose is out of credit, rate-limited or down (Claude first; you can switch that off).

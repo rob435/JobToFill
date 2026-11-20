@@ -122,6 +122,9 @@
       summary: '',
       coverLetter: '',
       customAnswers: [],
+      // Your story (Settings › Your story): more than a one-page CV holds, for letters, emails and answers to write
+      // from (letter.storyText). Never filled into a form.
+      story: { projects: '', achievements: '', motivation: '', moments: '', interests: '' },
     };
   }
 

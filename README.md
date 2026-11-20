@@ -8,7 +8,7 @@ A browser extension for Chrome, Edge, Brave and Firefox that fills in job applic
 
 - **Fills the form** from your profile: contact details, education, work history, your CV and the usual questions (right to work, start date, “How did you hear about us?”). It works on Workday, Greenhouse, Lever, Ashby and most other job sites.
 - **Answers the rest with AI**, if you add your own API key: “Why do you want to join us?” and anything else it doesn’t know. AI answers are outlined in orange so you can check them.
-- **Writes cover letters and tailors your CV** to the job.
+- **Writes cover letters and tailors your CV** to the job, from your CV and what you tell it under _Your story_: projects, results, why you want the work.
 - **Goes through the whole application** with _Apply for me_: every step, the AI’s answers, your letter and CV. When the site turns a step down, it reads what it says, fixes those fields and tries again, then stops at the step that submits.
 - **Signs you in to job portals**, makes a strong password for each one, and types in the codes they email you.
 - **Finds firms that don’t advertise**: small hedge funds, boutique advisers and low-profile tech companies, who to email there, and a draft of the email.
