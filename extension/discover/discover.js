@@ -4935,12 +4935,15 @@ function holdQueue(opts) {
   });
 }
 
-/** Whether this tab had the queue before it was reloaded (kept for the tab only, so a new one doesn't think so). */
-function hadQueue(on) {
+/**
+ * Whether this tab had the queue as its last page closed a moment ago (a reload): stamped as it goes, kept for the tab
+ * only and read once, so a new tab, or one duplicated from it, doesn't think so.
+ */
+function hadQueue() {
   try {
-    if (on !== undefined) return on ? sessionStorage.setItem(QUEUE_LOCK, '1') : sessionStorage.removeItem(QUEUE_LOCK);
-    const nav = performance.getEntriesByType('navigation')[0];
-    return !!nav && nav.type === 'reload' && sessionStorage.getItem(QUEUE_LOCK) === '1';
+    const t = Number(sessionStorage.getItem(QUEUE_LOCK));
+    sessionStorage.removeItem(QUEUE_LOCK);
+    return t > 0 && Date.now() - t < 15000;
   } catch (err) {
     return false;
   }
@@ -4957,18 +4960,22 @@ async function claimQueue() {
   if (!navigator.locks || typeof BroadcastChannel !== 'function') return void (review.live = true);
   review.channel = new BroadcastChannel(QUEUE_LOCK);
   review.channel.onmessage = (e) => heard(e.data || {});
-  // Asked and gone before it came: the tab that has it keeps it, and what it's preparing.
-  addEventListener('pagehide', () => review.taking && review.channel.postMessage({ never: TAB_ID }));
+  addEventListener('pagehide', () => {
+    // Asked and gone before it came: the tab that has it keeps it, and what it's preparing.
+    if (review.taking) review.channel.postMessage({ never: TAB_ID });
+    try {
+      if (review.live) sessionStorage.setItem(QUEUE_LOCK, String(Date.now()));
+    } catch (err) {
+      // No session storage: a reload just waits for the queue like any other tab.
+    }
+  });
+  const reloaded = hadQueue();
   // A moment's wait: a page being reloaded is still letting go of it.
   const got = await holdQueue({ signal: AbortSignal.timeout(1500) });
-  if (got) {
-    review.live = true;
-    hadQueue(true);
-    return;
-  }
+  if (got) return void (review.live = true);
   review.granted = new Promise((resolve) => (review.grant = resolve));
   waitForQueue();
-  if (hadQueue()) takeOver();
+  if (reloaded) takeOver();
 }
 
 /** Wait for the queue: the tab that has it closing gives it to the tab waiting longest. */
@@ -5001,7 +5008,6 @@ function heard(m) {
 async function opened() {
   clearTimeout(review.reclaim);
   Object.assign(review, { live: true, taking: false, busyThere: false, toast: null });
-  hadQueue(true);
   try {
     await loadReview(true);
   } finally {
@@ -5040,7 +5046,6 @@ async function handOver(to) {
   clearTimeout(whenDue.timer);
   await saveQueue();
   Object.assign(review, { live: false, handing: '', taking: false, alerts: [], toast: null });
-  hadQueue(false);
   review.granted = new Promise((resolve) => (review.grant = resolve));
   renderReview(true);
   review.channel.postMessage({ yours: to });

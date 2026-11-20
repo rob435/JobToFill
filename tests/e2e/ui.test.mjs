@@ -1366,9 +1366,13 @@ test('Discover: Review works in one tab at a time, handed to the tab it’s aske
   // Reloaded, C keeps it, on the card it was reading (B, waiting, would otherwise take it as the page reloads).
   await c.waitForTimeout(600);
   await c.reload();
-  await c.waitForFunction(() => document.querySelector('#review-card h2')?.textContent === 'Beta', null, {
-    timeout: 10000,
-  });
+  const seen = async () => Promise.all([a, b, c].map((p) => heading(p).catch(() => '?')));
+  await until(
+    async () => (await heading(c).catch(() => '')) === 'Beta',
+    () => true,
+    null,
+    10000,
+  ).catch(async () => assert.fail(`after the reload, A, B and C show ${JSON.stringify(await seen())}`));
   await b.waitForTimeout(500);
   assert.equal(await heading(b), elsewhere);
   assert.equal(await heading(a), elsewhere);
