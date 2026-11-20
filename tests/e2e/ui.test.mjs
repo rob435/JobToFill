@@ -1310,6 +1310,82 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
   await page.close();
 });
 
+test('Discover: Review works in one tab at a time, handed to the tab it’s asked for in, and kept through a reload', async () => {
+  const items = ['Alpha', 'Beta'].map((name) => {
+    const id = name.toLowerCase();
+    return {
+      id,
+      firm: { id, name, domain: `${id}.example`, site: `https://${id}.example` },
+      type: 'first',
+      status: 'ready',
+      step: '',
+      hooks: [],
+      hook: -1,
+      to: `careers@${id}.example`,
+      subject: 'Summer internship enquiry',
+      body: `Dear ${name} recruiting team,\n\n${DRAFT.body}\n\nAda Lovelace`,
+      result: { ok: true, checks: [] },
+      draftedFor: { address: `careers@${id}.example`, hook: -1, ask: 'internship' },
+    };
+  });
+  await h.bg(
+    (queue) =>
+      globalThis.JTF.store.setDiscoverCache({
+        trackr: { names: [], domains: [], at: Date.now(), answered: 1 },
+        listed: { names: [], domains: [], roles: [], at: Date.now(), answered: 1, asked: 1 },
+        queue: { items: queue, at: 0 },
+      }),
+    items,
+  );
+  const heading = (page) => page.textContent('#review-card h2');
+  const open = async () => {
+    const page = await openExt('discover/discover.html#review');
+    await page.waitForFunction(
+      () => !/Opening/.test(document.querySelector('#review-card h2')?.textContent || 'Opening'),
+    );
+    return page;
+  };
+  const elsewhere = 'Review is open in another Discover tab';
+  // A has the queue; B and C, opened after it, say it's open elsewhere and ignore the review keys.
+  const a = await open();
+  assert.equal(await heading(a), 'Alpha');
+  const b = await open();
+  const c = await open();
+  assert.equal(await heading(b), elsewhere);
+  assert.equal(await heading(c), elsewhere);
+  await c.keyboard.press('ArrowRight');
+  assert.equal(await heading(c), elsewhere);
+  // Asked for in C, it goes to C, not to B (waiting for it longer).
+  await c.bringToFront();
+  await c.click('#review-card button:text-is("Review here instead")');
+  await c.waitForFunction(() => document.querySelector('#review-card h2').textContent === 'Alpha');
+  await a.waitForFunction((t) => document.querySelector('#review-card h2').textContent === t, elsewhere);
+  assert.equal(await heading(b), elsewhere);
+  await c.keyboard.press('ArrowRight');
+  await c.waitForFunction(() => document.querySelector('#review-card h2').textContent === 'Beta');
+  // Reloaded, C keeps it, on the card it was reading (B, waiting, would otherwise take it as the page reloads).
+  await c.waitForTimeout(600);
+  await c.reload();
+  await c.waitForFunction(() => document.querySelector('#review-card h2')?.textContent === 'Beta', null, {
+    timeout: 10000,
+  });
+  await b.waitForTimeout(500);
+  assert.equal(await heading(b), elsewhere);
+  assert.equal(await heading(a), elsewhere);
+  // Closed, it goes to one of the others, as C left it.
+  await c.close();
+  await until(
+    async () => [await heading(a), await heading(b)].filter((t) => t === 'Beta').length === 1,
+    () => true,
+    null,
+    5000,
+  );
+  await h.bg(() => globalThis.JTF.store.setDiscoverCache({ queue: { items: [], at: 0 } }));
+  await a.close();
+  await b.close();
+  assert.deepEqual(errors, []);
+});
+
 test('settings: what Learn from this page saves while the page is open stays, through edits made there', async () => {
   const page = await openExt('options/options.html#personal');
   await page.waitForSelector('input[name="contact.phone"]');

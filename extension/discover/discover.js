@@ -3242,6 +3242,8 @@ function advance() {
 function move(by) {
   review.at = Math.max(0, Math.min(review.items.length, review.at + by));
   renderReview(true);
+  // Kept a moment later (a page closing can't wait for storage), so a reload opens on the card being read.
+  saveQueue(true);
 }
 
 /** Go to an item (Undo, Show it, Read them). */
@@ -3250,6 +3252,7 @@ function showItem(item) {
   if (i < 0) return;
   review.at = i;
   renderReview(true);
+  saveQueue(true);
 }
 
 /** The press is for this card only when the card has been showing for a moment (a double or held press isn't). */
