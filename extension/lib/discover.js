@@ -467,6 +467,8 @@
         last = { ok: res.ok, status: res.status, url: res.url || url, text };
         if (res.status === 202 && text.length < 2000) last.blocked = true;
         if (!json && text.length < 60000 && BOT_WALL.test(text.slice(0, 20000))) last.blocked = true;
+        // Radware's check is a redirect to its own host (Shva's home page lands on validate.perfdrive.com).
+        if (/^https?:\/\/[^/]*\bperfdrive\.com\//i.test(last.url)) last.blocked = true;
         if (/^(429|5\d\d)$/.test(String(res.status)) && attempt < retries) {
           await sleep(2000 * 2 ** attempt);
           continue;

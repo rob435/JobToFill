@@ -5,9 +5,8 @@
  * address format its own site shows and the pages that name its people. Discover starts from that file, so a firm's
  * card says who to write to before any check runs, and Review prepares an email without waiting for the crawl.
  *
- * Firms whose website is gone (no answer, a parked domain) or that have no careers page and no address anywhere on
- * their site are listed as `dead`, and --prune takes them out of firms.json (scripts/firms.mjs leaves them out of
- * later builds too). A site that turns robots away is never dead: a browser may get through.
+ * Firms whose website doesn't answer and for which nothing was found are listed as `dead` (see isDead), and --prune takes them out of firms.json (scripts/firms.mjs leaves them out
+ * of later builds too). A site that turns robots away is never dead: a browser may get through.
  *
  * Only firm-level facts are kept: role mailboxes (careers@, info@), the format, page addresses. Named people and
  * their addresses are still read live from the firm's pages, as before.
@@ -111,15 +110,19 @@ async function checkOne(D, C, firm) {
 }
 
 /**
- * Gone, for the registry: its site didn't answer and nothing else found it, or it answered but there is no careers
- * page, no job board, no programme and no address of any kind on it (the person's "remove them from the database").
+ * Gone, for the registry: nothing was found for it and its site doesn't answer (checked by hand, 9 in 10 such firms
+ * really are gone: no DNS, a domain with no site connected, a redirect to another company). A firm whose site answers
+ * is kept even when the check found no careers page and no address on it: by hand, 19 of 20 such firms had one the
+ * rules can't see (FICO's Workday board behind a bot wall, Tencent Games' careers.tencent.com, an info@ on a contact
+ * page drawn by script), and nor is a site that doesn't name the firm proof it's gone (the SEC's "HVPF Manager II" is
+ * Hudson Valley Property Group's). Discover ranks those after the rest, and Review leaves one out when the web search
+ * finds no one either.
  */
 function isDead(r) {
-  if (!r || r.timedOut || r.s === 'blocked') return false;
-  const anyAddress = (r.m || []).length || r.f || r.n;
-  const anyWay = (r.p || []).length || (r.b || []).length || r.r || r.g;
-  if (r.s === 'unreachable' && !anyWay && !anyAddress) return true;
-  return r.s === 'none' && !anyWay && !anyAddress;
+  if (!r || r.timedOut || r.error || r.s === 'blocked') return false;
+  const anything = (r.m || []).length || r.f || r.n || (r.p || []).length || (r.b || []).length || r.r || r.g;
+  if (anything) return false;
+  return r.s === 'unreachable';
 }
 
 async function main() {

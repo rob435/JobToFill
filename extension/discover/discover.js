@@ -1103,6 +1103,10 @@ function visible() {
   state.hidden = state.results.length - list.length;
   if ($('#only-open').checked) list = list.filter((r) => hasOpen((state.checks[r.firm.id] || {}).result));
   if ($('#only-contact').checked) list = list.filter((r) => contactsOf(r.firm).length);
+  // A firm whose site showed nothing (no careers page, no board, no address) goes after the rest, in the search's
+  // order: it's still a real firm (the web search may find someone), just not the first to write to.
+  const empty = (r) => wayOf(r.firm) === WAYS.length - 1;
+  list = [...list.filter((r) => !empty(r)), ...list.filter(empty)];
   if (!$('#sort-way').checked) return list;
   // Checked firms by their way in (the search's order within each), unchecked ones after.
   return list

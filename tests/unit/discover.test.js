@@ -1658,7 +1658,7 @@ test('discover: a bot wall is “blocked”, and a site whose https is broken is
   assert.deepEqual([access.status, access.pages], ['page', ['http://www.accessgames.co.jp/recruit/']]);
 });
 
-test('discover: FICO’s Imperva page served with a 200, and Don’t Nod’s careers pages that answer 500, are “blocked”', async () => {
+test('discover: FICO’s Imperva page served with a 200, Shva’s Radware redirect and Don’t Nod’s careers pages that answer 500 are “blocked”', async () => {
   // fico.com answers every robot with "Pardon Our Interruption", status 200: turned away, not an empty site.
   const imperva = `<!DOCTYPE html><html><head><noscript><title>Pardon Our Interruption</title></noscript>
     <script>window.reeseSkipExpirationCheck = true;</script></head><body>${'<p>Please wait.</p>'.repeat(30)}</body></html>`;
@@ -1668,6 +1668,19 @@ test('discover: FICO’s Imperva page served with a 200, and Don’t Nod’s car
     guess: false,
   });
   assert.equal(fico.status, 'blocked');
+  // Shva's home page sends a robot to Radware's check on validate.perfdrive.com.
+  const radware = () => ({
+    ok: true,
+    status: 200,
+    url: 'https://validate.perfdrive.com/shva/captcha?ssa=1',
+    text: async () => `<html><body>${'<p>Please complete the check.</p>'.repeat(20)}</body></html>`,
+  });
+  const shva = await D.careers(firm({ n: 'Automatic Bank Services', d: 'www.shva.co.il' }), {
+    fetch: mockFetch({ 'https://www.shva.co.il/': radware, 'https://shva.co.il/': radware }),
+    now: NOW,
+    guess: false,
+  });
+  assert.equal(shva.status, 'blocked');
   // Don't Nod's home page links its careers pages, and each answers 500 to a script.
   const failing = (url) => ({ ok: false, status: 500, url, text: async () => 'Internal Server Error' });
   const home = `<html><head><title>DON'T NOD</title></head><body>${'<p>Don’t Nod is a game studio in Paris.</p>'.repeat(10)}
