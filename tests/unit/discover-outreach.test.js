@@ -153,6 +153,38 @@ test('outreach: Your story comes last in a room of its own, so the CV keeps its 
   assert.equal(withStory.ctx.sources, withStory.text, 'the checks accept what the story says');
 });
 
+test('outreach: with Your story, the draft and the follow-up are told to pick from it for this firm', async () => {
+  const told = { ...profile, story: { ...profile.story, projects: 'A deal finder for eBay: 0.97 precision.' } };
+  const system = async (p) => {
+    const { chat, calls } = scripted([good]);
+    await O.draft(chat, { firm, found, contact: jane, profile: p, kit, cvText, kind: 'speculative', today });
+    return calls[0].messages[0].content;
+  };
+  const pick =
+    /^ {3}Pick those things for this firm: go through the part of CANDIDATE MATERIAL headed “About the candidate, in their own words”[^\n]*never eager or pleading\.$/m;
+  assert.doesNotMatch(await system(profile), pick);
+  const withStory = await system(told);
+  assert.match(withStory, pick);
+  assert.equal(withStory.replace(/\n {3}Pick those things[^\n]*/, ''), await system(profile), 'only that line is new');
+  const follow = [];
+  const chat = async (messages) => {
+    follow.push(messages[0].content);
+    return { json: {} };
+  };
+  const rec = {
+    firm,
+    subject: 'Summer internship enquiry',
+    sentAt: today - 7 * 864e5,
+    body: 'Dear Jane,\n\nHello.',
+    ask: 'internship',
+  };
+  await O.followUp(chat, { rec, contact: jane, profile: told, kit, cvText, today });
+  assert.match(
+    follow[0],
+    /^ {3}Look for it first in the part of CANDIDATE MATERIAL headed “About the candidate, in their own words”/m,
+  );
+});
+
 test('outreach: firmFacts() lists what the firm does, its roles, programmes, pages and the contact', () => {
   const f = O.firmFacts({ firm, found, contact: jane });
   assert.match(f.text, /^Firm: Acme Capital LLP\nAlso called: Acme Capital/);

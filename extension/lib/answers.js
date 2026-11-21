@@ -404,6 +404,11 @@
     };
   }
 
+  // With Your story filled in: where motivation and "tell us about a time" answers come from.
+  const STORY_ANSWERS = [
+    '- Motivation and experience questions ("Why do you want…", "Tell us about a time when…", "Describe a project you’re proud of", "What would you bring"): draw first on the part of CANDIDATE MATERIAL headed “About the candidate, in their own words”: their projects, results, stories and own reasons, choosing what this employer will care about most, in the way they talk about their work. Your aim is to get them to interview.',
+  ];
+
   function systemPrompt(o) {
     const uk = o.lang !== 'en-US';
     const may = allowed(o.allow);
@@ -434,6 +439,7 @@
       '- First person, as the candidate. Plain, specific and confident: short declarative sentences, concrete detail from the material (what they did, how, the result), no flattery, no filler. Match the voice of the PREVIOUS ANSWERS when there are any.',
       '- Keep to each question’s "limit". Never exceed a word, sentence or character limit.',
       '- "Why us / why this role / what excites you" answers: connect two or three specific things the posting says about the work, team or programme to specific things the candidate has done or studied. Name the employer.',
+      ...(o.story ? STORY_ANSWERS : []),
       '- Follow-up boxes ("If yes, please give details", "If other, please specify", "If not, write N/A"): look at "follows" (the question before and its answer, or the id of a question in this list, whose answer is yours). Answer only when it applies, with the detail it asks for; write "N/A" only when the question itself says to; otherwise skip.',
       '- Short factual boxes (hometown, current university, strongest programming language, preferred name pronunciation): a few words.',
       '- Optional catch-all boxes ("Anything else you’d like to share?", "Additional information", "Use this space to clarify any answers", "Note to the hiring manager"): skip them.',
@@ -984,6 +990,7 @@
       lang,
       allow: may,
       fixing: ask.some((it) => !!it.pageError),
+      story: L().hasStory(input.profile),
     });
     let calls = 0;
 

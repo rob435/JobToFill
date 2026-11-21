@@ -1608,6 +1608,10 @@
   const EVIDENCE =
     '2. Evidence: if paragraph 1 didn’t say who the candidate is, say it here in a clause, with the year of study as STAGE gives it (never worked out from dates), and don’t name the university again if paragraph 1 did. Give the degree result in that clause when CANDIDATE MATERIAL has one, final or predicted (“on track for a First”, “GPA 3.8”), as written there; it isn’t one of the two things. Then at most two things from CANDIDATE MATERIAL, the ones this reader would weigh most. Judge by their role first: a quant, researcher, trader or developer weighs maths and statistics results, code, data projects and competition placings; a banker or investor, models, valuation work, research and deals; an engineer or a CTO, what the candidate built, in what language, and who used it; a recruiter, the grade and then the strongest result. When the role says nothing (a mailbox), go by the kind of firm (FIRM FACTS › Kind of firm) the same way. Prefer a result with its number (a placing, a mark, a finding) over a duty or a role held; name a role as the material does (“on a spring week at …”), never as if it were a longer job; use active verbs for what the candidate did and leave out what they only watched. Don’t describe again a project paragraph 1 used. The CV carries the rest.';
 
+  // With Your story filled in: what the email picks from it, as the candidate's advocate.
+  const DRAFT_STORY =
+    '   Pick those things for this firm: go through the part of CANDIDATE MATERIAL headed “About the candidate, in their own words” and choose the project, result or moment this reader would weigh most that connects most closely to what this firm does; the candidate’s own reasons for wanting this kind of work can carry the why when they are about this reader’s kind of work. Your aim is a reply: every sentence has to earn it, calm and confident, never eager or pleading.';
+
   /** The rules that depend on where the candidate and the firm are, and how a UK grade reads abroad. */
   function placeRules(o) {
     const out = [];
@@ -1650,6 +1654,7 @@
       `The body: three short paragraphs, ${EMAIL_SIZE.aim} words in all, with a blank line between them.`,
       o.hook ? hookLine1(o) : whyLine(o),
       EVIDENCE,
+      ...(o.story ? [DRAFT_STORY] : []),
       `3. The ask: ${ask}`,
       '',
       'Rules:',
@@ -1765,6 +1770,7 @@
       lang,
       stage,
       reader,
+      story: L().hasStory(profile),
       ctx: {
         aliases: firmAliases(f),
         firmName: displayName(f.name) || 'the firm',
@@ -1969,7 +1975,7 @@
     const ask = askOf(input.ask);
     const facts = firmFacts({ firm, found, contact, role, hook });
     const kind = role ? 'role' : 'speculative';
-    const { mat, lang, stage, reader } = w;
+    const { mat, lang, stage, reader, story } = w;
     const attach = input.attach !== false;
     const stageLine = stageText(stage, role);
     const sources =
@@ -2028,6 +2034,7 @@
       abroadGrade,
       common: ctx.common,
       who,
+      story,
     });
     const messages = [
       { role: 'system', content: system },
@@ -2129,6 +2136,9 @@
     };
   }
 
+  const FOLLOW_STORY =
+    '   Look for it first in the part of CANDIDATE MATERIAL headed “About the candidate, in their own words”, and pick what connects most closely to what this firm does.';
+
   function followSystem(o) {
     const lang = o.lang === 'en-US' ? 'American' : 'British';
     return [
@@ -2146,6 +2156,7 @@
       '',
       `The body: two short paragraphs, ${FOLLOW_SIZE.aim} words in all, with a blank line between them.`,
       `1. Open with one sentence that says when the candidate wrote and what about, in a few words and the first email’s own terms (${o.first ? `as THE FIRST EMAIL asked it, “I wrote ${o.when || 'last week'} to ask about …”` : `“I wrote ${o.when || 'last week'} to ask about ${o.about} at ${o.firm}”`}); the question itself comes once, in paragraph 2. Never “I am following up”, never the weekday. Then, as its own sentence, ONE thing from CANDIDATE MATERIAL that ${o.first ? 'the first email didn’t mention' : 'shows what the candidate can do'}: the one that bears most on what FIRM FACTS says the firm does, with its numbers as the material gives them; say it as the material does, with no comment on what it taught or showed; don’t start it with “also”, “in addition” or “additionally”.`,
+      ...(o.story ? [FOLLOW_STORY] : []),
       `2. The same ask, in one sentence to “you”: ${o.first ? 'ask again for exactly what THE FIRST EMAIL asked, in its terms; never ask for something new.' : o.again} ${cvLine(false)} Then a short thanks in words the first email didn’t use.`,
       '',
       'Rules:',
@@ -2172,7 +2183,7 @@
     const firm = input.firm || rec.firm || {};
     const contact = input.contact || rec.contact || null;
     const w = writer({ ...input, firm, contact });
-    const { mat, lang, stage, reader } = w;
+    const { mat, lang, stage, reader, story } = w;
     const ask = askOf(rec.ask);
     const role = flat(rec.role) || null;
     const facts = firmFacts({ firm, contact, role });
@@ -2218,7 +2229,7 @@
     ].join('\n');
     const { about, again } = askAgain(ask, { firm: ctx.firmName, role, stage, reader, lang });
     const when = Number.isFinite(sentAt) && sentAt > 0 ? sentWhen(sentAt, lang, w.ctx.today, zoneOf(firm).zone) : '';
-    const system = followSystem({ ...ctx, lang, firm: ctx.firmName, sent, when, about, again, first: !!body });
+    const system = followSystem({ ...ctx, lang, firm: ctx.firmName, sent, when, about, again, first: !!body, story });
     const messages = [
       { role: 'system', content: system },
       { role: 'user', content: user },
