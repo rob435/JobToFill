@@ -2,8 +2,9 @@
  * JobToFill — your email through Nylas (https://www.nylas.com), with your own API key and the grant (connected
  * inbox) you choose, on the Nylas v3 API. For verification codes it only reads: the last few messages, never moving
  * or marking anything; so does the application tracker, which lists the messages since its last look and reads the
- * ones from employers and recruiting systems in full (only once you switch it on). Discover's outreach can also save an email you wrote to your mailbox's drafts or send it,
- * your CV attached, but only when you press that button for that one email. A send can wait for a time (Nylas holds
+ * ones from employers and recruiting systems in full (only once you switch it on). Discover's outreach can also save
+ * an email you wrote to your mailbox's drafts or send it, your CV attached, but only when you press that button for
+ * that one email. A send can wait for a time (Nylas holds
  * it until then; taking it back, until a minute before, has Nylas delete it unsent), and a follow-up goes into the
  * first email's thread. Once a waiting email's time has passed it's looked up by its subject, to learn its thread.
  */
