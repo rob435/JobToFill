@@ -46,7 +46,7 @@
     asset: { label: 'Asset managers', group: 'finance', tags: ['asset'], wiki: /investment management|asset management/i },
     credit: { label: 'Credit and distressed', group: 'finance', tags: ['credit'], wiki: /credit|hedge fund/i },
     pe: { label: 'Private equity', group: 'finance', tags: ['pe'], wiki: /private equity/i },
-    ib: { label: 'Boutique advisory banks', group: 'finance', tags: ['ib'], wiki: /investment bank/i },
+    ib: { label: 'Boutique advisory banks', fact: 'Investment banks', group: 'finance', tags: ['ib'], wiki: /investment bank/i },
     family: { label: 'Family offices', group: 'finance', tags: ['family'], wiki: /family office/i },
     vc: { label: 'Venture capital', group: 'finance', tags: ['vc'], wiki: /venture capital/i },
     software: { label: 'Software and SaaS', group: 'tech', tags: ['software'], wiki: /software|saas|cloud computing|internet compan/i },

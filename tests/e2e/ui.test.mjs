@@ -758,7 +758,7 @@ test('Discover: Tech kinds, a model of its own, who to email at a checked firm, 
   assert.equal(await page.inputValue(to), 'internships@quiet.example');
   await page.click(`${card} button.draft-go`);
   await page.waitForSelector(body);
-  assert.match(await page.inputValue(body), /^Dear .+ recruiting team,\n\nI am a final-year/);
+  assert.match(await page.inputValue(body), /^Dear .+ team,\n\nI am a final-year/);
   assert.equal(await page.isVisible(`${card} .redraft`), false);
   await page.selectOption(to, 'jane.doe@quiet.example');
   assert.match(await page.inputValue(body), /^Dear Jane,\n\nI am a final-year/);
@@ -1260,7 +1260,7 @@ test('Discover: at a large firm Review writes to someone from your university, a
   assert.match(await page.textContent('#review-card .reason'), /Education: University of Warwick/);
   assert.match(await page.textContent('#review-card .to-block'), /Asks for a 15-minute call/);
   const draft = asked.filter((b) => !b.tools).pop();
-  assert.match(JSON.stringify(draft), /ask for a 15-minute call/);
+  assert.match(JSON.stringify(draft), /ask for 15 minutes by phone or video/);
   // The alumni search had the firm and the university, never the person.
   const alumni = asked.find((b) => b.tools && /work at one employer now/.test(JSON.stringify(b.system)));
   assert.match(JSON.stringify(alumni.messages), /University of Warwick/);
@@ -1453,7 +1453,7 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
     (await page.textContent(`${card} .firm-name`)).trim(),
   );
   assert.match(await page.textContent('#review-progress'), /1 of 1/);
-  assert.match(await page.inputValue(box), /^Dear .+ recruiting team,\n\nI am a final-year/);
+  assert.match(await page.inputValue(box), /^Dear .+ team,\n\nI am a final-year/);
   assert.match(await page.textContent('#review-card .to-line'), /internships@quiet\.example/);
   assert.match(await page.textContent('#review-card .reason'), /opens with what the firm does/, 'no web search here');
   assert.equal(await page.isVisible('#review-keys'), true);

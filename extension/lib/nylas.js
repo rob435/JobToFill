@@ -250,15 +250,57 @@
 
   /**
    * Plain text as the HTML a mail program shows the way it was typed: a paragraph per blank line, a line break per
-   * line ("Kind regards,\nAda Lovelace"), addresses and links left as text.
+   * line ("Kind regards,\nAda Lovelace"), and the signature's address and profile link as links.
    */
   function htmlOf(text) {
-    return String(text || '')
+    const paragraphs = String(text || '')
       .replace(/\r\n?/g, '\n')
       .trim()
-      .split(/\n[ \t]*\n+/)
-      .map((p) => `<p>${p.split('\n').map(escapeHtml).join('<br>')}</p>`)
+      .split(/\n[ \t]*\n+/);
+    // The signature's contact line (the last paragraph's "+44 7700 900123 | ada@example.org | linkedin.com/in/ada") has
+    // its address and profile link made links, so every mail program shows them as such; nothing else is touched (a
+    // degree's "B.Sc.", a body's "Node.js").
+    return paragraphs
+      .map((p, i) => {
+        const last = i === paragraphs.length - 1 && paragraphs.length > 1;
+        return `<p>${p
+          .split('\n')
+          .map((line) => (last ? contactHtml(line) : escapeHtml(line)))
+          .join('<br>')}</p>`;
+      })
       .join('\n');
+  }
+
+  const EMAIL_ITEM = /^[\w.+'’-]+@[\w-]+(?:\.[\w-]+)+$/;
+  const LINK_ITEM = /^(?:https?:\/\/)?(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:\/\S*)?$/i;
+
+  /**
+   * A line of a signature as HTML: when it is a contact line (items between " | ") or one item, each item that is
+   * wholly an address or a link ("ada@example.org", "github.com/ada") becomes one; anything else stays text.
+   */
+  function contactHtml(line) {
+    const items = line.split(/(\s+\|\s+)/);
+    const contact = items.length > 1 || /@|\//.test(line.trim());
+    return items
+      .map((item) => {
+        const t = item.trim();
+        if (!contact || /^\|$/.test(t) || !t) return escapeHtml(item);
+        if (EMAIL_ITEM.test(t)) return `<a href="mailto:${escapeHtml(t)}">${escapeHtml(t)}</a>`;
+        if (LINK_ITEM.test(t) && (/\//.test(t) || items.length > 1) && !/^\d+(\.\d+)+$/.test(t)) {
+          const href = /^https?:\/\//i.test(t) ? t : `https://${t}`;
+          return `<a href="${escapeHtml(href)}">${escapeHtml(t)}</a>`;
+        }
+        return escapeHtml(item);
+      })
+      .join('');
+  }
+
+  /** The earlier email a reply quotes below its own text, as mail programs do: "On …, Ada <ada@…> wrote:". */
+  function quotedHtml(quote) {
+    const q = quote || {};
+    const body = htmlOf(q.text || '');
+    if (!body) return '';
+    return `\n<div>${escapeHtml(q.head || '')}</div>\n<blockquote style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">${body}</blockquote>`;
   }
 
   /** A data: URL's bytes as base64 and its type: "data:application/pdf;base64,JVBER…" → { type, base64 }. */
@@ -282,7 +324,8 @@
    * The message as Nylas takes it: { subject, body (HTML), to: [{ email, name }], attachments: [{ filename,
    * content_type, content (base64), size }], reply_to_message_id? }. email: { to (an address, or [{ email, name }]),
    * name, subject, text, attachments: [{ name, dataUrl } | { name, type, base64 }], replyTo? (the Nylas id of the
-   * message this answers: Nylas adds In-Reply-To and References, so a follow-up lands in the first email's thread) }.
+   * message this answers: Nylas adds In-Reply-To and References, so a follow-up lands in the first email's thread),
+   * quote? ({ head: "On 12 Nov 2026, Ada <ada@…> wrote:", text }: the email a reply quotes below its own) }.
    */
   function messageOf(email) {
     const e = email || {};
@@ -304,7 +347,8 @@
     const replyTo = String(e.replyTo || '').trim();
     return {
       subject: String(e.subject || ''),
-      body: htmlOf(e.text),
+      // A follow-up shows the first email under it, for a reader whose mail program doesn't show the thread.
+      body: htmlOf(e.text) + (replyTo && e.quote ? quotedHtml(e.quote) : ''),
       to,
       attachments,
       ...(replyTo ? { reply_to_message_id: replyTo } : {}),

@@ -1047,3 +1047,50 @@ test('letter: tailor() without a master asks for no tech list and for label rows
   assert.equal(result.cv.sections[0].entries[0].tagline, 'eBay deal detector');
   assert.deepEqual(result.cv.sections[1].lines, [{ label: 'Chess', text: 'University of Glasgow Chess Champion' }]);
 });
+
+test('letter: a link as a letterhead or signature shows it, the profile and never its tracking', () => {
+  const link = L.profileLink;
+  assert.equal(link('https://github.com/alexmorgan-jtf/JobToFill'), 'github.com/alexmorgan-jtf');
+  assert.equal(link('github.com/Ada?tab=repositories'), 'github.com/Ada');
+  assert.equal(
+    link('https://www.linkedin.com/in/alexmorgan-jtf?utm_source=share&utm_campaign=share_via&utm_medium=ios_app'),
+    'linkedin.com/in/alexmorgan-jtf',
+  );
+  assert.equal(link('https://uk.linkedin.com/in/ada-l/details/skills/'), 'linkedin.com/in/ada-l');
+  assert.equal(link('http://www.ada.dev/portfolio/#top'), 'ada.dev/portfolio');
+  assert.equal(link('https://x.com/ada/status/1'), 'x.com/ada');
+  // A shared file asks a stranger to sign in; an address or plain words are no link.
+  for (const u of [
+    'https://drive.google.com/file/d/x/view',
+    'https://www.dropbox.com/s/x/cv.pdf',
+    'mailto:a@b.co',
+    'my site',
+  ])
+    assert.equal(link(u), '', u);
+});
+
+test('letter: the phone as someone abroad dials it, from the country code and the number as typed', () => {
+  const phone = (c) => L.phoneOf(c);
+  assert.equal(phone({ phone: '07700 900123', phoneCountryCode: '+44' }), '+44 7700 900123');
+  assert.equal(phone({ phone: '7700 900123', phoneCountryCode: 'United Kingdom (+44)' }), '+44 7700 900123');
+  assert.equal(phone({ phone: '0044 7700 900123' }), '+44 7700 900123');
+  assert.equal(phone({ phone: '+447700900123' }), '+447700900123');
+  // Italy dials its 0 from abroad too.
+  assert.equal(phone({ phone: '06 6988 3145', phoneCountryCode: '+39' }), '+39 06 6988 3145');
+  assert.equal(phone({ phone: '07700 900123' }), '07700 900123');
+});
+
+test('letter: the contact line takes clean links, and a typed line loses the name and its tracking', () => {
+  const profile = {
+    personal: { firstName: 'Ada', lastName: 'Lovelace' },
+    contact: { email: 'ada@example.com', phone: '07700 900123', phoneCountryCode: '+44' },
+    links: { github: 'https://github.com/ada/JobToFill', linkedin: 'https://www.linkedin.com/in/ada?utm_source=share' },
+  };
+  assert.deepEqual(L.contactLine(profile, {}), ['+44 7700 900123', 'ada@example.com', 'github.com/ada']);
+  assert.deepEqual(
+    L.contactLine(profile, {
+      contact: 'Ada Lovelace | ada@example.com | https://www.linkedin.com/in/ada/?utm_source=share',
+    }),
+    ['ada@example.com', 'linkedin.com/in/ada'],
+  );
+});

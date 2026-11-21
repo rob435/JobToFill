@@ -1026,6 +1026,8 @@ const contactRef = (p) => ({
   title: p.title || '',
   email: p.address,
   guessed: !!p.guessed,
+  // A follow-up greets a recruiting mailbox as the first email did.
+  ...(p.kind ? { kind: p.kind } : {}),
   ...(p.address && (p.name || p.kind || p.source) ? { who: whoKind(p) } : {}),
 });
 const sameAddress = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
@@ -1055,33 +1057,11 @@ function recipientOf(d, people) {
   return p;
 }
 
-// A "name" that is a mailbox's ("Recruiting team"), and a title before a name ("Dr Jane Smith"), as O.draft reads them.
-const MAILBOX_NAME =
-  /\b(team|recruit\w*|careers?|jobs?|hr|talent|people|info|enquir\w*|inquir\w*|admin|office|hiring|internships?|graduates?|campus|mailbox|contact)\b/i;
-const HONORIFIC = /^(mr|mrs|ms|miss|mx|dr|prof|professor|sir|dame)\.?\s+/i;
-
 /**
- * The greeting O.draft opens an email to `p` with: "Dear Jane," to a person, "Dear Quiet Capital recruiting team," to
- * a recruiting mailbox, else "Hello,".
+ * The greeting O.draft opens an email to `p` with (discoverOutreach.greetingFor): "Dear Jane," to a person ("Hi Jane,"
+ * at a US tech firm), "Dear Quiet Capital team," to a small firm's careers mailbox, else "Hello,".
  */
-function greetingFor(p, firm) {
-  const name = String(p.name || '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(HONORIFIC, '');
-  const first = name.split(/[\s,]+/)[0];
-  if (name && !/@/.test(name) && !MAILBOX_NAME.test(name) && /^\p{L}[\p{L}'’-]+$/u.test(first)) {
-    const word = first === first.toUpperCase() ? first.toLowerCase() : first;
-    return `Dear ${word[0].toUpperCase() + word.slice(1)},`;
-  }
-  // "Lansdowne Partners (UK) LLP" → "Lansdowne Partners".
-  const names = L.companyAliases(
-    String(firm.name || '')
-      .replace(/\s*\([^)]*\)\s*/g, ' ')
-      .trim(),
-  );
-  return p.kind === 'recruiting' && names.length ? `Dear ${names[names.length - 1]} recruiting team,` : 'Hello,';
-}
+const greetingFor = (p, firm) => O.greetingFor(p, firm);
 
 // A draft's first line: "Dear Jane,", "Dear Quiet Capital recruiting team,", "Hello," (or the person's own).
 const GREETING_LINE = /^(dear|hello|hi|hey|good (morning|afternoon|evening)|greetings)\b[^\n]{0,80}[,:!]?$/i;
@@ -1169,6 +1149,8 @@ async function draftEmail(firm, consent) {
       kind,
       role,
       today: Date.now(),
+      // The CV goes only when Attach my CV is ticked and one is uploaded: the email says it's attached only then.
+      attach: d.attach !== false && !!(await cvFile()),
       // A junior, or someone from your university, is asked for a 15-minute call.
       ...(askFor(contact) === 'call' ? { ask: 'call' } : {}),
     });
@@ -2006,11 +1988,18 @@ function drawerView(firm) {
   const mailto = () => O.mailto({ to: d.to, subject: d.subject, body: d.body });
   const draftOut = result ? mailto() : null;
   const open = draftOut && el('a', { className: 'button primary small open-mail', href: draftOut.href });
-  if (open) open.textContent = 'Open in your email app';
+  if (open) {
+    open.textContent = 'Open in your email app';
+    // Too long for the link: the whole email is copied, to paste into the message the link opens.
+    open.addEventListener('click', () => {
+      if (mailto().truncated) navigator.clipboard.writeText(d.body).catch(() => {});
+    });
+  }
   const truncated = el('p', {
     className: 'small warn-text',
     hidden: !(draftOut && draftOut.truncated),
-    textContent: 'Too long for your email app’s link: the end is cut off there, so use Copy for the whole text.',
+    textContent:
+      'Too long for your email app’s link: Open in your email app copies the email, so paste it into the message that opens.',
   });
   // A draft written for someone other than the one now chosen: its greeting is swapped, and this says who it was for.
   const redraft = el('p', { className: 'small warn-text redraft' });
@@ -2227,6 +2216,46 @@ async function cvFile() {
 }
 
 /**
+ * The CV as an email carries it: named for the person ("Alex Morgan CV.pdf", not "CV_final_v3 (2).pdf"), in the
+ * stored file's own format. → { name, dataUrl, type } or null.
+ */
+async function cvAttachment() {
+  const doc = await cvFile();
+  if (!doc) return null;
+  const { profile } = await store.getActive();
+  const who = L.fullName(profile);
+  const ext = ((String(doc.name || '').match(/\.([a-z0-9]{2,5})$/i) || [])[1] || 'pdf').toLowerCase();
+  return { name: who ? `${who} CV.${ext}` : doc.name, dataUrl: doc.dataUrl, type: doc.type || '' };
+}
+
+/**
+ * The first email as a follow-up quotes it below its own text: { head: "On Thu 12 Nov 2026, Alex Morgan
+ * <alex@…> wrote:", text }, or null when its words weren't kept.
+ */
+async function quoteOf(rec) {
+  if (!rec || !rec.body) return null;
+  const { profile } = await store.getActive();
+  const me = (state.nylas && state.nylas.email) || (profile.contact && profile.contact.email) || '';
+  const who = L.fullName(profile);
+  const day = rec.sentAt
+    ? new Date(rec.sentAt).toLocaleDateString('en-GB', {
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      })
+    : '';
+  const head = `${day ? `On ${day}, ` : ''}${who || me}${who && me ? ` <${me}>` : ''} wrote:`;
+  return { head: head[0].toUpperCase() + head.slice(1), text: rec.body };
+}
+
+/** Is the stored CV something every reader can open (a PDF)? */
+const pdfCv = (doc) => !doc || /pdf/i.test(doc.type || '') || /\.pdf$/i.test(doc.name || '');
+
+/** Does the email say a CV goes with it ("My CV is attached")? */
+const claimsCv = (body) => /\b(attached|enclosed|attach(?:ing)?|enclosing)\b/i.test(String(body || ''));
+
+/**
  * Send the drawer's email from the connected inbox, or save it to its drafts (Gmail's Drafts folder), CV attached when
  * ticked. Sending asks first, naming who it goes to and from, and says when the address is only made from a format
  * or the draft failed a check. The outreach record says how it went (and keeps the thread, for replies).
@@ -2235,13 +2264,19 @@ async function sendEmail(firm, how) {
   const d = drawerOf(firm);
   const p = recipientOf(d, offeredTo(firm, d));
   if (!p || d.sending) return;
-  const cv = d.attach !== false ? await cvFile() : null;
+  const cv = d.attach !== false ? await cvAttachment() : null;
   if (how === 'send') {
     const doubts = [
-      p.guessed || ['likely', 'guessed', 'unconfirmed'].includes(p.level)
-        ? `${p.address} is made from the firm’s address format and isn’t confirmed: it may bounce.`
-        : '',
+      p.source === 'typed'
+        ? `You typed ${p.address} in yourself and nothing has checked it: it may bounce.`
+        : p.guessed || ['likely', 'guessed', 'unconfirmed'].includes(p.level)
+          ? `${p.address} is made from the firm’s address format and isn’t confirmed: it may bounce.`
+          : '',
       d.result && d.result.ok === false ? 'Some of the draft’s checks failed: read it through first.' : '',
+      !cv && claimsCv(d.body)
+        ? 'Your email says your CV is attached, but nothing is: tick Attach my CV or edit that line.'
+        : '',
+      cv && !pdfCv(cv) ? `Your CV is a .${cv.name.split('.').pop()} file: a PDF keeps its layout on every device.` : '',
     ].filter(Boolean);
     const from = (state.nylas && state.nylas.email) || 'your inbox';
     const ask = [
@@ -2292,8 +2327,23 @@ async function sendEmail(firm, how) {
         contact: contactRef(p),
         way: wayText(firm),
         via: 'nylas',
+        // What went, and what it asked, as Review keeps it: a follow-up asks the same thing.
         ...(how === 'send'
-          ? { messageId: r.id, threadId: r.threadId, sentAt: Date.now(), sendAt: null, scheduleId: '', sending: null }
+          ? {
+              body: d.body,
+              ask: (d.result && d.result.ask) || 'internship',
+              role: d.kind === 'role' ? roleOf(firm) : '',
+              reason: '',
+              reasonKind: 'none',
+              followedUpAt: null,
+              followUps: 0,
+              messageId: r.id,
+              threadId: r.threadId,
+              sentAt: Date.now(),
+              sendAt: null,
+              scheduleId: '',
+              sending: null,
+            }
           : { draftId: r.id }),
       };
     });
@@ -4308,6 +4358,8 @@ async function writeDraft(item, job) {
     kind: role ? 'role' : 'speculative',
     role,
     today: Date.now(),
+    // Review sends the CV whenever one is uploaded: the email says so only then.
+    attach: !!(await cvFile()),
     ...(hook ? { hook } : {}),
     ...(ask !== 'internship' ? { ask } : {}),
   });
@@ -4350,7 +4402,13 @@ async function writeFollowUp(item, job) {
   const r = await O.followUp(aiChat(), {
     firm: item.firm,
     rec,
-    contact: { name: c.name || '', title: c.title || '', email: rec.to, address: rec.to, kind: c.name ? 'person' : '' },
+    contact: {
+      name: c.name || '',
+      title: c.title || '',
+      email: rec.to,
+      address: rec.to,
+      kind: c.kind || (c.name ? 'person' : ''),
+    },
     profile,
     kit,
     cvText,
@@ -4471,6 +4529,9 @@ function doubtsOf(item) {
     first && !state.cvName && /\bCV\b|résumé|resume|attached/i.test(item.body)
       ? 'The email says your CV is attached, but none is uploaded (Settings › Resume & files): it goes without one.'
       : '',
+    first && state.cvName && !pdfCv({ name: state.cvName, type: state.cvType })
+      ? `Your CV is a .${state.cvName.split('.').pop()} file: a PDF keeps its layout on every device (Settings › Resume & files).`
+      : '',
     item.unsure || '',
   ].filter(Boolean);
 }
@@ -4590,7 +4651,7 @@ async function deliver(item) {
     }
     const nylas = await store.getNylas();
     if (!nylas || !nylas.grantId) throw new Error('Connect your inbox first (Settings › Email codes).');
-    const cv = follow ? null : await cvFile();
+    const cv = follow ? null : await cvAttachment();
     const p = contactsOf(firm).find((x) => sameAddress(x.address, item.to)) || {};
     const name = p.name || (follow && rec && rec.contact && rec.contact.name) || '';
     const email = {
@@ -4598,7 +4659,7 @@ async function deliver(item) {
       subject: item.subject,
       text: item.body,
       attachments: cv ? [{ name: cv.name, dataUrl: cv.dataUrl }] : [],
-      ...(follow && rec && rec.messageId ? { replyTo: rec.messageId } : {}),
+      ...(follow && rec && rec.messageId ? { replyTo: rec.messageId, quote: await quoteOf(rec) } : {}),
       ...(when.at ? { sendAt: when.at } : {}),
     };
     const r = await N.send(nylas, email, { fetch: fetchFn });
@@ -4865,12 +4926,12 @@ async function saveItem(item) {
     const nylas = await store.getNylas();
     if (!nylas || !nylas.grantId) throw new Error('Connect your inbox first (Settings › Email codes).');
     const follow = item.type === 'follow';
-    const cv = follow ? null : await cvFile();
+    const cv = follow ? null : await cvAttachment();
     const rec = state.outreach[item.firm.id];
     const r = await N.saveDraft(
       nylas,
       {
-        ...(follow && rec && rec.messageId ? { replyTo: rec.messageId } : {}),
+        ...(follow && rec && rec.messageId ? { replyTo: rec.messageId, quote: await quoteOf(rec) } : {}),
         to: [{ email: item.to }],
         subject: item.subject,
         text: item.body,
@@ -5436,7 +5497,12 @@ function reviewActions(item) {
         // meanwhile (another tab, the Outreach tab), which the email app would get a second email to.
         onclick: (e) => {
           const why = alreadyDone(item, state.outreach[item.firm.id]);
-          if (!why) return (e.currentTarget.href = mailtoOf(item).href);
+          if (!why) {
+            const m = mailtoOf(item);
+            // Too long for the link: the whole email is copied, to paste into the message the link opens.
+            if (m.truncated) navigator.clipboard.writeText(item.body).catch(() => {});
+            return (e.currentTarget.href = m.href);
+          }
           e.preventDefault();
           finishElsewhere(item, why);
           alarm(`${item.firm.name}: ${why} ${notAgain(why, 'opened')}`, item);
@@ -5493,7 +5559,8 @@ function sendNote(item) {
     const long = el('p', {
       className: 'small warn-text truncated',
       hidden: !mailtoOf(item).truncated,
-      textContent: 'Too long for your email app’s link: the end is cut off there, so use Copy for the whole text.',
+      textContent:
+        'Too long for your email app’s link: Open in your email app copies the email, so paste it into the message that opens.',
     });
     return el(
       'div',
@@ -7170,6 +7237,7 @@ async function start() {
       cvFile()
         .then((doc) => {
           state.cvName = doc ? doc.name : '';
+          state.cvType = doc ? doc.type || '' : '';
           // The line under the buttons, without drawing the email being read (and maybe typed in) again.
           const note = document.querySelector('#review-card .send-note');
           if (note && shown() && shown().status === 'ready') note.replaceWith(sendNote(shown()));
@@ -7243,7 +7311,7 @@ async function start() {
     store.getNylas().then((n) => (state.nylas = n)),
     store.getFinderKeys().then((k) => (state.finderKeys = k)),
     cvFile()
-      .then((doc) => (state.cvName = doc ? doc.name : ''))
+      .then((doc) => ((state.cvName = doc ? doc.name : ''), (state.cvType = doc ? doc.type || '' : '')))
       .catch(() => ''),
   ]);
   adoptPre();

@@ -27,8 +27,35 @@ test('nylas: an email as Nylas takes it, plain text as paragraphs, the CV as bas
   assert.deepEqual(m.to, [{ email: 'jane.smith@hbk.com', name: 'Jane Smith' }]);
   assert.equal(
     m.body,
-    '<p>Dear Jane,</p>\n<p>I study &lt;Computer Science&gt; &amp; more.</p>\n<p>Kind regards,<br>Ada Lovelace<br>ada@example.org</p>',
+    '<p>Dear Jane,</p>\n<p>I study &lt;Computer Science&gt; &amp; more.</p>\n<p>Kind regards,<br>Ada Lovelace<br><a href="mailto:ada@example.org">ada@example.org</a></p>',
   );
+  // The signature's address and profile link are links in every mail program; the body's words are left alone.
+  const signed = nylas.messageOf({
+    to: 'jane.smith@hbk.com',
+    text: 'Dear Jane,\n\nI read about it on hbk.com, version 3.5.\n\nKind regards,\nAda Lovelace\n+44 7700 900123 | ada@example.org | linkedin.com/in/ada',
+  });
+  assert.match(signed.body, /<p>I read about it on hbk\.com, version 3\.5\.<\/p>/);
+  assert.match(
+    signed.body,
+    /\+44 7700 900123 \| <a href="mailto:ada@example\.org">ada@example\.org<\/a> \| <a href="https:\/\/linkedin\.com\/in\/ada">linkedin\.com\/in\/ada<\/a><\/p>$/,
+  );
+  // A follow-up quotes the first email below its own, as mail programs do.
+  const reply = nylas.messageOf({
+    to: 'jane.smith@hbk.com',
+    text: 'Dear Jane,\n\nI wrote last week.',
+    replyTo: 'm-1',
+    quote: {
+      head: 'On Thu, 12 Nov 2026, Ada Lovelace <ada@example.org> wrote:',
+      text: 'Dear Jane,\n\nFirst email & more.',
+    },
+  });
+  assert.match(
+    reply.body,
+    /<p>I wrote last week\.<\/p>\n<div>On Thu, 12 Nov 2026, Ada Lovelace &lt;ada@example\.org&gt; wrote:<\/div>\n<blockquote style="[^"]+"><p>Dear Jane,<\/p>\n<p>First email &amp; more\.<\/p><\/blockquote>$/,
+  );
+  assert.equal(reply.reply_to_message_id, 'm-1');
+  // Not a reply: nothing is quoted.
+  assert.doesNotMatch(nylas.messageOf({ to: 'a@b.co', text: 'x', quote: { text: 'y' } }).body, /blockquote/);
   assert.deepEqual(
     { ...m.attachments[0], content: Buffer.from(m.attachments[0].content, 'base64').toString() },
     { filename: 'Ada Lovelace CV.pdf', content_type: 'application/pdf', content: '%PDF-1.4 tiny', size: 13 },

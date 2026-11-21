@@ -91,19 +91,101 @@
       .replace(/^www\./i, '')
       .replace(/\/+$/, '');
 
-  /** The contact line under the name: phone | email | one link, like the template. */
+  // A Google Drive or Docs link opens a sign-in or a request for access to a stranger: never a link to give.
+  const PRIVATE_LINK =
+    /(^|\.)(drive|docs)\.google\.com$|(^|\.)dropbox\.com$|(^|\.)onedrive\.live\.com$|(^|\.)1drv\.ms$/;
+
+  /**
+   * A link as a letterhead or signature shows it: no scheme, "www." or tracking ("?utm_source=share&utm_campaign=…",
+   * "#readme"), and the profile rather than a page in it: "https://github.com/ada/JobToFill" is "github.com/ada" (a
+   * repository in the GitHub box is one project, not the person), LinkedIn's "uk.linkedin.com/in/ada-l/details/skills"
+   * is "linkedin.com/in/ada-l". A shared Drive or Dropbox file is '': it asks a stranger to sign in.
+   */
+  function profileLink(u) {
+    const s = String(u || '').trim();
+    if (!s || /^mailto:/i.test(s)) return '';
+    let url;
+    try {
+      url = new URL(/^[a-z][\w+.-]*:\/\//i.test(s) ? s : `https://${s}`);
+    } catch (err) {
+      return isLink(s) ? shortUrl(s.replace(/[?#].*$/, '')) : '';
+    }
+    // (A phone written with dots, "212.123.4567", is no host: new URL would read it as an IP address.)
+    if (!/^https?:$/.test(url.protocol) || !/\.[a-z]{2,}$/i.test(url.hostname)) return '';
+    const host = url.hostname
+      .toLowerCase()
+      .replace(/^www\./, '')
+      .replace(/^[a-z]{2}\.(?=linkedin\.com$)/, '');
+    if (PRIVATE_LINK.test(host)) return '';
+    const parts = url.pathname
+      .split('/')
+      .filter(Boolean)
+      .map((p) => {
+        try {
+          return decodeURIComponent(p);
+        } catch (err) {
+          return p;
+        }
+      });
+    if (/^(github\.com|gitlab\.com|bitbucket\.org)$/.test(host)) return parts[0] ? `${host}/${parts[0]}` : host;
+    // A profile's own address ("/in/ada-l"); an old "/pub/…" one goes as written, its parts are the profile's.
+    if (host === 'linkedin.com' && parts[0] === 'in' && parts[1]) return `${host}/in/${parts[1]}`;
+    if (/^(twitter\.com|x\.com)$/.test(host)) return parts[0] ? `x.com/${parts[0]}` : host;
+    // Only the tracking goes: Google Scholar's "?user=…" is the page.
+    const kept = [...url.searchParams].filter(([k]) => !TRACKING.test(k));
+    const query = kept.length ? `?${new URLSearchParams(kept)}` : '';
+    return `${host}${parts.length ? `/${parts.join('/')}` : ''}${query}`;
+  }
+
+  // Query parameters that say where a click came from, not which page it is.
+  const TRACKING = /^(utm_\w+|trk\w*|ref|refid|si|fbclid|gclid|mc_\w+|igshid|source|src|share\w*|original_referer)$/i;
+
+  /** Does a contact-line item read as a link ("github.com/ada", "https://…")? */
+  const isLink = (s) =>
+    /^(https?:\/\/)?(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/\S*)?$/i.test(String(s).trim()) && !/@/.test(s);
+
+  /**
+   * The phone number as someone abroad can dial it: "+44 7700 900123" from the country code and "07700 900123" (the
+   * trunk 0 left out), a "44" code given its "+", a "United Kingdom (+44)" code read for its digits; one already
+   * written with "+" or "00" as written.
+   */
+  function phoneOf(c) {
+    const phone = String((c && c.phone) || '').trim();
+    if (!phone) return '';
+    if (/^(\+|00)/.test(phone)) return phone.replace(/^00\s*/, '+');
+    const cc = String((c && c.phoneCountryCode) || '').replace(/\D/g, '');
+    if (!cc) return phone;
+    // The code typed again without its "+" ("44 7700 900123", "1-617-555-0100"): not dialled twice.
+    const all = phone.replace(/\D/g, '');
+    if (!/^0/.test(phone) && all.startsWith(cc) && all.length - cc.length >= 9 && all.length - cc.length <= 11) {
+      let seen = 0;
+      let i = 0;
+      while (i < phone.length && seen < cc.length) if (/\d/.test(phone[i++])) seen++;
+      return `+${cc} ${phone.slice(i).replace(/^[\s().-]+/, '')}`;
+    }
+    const G = JTF.geo;
+    const national = G && G.afterCode ? G.afterCode(phone, cc) : phone.replace(/^\(?0\)?\s*/, '');
+    return `+${cc} ${national}`;
+  }
+
+  /**
+   * The contact line under the name: phone | email | one link, like the template; or the line typed under Settings ›
+   * Cover letters & AI, its links cleaned (profileLink) and the name left out (it's above).
+   */
   function contactLine(profile, kit) {
-    if (kit && kit.contact && kit.contact.trim())
+    if (kit && kit.contact && kit.contact.trim()) {
+      const name = U.normalize(fullName(profile));
       return kit.contact
         .split('|')
         .map((s) => s.trim())
+        .filter((s) => s && U.normalize(s) !== name)
+        .map((s) => (isLink(s) ? profileLink(s) : s))
         .filter(Boolean);
+    }
     const c = profile.contact || {};
     const l = profile.links || {};
-    let phone = (c.phone || '').trim();
-    if (phone && c.phoneCountryCode && !/^[+0(]/.test(phone)) phone = `${c.phoneCountryCode} ${phone}`;
-    const link = [l.github, l.linkedin, l.portfolio, l.website].find((x) => x && x.trim());
-    return [phone, (c.email || '').trim(), shortUrl(link)].filter(Boolean);
+    const link = [l.github, l.linkedin, l.portfolio, l.website].map(profileLink).find(Boolean);
+    return [phoneOf(c), (c.email || '').trim(), link].filter(Boolean);
   }
 
   function fullName(profile) {
@@ -277,7 +359,7 @@
     const c = String(company || '').trim();
     if (!c) return [];
     const SUFFIX =
-      /[,\s]+(plc|llc|l\.l\.c\.|ltd\.?|limited|inc\.?|incorporated|corp\.?|corporation|gmbh|ag|s\.?a\.?|llp|lp|group|holdings|& co\.?|and company|co\.)$/i;
+      /[,\s]+(plc|llc|l\.l\.c\.|ltd\.?|limited|inc\.?|incorporated|corp\.?|corporation|gmbh|ag|s\.?a\.?|llp|l\.?p\.?|b\.?v\.?|n\.?v\.?|group|holdings|& co\.?|and company|co\.)$/i;
     let base = c;
     while (SUFFIX.test(base)) base = base.replace(SUFFIX, '').trim();
     return [...new Set([c, base].filter(Boolean))];
@@ -1437,6 +1519,8 @@
     numbers,
     formatDate,
     contactLine,
+    profileLink,
+    phoneOf,
     fullName,
     materials,
     STORY,
