@@ -988,10 +988,10 @@
     return false;
   }
 
-  // The reader's job told to them as the reason to write: "because you run campus recruiting", "as you're a quant",
-  // "your role as Head of Talent" (not "as you're an alum", which is common ground).
+  // The reader's job told to them as the reason to write: "because you run campus recruiting", "since you recruit
+  // students from campus", "as you're a quant", "your role as Head of Talent" (not "as you're an alum": common ground).
   const READ_BACK =
-    /\b(?:because|since|as)\s+you(?:’re|'re|\s+are)?\s+(?:(?:the|an?)\s+(?:[\p{L}-]+\s+)?(?:head|lead|director|manager|recruiter|analyst|engineer|developer|trader|researcher|scientist|quant|partner|founder|associate|cto|ceo|coo|vp)\b|run|lead|head|manage|oversee|look after|work (?:as|in|on)\b)|\byour (?:role|position|job) as\b/iu;
+    /\b(?:because|since|as)\s+you(?:’re|'re|\s+are)?\s+(?:(?:the|an?)\s+(?:[\p{L}-]+\s+)?(?:head|lead|director|manager|recruiter|analyst|engineer|developer|trader|researcher|scientist|quant|partner|founder|associate|cto|ceo|coo|vp)\b|run|lead|head|manage|oversee|look after|recruit|hire|work (?:as|in|on)\b)|\byour (?:role|position|job) as\b/iu;
 
   /** Does the opening say why it's written to this reader: a word of their title, or "your role", "your work"? */
   function aboutRole(lead, title) {
@@ -1226,7 +1226,7 @@
       'Don’t tell the reader what their own firm is or does (“Acme is a …”): they work there. Say who the candidate is and why they’re writing to this reader',
     );
     const r = ctx.reader || {};
-    if (r.person && r.title && !ctx.hook && !ctx.reply)
+    if (r.person && r.title && !r.recruiter && !ctx.hook && !ctx.reply)
       add(
         aboutRole(lead, r.title),
         `Says why to ${r.name || 'them'}`,
@@ -1579,7 +1579,7 @@
 
   // How the candidate writes, the same for a draft and a follow-up.
   const VOICE =
-    'Write as the candidate, in the first person: plain sentences of varied length, joined where the ideas belong together; contractions are fine (I’m, I’d); no more than three sentences start with “I”; no flattery, no filler, nothing a careers-service template would say.';
+    'Write as the candidate, in the first person: plain sentences of varied length, joined where the ideas belong together; contractions are fine (I’m, I’d); no more than three sentences start with “I”, and none starts with a phrase put first only to avoid it (“In Python, I wrote …”, “As a student, I read your post …”); no flattery, no filler, nothing a careers-service template would say.';
   // What a model adds that the material never said: "most of my work is in Python", "which gave me a real taste of live
   // markets", "which is what led me to your fund".
   const NO_STORY =
@@ -1591,14 +1591,18 @@
   function whyLine(o) {
     const never =
       'Never tell the reader what their own firm is, does, where its offices are or how big it is (not “Acme is a …”, not “… with an office in London, where I live”): they work there. Don’t explain why the candidate likes the industry in general.';
+    // A recruiter's job is the reason to write to them: told it back ("since you recruit students from campus"), they
+    // read a mail merge, so the opening says who is writing and what they ask, as the best student emails do.
+    if (o.reader && o.reader.person && o.reader.recruiter)
+      return `1. Who and what, in one or two sentences: who the candidate is (as STAGE gives it, with degree and university) and what they’re writing about (the question paragraph 3 asks, in a few words). Their job is reason enough to write to them: don’t explain why you chose them or describe their job back to them. ${never} ${NO_FLATTERY}`;
     if (o.reader && o.reader.person && o.reader.title)
-      return `1. Who and why, in one or two sentences: who the candidate is (as STAGE gives it, with degree and university) and why you’re writing to this person: tie something the candidate did or likes in CANDIDATE MATERIAL to the reader’s kind of work, named in plain words (for “${o.reader.title}”, the work it stands for, not the title). Never read their title and firm back to them (“because of your role as … at …”, “because you’re a …”). Don’t claim to know their team, desk or work, and don’t state ambitions or preferences CANDIDATE MATERIAL doesn’t give. ${never} ${NO_FLATTERY}`;
+      return `1. Who and why, in one or two sentences: who the candidate is (as STAGE gives it, with degree and university) and why you’re writing to this person: tie something the candidate did or likes in CANDIDATE MATERIAL to the reader’s kind of work, named in plain words (for “${o.reader.title}”, the work it stands for, not the title). Never read their title and firm back to them (“because of your role as … at …”, “because you’re a …”). Don’t claim to know their team, desk or work, and don’t state ambitions or preferences CANDIDATE MATERIAL doesn’t give; what the candidate likes goes in only when it is about this reader’s kind of work (markets are a trader’s, not a banker’s who advises on deals). ${never} ${NO_FLATTERY}`;
     return `1. Who and why, in one or two sentences: who the candidate is (as STAGE gives it, with degree and university) and why this firm: tie one fact from FIRM FACTS (what it works on, a programme it runs) to something the candidate did or wrote in CANDIDATE MATERIAL, told from the candidate’s side, in passing. ${never} ${NO_FLATTERY}`;
   }
 
   /** Paragraph 1 with a reason to write: retold as one person tells another, never recited. */
   function hookLine1(o) {
-    return `1. Why you’re writing: open with the reason to write in FIRM FACTS, retold the way one person tells another, in the candidate’s own voice and never claiming more than its quote says. Don’t recite it: no more than five words in a row from its quote; no years, degree titles or job titles copied from a profile; never “I saw on LinkedIn that you …”. For common ground with the reader, say in the first sentence who the candidate is and what they share (“I’m a final-year Economics student at UCL, where you studied too”); the short name the university goes by is fine. If it is about someone other than the person you’re writing to (FIRM FACTS says whom), name them as the reader’s colleague (“your colleague Ben Hall’s talk”) without their job title or firm, and don’t write “you” or “your” for the work itself. Call a piece the reader’s own only if FIRM FACTS says they wrote it, and never imply the candidate attended an event or met anyone. Keep the quote’s own words for what the thing does (if it “reconciles” trades, it doesn’t “clear” them). The quote’s names and numbers belong in this paragraph only. Then, in one sentence, what in it interests the candidate, from CANDIDATE MATERIAL; never call the candidate’s own work “close to”, “similar to” or “the same kind of” thing unless the material describes the same task. Mention common ground once. ${NO_FLATTERY}`;
+    return `1. Why you’re writing: open with the reason to write in FIRM FACTS, retold the way one person tells another, in the candidate’s own voice and never claiming more than its quote says. Don’t recite it: no more than five words in a row from its quote; no years, degree titles or job titles copied from a profile; never “I saw on LinkedIn that you …”. For common ground with the reader, say in the first sentence who the candidate is and what they share (“I’m a final-year Economics student at UCL, where you studied too”); the short name the university goes by is fine. If it is about someone other than the person you’re writing to (FIRM FACTS says whom), name them as the reader’s colleague (“your colleague Ben Hall’s talk”) without their job title or firm, and don’t write “you” or “your” for the work itself. Call a piece the reader’s own only if FIRM FACTS says they wrote it, and never imply the candidate attended an event or met anyone. Keep the quote’s own words for what the thing does (if it “reconciles” trades, it doesn’t “clear” them). The quote’s names and numbers belong in this paragraph only. Then, in one sentence, what in it interests the candidate; tie it to something in CANDIDATE MATERIAL only when that is the same kind of work, and never with a made-up “because” or “as” (not “as I code in Python and SQL”, not “because I built a sentiment script” for a post on matching trades); never call the candidate’s own work “close to”, “similar to” or “the same kind of” thing unless the material describes the same task. Mention common ground once. ${NO_FLATTERY}`;
   }
 
   const EVIDENCE =

@@ -106,8 +106,8 @@ test('outreach: without a hook or an ask, draft()’s messages are byte for byte
     assert.equal(seen.length, 2);
     return sha(seen.join('\n=====\n'));
   };
-  const GB = '39609bbb12bea50a4200a76137d7406f83a9f380a6666dcac5520359fd30dea0';
-  const US = '9b8894abd1d92a39c8e38efffb82ade948598d0039f7b7257edc1d6fc5358b1c';
+  const GB = '9604809cb6a56ab52f9ceac8b4357bc32a006fc0efa40912d65e7c5a48ce3fb6';
+  const US = '9b95564fd5560a750a449754adcfd1835d6a2d888f7f63b9ed93f45a98ccbaeb';
   const us = { ...firm, country: 'US' };
   for (const extra of [{}, { ask: 'internship', hook: null }, { ask: 'anything', hook: {} }]) {
     assert.equal(
@@ -612,6 +612,36 @@ test('outreach: the greeting is the one a person would write, by reader, firm an
   assert.equal(O.greetingFor({ kind: 'general' }, firm), 'Hello,');
 });
 
+test('outreach: a recruiter is told who is writing and what about; anyone else, why them', async () => {
+  const quant = { address: 'tom.reed@acme.com', name: 'Tom Reed', title: 'Quantitative Analyst', kind: 'person' };
+  // An opening that gives no reason to write to this reader.
+  const plain = {
+    ...good,
+    body: good.body.replace('says your team hires', 'mentions').replace('to work alongside', 'who work alongside'),
+  };
+  const run = async (contact) => {
+    const { chat, calls } = scripted([plain, plain]);
+    const r = await O.draft(chat, { firm, found, contact, profile, kit, cvText, today });
+    return { system: calls[0].messages[0].content, failed: failed(r) };
+  };
+  // Their job is the reason to write to a recruiter: no reason to give, and none of their job told back to them.
+  const talent = await run(jane);
+  assert.match(
+    talent.system,
+    /^1\. Who and what, in one or two sentences: .* Their job is reason enough to write to them/m,
+  );
+  assert.ok(!talent.failed.some((w) => /Say why you’re writing to this person/.test(w)));
+  // A quant gets the candidate's work tied to theirs, and an opening without it goes back.
+  const analyst = await run(quant);
+  assert.match(
+    analyst.system,
+    /^1\. Who and why, .* \(for “Quantitative Analyst”, the work it stands for, not the title\)/m,
+  );
+  assert.ok(
+    analyst.failed.some((w) => /^Say why you’re writing to this person: their role \(Quantitative Analyst\)/.test(w)),
+  );
+});
+
 test('outreach: displayName() gives the firm as a sentence names it', () => {
   assert.equal(O.displayName('Lansdowne Partners (UK) LLP'), 'Lansdowne Partners');
   assert.equal(O.displayName('The Baupost Group, L.L.C.'), 'Baupost Group');
@@ -720,6 +750,8 @@ test('outreach: links, the tool, a CV that isn’t attached and the reader’s o
   // "I'm writing to you because you run campus recruiting": their own job told to them.
   const told = `As you run hiring for the interns, ${p1[0].toLowerCase()}${p1.slice(1)}`;
   assert.match(await fails([told, p2, p3].join('\n\n')), /^Don’t tell the reader their own job/m);
+  const since = `Since you recruit students from campus, ${p1[0].toLowerCase()}${p1.slice(1)}`;
+  assert.match(await fails([since, p2, p3].join('\n\n')), /^Don’t tell the reader their own job/m);
   const alum = `As you are an alum of Leeds too, ${p1[0].toLowerCase()}${p1.slice(1)}`;
   assert.doesNotMatch(await fails([alum, p2, p3].join('\n\n')), /own job/, 'common ground is no job');
   // Four sentences in a row that start with "I", and a list of placements.
