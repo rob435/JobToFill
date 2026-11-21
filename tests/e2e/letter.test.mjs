@@ -57,6 +57,8 @@ function mockAi() {
   const fail = { status: 0 };
   // Set `gate.letter` to a promise to hold the cover letter's reply until it settles.
   const gate = { letter: null };
+  // Set `judge.posting` to false to have the model call the posting no job description.
+  const judge = { posting: true };
   let drafts = 0;
   const server = http.createServer((req, res) => {
     let body = '';
@@ -78,6 +80,7 @@ function mockAi() {
           location: 'London',
           keywords: ['reconcile trades', 'breaks', 'Python', 'data quality', 'VBA'],
           requirements: ['Python or SQL'],
+          isPosting: judge.posting,
         };
       else if (/write job application cover letters/.test(system)) {
         if (gate.letter) await gate.letter;
@@ -97,7 +100,7 @@ function mockAi() {
       );
     });
   });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, calls, fail, gate })));
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, calls, fail, gate, judge })));
 }
 
 async function cvPdf() {
@@ -330,6 +333,48 @@ test('studio: an edit made just before the studio is closed is kept, and its PDF
   assert.notEqual(fresh.pdf.dataUrl, before.pdf.dataUrl);
   await studio.close();
   await apply.close();
+});
+
+test('studio: a posting that says little is written for anyway, with the employer’s own page read beside it', async () => {
+  const page = await h.open('letters/thin-posting.html');
+  // The model calls three sentences about the firm "not a job description": the page's own posting is one anyway.
+  ai.judge.posting = false;
+  const from = ai.calls.length;
+  const studio = await h.extPage(`studio/studio.html?tab=${await h.tabId(page)}`);
+  try {
+    await until(
+      studio.call,
+      () => !document.querySelector('#editor').hidden || !document.querySelector('#error').hidden,
+      null,
+      30000,
+    );
+    assert.equal(await studio.call(() => document.querySelector('#error').hidden), true);
+    const card = await studio.call(() => ({
+      title: document.querySelector('.job-title').textContent,
+      more: document.querySelector('.job-more') && document.querySelector('.job-more').textContent,
+      link: document.querySelector('.job-more a') && document.querySelector('.job-more a').href,
+      web: document.querySelector('#job-web').hidden,
+    }));
+    assert.equal(card.title, 'Intern, London');
+    assert.match(card.more, /The posting says little about the work \(\d+ words\), so the letter also draws on:/);
+    assert.match(card.more, /Early careers \| Acme Capital/);
+    assert.match(card.link, /letters\/early-careers\.html$/);
+    assert.equal(card.web, true, 'the custom provider can’t search the web: no button');
+    // The model read the early-careers page beside the posting, and so did the letter's writer.
+    const mine = ai.calls.slice(from);
+    const analyse = mine.find((c) => /extract facts from a job posting/.test(c.json.messages[0].content));
+    assert.match(
+      analyse.json.messages[1].content,
+      /MORE ABOUT THE JOB[\s\S]*Our internships put students in a deal team/,
+    );
+    const letter = mine.find((c) => /write job application cover letters/.test(c.json.messages[0].content));
+    assert.match(letter.json.messages[0].content, /use only what the JOB POSTING and MORE ABOUT THE JOB say/);
+    assert.match(letter.json.messages[1].content, /MORE ABOUT THE JOB/);
+  } finally {
+    ai.judge.posting = true;
+    await studio.close();
+    await page.close();
+  }
 });
 
 test('studio: a job that cannot be found asks for the description', async () => {

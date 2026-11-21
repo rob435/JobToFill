@@ -71,6 +71,17 @@ function fileName(kind, ext = 'pdf') {
 async function chat(messages, options = {}) {
   const signal = options.signal || (state.controller && state.controller.signal);
   const r = await ai.chat(state.config, { ...options, messages, signal });
+  return counted(r);
+}
+
+/** The AI's web search (ai.search), for a job that can't be found or says little, counted like chat(). */
+async function search(messages, options = {}) {
+  const signal = options.signal || (state.controller && state.controller.signal);
+  return counted(await ai.search(state.config, { ...options, messages, signal }));
+}
+
+/** A reply's cost added to the running total in the top bar. */
+function counted(r) {
   // OpenRouter and Claude report the cost; DeepSeek's own API only the tokens.
   if (r.usage && typeof r.usage.cost === 'number') state.cost += r.usage.cost;
   else if (r.usage && r.usage.total_tokens) state.tokens += r.usage.total_tokens;
@@ -265,10 +276,14 @@ async function findJob() {
   state.context = context;
 
   const useHistory = state.settings.searchHistory && (await historyAllowed());
+  const visited = [];
   const found = await jobpage.find(context, {
     fetch: safeFetch,
     historySearch: useHistory ? (q) => api.history.search(q) : null,
+    onHistory: (items) => visited.push(...items),
     now: Date.now(),
+    // The pages read beside a posting that says little come last, once the posting itself is settled (below).
+    related: false,
   });
 
   // Pages built entirely by scripts come back empty when fetched, and some sites block or throttle
@@ -313,6 +328,12 @@ async function findJob() {
     });
   }
 
+  // Still nothing: the AI's web search, when it is switched on (else the job card offers it as a button).
+  if ((!found.posting || found.verdict === 'different') && state.settings.jobWebSearch && ai.canSearch(state.config))
+    await searchOnline(found).catch((err) =>
+      found.tried.push({ url: 'web search', outcome: `failed: ${err.message}` }),
+    );
+
   // Unsure? A quick second opinion from the model before writing a letter for the wrong job.
   if (found.posting && found.verdict === 'unsure') {
     try {
@@ -327,8 +348,127 @@ async function findJob() {
       /* keep "unsure" */
     }
   }
+  // A posting that says little about the work (3i's "Please register your interest… by clicking Apply"): the same
+  // programme's postings for other offices and the employer's own pages are read beside it.
+  if (found.posting && found.verdict !== 'different' && jobpage.thin(found.posting.description)) {
+    const site = await firmSite(found.posting.company || context.company);
+    const more = await jobpage
+      .related(context, found.posting, { fetch: safeFetch, items: visited, site })
+      .catch(() => ({ extra: [], tried: [] }));
+    found.tried.push(...more.tried);
+    found.extra = more.extra;
+    found.posting = { ...found.posting, thin: true, related: more.extra };
+    if (!more.extra.length && state.settings.jobWebSearch && ai.canSearch(state.config))
+      await searchOnline(found).catch((err) =>
+        found.tried.push({ url: 'web search', outcome: `failed: ${err.message}` }),
+      );
+  }
   state.job = found;
   return found;
+}
+
+let firms = null;
+
+/** The employer's website, from Discover's registry ("3i" → https://www.3i.com), or ''. */
+async function firmSite(company) {
+  const key = (s) =>
+    util
+      .normalize(s)
+      .replace(/\b(the|plc|ltd|limited|llp|llc|lp|inc|group|holdings?|co|company|corp|corporation|gmbh|ag|sa)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  const want = key(company);
+  if (!want) return '';
+  try {
+    if (!firms)
+      firms = fetch(api.runtime.getURL('data/firms.json'))
+        .then((r) => r.json())
+        .then((j) => (j && j.firms) || []);
+    const list = await firms;
+    const hit = list.find((f) => key(f.n) === want) || list.find((f) => (f.a || []).some((a) => key(a) === want));
+    return hit ? hit.s || (hit.d ? `https://${hit.d}` : '') : '';
+  } catch (err) {
+    firms = null;
+    return '';
+  }
+}
+
+/**
+ * The AI's web search for the job (letter.findOnline): with no posting, a page it found that is this job; with a
+ * posting that says little, pages about the same programme, read beside it. Each page is read here, from the job
+ * site itself; the search's own reading of it stands in only when the site won't load here.
+ */
+async function searchOnline(found) {
+  const context = state.context || {};
+  const thinPosting = !!found.posting && found.verdict !== 'different';
+  const r = await L.findOnline(search, { context, posting: thinPosting ? found.posting : null });
+  found.searched = true;
+  if (!r.pages.length) found.tried.push({ url: 'web search', outcome: 'the web search found nothing about this job' });
+  const extra = thinPosting ? [...(found.extra || [])] : [];
+  const seen = (text) => {
+    const head = String(text).replace(/\s+/g, ' ').slice(0, 300);
+    return [found.posting ? found.posting.description : '', ...extra.map((x) => x.text)].some((t) =>
+      String(t).replace(/\s+/g, ' ').includes(head),
+    );
+  };
+  for (const page of r.pages) {
+    const got = await jobpage.readPage(page.url, context, { fetch: safeFetch }).catch(() => null);
+    const note = (outcome) => found.tried.push({ url: page.url, outcome: `found by a web search: ${outcome}` });
+    if (!found.posting || found.verdict === 'different') {
+      // A page that is this job (or, read only by the search, one whose text is a real advert under its title).
+      const p =
+        (got && got.posting) ||
+        (!got && L.words(page.text) >= 120 && !jobpage.thin(page.text)
+          ? {
+              url: page.url,
+              title: page.title,
+              company: context.company || '',
+              location: context.location || '',
+              description: page.text,
+              jobIds: [],
+              source: 'web-search',
+            }
+          : null);
+      const cmp = p && jobpage.compare(context, p);
+      note(cmp ? `${cmp.verdict} (${p.title || 'untitled'})` : got ? 'not a job posting' : 'couldn’t load it');
+      // (A law firm's programme page is its posting; another office's posting never is this job's.)
+      if (p && cmp.verdict !== 'different' && page.kind !== 'other-office') {
+        Object.assign(found, {
+          posting: p,
+          verdict: cmp.verdict === 'same' ? 'same' : 'unsure',
+          reasons: [...cmp.reasons, 'found by a web search'],
+          source: page.url,
+        });
+      }
+      continue;
+    }
+    const text =
+      (got && got.posting && !jobpage.thin(got.posting.description) ? got.posting.description : got && got.text) ||
+      page.text;
+    if (L.words(text) < 80 || seen(text) || extra.length >= 3) {
+      note('nothing new');
+      continue;
+    }
+    extra.push({
+      url: page.url,
+      title: page.title || (got && got.posting && got.posting.title) || page.url,
+      text: L.clip(text, 9000),
+      kind: 'web',
+      reason: page.why || 'found by a web search',
+    });
+    note(`read (${L.words(text)} words)`);
+  }
+  if (thinPosting && extra.length) {
+    found.extra = extra;
+    found.posting = { ...found.posting, thin: true, related: extra };
+  }
+}
+
+/** A job the AI may call "not a posting" but that is one: the job board's own data for this job, or the person's paste. */
+function trustedPosting(job) {
+  if (!job || !job.posting) return false;
+  if (job.verdict === 'pasted' && job.posting.source !== 'page-text') return true;
+  return ['same', 'likely'].includes(job.verdict) && !['page-text', 'web-search'].includes(job.posting.source || '');
 }
 
 const VERDICTS = {
@@ -343,8 +483,13 @@ function renderJob() {
   const job = state.job;
   const body = $('#job-body');
   const verdict = $('#job-verdict');
-  $('#job-history').hidden = !!(job && job.posting && job.verdict !== 'different') || !!state.settings.searchHistory;
+  // History and the AI's web search, offered for a job not found or one whose posting says little (and nothing more
+  // was found): history may hold the job's page, or the employer's own page about the programme.
+  const wanting =
+    !job || !job.posting || job.verdict === 'different' || (job.posting.thin && !(job.extra || []).length);
+  $('#job-history').hidden = !wanting || !!state.settings.searchHistory;
   $('#job-change').hidden = !job || !job.posting;
+  $('#job-web').hidden = tabId == null || !wanting || !!(job && job.searched) || !ai.canSearch(state.config || {});
   if (!job || !job.posting) {
     verdict.hidden = true;
     body.replaceChildren(
@@ -392,11 +537,50 @@ function renderJob() {
           )
         : null,
       el('div', { className: 'job-desc', textContent: p.description }),
+      p.thin ? moreAboutJob(job) : null,
     );
   }
   const tried = (job && job.tried) || [];
   $('#job-tried').hidden = !tried.length;
   $('#job-tried-list').replaceChildren(...tried.map((t) => el('li', { textContent: `${t.url} — ${t.outcome}` })));
+}
+
+/** For a posting that says little about the work: what else was read about the job, or that nothing was. */
+function moreAboutJob(job) {
+  const extra = job.extra || [];
+  const n = L.words(job.posting.description);
+  if (!extra.length)
+    return el('p', {
+      className: 'small warn-text',
+      textContent: `The posting says little about the work (${n} words), and nothing more about it was found, so the letter can only draw on what it says.`,
+    });
+  const host = (url) => {
+    try {
+      return new URL(url).hostname.replace(/^www\./, '');
+    } catch (err) {
+      return '';
+    }
+  };
+  return el(
+    'div',
+    { className: 'job-more' },
+    el('p', {
+      className: 'small',
+      textContent: `The posting says little about the work (${n} words), so the letter also draws on:`,
+    }),
+    el(
+      'ul',
+      { className: 'reasons' },
+      extra.map((x) =>
+        el(
+          'li',
+          {},
+          el('a', { href: x.url, target: '_blank', rel: 'noopener', textContent: x.title || host(x.url) }),
+          ` · ${host(x.url)} · ${L.words(x.text)} words: ${x.reason}`,
+        ),
+      ),
+    ),
+  );
 }
 
 /** Say what's wrong with what was pasted, under the box (not in a dialog that hides the page). */
@@ -546,6 +730,7 @@ function checkContext() {
       posting.company,
       posting.location,
       JSON.stringify(state.analysis),
+      L.relatedBlock(posting),
     ].join('\n'),
     samples: state.kit.samples || [],
     today: Date.now(),
@@ -1073,6 +1258,9 @@ async function run(from = 'job') {
       current = 'analyse';
       step('analyse', 'active');
       state.analysis = await L.analyse(chat, state.job.posting, state.context, { signal });
+      // The job board's own posting for this job is one, however little it says (3i's "Intern, London" is three
+      // sentences about the firm): the model's doubt is for text read off a page.
+      if (!state.analysis.isPosting && trustedPosting(state.job)) state.analysis.isPosting = true;
       // The page the finder settled on may not be a job description at all (a privacy notice, a job list).
       if (!state.analysis.isPosting) {
         step('analyse', 'warn', 'that page isn’t a job description');
@@ -1241,6 +1429,7 @@ async function quickApply() {
     current = 'analyse';
     await phase('analyse', 'reading the job…');
     state.analysis = await L.analyse(chat, state.job.posting, state.context, { signal });
+    if (!state.analysis.isPosting && trustedPosting(state.job)) state.analysis.isPosting = true;
     if (!state.analysis.isPosting && state.job.posting.source !== 'page-text' && useApplicationPage(state.job.tried))
       state.analysis = await L.analyse(chat, state.job.posting, state.context, { signal });
     if (!state.analysis.isPosting)
@@ -1410,6 +1599,31 @@ async function boot() {
     manualError('');
   };
   $('#job-manual-use').onclick = () => useManual().catch((err) => manualError(err.message));
+  $('#job-web').onclick = async () => {
+    const button = $('#job-web');
+    button.disabled = true;
+    button.textContent = 'Searching the web…';
+    const before = !!(state.job && state.job.posting && state.job.verdict !== 'different');
+    try {
+      await searchOnline(state.job);
+    } catch (err) {
+      state.job.tried.push({ url: 'web search', outcome: `failed: ${err.message}` });
+      state.job.searched = true;
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Search the web for it';
+    }
+    // A job found now is checked as any other; a posting with more read beside it is written for again.
+    if (!before && state.job.posting && state.job.verdict === 'unsure') {
+      const second = await L.sameJob(chat, state.context, state.job.posting).catch(() => null);
+      if (second && second.confidence >= 0.7) state.job.verdict = second.same ? 'likely' : 'different';
+    }
+    renderJob();
+    if (state.job.posting && state.job.verdict !== 'different' && (!before || (state.job.extra || []).length)) {
+      $('#job-manual').hidden = true;
+      run('cv');
+    }
+  };
   $('#job-history').onclick = async () => {
     // Asked straight from the click, as browsers require for permission prompts.
     const granted = await api.permissions.request({ permissions: ['history'] }).catch(() => false);

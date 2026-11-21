@@ -169,6 +169,13 @@ main {
   border-radius: 8px;
   padding: 8px 10px;
 }
+.job-more p,
+.warn-text {
+  margin: 8px 0 4px;
+}
+.warn-text {
+  color: var(--warn);
+}
 .reasons {
   margin: 0;
   padding-left: 18px;

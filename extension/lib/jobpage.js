@@ -14,14 +14,22 @@
  *   historyQuery(context, now?)   → [{ text, startTime, maxResults }] for chrome.history.search
  *   rankHistory(context, items)   → candidates from history items { url, title, lastVisitTime, visitCount }
  *   compare(context, posting)     → { score: 0..1, verdict: 'same'|'different'|'unsure', reasons: [] }
- *   find(context, { fetch, historySearch, now, budget, timeout })
+ *   find(context, { fetch, historySearch, now, budget, timeout, trackrTimeout, related, site, onHistory })
  *                                 → Promise<{ posting, verdict, reasons, source, tried: [{ url, outcome }], hint? }>
  *                                   hint: { source: 'Trackr', company, programme, deadline, … } when the user came
  *                                   from Trackr (a hint for matching, never the description)
  *   trackrHint(context, items)    → { region, industry, season, type, links } | null  (referrer, trail, history)
+ *   thin(text)                    → does a posting say little about the work (3i's "register your interest…")?
+ *   related(context, posting, { fetch, items, site, timeout })
+ *                                 → Promise<{ extra: [{ url, title, text, kind: 'sibling'|'employer', reason }], tried }>
+ *                                   the same programme's postings for other offices, and the employer's own pages;
+ *                                   find() adds them as `extra` (and posting.thin) unless opts.related is false
+ *   readPage(url, context, { fetch }) → Promise<{ url, posting, cmp, text }>  one page (a web search's find)
  *
  * context may also carry trail: [{ url, title, at }] — this tab's earlier pages, newest first — and embeds
- * (job boards embedded in the page); candidates(context, now) uses both.
+ * (job boards embedded in the page); candidates(context, now) uses both. applicationContext also gives siteLinks (the
+ * employer's own careers and programme pages the page links to) and listed (on a page that is no one job, the jobs it
+ * links to: the one its search, its address or Trackr's programme names is followed).
  *
  * A posting is { url, title, company, location, jobIds, description, source, ats, datePosted,
  * employmentType, confidence }; description is plain text with blank-line paragraphs and "• " bullets.
@@ -516,6 +524,20 @@
       return set('tal.net', host.split('.')[0].replace(/campus$|careers$/, ''), id, stage);
     }
 
+    // PageUp: careersmanager.pageuppeople.com/{client}/{portal}/{lang}/job/{id}/{slug}; apply:
+    // secure.dc{n}.pageuppeople.com/apply/{client}/gateway/default.aspx?c=apply&lJobID={id} (Mercedes AMG HPP)
+    if (/(^|\.)pageuppeople\.com$/.test(host)) {
+      const j = lower.indexOf('job');
+      if (j > 0 && /^\d+$/.test(parts[j + 1] || ''))
+        return set('pageup', null, parts[j + 1], 'description', { client: parts[0], portal: parts[1] });
+      const id = (queryPairs(u).find(([k]) => /^l?jobid$/i.test(k)) || [])[1];
+      if (lower[0] === 'apply' && /^\d+$/.test(parts[1] || ''))
+        return set('pageup', null, /^\d+$/.test(id || '') ? id : null, id ? 'application' : 'unknown', {
+          client: parts[1],
+        });
+      return set('pageup', null, null, 'unknown');
+    }
+
     // Sainoo: (www|{co}).sainoo.com/jobs/{id}[/apply] (France)
     if (/(^|\.)sainoo\.com$/.test(host) && lower[0] === 'jobs' && /^\d+$/.test(parts[1] || '')) {
       const co = host.split('.')[0];
@@ -651,11 +673,14 @@
       /^([a-z0-9-]+)\.(?:grad\.allhires\.com|(?:app|hr)\.candidats\.io|ambertrack\.co\.uk|vacancy-filler\.co\.uk|apply4law\.com|current-vacancies\.com|careers\.hibob\.com|zohorecruit\.(?:com|eu)|bc\.direct|talentview\.io|jobs\.50skills\.com|easyapply\.co)$/,
     );
     if (tenant && !/^(app|www|jobs|careers|apply)$/.test(tenant[1])) out.company = tenant[1].replace(/^app-/, '');
-    // (Greencore's "/early-careers/early-careers-apply/" too.)
+    // (Greencore's "/early-careers/early-careers-apply/" too; but not a section named "apply" that the job's own page
+    // sits under: Standard Bank's "/careers/apply/jobs/view-all-jobs/job-detail?jobID=…".)
+    const step = path.match(
+      /\/(apply|application|applications|apply-now|candidate|new_candidate|new-candidate|register|login|signin|signup|sign-up|easyapply|[\w-]+-apply)(\/|$)/,
+    );
     if (
-      /\/(apply|application|applications|apply-now|candidate|new_candidate|new-candidate|register|login|signin|signup|sign-up|easyapply|[\w-]+-apply)(\/|$)/.test(
-        path,
-      )
+      step &&
+      !/\/(job-?details?|jobdetail|job-?description|vacancy-?details?)(\/|$)/.test(path.slice(step.index + 1))
     )
       out.stage = 'application';
     else if (out.jobId && /job|career|position|vacanc|opening|posting|opportunit|role/.test(path))
@@ -699,7 +724,8 @@
     // The same names in another case ("ReqId=751069" on SAP's easy-apply pages).
     for (const [k, v] of queryPairs(u))
       if (
-        /^(job_?id|req_?id|requisition_?id|posting_?id|vacancy_?id|position_?id|opportunity_?id)$/i.test(k) &&
+        // (With a type letter in front too: PageUp's "lJobID=498332".)
+        /^[lns]?(job_?id|req_?id|requisition_?id|posting_?id|vacancy_?id|position_?id|opportunity_?id)$/i.test(k) &&
         v &&
         /\d/.test(v) &&
         v.length <= 40
@@ -834,6 +860,10 @@
           add(`${u.origin}/job/${a.jobId}/`, 'the job page');
         break;
       }
+      case 'pageup':
+        if (a.stage === 'application' && a.jobId && a.client)
+          add(`https://careersmanager.pageuppeople.com/${a.client}/cw/en/job/${a.jobId}`, 'the PageUp job page');
+        break;
       case 'taleo':
         if (a.stage === 'application' && a.jobId)
           add(u.href.replace(/jobapply\.ftl/i, 'jobdetail.ftl').replace(/#.*$/, ''), 'the Taleo job page');
@@ -1712,6 +1742,16 @@
     for (const el of qa(clone, JUNK_SELECTOR)) {
       if (el.tagName === 'FORM' && (!q(el, 'input:not([type="hidden"]), select, textarea, button') || q(el, 'h1')))
         continue;
+      // Nor one around a page's prose: PageUp puts its search filters and the whole advert in one form.
+      if (
+        el.tagName === 'FORM' &&
+        words(
+          qa(el, 'p, li')
+            .map((x) => x.textContent || '')
+            .join(' '),
+        ) >= 150
+      )
+        continue;
       if (
         el.hasAttribute('hidden') &&
         /^(DIV|SECTION|P|UL|OL|SPAN|DD|ARTICLE)$/i.test(el.tagName) &&
@@ -1722,7 +1762,22 @@
         continue;
       el.remove();
     }
-    for (const el of qa(clone, '[class],[id],[aria-label]')) if (junkName(el)) el.remove();
+    // Screen-reader anchors named like their section ("About-the-Programme" above "About the Programme").
+    for (const el of qa(clone, '.visually-hidden, .sr-only, .screen-reader-text'))
+      if (!/\s/.test(clean(el.textContent, 120))) el.remove();
+    // (Not a wrapper around the page itself, Sullivan & Cromwell's whole page in a div.nav-wrapper, nor a block of
+    // prose under a widget's name: Willkie's programme text is in country tabs, div.filter-tabbing > div.filter-data.)
+    const prose = (el) => {
+      const text = qa(el, 'p, li')
+        .map((x) => x.textContent || '')
+        .join(' ');
+      const links = qa(el, 'a')
+        .map((a) => a.textContent || '')
+        .join(' ');
+      return words(text) >= 150 && links.length < 0.3 * text.length;
+    };
+    for (const el of qa(clone, '[class],[id],[aria-label]'))
+      if (junkName(el) && (consentLike(el) || !(q(el, 'main, [role="main"], article, h1') || prose(el)))) el.remove();
     const scores = new Map();
     const bump = (el, v) => {
       if (el && el.nodeType === 1) scores.set(el, (scores.get(el) || 0) + v);
@@ -1829,7 +1884,7 @@
 
   function cleanCompany(s) {
     if (
-      /^\s*(false|true|null|undefined|none|n\/a|company( name| logo)?|your company|logo|brand|site name|home|careers?|jobs?|log ?in|sign ?in|apply|greenhouse|lever|workday|ashby|smartrecruiters|workable|icims|taleo|successfactors|oracle|avature|eightfold|phenom|jobvite|recruitee|personio|teamtailor|bamboohr|pinpoint|breezy|allhires|candidats|ambertrack|vacancy filler|apply4law|oleeo|cezanne|eploy|tribepad|hireful|jobtrain|networx|webitrent|hibob|zoho recruit|50skills|kernel( ats)?|general data protection regulation( \(gdpr\))?|gdpr|cloudflare|privacy( policy| notice)?|cookies?( policy)?)\s*$/i.test(
+      /^\s*(false|true|null|undefined|none|n\/a|company( name| logo)?|your company|logo|brand|site name|home|careers?|jobs?|log ?in|sign ?in|apply|greenhouse|lever|workday|ashby|smartrecruiters|workable|icims|taleo|successfactors|oracle|avature|eightfold|phenom|jobvite|recruitee|personio|teamtailor|bamboohr|pinpoint|breezy|allhires|candidats|ambertrack|vacancy filler|apply4law|oleeo|cezanne|eploy|tribepad|hireful|jobtrain|networx|webitrent|hibob|zoho recruit|50skills|kernel( ats)?|pageup( people)?|pageuppeople|general data protection regulation( \(gdpr\))?|gdpr|cloudflare|privacy( policy| notice)?|cookies?( policy)?)\s*$/i.test(
         String(s || ''),
       )
     )
@@ -1853,7 +1908,10 @@
       .replace(/[\s|–—:,-]+$/, '')
       // "Amazon." (not "Expedia, Inc." or "Acme Co.").
       .replace(/(?<!\b(inc|ltd|co|corp|plc|llc|llp|sa|ag|bv|nv|lp))\.$/i, '');
-    // A piece of the tab's title that is no firm: "JANUARY 2027", "2027 Start", "6-months", "Summer 2027".
+    // A piece of the tab's title that is no firm: "JANUARY 2027", "2027 Start", "6-months", "Summer 2027", nor a place
+    // ("Willkie | United Kingdom").
+    const place = U.tokens(out);
+    if (place.length && (place.every((t) => LOCATION_FILLER.has(t)) || CITIES.includes(place.join(' ')))) return '';
     return NOT_A_FIRM.test(out) ? '' : out;
   }
 
@@ -1921,6 +1979,10 @@
     // A heading the tab title holds whole, its dashes too ("Crédit Agricole CIB - 2027 Summer Internship - Distribution
     // & Asset Rotation" over the h1 "2027 Summer Internship - Distribution & Asset Rotation"): the title, and the rest
     // of the tab title names the company.
+    // The page's own heading is the tab title, dashes and all ("Internship - Buy-out Fund of Funds (Paris or London)"
+    // on Access Capital's page): all of it is the title, and none of it the company.
+    const same = headings.find((h) => /\s[|–—·•-]\s|::/.test(h) && norm(h) === norm(t) && words(h) >= 3);
+    if (same && !/\b(careers?|jobs)\b/i.test(same)) return { title: same, company: '' };
     const whole = headings.find(
       (h) => /\s[|–—·•-]\s|::/.test(h) && norm(t).includes(norm(h)) && norm(h) !== norm(t) && words(h) >= 3,
     );
@@ -2616,8 +2678,131 @@
       ...(posting ? posting.jobIds : []),
     ]).slice(0, 12);
     context.links = pageLinks(doc, pageUrl, context);
+    context.siteLinks = employerPageLinks(doc, pageUrl);
+    // On a page that is no one job (a board filtered by Trackr's link, Access Capital's "?annonce=" careers page): the
+    // jobs it links to, for picking the one named by the search, the address or Trackr's programme.
+    context.listed = context.posting && aboutJob(context) ? [] : listedJobs(doc, pageUrl);
     context.embeds = embeddedBoards(doc, pageUrl);
     return context;
+  }
+
+  /** Does a page's address or its board say it is one job (a job ID, a board's job page)? */
+  function aboutJob(ctx) {
+    const a = ctx.ats && 'stage' in ctx.ats ? ctx.ats : ats(ctx.url || '');
+    return (ctx.jobIds || []).length > 0 || a.stage !== 'unknown';
+  }
+
+  /** The links on a list of jobs that each go to one job: [{ url, text }], at most 80. */
+  function listedJobs(doc, url) {
+    const here = parseUrl(url);
+    const out = [];
+    const seen = new Set([urlKey(url)]);
+    for (const el of qa(doc, 'a[href]').slice(0, 4000)) {
+      const u = parseUrl(el.getAttribute('href') || '', url);
+      if (!u || !/^https?:$/.test(u.protocol)) continue;
+      const href = u.href.replace(/#.*$/, '');
+      const key = urlKey(href);
+      const text = clean(el.textContent || el.getAttribute('aria-label') || '', 160);
+      const n = words(text);
+      if (seen.has(key) || n < 1 || n > 16 || ACTION_LINK.test(href) || LOGIN_PAGE.test(u.pathname)) continue;
+      if (LIST_PAGE.test(u.pathname + u.search) || searchEngine(u) || SOCIAL_HOST.test(u.hostname)) continue;
+      const last = u.pathname.split('/').filter(Boolean).pop() || '';
+      const slugged = !!here && sameDomain(u.hostname, here.hostname) && /^[\p{L}\d]+([-_][\p{L}\d]+){2,}/u.test(last);
+      if (!looksLikeJobPage(href) && !ats(href).jobId && !slugged) continue;
+      seen.add(key);
+      out.push({ url: href, text });
+      if (out.length >= 80) break;
+    }
+    return out;
+  }
+
+  /** A list page's context for comparing a job it names: without its own title, and its company only if the site's. */
+  function namedContext(ctx) {
+    const label = siteLabel(ctx.url);
+    const company = ctx.company && label && companyMatch(ctx.company, label) === true ? ctx.company : '';
+    return { ...ctx, title: '', company };
+  }
+
+  /** What a list page's address names: its search ("?q=graduate+programme+2027") and a slug ("?annonce=internship-…"). */
+  function listNames(url) {
+    const u = parseUrl(url);
+    if (!u) return [];
+    const out = [];
+    for (const [k, v] of queryPairs(u)) {
+      const val = clean(v, 120);
+      if (/^(q|query|keywords?|search(text|term)?|k|term|text|title|position)$/i.test(k) && /\p{L}{3}/u.test(val))
+        out.push(val.replace(/^["'“]|["'”]$/g, ''));
+      else if (/^[\p{L}\d]+(-[\p{L}\d]+){2,}$/u.test(val) && !/utm|source|medium|campaign/i.test(k))
+        out.push(val.replace(/-/g, ' '));
+    }
+    return uniq(out);
+  }
+
+  /**
+   * The one link on a list of jobs that a name picks out (the list's own search, a slug in its address, Trackr's
+   * programme): it must clearly beat every other link. → { url, text, sim } | null
+   */
+  function namedLink(listed, names) {
+    const scored = [];
+    for (const l of listed || []) {
+      const slug = clean(
+        safeDecode((parseUrl(l.url) || { pathname: '' }).pathname.split('/').filter(Boolean).pop() || '').replace(
+          /[-_]+/g,
+          ' ',
+        ),
+        160,
+      );
+      let sim = 0;
+      for (const n of names.filter(Boolean))
+        sim = Math.max(sim, titleSimilarity(n, l.text) || 0, words(slug) >= 3 ? titleSimilarity(n, slug) || 0 : 0);
+      if (sim >= 0.75) scored.push({ ...l, sim });
+    }
+    scored.sort((x, y) => y.sim - x.sim);
+    if (!scored.length) return null;
+    const [best, next] = scored;
+    // Two jobs alike ("Summer Analyst – London" and "– New York") are no answer.
+    if (next && next.sim > best.sim - 0.1 && urlKey(next.url) !== urlKey(best.url)) return null;
+    return best;
+  }
+
+  // The employer's own pages about its programmes ("Early careers", "Students & graduates", "Internships"), linked
+  // from a job page's header or footer: read when the posting itself says little about the work.
+  const EMPLOYER_LINK =
+    /\b(early[- ]?careers?|emerging talent|early talent|students?|graduates?|internships?|interns|campus|programmes?|programs?|insight|spring weeks?|summer (schemes?|internships?)|vacation schemes?|training contracts?|placements?|why (join|work)|life at|working (at|here|with us)|our (people|culture|values)|careers?|join us|about us|who we are)\b/i;
+  const SOCIAL_HOST =
+    /(^|\.)(linkedin|facebook|twitter|x|instagram|youtube|tiktok|glassdoor|indeed|wikipedia|apple|google|microsoft|cookiebot|onetrust|vimeo)\.[a-z.]+$/i;
+
+  /** Links to the employer's own careers and programme pages (not job boards, searches or social sites), best first. */
+  function employerPageLinks(doc, url) {
+    const out = [];
+    const seen = new Set([urlKey(url)]);
+    for (const el of qa(doc, 'a[href]').slice(0, 3000)) {
+      const u = parseUrl(el.getAttribute('href') || '', url);
+      if (!u || !/^https?:$/.test(u.protocol)) continue;
+      const href = u.href.replace(/#.*$/, '');
+      const text = clean(el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || '', 80);
+      const key = urlKey(href);
+      if (seen.has(key) || !text || words(text) > 6 || !EMPLOYER_LINK.test(text)) continue;
+      if (ACTION_LINK.test(href) || LOGIN_PAGE.test(u.pathname) || SOCIAL_HOST.test(u.hostname) || searchEngine(u))
+        continue;
+      if (ats(href).name) continue;
+      seen.add(key);
+      out.push({ url: href, text });
+    }
+    return out.sort((x, y) => employerLinkWeight(y) - employerLinkWeight(x)).slice(0, 8);
+  }
+
+  /** How much a link to the employer's own site says about early careers: 3 for programmes, 1 for "About us". */
+  function employerLinkWeight(l) {
+    const t = `${l.text || ''} ${(parseUrl(l.url) || {}).pathname || ''}`.toLowerCase();
+    if (
+      /early[- ]?careers?|emerging|early[- ]talent|student|graduate|intern|campus|insight|spring|summer|vacation|training[- ]contract|placement|programme|program/.test(
+        t,
+      )
+    )
+      return 3;
+    if (/career|join|life at|working|people|culture|why/.test(t)) return 2;
+    return 1;
   }
 
   /**
@@ -2770,6 +2955,9 @@
       for (const r of apiRequests(l.url)) add(r.url, 'the job board’s data for the linked job', 0.8, { request: r });
       if (la.stage === 'application') for (const t of descriptionUrls(l.url)) add(t.url, t.reason, 0.6);
     }
+    // A list of jobs: the one its search, its address or its title names.
+    const named = !aboutJob(ctx) ? namedLink(ctx.listed, [ctx.title, ...listNames(ctx.url)]) : null;
+    if (named) add(named.url, `the job this list names (“${clean(named.text, 60)}”)`, 0.65, { named: true });
     if (ctx.canonical && urlKey(ctx.canonical) !== urlKey(ctx.url))
       add(ctx.canonical, 'the page’s canonical address', 0.6);
     if (ctx.referrer && isJobReferrer(ctx, ctx.referrer)) add(ctx.referrer, 'the page you came from', 0.55);
@@ -2987,6 +3175,7 @@
     /^(summer-internships|graduate-programmes|off-cycle-internships|spring-weeks|placements|vacation-schemes|training-contracts)$/;
   const TRACKR_KEY =
     /^(uk|us|eu|france|germany|italy|hong[-_]kong)[-_](finance|tech|law|engineering)(?:[-_](20\d\d))?$/i;
+  const TRACKR_TIMEOUT = 20000;
   const TRACKR_TAGS = /^(utm_source|utm_medium|utm_campaign|utm_content|utm_term|gh_src|source|src|ref|trid)$/i;
 
   /** What an address says about a Trackr tracker: its own page, or a link out of it (utm_source=Trackr). */
@@ -3151,7 +3340,9 @@
       ...U.tokens(ctx && ctx.postingCompany),
       ...U.tokens(ctx && ctx.postingLocation),
     ]);
+    // (A place is set aside before plurals are: "Paris" isn't "pari".)
     const toks = U.tokens(s)
+      .filter((t) => !drop.has(t))
       .map((t) => (t.length > 4 && t.endsWith('s') && !t.endsWith('ss') ? t.slice(0, -1) : t))
       .filter((t) => !TITLE_FILLER.has(t) && !drop.has(t) && !/^\d{1,2}$/.test(t));
     return toks;
@@ -3420,8 +3611,545 @@
     );
   }
 
-  /** Find the description for the application in `context`; see the API notes at the top. */
+  /* ------------------------------------------------- more about a thin posting */
+
+  // What a posting says about the work itself: what you'd do, what's asked of you, how the programme runs.
+  const WORK_CUES =
+    /\b(you will|you('|’)ll|you would|responsib\w*|dut(y|ies)|tasks?|day[- ]to[- ]day|work(ing)? (on|with|alongside|closely)|support(ing)? (the|our|in|with)|assist\w*|prepar(e|es|ing|ation)|analys(e|es|is|ing)|research(ing)?|model(l)?ing|due diligence|develop(ing|ment) (of|and|new)|build(ing)? (and|new|our|tools?|models?)|requirements?|qualifications?|looking for|candidates? (should|must|will)|you (have|are|should|must|need)|bachelor|master'?s|degree|penultimate|final[- ]year|skills|experience (in|with|of)|programme (will|consists|includes|offers)|rotations?|training|mentor\w*|ihre aufgaben|ihr profil|vos missions|votre profil|profil recherché)\b/gi;
+
+  /**
+   * Does a posting say little about the work? 3i's "Intern, London" is three sentences about the firm and "Please
+   * register your interest in an internship by clicking Apply"; its "Intern, Frankfurt" lists the duties.
+   */
+  function thin(text) {
+    const n = words(text);
+    if (n < 90) return true;
+    const cues = (
+      String(text || '')
+        .slice(0, 30000)
+        .match(WORK_CUES) || []
+    ).length;
+    return cues < 4 || (n < 180 && cues < 6 && jobStructure(text) < 2);
+  }
+
+  /** The words of a title that name the programme, not the office: "Intern, Frankfurt" → "Intern". */
+  function programmeOf(title, location) {
+    const drop = new Set([...U.tokens(location), ...LOCATION_FILLER]);
+    const parts = String(title || '')
+      .split(/\s*[,|–—()]\s*|\s+-\s+/)
+      .filter(Boolean);
+    const keep = parts.filter((part) => {
+      const city = new Set(cities(part).flatMap((c) => c.split(' ')));
+      return U.tokens(part).some((t) => !drop.has(t) && !city.has(t));
+    });
+    return clean((keep.length ? keep : parts).join(' '), 80);
+  }
+
+  /** The same programme posted for another office ("Intern, Paris" ↔ "Intern, Frankfurt")? */
+  function sameProgramme(a, b) {
+    if (!a || !b || !a.title || !b.title) return false;
+    if (a.url && b.url && urlKey(a.url) === urlKey(b.url)) return false;
+    const pa = programmeOf(a.title, a.location);
+    const pb = programmeOf(b.title, b.location);
+    if (!pa || !pb) return false;
+    if (norm(pa) === norm(pb)) return true;
+    const sim = titleSimilarity(pa, pb, { location: `${a.location || ''} ${b.location || ''}` });
+    return sim != null && sim >= 0.8;
+  }
+
+  /** The board's list of the employer's jobs, to look for the same programme posted elsewhere. → request | null */
+  function siblingRequest(posting) {
+    const url = (posting && posting.url) || '';
+    const a = ats(url);
+    const u = parseUrl(url);
+    if (!u || !a.name || !a.company) return null;
+    const enc = encodeURIComponent;
+    const get = (href, kind) => ({ url: href, method: 'GET', headers: { ...JSON_HEADERS }, body: null, kind });
+    switch (a.name) {
+      case 'workday':
+        if (!a.site) return null;
+        return {
+          url: `${u.origin}/wday/cxs/${enc(a.company)}/${enc(a.site)}/jobs`,
+          method: 'POST',
+          headers: { ...JSON_HEADERS, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            appliedFacets: {},
+            limit: 20,
+            offset: 0,
+            searchText: programmeOf(posting.title, posting.location),
+          }),
+          kind: 'workday-list',
+          origin: `${u.origin}/wday/cxs/${enc(a.company)}/${enc(a.site)}`,
+          page: `${u.origin}/${a.site}`,
+        };
+      case 'greenhouse':
+        return get(`https://boards-api.greenhouse.io/v1/boards/${enc(a.company)}/jobs?content=true`, 'greenhouse-list');
+      case 'lever': {
+        const api = /\.eu\.lever\.co$/.test(u.hostname) ? 'api.eu.lever.co' : 'api.lever.co';
+        return get(`https://${api}/v0/postings/${enc(a.company)}?mode=json`, 'lever-list');
+      }
+      case 'ashby':
+        return u.hostname === 'jobs.ashbyhq.com'
+          ? get(`https://api.ashbyhq.com/posting-api/job-board/${enc(a.company)}`, 'ashby-list')
+          : null;
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * The same programme's other postings in a board's list (siblingRequest's reply), each as a posting, or with the
+   * request that fetches it (Workday lists only titles). → [{ posting } | { request, title, location }]
+   */
+  function siblingsIn(req, json, posting) {
+    if (!json || typeof json !== 'object') return [];
+    const out = [];
+    const add = (p) => {
+      if (p && p.description && sameProgramme(posting, p)) out.push({ posting: makePosting({ ...p, source: 'api' }) });
+    };
+    switch (req.kind) {
+      case 'workday-list':
+        for (const j of (Array.isArray(json.jobPostings) ? json.jobPostings : []).slice(0, 40)) {
+          const path = String(j.externalPath || '');
+          const page = `${req.page}${path}`;
+          if (
+            !/^\/job\//.test(path) ||
+            !sameProgramme(posting, { title: j.title, location: j.locationsText, url: page })
+          )
+            continue;
+          out.push({
+            title: j.title,
+            location: j.locationsText,
+            request: {
+              url: `${req.origin}${path.split('/').map(encodeURIComponent).join('/')}`,
+              method: 'GET',
+              headers: { ...JSON_HEADERS },
+              body: null,
+              kind: 'workday',
+              page,
+            },
+          });
+        }
+        break;
+      case 'greenhouse-list':
+        for (const j of (Array.isArray(json.jobs) ? json.jobs : []).slice(0, 300))
+          add(fromApi('greenhouse', j, j.absolute_url));
+        break;
+      case 'lever-list':
+        for (const j of (Array.isArray(json) ? json : []).slice(0, 300)) add(fromApi('lever', j, j.hostedUrl));
+        break;
+      case 'ashby-list':
+        for (const j of (Array.isArray(json.jobs) ? json.jobs : []).slice(0, 300))
+          add(fromApi('ashby', { jobs: [j], organization: json.organization }, j.jobUrl));
+        break;
+      default:
+        break;
+    }
+    return out;
+  }
+
+  /** A page's links ({ url, text }), read from its HTML without a DOM. */
+  function htmlLinks(html, base) {
+    const out = [];
+    const re = /<a\b[^>]*?\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a\s*>/gi;
+    let m;
+    while ((m = re.exec(String(html || ''))) && out.length < 3000) {
+      const u = parseUrl(decodeEntities(m[2] || m[3] || m[4] || ''), base);
+      if (!u || !/^https?:$/.test(u.protocol)) continue;
+      out.push({ url: u.href.replace(/#.*$/, ''), text: clean(htmlToText(m[5]), 80) });
+    }
+    return out;
+  }
+
+  /** The readable part of a page that isn't a posting (an early-careers page): its main text, without menus. */
+  function mainText(html) {
+    let s = String(html || '').replace(
+      /<(script|style|noscript|template|svg|nav|header|footer|form|aside|dialog)\b[\s\S]*?<\/\1\s*>/gi,
+      ' ',
+    );
+    const main = s.match(/<main\b[\s\S]*?<\/main\s*>/i) || s.match(/<article\b[\s\S]*?<\/article\s*>/i);
+    if (main && words(htmlToText(main[0])) >= 80) s = main[0];
+    // Menus and link lists left over: lines of one or two words.
+    return htmlToText(s)
+      .split('\n')
+      .filter((l) => !l || words(l) > 3 || /[.:!?]$/.test(l))
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  /** Same registrable domain ("www.3i.com" and "careers.3i.com")? */
+  function sameDomain(a, b) {
+    const d = (h) => {
+      const labels = String(h || '')
+        .toLowerCase()
+        .replace(/^www\./, '')
+        .split('.');
+      const n =
+        labels.length >= 3 && labels[labels.length - 1].length === 2 && labels[labels.length - 2].length <= 3 ? 3 : 2;
+      return labels.slice(-n).join('.');
+    };
+    return !!a && !!b && d(a) === d(b);
+  }
+
+  /** Is this host the employer's own ("www.3i.com" for 3i, "careers.jumptrading.com" for Jump Trading)? */
+  function employerHost(host, company) {
+    const label = companyFromHost(host);
+    if (!label || !company || ats(`https://${host}/`).name || SOCIAL_HOST.test(host)) return false;
+    return companyMatch(label, company) === true || compact(company).replace(/[^a-z0-9]/g, '') === label;
+  }
+
+  /**
+   * The employer's own pages worth reading about this programme: linked from the job page, in history (pages on
+   * the employer's site about careers, students or graduates), and its website's careers pages. → [{ url, reason, weight, crawl? }]
+   */
+  function employerCandidates(ctx, posting, { items = [], site = '' } = {}) {
+    const company = (posting && posting.company) || ctx.company || '';
+    const out = [];
+    const seen = new Set();
+    const push = (url, reason, weight, extra) => {
+      const u = parseUrl(url);
+      if (!u || !/^https?:$/.test(u.protocol) || ACTION_LINK.test(url) || LOGIN_PAGE.test(u.pathname)) return;
+      const key = urlKey(u.href);
+      if (seen.has(key) || key === urlKey(ctx.url) || (posting && key === urlKey(posting.url))) return;
+      seen.add(key);
+      out.push({ url: u.href, reason, weight, ...extra });
+    };
+    for (const l of ctx.siteLinks || []) {
+      const u = parseUrl(l.url);
+      if (u && (employerHost(u.hostname, company) || sameDomain(u.hostname, ctx.host)))
+        push(l.url, `linked from the job page (“${l.text}”)`, 0.4 + 0.1 * employerLinkWeight(l));
+    }
+    for (const it of items) {
+      const u = parseUrl(it && it.url);
+      if (!u || !employerHost(u.hostname, company) || searchEngine(u)) continue;
+      const hay = `${u.pathname} ${it.title || ''}`;
+      if (!EMPLOYER_LINK.test(hay.replace(/[-_/]/g, ' ')) || LIST_PAGE.test(u.pathname + u.search)) continue;
+      push(
+        it.url,
+        'on the employer’s site, in your history',
+        0.5 + 0.1 * employerLinkWeight({ text: it.title, url: it.url }),
+      );
+    }
+    const home = parseUrl(/^https?:/i.test(site) ? site : site ? `https://${site}` : '');
+    if (home) push(home.origin + '/', 'the employer’s website', 0.3, { crawl: true });
+    else {
+      const linked = (ctx.siteLinks || [])
+        .map((l) => parseUrl(l.url))
+        .find((u) => u && employerHost(u.hostname, company));
+      if (linked) push(linked.origin + '/', 'the employer’s website', 0.3, { crawl: true });
+    }
+    return out.sort((x, y) => y.weight - x.weight);
+  }
+
+  /**
+   * Is this page about the employer's programmes (not a privacy notice, a news story or a fund's page)? It is on the
+   * employer's own site already: the firm need only be named somewhere, its tab title included.
+   */
+  function aboutProgrammes(text, company, title) {
+    const s = String(text || '').slice(0, 30000);
+    if (words(s) < 60 || isLegalText(s)) return false;
+    const hits = (
+      s.match(
+        /\b(intern(ship)?s?|graduates?|students?|early careers?|programmes?|programs?|placements?|training|apply|applications?|recruit\w*|careers?|join)\b/gi,
+      ) || []
+    ).length;
+    const named = `${title || ''} ${s.slice(0, 20000)}`;
+    return (
+      hits >= 4 &&
+      (!company || compact(named).includes(compact(company)) || companyMatch(company, title || '') === true)
+    );
+  }
+
+  /**
+   * More about a job whose posting says little (thin()): the same programme's postings for other offices on the
+   * board, and the employer's own pages about it (from the job page's links, history and its website). Each is text
+   * to read beside the posting, never instead of it.
+   *   → { extra: [{ url, title, text, kind: 'sibling'|'employer', reason }], tried: [{ url, outcome }] }
+   */
+  async function related(context, posting, opts = {}) {
+    const ctx = context || {};
+    const fetchFn = opts.fetch || (typeof root.fetch === 'function' ? root.fetch.bind(root) : null);
+    // (All of it in a dozen seconds: a fill's AI answers wait for the job.)
+    const deadline = Date.now() + (opts.relatedBudget || 12000);
+    const timeout = opts.timeout || 9000;
+    const tried = [];
+    const extra = [];
+    if (!fetchFn || !posting) return { extra, tried };
+    // Only what the posting and the pages read so far don't already say: the same programme's posting for another
+    // office repeats the firm's boilerplate and adds the duties.
+    const fresh = (text) => newLines(text, [posting.description, ...extra.map((x) => x.text)]);
+    const get = async (url, init) => {
+      const left = deadline - Date.now();
+      if (left < 500) throw new Error('timed out');
+      const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+      let timer = null;
+      try {
+        return await Promise.race([
+          fetchFn(url, { ...init, ...(ctl ? { signal: ctl.signal } : {}) }).then(async (res) => {
+            if (!res || res.ok === false) throw new Error(`HTTP ${(res && res.status) || 'error'}`);
+            const body = typeof res.text === 'function' ? await res.text() : JSON.stringify(await res.json());
+            return { body: body.slice(0, 4e6), url: res.url || url };
+          }),
+          new Promise((_, reject) => {
+            timer = setTimeout(
+              () => {
+                if (ctl) ctl.abort();
+                reject(new Error('timed out'));
+              },
+              Math.min(timeout, left),
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+    const note = (url, outcome) => tried.push({ url, outcome });
+    const fail = (url, err) =>
+      note(
+        url,
+        /abort|timed out/i.test(String(err && err.message))
+          ? 'timed out'
+          : `failed: ${clean((err && err.message) || err, 80)}`,
+      );
+
+    // The same programme for other offices, on the board.
+    const siblings = async () => {
+      const req = siblingRequest(posting);
+      if (!req) return;
+      let json;
+      try {
+        json = parseJsonLoose(
+          (await get(req.url, { method: req.method, headers: req.headers, ...(req.body ? { body: req.body } : {}) }))
+            .body,
+        );
+      } catch (err) {
+        return fail(req.url, err);
+      }
+      const found = siblingsIn(req, json, posting);
+      note(req.url, `the board’s other postings: ${found.length} for the same programme`);
+      let fetched = 0;
+      for (const s of found) {
+        if (extra.filter((x) => x.kind === 'sibling').length >= 2 || fetched >= 4) break;
+        let p = s.posting;
+        if (!p && s.request) {
+          fetched++;
+          try {
+            p = fromApi(
+              s.request.kind,
+              parseJsonLoose((await get(s.request.url, { method: 'GET', headers: s.request.headers })).body),
+              s.request.page,
+            );
+          } catch (err) {
+            fail(s.request.url, err);
+            continue;
+          }
+        }
+        const text = p && p.description && !thin(p.description) ? fresh(p.description) : '';
+        if (words(text) < 40) continue;
+        extra.push({
+          url: p.url,
+          title: [p.title, p.location && !p.title.includes(p.location) ? p.location : ''].filter(Boolean).join(' · '),
+          text: clip(text, 1500),
+          kind: 'sibling',
+          reason: 'the same programme, posted for another office',
+        });
+        note(p.url, `read: ${p.title} (${words(p.description)} words)`);
+      }
+    };
+
+    // The employer's own pages: those linked or in history first, then its careers pages from its home page.
+    const employer = async () => {
+      const company = posting.company || ctx.company || '';
+      const list = employerCandidates(ctx, posting, { items: opts.items || [], site: opts.site || '' });
+      const queue = list.slice(0, 6);
+      let used = 0;
+      const crawled = new Set();
+      while (queue.length && used < 6 && extra.filter((x) => x.kind === 'employer').length < 2) {
+        const c = queue.shift();
+        used++;
+        let page;
+        try {
+          page = await get(c.url, { method: 'GET', headers: { Accept: 'text/html,application/xhtml+xml' } });
+        } catch (err) {
+          fail(c.url, err);
+          continue;
+        }
+        const all = mainText(page.body);
+        const base = page.url || c.url;
+        // A home or careers page leads on to the programme pages (one hop from the home page, one more from there).
+        if (c.crawl || (c.depth || 0) < 2) {
+          const next = htmlLinks(page.body, base)
+            .filter((l) => {
+              const u = parseUrl(l.url);
+              return (
+                u &&
+                sameDomain(u.hostname, parseUrl(base).hostname) &&
+                !crawled.has(urlKey(l.url)) &&
+                urlKey(l.url) !== urlKey(base) &&
+                l.text &&
+                words(l.text) <= 6 &&
+                EMPLOYER_LINK.test(`${l.text} ${u.pathname.replace(/[-_/]/g, ' ')}`) &&
+                !ACTION_LINK.test(l.url) &&
+                !LOGIN_PAGE.test(u.pathname) &&
+                !/\.(pdf|jpe?g|png|zip|docx?)$/i.test(u.pathname)
+              );
+            })
+            .map((l) => ({ ...l, w: employerLinkWeight(l) }))
+            .filter((l) => l.w >= 2)
+            .sort((x, y) => y.w - x.w)
+            .slice(0, 2);
+          for (const l of next) {
+            crawled.add(urlKey(l.url));
+            queue.unshift({
+              url: l.url,
+              reason: `the employer’s “${l.text}” page`,
+              weight: 0.4,
+              depth: (c.depth || 0) + 1,
+            });
+          }
+        }
+        if (c.crawl) {
+          note(c.url, 'the employer’s website: looking for its careers pages');
+          continue;
+        }
+        const title = clean(decodeEntities((page.body.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || ''), 120);
+        const text = aboutProgrammes(all, company, title) ? fresh(all) : '';
+        if (words(text) < 60) {
+          note(c.url, 'nothing about its programmes');
+          continue;
+        }
+        extra.push({ url: base, title: title || base, text: clip(text, 1500), kind: 'employer', reason: c.reason });
+        note(c.url, `read: ${title || base} (${words(text)} words)`);
+      }
+    };
+
+    await Promise.all([
+      siblings().catch((err) => fail('siblings', err)),
+      employer().catch((err) => fail('employer', err)),
+    ]);
+    // The same programme's posting first: it says what this one leaves out.
+    extra.sort((x, y) => (x.kind === y.kind ? 0 : x.kind === 'sibling' ? -1 : 1));
+    return { extra, tried };
+  }
+
+  /** The sentences of `text` that none of `known` has (compared without case, spacing or punctuation), line by line. */
+  function newLines(text, known) {
+    const key = (t) =>
+      norm(t)
+        .replace(/[^\p{L}\p{N}]+/gu, ' ')
+        .trim();
+    const sentences = (line) => line.split(/(?<=[.!?…])\s+(?=\S)/);
+    const have = new Set();
+    for (const k of known)
+      for (const line of String(k || '').split('\n')) for (const t of sentences(line)) if (key(t)) have.add(key(t));
+    // (Also a sentence or heading the known text runs into another: "Our purposeWe generate…" in a page's data.)
+    const all = ` ${known.map((k) => key(k)).join(' ')} `;
+    const seen = (k) => have.has(k) || all.includes(` ${k} `) || (k.length >= 40 && all.includes(k));
+    return String(text || '')
+      .split('\n')
+      .map((line) =>
+        sentences(line)
+          .filter((t) => !key(t) || !seen(key(t)))
+          .join(' ')
+          .trim(),
+      )
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/^(•\s*)$/gm, '')
+      .trim();
+  }
+
+  /** At most `max` words of a text, ending at a sentence or line where it can. */
+  function clip(text, max) {
+    const s = String(text || '');
+    const parts = s.split(/(\s+)/);
+    let n = 0;
+    let i = 0;
+    for (; i < parts.length; i++) if (/\S/.test(parts[i]) && ++n > max) break;
+    if (i >= parts.length) return s.trim();
+    const cut = parts.slice(0, i).join('');
+    const end = Math.max(cut.lastIndexOf('\n'), cut.lastIndexOf('. '));
+    return (end > cut.length * 0.6 ? cut.slice(0, end + 1) : cut).trim() + ' …';
+  }
+
+  /**
+   * One page read for the job finder's helpers (an address a web search suggested): its posting, compared with the
+   * application, or its main text. → { url, posting, cmp, text } (throws when it can't be fetched)
+   */
+  async function readPage(url, context, opts = {}) {
+    const fetchFn = opts.fetch || (typeof root.fetch === 'function' ? root.fetch.bind(root) : null);
+    if (!fetchFn) throw new Error('no way to fetch pages');
+    const timeout = opts.timeout || 9000;
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    let timer = null;
+    try {
+      const res = await Promise.race([
+        fetchFn(url, {
+          method: 'GET',
+          headers: { Accept: 'text/html,application/xhtml+xml' },
+          ...(ctl ? { signal: ctl.signal } : {}),
+        }),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            if (ctl) ctl.abort();
+            reject(new Error('timed out'));
+          }, timeout);
+        }),
+      ]);
+      if (!res || res.ok === false) throw new Error(`HTTP ${(res && res.status) || 'error'}`);
+      const body = String(await res.text()).slice(0, 6e6);
+      const finalUrl = res.url || url;
+      let posting = null;
+      // A job board's address is read through its data, as find() does.
+      for (const req of apiRequests(finalUrl)) {
+        try {
+          const r = await fetchFn(req.url, {
+            method: req.method,
+            headers: req.headers,
+            ...(req.body ? { body: req.body } : {}),
+          });
+          if (r && r.ok !== false) posting = fromApi(req.kind, parseJsonLoose(await r.text()), req.page);
+        } catch (err) {
+          /* the page itself, below */
+        }
+        if (posting) break;
+      }
+      if (!posting) {
+        try {
+          posting = fromHtml(body, finalUrl);
+        } catch (err) {
+          posting = null;
+        }
+      }
+      if (posting && words(posting.description) < 40) posting = null;
+      if (posting && !posting.url) posting.url = finalUrl;
+      return { url: finalUrl, posting, cmp: posting ? compare(context || {}, posting) : null, text: mainText(body) };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Find the description for the application in `context`; see the API notes at the top. A posting that says little
+   * about the work (thin()) comes with `extra`: the same programme's other postings and the employer's own pages
+   * (related()), unless `opts.related` is false.
+   */
   async function find(context, opts = {}) {
+    const items = [];
+    const onHistory = (list) => {
+      items.push(...list);
+      if (opts.onHistory) opts.onHistory(list);
+    };
+    const out = await findPosting(context, { ...opts, onHistory });
+    if (opts.related === false || !out.posting || out.verdict === 'different' || !thin(out.posting.description))
+      return out;
+    const more = await related(context, out.posting, { ...opts, items });
+    return { ...out, posting: { ...out.posting, thin: true }, extra: more.extra, tried: [...out.tried, ...more.tried] };
+  }
+
+  async function findPosting(context, opts = {}) {
     const ctx = context || {};
     const fetchFn = opts.fetch || (typeof root.fetch === 'function' ? root.fetch.bind(root) : null);
     const budget = opts.budget || 10;
@@ -3494,6 +4222,7 @@
         for (const query of historyQuery(ctx, opts.now)) {
           const got = await opts.historySearch(query);
           if (Array.isArray(got)) items.push(...got);
+          if (Array.isArray(got) && opts.onHistory) opts.onHistory(got);
         }
         list = list.concat(rankHistory(ctx, items, opts.now));
       } catch (err) {
@@ -3549,10 +4278,14 @@
           const data = await Promise.race([
             read(),
             new Promise((_, reject) => {
-              timer = setTimeout(() => {
-                if (ctl) ctl.abort();
-                reject(new Error('timed out'));
-              }, timeout);
+              timer = setTimeout(
+                () => {
+                  if (ctl) ctl.abort();
+                  reject(new Error('timed out'));
+                },
+                // Trackr's lists take seven to ten seconds to come back; they are asked alongside the job's own pages.
+                opts.trackrTimeout || Math.max(timeout, TRACKR_TIMEOUT),
+              );
             }),
           ]);
           found = trackrProgramme(ctx, data, tr);
@@ -3633,7 +4366,9 @@
             return outcome(looksLikeShell(body) ? 'empty shell (needs scripts)' : 'no posting found on the page');
         }
         if (!posting.url) posting.url = finalUrl;
-        let cmp = compare(ctx, posting);
+        // (A list's own title, "Join Our Team", says nothing about the job it names, nor does a company read off its
+        // tagline, "Investing in private assets across Europe", that isn't the site's.)
+        let cmp = compare(c.named ? namedContext(ctx) : ctx, posting);
         if (
           (ctx.pasted && urlKey(c.url) === urlKey(ctx.pasted)) ||
           (c.request && c.request.page && ctx.pasted && urlKey(c.request.page) === urlKey(ctx.pasted))
@@ -3709,6 +4444,18 @@
         !tried.some((t) => sameJobUrl(t.url, hu.href))
       )
         await load({ url: hu.href, reason: 'the job page Trackr links to', weight: 0.7 });
+      // On a list of jobs: the one Trackr's programme names ("Internship - Buy-out Fund of Funds").
+      const listedHit =
+        !aboutJob(ctx) && !results.some((r) => ['same', 'likely'].includes(r.cmp.verdict))
+          ? namedLink(ctx.listed, [hint.programme])
+          : null;
+      if (listedHit && !tried.some((t) => sameJobUrl(t.url, listedHit.url)))
+        await load({
+          url: listedHit.url,
+          reason: `the job on this list that Trackr names (“${clean(listedHit.text, 60)}”)`,
+          weight: 0.65,
+          named: true,
+        });
       // Trackr's programme name and company only break ties: never 'same' or 'different' on their own.
       if (cmpCtx)
         for (const r of results) {
@@ -3741,6 +4488,16 @@
         !clash &&
         ((justBefore(r.c, r.posting) && !r.cmp.reasons.includes('company differs')) ||
           (r.cmp.hinted && r.cmp.score >= 0.85))
+      )
+        r.verdict = 'likely';
+      // The one job a list's search, address or Trackr's programme names: likely, unless its company says otherwise.
+      else if (
+        r.c.named &&
+        r.cmp.verdict !== 'different' &&
+        !clash &&
+        !r.cmp.reasons.includes('company differs') &&
+        (sameDomain((parseUrl(r.c.url) || {}).hostname, ctx.host || (parseUrl(ctx.url) || {}).hostname) ||
+          (!!ats(r.c.url).name && ats(r.c.url).company === ats(ctx.url || '').company))
       )
         r.verdict = 'likely';
       // The application page's own link to its job ("Back to job description" on Bending Spoons' form): likely,
@@ -3822,8 +4579,19 @@
     rankHistory,
     compare,
     find,
+    thin,
+    related,
+    readPage,
+    siblingRequest,
+    siblingsIn,
+    sameProgramme,
+    namedLink,
+    listNames,
     // Exposed for the unit tests (and the eval's dataset builder: descriptionUrls).
     descriptionUrls,
+    words,
+    jobStructure,
+    isLegalText,
     urlJobIds,
     textJobIds,
     titleSimilarity,

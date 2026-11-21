@@ -70,6 +70,9 @@
     // mode (twice the price).
     ai: { provider: 'openrouter', model: '', baseUrl: '', models: {}, fallback: true, backupKeys: true, fast: false },
     searchHistory: false,
+    // A job whose description can't be found, or says little about the work, is looked for on the web by the person's
+    // AI model (its web search, at their cost) by itself; off, the letter studio offers it as a button.
+    jobWebSearch: false,
     // Questions the rules leave empty are answered by the AI (when a key is set up) as part of each fill.
     aiAnswers: true,
     // Questions the AI never sees unless switched on here (Settings › Cover letters & AI, answers.withheld): eeo
