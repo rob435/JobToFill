@@ -45,6 +45,7 @@ const timed = (p, ms, what) =>
   Promise.race([p, new Promise((_, reject) => setTimeout(() => reject(new Error(`${what} timed out`)), ms))]);
 const WALL =
   /security verification|just a moment|access denied|attention required|checking your browser|^403 forbidden|unusual traffic|request blocked|you have been blocked/i;
+const CHALLENGE = /_Incapsula_Resource|\/cdn-cgi\/challenge-platform|captcha-delivery\.com|px-captcha|perimeterx/i;
 
 /* --------------------------------------------------------------- targets */
 
@@ -236,14 +237,17 @@ async function surveyOne(h, t) {
   const entry = { company: t.company, name: t.name, url: t.url, host: t.host || new URL(t.url).hostname };
   let page = await h.newPage();
   try {
-    await page.goto(t.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    const res = await page.goto(t.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
     await settle(page);
     const tabId = await tabIdOf(h, page);
     await h.bg((id) => globalThis.JTFBackground.ensureInjected(id), tabId);
     const text = await page
       .evaluate(() => `${document.title} ${((document.body && document.body.innerText) || '').slice(0, 400)}`)
       .catch(() => '');
-    entry.wall = WALL.test(text);
+    // (Also a challenge that draws nothing, Incapsula's "_Incapsula_Resource" script, and a site that answers 403.)
+    const html = await page.evaluate(() => document.documentElement.outerHTML.slice(0, 20000)).catch(() => '');
+    entry.status = res ? res.status() : 0;
+    entry.wall = WALL.test(text) || CHALLENGE.test(html) || [401, 403, 429].includes(entry.status);
     entry.landed = page.url();
     entry.job = await timed(findJob(h, page), 120000, 'job finding').catch((err) => ({ error: err.message }));
     entry.grade = entry.wall && grade(t, entry.job) !== 'good' ? 'wall' : grade(t, entry.job);
