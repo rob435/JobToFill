@@ -1806,7 +1806,7 @@ test('Trackr: where the user came from names the programme — a hint that break
       return { ok: true, status: 200, url, headers: new Map(), text: () => body };
     },
   };
-  const opts = { now, historySearch: historyOf(visits), fetch: mockFetch(stalled), timeout: 300 };
+  const opts = { now, historySearch: historyOf(visits), fetch: mockFetch(stalled), timeout: 300, trackrTimeout: 300 };
   const late = await Promise.race([
     jp.find(ctx, opts),
     new Promise((resolve) => setTimeout(() => resolve('still waiting'), 5000)),
@@ -2816,4 +2816,248 @@ test('TikTok’s pre-wrapped sections; no bot check, closed job or stray "|" rea
     jp.applicationContext(parseHTML(page('| Graduate product manager', '<p>Apply</p>')).document, bs).title,
     'Graduate product manager',
   );
+});
+
+/* ------------------------------------------------- a posting that says little */
+
+const THREE_I = 'https://3i.wd103.myworkdayjobs.com/en-US/Intern_Career/job/London-United-Kingdom/Intern--London_';
+const THREE_I_API = 'https://3i.wd103.myworkdayjobs.com/wday/cxs/3i/Intern_Career';
+const threeI = () => ({
+  url: THREE_I,
+  host: '3i.wd103.myworkdayjobs.com',
+  ats: jp.ats(THREE_I),
+  title: 'Intern, London',
+  company: '3i',
+  location: 'London, United Kingdom',
+  jobIds: [],
+  links: [],
+  posting: null,
+});
+/** 3i's board: the London posting (three sentences about the firm), its list, and Frankfurt's (the duties). */
+const threeIBoard = (extra = {}, log = []) =>
+  mockFetch(
+    {
+      [`${THREE_I_API}/job/London-United-Kingdom/Intern--London_`]: json('api-workday-3i-london.json'),
+      [`${THREE_I_API}/jobs`]: (url, init) => {
+        assert.equal(init.method, 'POST');
+        assert.equal(JSON.parse(init.body).searchText, 'Intern');
+        return {
+          ok: true,
+          status: 200,
+          url,
+          headers: { get: () => 'application/json' },
+          text: async () => html('api-workday-3i-list.json'),
+        };
+      },
+      [`${THREE_I_API}/job/Frankfurt-Germany/Intern--Frankfurt_`]: json('api-workday-3i-frankfurt.json'),
+      ...extra,
+    },
+    log,
+  );
+
+test('thin: a posting that only says who the firm is, not what the work is', () => {
+  const london = jp.fromApi('workday', json('api-workday-3i-london.json'), THREE_I);
+  const frankfurt = jp.fromApi('workday', json('api-workday-3i-frankfurt.json'), THREE_I);
+  assert.match(london.description, /Please register your interest in an internship by clicking/);
+  assert.equal(jp.thin(london.description), true);
+  assert.equal(jp.thin(frankfurt.description), false);
+  assert.equal(jp.thin(jp.fromApi('workday', json('api-workday.json'), THREE_I).description), false);
+  assert.equal(jp.thin(jp.fromApi('lever', json('api-lever.json'), LEVER_APPLY).description), false);
+});
+
+test('related: the same programme for another office, without the boilerplate both repeat', () => {
+  assert.equal(jp.sameProgramme({ title: 'Intern, London', url: 'a' }, { title: 'Intern, Frankfurt', url: 'b' }), true);
+  assert.equal(
+    jp.sameProgramme(
+      { title: '2027 Summer Analyst – London', url: 'a' },
+      { title: '2027 Summer Analyst – New York', url: 'b' },
+    ),
+    true,
+  );
+  assert.equal(
+    jp.sameProgramme(
+      { title: 'Summer Analyst - Investment Banking', url: 'a' },
+      { title: 'Summer Analyst - Sales & Trading', url: 'b' },
+    ),
+    false,
+  );
+  assert.equal(
+    jp.sameProgramme({ title: 'Quant Researcher Intern', url: 'a' }, { title: 'Quant Trader Intern', url: 'b' }),
+    false,
+  );
+  // (A city is set aside before plurals are: "Paris" is no "pari".)
+  assert.equal(jp.titleSimilarity('Intern, Paris', 'Intern, Frankfurt', { location: 'Paris Frankfurt' }), 1);
+});
+
+test('find: 3i’s “Intern, London” comes with the duties its Frankfurt posting lists', async () => {
+  const r = await jp.find(threeI(), { fetch: threeIBoard() });
+  assert.equal(r.verdict, 'same');
+  assert.equal(r.posting.title, 'Intern, London');
+  assert.equal(r.posting.thin, true);
+  assert.equal(r.extra.length, 1);
+  const [sib] = r.extra;
+  assert.equal(sib.kind, 'sibling');
+  assert.match(sib.title, /^Intern, Frankfurt/);
+  assert.match(sib.text, /Support in preparing investment proposals/);
+  assert.doesNotMatch(sib.text, /3i is an investment company|Please register your interest/);
+  assert.ok(r.tried.some((t) => /the board’s other postings: \d+ for the same programme/.test(t.outcome)));
+  // Asked not to (the studio does it itself, once the posting is settled).
+  const plain = await jp.find(threeI(), { fetch: threeIBoard(), related: false });
+  assert.equal(plain.extra, undefined);
+  assert.equal(plain.posting.thin, undefined);
+});
+
+test('related: the employer’s own pages, from the job page’s links, history and its website', async () => {
+  const posting = jp.fromApi('workday', json('api-workday-3i-london.json'), THREE_I);
+  const page = (title, body) =>
+    `<html><head><title>${title}</title></head><body><nav><a href="/">Home</a></nav><main>${body}</main></body></html>`;
+  const early = page(
+    'Early careers | 3i',
+    `<h1>Early careers</h1><p>${'Our internships give students a real role in a deal team for ten weeks, working on live investment proposals, sector research and portfolio reviews. '.repeat(3)}</p><p>Interns join our London, Paris, Frankfurt and New York offices each summer. Applications open in the autumn and we recruit on a rolling basis, so apply early.</p>`,
+  );
+  const home = page(
+    '3i',
+    '<p><a href="/careers/">Careers</a> <a href="/about-us/">About us</a> <a href="/news/">News</a></p>',
+  );
+  const careers = page(
+    'Careers | 3i',
+    '<h1>Careers</h1><p><a href="/careers/early-careers/">Early careers</a> <a href="/careers/our-people/">Our people</a></p>',
+  );
+  // The website: its home page, its careers page, then the early-careers page it links to.
+  const log = [];
+  const crawl = await jp.related(threeI(), posting, {
+    fetch: threeIBoard(
+      {
+        'https://www.3i.com/': home,
+        'https://www.3i.com/careers/': careers,
+        'https://www.3i.com/careers/early-careers/': early,
+      },
+      log,
+    ),
+    site: 'https://www.3i.com',
+  });
+  const mine = crawl.extra.find((x) => x.kind === 'employer');
+  assert.ok(mine, JSON.stringify(crawl.tried));
+  assert.equal(mine.url, 'https://www.3i.com/careers/early-careers/');
+  assert.match(mine.text, /Our internships give students a real role/);
+  assert.equal(crawl.extra[0].kind, 'sibling', 'the same programme’s posting first');
+  // In history, a page on the employer's site about early careers; a news story there isn't.
+  const visited = await jp.related(threeI(), posting, {
+    fetch: threeIBoard({ 'https://www.3i.com/careers/early-careers/': early }),
+    items: [
+      { url: 'https://www.3i.com/careers/early-careers/', title: 'Early careers | 3i', lastVisitTime: Date.now() },
+      { url: 'https://www.3i.com/news/results-2026/', title: '3i results', lastVisitTime: Date.now() },
+    ],
+  });
+  assert.deepEqual(
+    visited.extra.filter((x) => x.kind === 'employer').map((x) => x.url),
+    ['https://www.3i.com/careers/early-careers/'],
+  );
+  // A page that says nothing about the firm's programmes is left out.
+  const none = await jp.related(
+    { ...threeI(), siteLinks: [{ url: 'https://www.3i.com/about-us/', text: 'About us' }] },
+    posting,
+    {
+      fetch: threeIBoard({
+        'https://www.3i.com/about-us/': page(
+          'About us',
+          `<p>${'We invest in mid-market companies across Europe and North America. '.repeat(8)}</p>`,
+        ),
+      }),
+    },
+  );
+  assert.equal(none.extra.filter((x) => x.kind === 'employer').length, 0);
+});
+
+test('PageUp: the advert inside the site’s search form, and the apply page’s way back to it', () => {
+  const url = 'https://careersmanager.pageuppeople.com/920/cw/en/job/498332/quality-engineering-graduate';
+  const p = jp.fromHtml(html('pageup-job.html'), url);
+  assert.equal(p.title, 'Quality Engineering Graduate');
+  assert.match(p.description, /Key Deliverables/);
+  assert.match(p.description, /What do we need from you\?/);
+  assert.ok(words(p.description) > 600);
+  assert.notEqual(p.company, 'Pageuppeople');
+  const apply =
+    'https://secure.dc3.pageuppeople.com/apply/920/gateway/default.aspx?c=apply&lJobID=498332&lJobSourceTypeID=796&sLanguage=en';
+  assert.deepEqual(jp.urlJobIds(apply), ['498332']);
+  const a = jp.ats(apply);
+  assert.deepEqual([a.name, a.jobId, a.stage, a.company], ['pageup', '498332', 'application', null]);
+  assert.deepEqual(
+    jp.descriptionUrls(apply).map((d) => d.url),
+    ['https://careersmanager.pageuppeople.com/920/cw/en/job/498332'],
+  );
+});
+
+test('a programme page inside a div.nav-wrapper, its screen-reader anchors left out (Sullivan & Cromwell)', () => {
+  const url = 'https://www.sullcrom.com/Careers/Offices/United-Kingdom/U.K.-Trainee-Solicitors-Programme';
+  const p = jp.fromHtml(html('programme-nav-wrapper.html'), url);
+  assert.equal(p.title, 'UK Trainee Solicitor Programme');
+  assert.match(p.description, /^About the Programme\n/);
+  assert.match(p.description, /four six-month seats/);
+  assert.doesNotMatch(p.description, /About-the-Programme/);
+  const ctx = jp.applicationContext(doc('programme-nav-wrapper.html'), url);
+  assert.equal(ctx.company, 'Sullivan & Cromwell LLP');
+  assert.ok(ctx.posting && words(ctx.posting.description) > 300);
+});
+
+test('a job page under a section named “apply” is no application step, and the trail leads back to it (Standard Bank)', () => {
+  const job =
+    'https://www.standardbank.com/sbg/standard-bank-group/careers/apply/jobs/view-all-jobs/job-detail?jobID=744000152994500';
+  assert.equal(jp.ats(job).stage, 'description');
+  assert.equal(jp.ats('https://www.greencore.com/early-careers/early-careers-apply/').stage, 'application');
+  const ctx = {
+    url: 'https://www.standardbank.com/sbg/standard-bank-group/careers/apply',
+    title: '',
+    company: 'Standard Bank',
+    jobIds: [],
+    trail: [{ url: job, title: 'detail', at: Date.now() - 60e3 }],
+  };
+  assert.deepEqual(
+    jp.candidates(ctx, Date.now()).map((c) => c.url),
+    [job],
+  );
+});
+
+test('a list of jobs: the one its address, its search or Trackr’s programme names (Access Capital’s “?annonce=”)', async () => {
+  const url =
+    'https://www.access-capital-partners.com/en/careers?annonce=internship-offer-buy-out-fund-of-funds-primaries-secondaries&utm_source=Trackr';
+  const job = 'https://www.access-capital-partners.com/en/news/internship-buy-out-fund-of-funds-primaries-secondaries';
+  const ctx = jp.applicationContext(doc('list-annonce.html'), url);
+  assert.equal(ctx.posting, null);
+  assert.ok(ctx.listed.some((l) => l.url === job));
+  const r = await jp.find(ctx, { fetch: mockFetch({ [job]: html('list-annonce-job.html') }), related: false });
+  assert.equal(r.verdict, 'likely');
+  assert.equal(r.source, job);
+  assert.equal(r.posting.title, 'Internship - Buy-out Fund of Funds (Paris or London)');
+  assert.notEqual(r.posting.company, 'Buy-out Fund of Funds (Paris or London)');
+  // Two jobs alike are no answer; a search that names one is.
+  const listed = [
+    { url: 'https://x.com/jobs/1-summer-analyst-london', text: '2027 Summer Analyst – London' },
+    { url: 'https://x.com/jobs/2-summer-analyst-new-york', text: '2027 Summer Analyst – New York' },
+    { url: 'https://x.com/jobs/3-data-intern', text: 'Data Intern - Summer 2027' },
+  ];
+  const named = (names) => jp.namedLink(listed, names);
+  assert.equal(named(['Summer Analyst 2027']), null);
+  assert.equal(named(['Data Intern - Summer 2027']).url, 'https://x.com/jobs/3-data-intern');
+  assert.deepEqual(
+    jp.listNames(
+      'https://www.kpmgcareers.co.uk/search/vacancies/?searchText=%22graduate+technology+-+software+engineering%22&intakeType=Student',
+    ),
+    ['graduate technology - software engineering'],
+  );
+});
+
+test('prose under a widget’s class name is still the page’s text; a real filter, or a place, is not (Willkie)', () => {
+  const para = (n) =>
+    `<p>${'Trainees join our London team for four six-month seats, and you will work with partners on contentious and transactional matters. We look for candidates with strong academic results and the skills to explain hard problems simply. '.repeat(n)}</p>`;
+  const page = `<html><head><title>Willkie | United Kingdom</title></head><body><main>
+    <div class="filters"><label><input type="checkbox"> London</label><label><input type="checkbox"> Paris</label><p>Filter by office</p></div>
+    <div class="filter-tabbing"><div class="filter-data current"><h2>London Overview</h2>${para(4)}<h3>How to apply</h3>${para(3)}</div></div>
+  </main></body></html>`;
+  const url = 'https://www.willkie.com/careers/legal-professional/early-careers/discover-more-and-apply/united-kingdom';
+  const p = jp.fromHtml(page, url);
+  assert.ok(p && words(p.description) > 150);
+  assert.match(p.description, /four six-month seats/);
+  assert.doesNotMatch(p.description, /Filter by office|London\s+Paris/);
+  assert.equal(p.company, '');
 });

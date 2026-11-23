@@ -1235,3 +1235,126 @@ test('letter: the contact line takes clean links, and a typed line loses the nam
     ['ada@example.com', 'linkedin.com/in/ada'],
   );
 });
+
+test('letter: a posting that says little is read with the pages found about it, labelled, and only then', async () => {
+  const short = {
+    ...posting,
+    title: 'Intern, London',
+    company: '3i',
+    description:
+      '3i is an investment company. Please register your interest in an internship by clicking Apply. '.repeat(5),
+  };
+  const related = [
+    {
+      title: 'Intern, Frankfurt · Frankfurt, Germany',
+      url: 'https://3i.wd103.myworkdayjobs.com/Intern_Career/job/Frankfurt-Germany/Intern--Frankfurt_',
+      text: '• Support in preparing investment proposals for internal decision-making.\n• Market analysis of selected sectors.',
+      kind: 'sibling',
+    },
+  ];
+  const asked = [];
+  const chat = async (messages) => {
+    asked.push(messages);
+    return { json: { isPosting: true, company: '3i', role: 'Internship' } };
+  };
+  await L.analyse(chat, short, {});
+  await L.analyse(chat, { ...short, related }, {});
+  const [plain, more] = asked;
+  assert.doesNotMatch(plain[0].content + plain[1].content, /MORE ABOUT THE JOB/);
+  assert.match(more[0].content, /never from another office’s posting/);
+  assert.match(
+    more[1].content,
+    /MORE ABOUT THE JOB[^\n]*\n--- Intern, Frankfurt · Frankfurt, Germany \(https:\/\/3i\.wd103/,
+  );
+  assert.match(more[1].content, /Support in preparing investment proposals/);
+  assert.ok(more[1].content.indexOf('Posting:') < more[1].content.indexOf('MORE ABOUT THE JOB'), 'the posting first');
+  assert.equal(L.relatedBlock(short), '');
+
+  // The letter's prompt carries them too, and its rule on employer facts says so.
+  const analysis = L.cleanAnalysis({ company: '3i', role: 'Internship' }, short, {});
+  const letters = [];
+  const write = async (messages, opts) => {
+    if (/write job application cover letters/.test(messages[0].content)) letters.push(messages);
+    return { json: opts && opts.json && /fact-checker/.test(messages[0].content) ? { unsupported: [] } : good };
+  };
+  await L.write(write, {
+    profile,
+    kit,
+    cvText: '',
+    posting: { ...short, related },
+    analysis,
+    today: Date.parse('2025-10-01'),
+  });
+  assert.match(letters[0][0].content, /use only what the JOB POSTING and MORE ABOUT THE JOB say/);
+  assert.match(letters[0][1].content, /JOB POSTING:\n[\s\S]*MORE ABOUT THE JOB[\s\S]*CANDIDATE MATERIAL:/);
+  await L.write(write, { profile, kit, cvText: '', posting: short, analysis, today: Date.parse('2025-10-01') });
+  assert.match(letters.at(-1)[0].content, /About the employer, use only what the JOB POSTING says\./);
+  assert.doesNotMatch(letters.at(-1)[1].content, /MORE ABOUT THE JOB/);
+});
+
+test('letter: the web search for a job keeps only pages the search itself returned, never anything about you', async () => {
+  let sent = null;
+  const search = async (messages, opts) => {
+    sent = { messages, opts };
+    return {
+      json: {
+        pages: [
+          {
+            url: 'https://www.3i.com/careers/early-careers/',
+            title: 'Early careers',
+            kind: 'programme',
+            why: '3i’s internships',
+          },
+          { url: 'https://made-up.example.com/3i-intern', title: 'Invented', kind: 'posting' },
+          { url: 'https://www.brightnetwork.co.uk/graduate-jobs/3i/intern-london', kind: 'posting' },
+        ],
+      },
+      sources: [
+        { url: 'https://www.3i.com/careers/early-careers', title: 'Early careers | 3i', text: '', kind: 'result' },
+        {
+          url: 'https://www.3i.com/careers/early-careers/',
+          title: '',
+          text: 'Our interns join a deal team for ten weeks.',
+          kind: 'page',
+        },
+        {
+          url: 'https://www.brightnetwork.co.uk/graduate-jobs/3i/intern-london',
+          title: 'Intern, London | 3i',
+          text: '',
+          kind: 'result',
+        },
+      ],
+      usage: { cost: 0.03 },
+      searches: 2,
+    };
+  };
+  const context = {
+    url: 'https://3i.wd103.myworkdayjobs.com/en-US/Intern_Career/job/London-United-Kingdom/Intern--London_',
+    title: 'Intern, London',
+    company: '3i',
+    jobIds: [],
+  };
+  const r = await L.findOnline(search, {
+    context,
+    posting: {
+      title: 'Intern, London',
+      company: '3i',
+      location: 'London',
+      description: 'Please register your interest.',
+    },
+  });
+  assert.deepEqual(
+    r.pages.map((p) => [p.url, p.kind]),
+    [
+      ['https://www.3i.com/careers/early-careers/', 'programme'],
+      ['https://www.brightnetwork.co.uk/graduate-jobs/3i/intern-london', 'posting'],
+    ],
+  );
+  assert.equal(r.pages[0].text, 'Our interns join a deal team for ten weeks.');
+  assert.equal(r.pages[1].title, 'Intern, London | 3i');
+  assert.equal(r.searches, 2);
+  const brief = sent.messages.map((m) => m.content).join('\n');
+  assert.match(brief, /Employer: 3i\nJob title: Intern, London/);
+  assert.doesNotMatch(brief, /Ada|Lovelace|ada@example\.com|07700/);
+  assert.equal(sent.opts.json, true);
+});

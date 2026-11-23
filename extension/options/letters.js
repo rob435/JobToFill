@@ -716,9 +716,11 @@ async function findingGroup(settings) {
       await api.permissions.remove({ permissions: ['history'] }).catch(() => {});
     }
   });
+  const web = el('input', { type: 'checkbox', checked: !!settings.jobWebSearch, name: 'job-web-search' });
+  web.addEventListener('change', () => store.saveSettings({ jobWebSearch: web.checked }));
   return group(
     'Finding the job description',
-    'Application forms often don’t include the job description. JobToFill looks for it on the page, through the job site’s public listings, and on pages linked from the form, then checks it is the same job (same job ID, company and title) before writing anything.',
+    'Application forms often don’t include the job description. JobToFill looks for it on the page, through the job site’s public listings, and on pages linked from the form, then checks it is the same job (same job ID, company and title) before writing anything. When the posting says little about the work (3i’s “Please register your interest… by clicking Apply”), it also reads the same programme’s postings for other offices and the employer’s own pages about it.',
     el(
       'label',
       { className: 'check top' },
@@ -731,7 +733,23 @@ async function findingGroup(settings) {
         el('small', {
           className: 'muted',
           textContent:
-            'Finds the job page you read before clicking Apply. History is searched in this browser only; just the matching job pages are opened.',
+            'Finds the job page you read before clicking Apply, and the employer’s own pages about the programme you looked at. History is searched in this browser only; just the matching pages are opened.',
+        }),
+      ),
+    ),
+    el(
+      'label',
+      { className: 'check top' },
+      web,
+      el(
+        'span',
+        {},
+        el('strong', { textContent: 'Search the web when a description can’t be found or says little' }),
+        el('br'),
+        el('small', {
+          className: 'muted',
+          textContent:
+            'Your AI model searches the web for the job (Claude’s web search or OpenRouter’s web plugin, about 2 to 5 cents a search on your key) with the employer’s name, the job’s title and its address, never anything about you. Off, the letter studio offers it as a button.',
         }),
       ),
     ),

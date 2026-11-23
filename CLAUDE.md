@@ -100,6 +100,10 @@ detail. Keep the README short: only what everyone needs.
 - **Detection on real forms:** `npm run bench` scores the rules on 55 real forms (a private corpus, cloned beside this
   repo; `tests/bench/README.md`). Run it with `--save` before and `--baseline` after any change to the rules or
   `dom.js` (`--pages` for `dom.js`), and look at every field that got worse.
+- **Finding job descriptions on real sites:** `tests/live/survey-descriptions.mjs` reads Trackr's open programmes (one or
+  two per site) in the real extension as the letter studio does, before and after _Apply_, and tallies each as good,
+  thin, more, wrong, none or wall. Run it after a change to `lib/jobpage.js`, and turn each site it misses into a
+  fixture in `tests/fixtures/jobs/` with a unit test.
 - **Coverage on real forms:** `tests/live/survey-api.mjs` (`docs/development.md` › _Surveying live application
   forms_) runs the rules over live Greenhouse, Ashby and Lever forms and lists what they don't recognise.
 

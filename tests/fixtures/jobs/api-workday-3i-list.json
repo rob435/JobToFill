@@ -1,0 +1,35 @@
+{
+  "total": 5,
+  "jobPostings": [
+    {
+      "title": "Intern, London",
+      "externalPath": "/job/London-United-Kingdom/Intern--London_",
+      "locationsText": "London, United Kingdom",
+      "postedOn": "Posted 30+ Days Ago"
+    },
+    {
+      "title": "Intern, Frankfurt",
+      "externalPath": "/job/Frankfurt-Germany/Intern--Frankfurt_",
+      "locationsText": "Frankfurt, Germany",
+      "postedOn": "Posted 30+ Days Ago"
+    },
+    {
+      "title": "Intern, Amsterdam",
+      "externalPath": "/job/Amsterdam-Netherlands/Intern--Amsterdam_",
+      "locationsText": "Amsterdam, Netherlands",
+      "postedOn": "Posted 30+ Days Ago"
+    },
+    {
+      "title": "Intern, Paris",
+      "externalPath": "/job/Paris-France/Intern--Paris_",
+      "locationsText": "Paris, France",
+      "postedOn": "Posted 30+ Days Ago"
+    },
+    {
+      "title": "Intern, New York",
+      "externalPath": "/job/New-York-USA/Intern--New-York_",
+      "locationsText": "New York, USA",
+      "postedOn": "Posted 30+ Days Ago"
+    }
+  ]
+}

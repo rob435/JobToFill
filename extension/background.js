@@ -1757,12 +1757,19 @@ async function jobFor(tabId) {
         : null;
     const posting = (ok && found.posting) || onPage;
     const hint = (found && found.hint) || null;
+    // A posting that says little comes with the employer's own pages and its postings for other offices (find()).
+    const more = ok && posting === found.posting && Array.isArray(found.extra) ? found.extra : [];
     job = {
       company: (posting && posting.company) || context.company || (hint && hint.company) || '',
       title: (posting && posting.title) || (hint && hint.programme) || context.title || '',
       location: (posting && posting.location) || context.location || ((hint && hint.locations) || []).join(', '),
       url: (posting && posting.url) || url,
-      description: (posting && posting.description) || '',
+      description: [
+        (posting && posting.description) || '',
+        ...more.map((x) => `More about the job (${x.reason}: ${x.title}):\n${x.text}`),
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
       companyNotes: (hint && hint.about) || '',
     };
   }
