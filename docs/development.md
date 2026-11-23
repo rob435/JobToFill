@@ -71,7 +71,7 @@ extension/
   tracker/             the Applications page: every application and how far it got, the funnel, where you're being cut,
                        the emails to sort, stages set by hand and notes
   studio/              the cover letter page: find the job, write, check, preview, attach, tailor the CV
-  discover/            Discover internships page: the Overview (control panel), search, careers and contact checks, email
+  discover/            Discover internships page: the Overview, search, careers and contact checks, email
                        drafts, the Review queue, outreach with replies sorted, watchlist
   data/firms.json      the registry Discover searches: finance and tech firms (built by scripts/firms.mjs)
   data/checks.json     every registry firm's careers pages, job boards, mailboxes and address format, found ahead of time,

@@ -1,17 +1,67 @@
-/* JobToFill — Discover internships. */
+/* JobToFill — Discover internships. One shell for the five tabs: a title line with the tab's one main button, then
+   flat lists of rows on a single surface (never a box inside a box), with the quiet actions as words under each row. */
+:root {
+  --pop: 0 1px 3px rgba(20, 16, 40, 0.08), 0 10px 32px rgba(20, 16, 40, 0.16);
+  --edge: rgba(20, 16, 40, 0.09);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pop: 0 1px 3px rgba(0, 0, 0, 0.4), 0 12px 36px rgba(0, 0, 0, 0.5);
+    --edge: rgba(0, 0, 0, 0.4);
+  }
+}
 body {
   min-height: 100vh;
 }
+h4 {
+  margin: 0;
+}
+fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.page p,
+.menu-panel p {
+  margin: 0;
+}
+.grow {
+  flex: 1;
+}
+.small {
+  font-size: 12.5px;
+}
+.error {
+  color: var(--danger);
+}
+.ok-text {
+  color: var(--ok);
+}
+.warn-text {
+  color: var(--warn);
+}
+/* An address, a website, a source: coloured, underlined only under the pointer (a sentence's own link stays
+   underlined). */
+.page a {
+  text-decoration: none;
+}
+.page a:hover,
+.page :is(small, .footnote) a {
+  text-decoration: underline;
+}
 
-/* The bar across the top: the name, the five tabs as an underlined row, and how the AI and inbox stand. */
+/* ------------------------------------------------------------------ shell */
+
+/* The bar across the top: the name, the five tabs, and how the AI and the inbox stand. */
 .topbar {
   position: sticky;
   top: 0;
-  z-index: 3;
+  z-index: 4;
   display: flex;
   flex-wrap: wrap;
   align-items: stretch;
-  gap: 4px 18px;
+  gap: 0 20px;
   padding: 0 24px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -20,37 +70,34 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 0;
+  padding: 12px 0;
 }
 .topbar h1 {
   font-size: 15px;
+  font-weight: 650;
   white-space: nowrap;
 }
-.grow {
-  flex: 1;
-}
-.small {
-  font-size: 12.5px;
-}
-
+/* The tabs give way first (they scroll sideways), so the pills stay on the bar's one line. */
 .tabs {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
-  gap: 2px;
   align-items: stretch;
   overflow-x: auto;
   scrollbar-width: none;
 }
 .tabs button {
   border: 0;
-  border-bottom: 2px solid transparent;
   border-radius: 0;
   background: none;
-  padding: 14px 12px 12px;
+  min-height: 52px;
+  padding: 0 11px;
   color: var(--muted);
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
+  box-shadow: inset 0 -2px 0 transparent;
 }
 .tabs button:where(:not(:disabled)):hover {
   background: none;
@@ -58,75 +105,170 @@ body {
 }
 .tabs button[aria-selected='true'] {
   color: var(--text);
-  border-bottom-color: var(--primary);
+  box-shadow: inset 0 -2px 0 var(--primary);
+}
+/* Inside the row, which scrolls sideways when it's too narrow for the five. */
+.tabs button:focus-visible {
+  outline-offset: -3px;
+}
+.tabs .pill {
+  padding: 1px 7px;
+  font-size: 11.5px;
 }
 .tabs .pill:empty {
   display: none;
 }
-.tabs button[aria-selected='true'] .pill {
+.tabs button[aria-selected='true'] .pill:not(.ok) {
   background: var(--primary-weak);
   color: var(--primary);
 }
 .health {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  padding: 8px 0;
+  gap: 8px;
+  margin-left: auto;
+  padding: 10px 0;
 }
 .health .pill {
-  cursor: default;
+  padding: 4px 10px;
+  white-space: nowrap;
 }
 .health button.pill {
   border: 0;
   cursor: pointer;
 }
-
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 20px 24px;
-  max-width: 1320px;
-  margin: 0 auto;
+.health button.pill:hover {
+  background: var(--warn-weak);
+  text-decoration: underline;
 }
-#find-view,
-#watch-view,
-#home-view,
-#outreach-view {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-#find-view[hidden],
-#watch-view[hidden],
-#home-view[hidden],
-#outreach-view[hidden] {
+#health-inbox:empty {
   display: none;
 }
-/* Watchlist and Outreach read best at a measure, not the width of a wide screen. */
-#watch-view > .card,
-#outreach-view > .card {
-  max-width: 1100px;
-  width: 100%;
-  margin: 0 auto;
-}
 
-.card {
+/* A menu: a <details> whose panel hangs under its summary (discover.js closes it on a click elsewhere and Escape). */
+.menu {
+  position: relative;
+}
+.menu > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+.menu > summary::-webkit-details-marker {
+  display: none;
+}
+.menu > summary::after {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin: 0 1px 2px 7px;
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+  opacity: 0.75;
+}
+.menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 6;
+  min-width: 230px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 16px 18px;
+  border-radius: 12px;
+  box-shadow: var(--pop);
+}
+.menu-items button {
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  padding: 8px 10px;
+  text-align: left;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.menu-items button:disabled {
+  background: none;
+  border: 0;
+}
+/* The AI model for this page, under its pill in the bar. */
+.ai-body {
+  width: min(360px, calc(100vw - 24px));
+  max-height: calc(100vh - var(--bar, 53px) - 16px);
+  overflow-y: auto;
+  padding: 16px;
+  gap: 12px;
+}
+.ai-body h2 {
+  font-size: 14px;
+}
+.ai-body > span:empty {
+  display: none;
+}
+.stack {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
-.card h2 {
-  font-size: 15px;
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 24px 24px 40px;
 }
-.card p {
-  margin: 0;
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+/* A tab's first line: what it is and how it stands on the left, its buttons on the right. */
+.view-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 20px;
+}
+.view-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  max-width: 720px;
+}
+.view-title h2 {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.view-title p:empty {
+  display: none;
+}
+
+.card,
+.list-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  min-width: 0;
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 20px;
+}
+.card h2,
+.card h3 {
+  font-size: 14.5px;
+  font-weight: 650;
 }
 .card-head {
   display: flex;
@@ -135,125 +277,222 @@ body {
   justify-content: space-between;
   gap: 10px;
 }
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+/* Clipped to its corners without becoming a scroller: the line over the firms can stick under the bar. */
+.list-card {
+  overflow: clip;
 }
-@media (max-width: 640px) {
-  .grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.list-card:has(> .firms:empty) {
+  display: none;
 }
-.field {
+.list-foot {
+  display: flex;
+  justify-content: center;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+.list-foot:not(:has(> :not([hidden]))) {
+  display: none;
+}
+/* Nothing here yet, and what to do about it. */
+.empty-state {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  align-items: center;
+  gap: 10px;
+  padding: 44px 24px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  text-align: center;
 }
-.field.wide {
-  grid-column: 1 / -1;
+.empty-state h2 {
+  font-size: 16px;
 }
-.field > span,
-legend {
-  font-weight: 600;
-  font-size: 12.5px;
+.empty-state p {
+  max-width: 540px;
 }
-.field small {
-  color: var(--muted);
-}
+
 .row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
-.check {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-/* The box keeps its size however long its words, which wrap beside it. */
-.check input {
-  flex: none;
-}
-#ai-wrap {
-  align-items: baseline;
-}
-#ai-wrap input {
-  align-self: center;
-}
-.error {
-  color: var(--danger);
-}
-
-/* Find firms: the search on the left (it stays in view while the results scroll), the firms on the right. */
-.find-cols {
+.grid {
   display: grid;
-  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
-/* Under the bar, however tall it wraps (--bar is its height, kept by discover.js). */
-.filters {
-  position: sticky;
-  top: calc(var(--bar, 50px) + 14px);
-  max-height: calc(100vh - var(--bar, 50px) - 30px);
-  overflow-y: auto;
-  gap: 14px;
+.wide {
+  grid-column: 1 / -1;
 }
-.filters .grid {
-  grid-template-columns: minmax(0, 1fr);
+/* Two short choices, each with its name beside it: the list keeps the room for "Manchester and Leeds". */
+.pair {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 12px;
+  align-items: center;
 }
-.results-col {
+.pair .field {
+  display: contents;
+}
+.field {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 5px;
   min-width: 0;
 }
-.search-row {
-  position: sticky;
-  bottom: -16px;
-  margin: 0 -18px -16px;
-  padding: 12px 18px;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
+.field > span,
+legend {
+  font-size: 12.5px;
+  font-weight: 600;
 }
-.search-row #search {
-  min-width: 120px;
+.field small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
-.empty-results p {
-  max-width: 560px;
+/* A tick box and its words: the box keeps its size and sits on the first line, however far the words wrap. */
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
 }
-@media (max-width: 900px) {
-  .find-cols {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .filters {
-    position: static;
-    max-height: none;
-  }
-  .search-row {
-    position: static;
-    margin: 0;
-    padding: 0;
-    border: 0;
-  }
+.check input {
+  flex: none;
+  margin-top: 3.5px;
 }
-
-.niches,
-.sources {
-  border: 0;
+/* A summary that folds what's under it (not a menu's). */
+details:not(.menu) > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.plain {
+  list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+}
+.log {
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-all;
+}
+.page .footnote {
+  max-width: 760px;
+  margin: 8px auto 0;
+  text-align: center;
+}
+/* "Open in your email app" is a mailto: link, and a menu's summary a <summary>, that look like the buttons beside them. */
+:is(a, summary).button {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 7px 12px;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 550;
+  text-decoration: none;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+:is(a, summary).button:hover {
+  background: var(--surface-2);
+  text-decoration: none;
+}
+a.button.small {
+  padding: 4px 9px;
+  font-size: 12.5px;
+}
+a.button.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-text);
+}
+a.button.primary:hover {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+button.big,
+a.button.big {
+  min-height: 44px;
+  padding: 9px 20px;
+  font-size: 15px;
+  border-radius: 10px;
+}
+
+/* -------------------------------------------------------------- find firms */
+
+/* The search down the left (it stays in view while the firms scroll), the firms on the right. */
+.find-cols {
+  display: grid;
+  grid-template-columns: 296px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+/* Under the bar, however tall it wraps (--bar is its height, kept by discover.js): its head and its Search button
+   stay put, and what's between them scrolls. */
+.filters {
+  position: sticky;
+  top: calc(var(--bar, 53px) + 24px);
+  max-height: calc(100vh - var(--bar, 53px) - 48px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.filters-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.filters-head h2 {
+  font-size: 15px;
+  font-weight: 650;
+}
+.filters-head .small {
+  font-size: 12px;
+}
+/* A shadow at an edge says there's more past it (the kinds of firm are a long list on a laptop's screen). */
+.filters-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+  padding: 16px 18px 18px;
+  overflow-y: auto;
+  background:
+    linear-gradient(var(--surface) 30%, transparent) top / 100% 28px no-repeat local,
+    linear-gradient(transparent, var(--surface) 70%) bottom / 100% 28px no-repeat local,
+    linear-gradient(var(--edge), transparent) top / 100% 6px no-repeat scroll,
+    linear-gradient(transparent, var(--edge)) bottom / 100% 6px no-repeat scroll;
+}
+.search-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 18px 14px;
+  border-top: 1px solid var(--border);
+}
+.search-row #search {
+  width: 100%;
+  padding: 9px 12px;
+}
+#status:empty {
+  display: none;
 }
 .niches legend,
 .sources legend {
   width: 100%;
-  padding: 0 0 6px;
+  padding: 0 0 8px;
   display: flex;
   align-items: baseline;
   gap: 10px;
@@ -264,195 +503,371 @@ legend {
   margin-left: auto;
   font-weight: 500;
 }
-/* The kinds of firm in two short groups, each under its own small heading with All and None ("Finance", "Tech"). */
+/* The kinds of firm as two ticked lists, each under its own small heading with All and None ("Finance", "Tech"). */
 .niche-groups {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 .niche-group {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 2px;
 }
 .niche-title {
   display: flex;
   align-items: baseline;
   gap: 10px;
+  padding-bottom: 2px;
 }
 .niche-head {
+  margin-right: auto;
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11.5px;
+  font-weight: 650;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
 }
 .niche-title .link {
   font-size: 12px;
 }
-.sources .check {
-  align-items: baseline;
-}
-.sources .check input {
-  align-self: center;
-}
-
-/* The AI model for this page: a summary line until opened. */
-#ai-box {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 12px;
-}
-#ai-box[open] summary {
-  margin-bottom: 10px;
-}
-.ai-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.ai-body p {
-  margin: 0;
-}
-.wide {
-  grid-column: 1 / -1;
-}
 .chips {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
 }
 .chip {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  gap: 9px;
+  margin: 0 -8px;
+  padding: 3px 8px;
+  border-radius: 7px;
+  font-size: 13.5px;
   cursor: pointer;
   user-select: none;
-  font-size: 13px;
+}
+.chip:hover {
+  background: var(--surface-2);
 }
 .chip input {
   margin: 0;
 }
-.chip:has(input:checked) {
-  background: var(--primary-weak);
-  border-color: var(--primary);
-}
-
-/* The results' own filters and what to do with the firms picked. */
-.results-tools {
+.sources {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--border);
+  gap: 10px;
 }
-.toggle {
-  padding: 3px 9px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  cursor: pointer;
+.sources legend {
+  padding-bottom: 0;
 }
-.toggle:has(input:checked) {
-  background: var(--primary-weak);
-  border-color: var(--primary);
-}
-.pick-bar {
-  gap: 6px;
+/* What a source is, on a line of its own under its name. */
+.sources .check > span > .muted {
+  display: block;
 }
 
-/* Result and watchlist cards */
+.results-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  container-type: inline-size;
+}
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+/* How the list is narrowed and ordered: switches that show as filled when on. */
+.results-tools,
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.toggle,
+.filter-chips button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+}
+:is(.toggle, .filter-chips button):hover {
+  color: var(--text);
+  background: var(--surface);
+}
+/* The box itself covers the switch, unseen: a click anywhere on it ticks it. */
+.toggle input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.toggle:has(input:checked),
+.filter-chips button[aria-checked='true'] {
+  background: var(--primary-weak);
+  border-color: var(--primary-weak);
+  color: var(--primary);
+  font-weight: 600;
+}
+.toggle:has(input:checked)::before {
+  content: '✓';
+  font-size: 11px;
+}
+.toggle:has(input:focus-visible) {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.filter-chips .count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  opacity: 0.75;
+}
+/* The list's own first line: how many firms are ticked, and what to do with them. */
+.pick-bar {
+  position: sticky;
+  top: var(--bar, 53px);
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  min-height: 44px;
+  padding: 7px 18px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.pick-bar #picked-count {
+  font-weight: 600;
+}
+
+/* A list's rows: firms found, firms written to, firms watched. */
 .firms {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
 }
 .firm {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  background: var(--surface);
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
   overflow-wrap: anywhere;
 }
-.firms > .muted {
-  padding: 4px 2px;
+.firm:first-child {
+  border-top: 0;
 }
-.firm[data-open='true'] {
-  border-color: var(--ok);
+.firms > .muted {
+  padding: 32px 24px;
+  text-align: center;
 }
 .firm-head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
-}
-/* The box that picks a firm for Write to them, beside its name. */
-.firm-head .pick {
-  align-self: center;
-  width: 17px;
-  height: 17px;
-}
-.firm.picked {
-  border-color: var(--primary);
-  box-shadow: inset 3px 0 0 var(--primary);
-}
-/* What the firm's own site says at a glance: the way in and the first person to write to. */
-.glance {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 10px;
-  font-size: 13px;
-}
-.glance .who {
-  font-weight: 600;
-}
-.firm-head .outreach-pill {
-  margin-left: auto;
+  gap: 2px 10px;
 }
 .firm-name {
   font-size: 15px;
   font-weight: 650;
 }
+.firm-name a {
+  color: inherit;
+}
 .firm-meta {
   color: var(--muted);
   font-size: 12.5px;
 }
-.badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-.firm-why {
-  font-size: 12.5px;
-  color: var(--muted);
-}
+/* What can be done with a row, as quiet words: its one main button is the only button that looks like one. */
 .firm-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
   align-items: center;
+  gap: 2px;
+  margin-left: -8px;
 }
-.found {
+.firm-actions :is(button, a):not(.primary) {
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  padding: 4px 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 550;
+}
+.firm-actions :is(button:not(:disabled), a):not(.primary):hover {
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+}
+.firm-actions button:not(.primary):disabled {
+  opacity: 0.6;
+}
+.firm-actions a::after {
+  content: ' ↗';
+  font-size: 11px;
+}
+.firm-actions [aria-expanded]::before {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin: 0 7px 1px 1px;
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(-45deg);
+  transition: transform 0.12s;
+}
+.firm-actions [aria-expanded='true']::before {
+  transform: rotate(45deg);
+  margin-bottom: 3px;
+}
+.firm-actions [aria-expanded='true'] {
+  color: var(--text);
+}
+
+/* A firm found: who it is | the way in and who to write to | the button that writes to them; under those, the quiet
+   actions and whatever was opened (what its site says, the web research, the email drawer). */
+#results .firm {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1.5fr) minmax(0, 1fr) auto;
+  gap: 8px 14px;
+  align-items: start;
+}
+#results .firm-head {
+  flex-direction: column;
+  gap: 2px;
+}
+#results .firm > .pick {
+  grid-area: 1 / 1;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+}
+.firm-id {
+  grid-column: 2;
   display: flex;
   flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.firm-way {
+  grid-column: 3;
+  min-width: 0;
+}
+.firm-cta {
+  grid-column: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   gap: 6px;
-  border-top: 1px dashed var(--border);
-  padding-top: 8px;
 }
-.found[open] > summary {
-  margin-bottom: 2px;
+#results .firm > :is(.firm-actions, .reads, .found, .research, .drawer, .hn-post) {
+  grid-column: 2 / -1;
 }
-.roles,
-.plain {
+.firm.picked {
+  background: color-mix(in srgb, var(--primary-weak) 45%, var(--surface));
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+/* The way in and the first person to write to, in a column of their own so they line up down the list. */
+.glance {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.glance > span:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.glance .who {
+  font-weight: 600;
+}
+.glance.none {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+/* Where the firm comes from and what it is, as one quiet line: a dot for what vouches for it. */
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
+}
+.badges .pill {
+  gap: 5px;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.badges .pill:is(.ok, .warn)::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.badges .pill.warn::before {
+  background: var(--warn);
+}
+.badges a.pill {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.firm-why {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.hn-post {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* What a firm's own site says, opened under its row: the roles, the programmes, who to email. */
+.found,
+.research,
+.drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+.found,
+.research {
+  background: var(--bg);
+}
+.found :is(h3, h4),
+.research h3 {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.roles {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -471,9 +886,8 @@ legend {
   font-size: 12.5px;
 }
 .programme {
-  font-size: 13px;
   border-left: 3px solid var(--primary);
-  padding-left: 8px;
+  padding-left: 10px;
 }
 /* What a page says about its programme without a date: worth reading, not a deadline. */
 .programme.mention {
@@ -484,36 +898,33 @@ legend {
 }
 .programme.new,
 .roles li.new {
-  padding: 3px 8px;
+  padding: 4px 10px;
   border-radius: 0 6px 6px 0;
 }
 .roles li.new {
   border-radius: 6px;
 }
-/* Who to email, the best way in, what the AI read. */
-.way {
-  margin: 0;
-}
 .contacts {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
-.contacts h3 {
-  font-size: 13px;
+.contact-list {
+  gap: 0;
 }
 .contact-list li {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 8px;
-  font-size: 13px;
+  gap: 4px 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+}
+.contact-list li:first-child {
+  border-top: 0;
 }
 .contact-list .who {
   font-weight: 600;
-}
-.contacts button.link {
-  align-self: flex-start;
 }
 .contact-list .why {
   color: var(--muted);
@@ -522,38 +933,18 @@ legend {
 .contact-list .write-to {
   margin-left: auto;
 }
+.contacts button.link {
+  align-self: flex-start;
+}
 .who-group h4 {
-  margin: 8px 0 4px;
-  color: var(--muted);
-  font-weight: 600;
-}
-.contacts .size-note {
-  margin: 0;
-}
-.hn-post {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.hn-post p {
-  margin: 0;
+  margin: 10px 0 2px;
 }
 
-/* The email drawer under a card. */
+/* The email drawer under a row. */
 .drawer {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  border-top: 1px dashed var(--border);
-  padding-top: 10px;
-}
-.drawer p {
-  margin: 0;
+  border: 1px solid var(--border);
 }
 .kinds {
-  border: 0;
-  margin: 0;
-  padding: 0;
   display: flex;
   flex-wrap: wrap;
   gap: 4px 14px;
@@ -565,206 +956,150 @@ legend {
 .checks {
   gap: 2px;
 }
-.ok-text {
-  color: var(--ok);
-}
-.warn-text {
-  color: var(--warn);
-}
-/* "Open in your email app" is a mailto: link that looks like the buttons beside it. */
-a.button {
-  display: inline-flex;
+.typed-to.row {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  padding: 4px 9px;
-  font-size: 12.5px;
-  font-weight: 550;
-  text-decoration: none;
-}
-a.button.primary {
-  background: var(--primary);
-  border-color: var(--primary);
-  color: var(--primary-text);
-}
-a.button.primary:hover {
-  background: var(--primary-hover);
-  border-color: var(--primary-hover);
-}
-
-/* Outreach: one row per firm on a wide screen (who and what they said, the status and notes, then its buttons),
-   stacked on a narrow one. */
-.outreach-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.2fr) auto;
-  gap: 6px 16px;
-  align-items: start;
-}
-.outreach-item > .firm-head,
-.outreach-item > .reply-snippet,
-.outreach-item > p {
-  grid-column: 1;
-}
-.outreach-item > .outreach-fields {
-  grid-column: 2;
-  grid-row: 1 / span 3;
-}
-.outreach-item > .firm-actions {
-  grid-column: 3;
-  grid-row: 1 / span 3;
-  flex-direction: column;
-  align-items: stretch;
-}
-.outreach-fields {
-  display: grid;
-  grid-template-columns: minmax(0, 130px) minmax(0, 1fr);
   gap: 8px;
 }
-.outreach-fields .field > span {
-  font-size: 11.5px;
-  color: var(--muted);
+.typed-to input {
+  flex: 1 1 260px;
+  min-width: 0;
 }
-.outreach-fields textarea {
-  min-height: 0;
+.typed-to .error {
+  flex-basis: 100%;
 }
-.outreach-item p {
-  margin: 0;
+
+/* Narrow (the results beside the search on a small window, or a phone): the way in goes under the name. */
+@container (max-width: 700px) {
+  #results .firm {
+    grid-template-columns: 16px minmax(0, 1fr) auto;
+  }
+  .firm-way {
+    grid-area: 2 / 2 / auto / -1;
+  }
+  .firm-cta {
+    grid-column: 3;
+  }
 }
-@media (max-width: 860px) {
-  .outreach-item {
+@media (max-width: 960px) {
+  .find-cols {
     grid-template-columns: minmax(0, 1fr);
   }
-  .outreach-item > .outreach-fields,
-  .outreach-item > .firm-actions {
-    grid-column: 1;
-    grid-row: auto;
-    flex-direction: row;
+  .filters {
+    position: static;
+    max-height: none;
   }
-}
-@media (max-width: 640px) {
-  .outreach-fields {
-    grid-template-columns: minmax(0, 1fr);
+  .filters-body {
+    overflow: visible;
   }
 }
 
-.empty {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-details summary {
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 12.5px;
-}
-.log {
-  font-size: 12px;
-  color: var(--muted);
-  word-break: break-all;
-}
-.footnote {
-  text-align: center;
-}
+/* ------------------------------------------------------------------ review */
 
-/* A phone-sized window: the five tabs wrap under the title, so none is out of sight. */
-@media (max-width: 640px) {
-  .topbar {
-    padding: 0 14px;
-  }
-  .tabs {
-    flex-wrap: wrap;
-    overflow-x: visible;
-  }
-  .tabs button {
-    padding: 10px 8px 8px;
-  }
-  .health {
-    display: none;
-  }
-  .page {
-    padding: 12px;
-    gap: 12px;
-  }
-  .card {
-    padding: 14px;
-  }
-}
-
-/* The review queue: one firm at a time, big buttons. */
-button.big,
-a.button.big {
-  min-height: 46px;
-  padding: 10px 22px;
-  font-size: 15px;
-  border-radius: 10px;
-}
-.write-bar {
+.follow-due {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border);
+  gap: 10px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: var(--warn-weak);
 }
-.write-bar p {
-  max-width: 560px;
-}
-.firm-actions .write-go {
-  min-height: 36px;
-  padding: 6px 16px;
-}
-#review-view {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  max-width: 1180px;
-  width: 100%;
-  margin: 0 auto;
-}
-/* Review: the queue down the left, one email at a time on the right. */
+/* The queue and the email options down the left, one email at a time on the right. */
 .review-cols {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: 290px minmax(0, 1fr);
+  gap: 24px;
   align-items: start;
 }
 .queue-side {
   position: sticky;
-  top: calc(var(--bar, 50px) + 14px);
-  max-height: calc(100vh - var(--bar, 50px) - 30px);
-  overflow-y: auto;
+  top: calc(var(--bar, 53px) + 24px);
+  max-height: calc(100vh - var(--bar, 53px) - 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+.queue-panel,
+.review-options-box {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 6px;
+  border-radius: 12px;
 }
-.queue-side:has(.queue-list:empty) {
+/* The list scrolls between how far the queue has got and the options, which both stay in view. */
+.queue-panel {
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 150px;
+  overflow: hidden;
+}
+.queue-panel:has(.queue-list:empty) {
   display: none;
 }
-.review-cols:has(.queue-list:empty) {
-  grid-template-columns: minmax(0, 1fr);
+.review-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.review-progress:empty {
+  display: none;
+}
+.review-progress .row {
+  flex-wrap: nowrap;
+}
+.review-progress strong {
+  font-size: 15px;
+  font-weight: 650;
+}
+.review-progress .nav {
+  display: inline-flex;
+  gap: 2px;
+  white-space: nowrap;
+}
+.review-progress .nav button {
+  padding: 3px 9px;
+}
+.review-progress .bar {
+  height: 4px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.review-progress .bar span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.3s;
 }
 .queue-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 6px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
+  overflow-y: auto;
 }
 .queue-list button {
   width: 100%;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  gap: 2px 8px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 0 8px;
   align-items: baseline;
-  text-align: left;
   border: 0;
   border-radius: 8px;
-  padding: 7px 8px;
+  padding: 5px 8px;
   background: none;
-  font-weight: 500;
+  text-align: left;
+  font-weight: 550;
+  line-height: 1.35;
 }
 .queue-list button[aria-current='true'] {
   background: var(--primary-weak);
@@ -776,14 +1111,18 @@ a.button.big {
 }
 .queue-list .q-state {
   grid-column: 2;
-  font-size: 11.5px;
   color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
 }
 .queue-list .q-icon {
-  font-size: 12px;
+  color: var(--border-strong);
+  font-size: 11px;
   text-align: center;
 }
-.q-ready .q-icon,
+.q-ready .q-icon {
+  color: var(--primary);
+}
 .q-done .q-icon {
   color: var(--ok);
 }
@@ -793,129 +1132,71 @@ a.button.big {
 }
 .q-done .q-name {
   color: var(--muted);
+  font-weight: 500;
 }
 .q-busy .q-icon {
+  display: inline-block;
   color: var(--primary);
   animation: q-spin 1.2s linear infinite;
-  display: inline-block;
 }
 @keyframes q-spin {
   to {
     transform: rotate(360deg);
   }
 }
+.review-options-box {
+  flex: none;
+}
+.review-options-box > summary {
+  padding: 11px 14px;
+  color: var(--text);
+  font-weight: 600;
+}
+.review-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 2px 14px 14px;
+}
+/* What the email asks for: three plain choices, over the two tick boxes. */
+.segmented {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.seg-label {
+  padding-bottom: 2px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.segmented label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.review-options .check > span > .muted {
+  display: block;
+}
+
+/* The email keeps a width that reads, however wide the window. */
 .review-main {
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-width: 0;
-}
-.review-options-box {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 8px 12px;
-  background: var(--surface);
-}
-.review-options-box[open] summary {
-  margin-bottom: 10px;
-}
-@media (max-width: 860px) {
-  .review-cols {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .queue-side {
-    position: static;
-    max-height: 220px;
-  }
-}
-#review-view[hidden] {
-  display: none;
-}
-.review-top {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.review-progress .bar {
-  height: 6px;
-  margin-top: 8px;
-  border-radius: 3px;
-  background: var(--surface-2);
-  overflow: hidden;
-}
-.review-progress .bar span {
-  display: block;
-  height: 100%;
-  background: var(--primary);
-  transition: width 0.3s;
-}
-.review-options {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 18px;
-}
-.segmented {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-.seg-label {
-  font-size: 12.5px;
-  color: var(--muted);
-}
-.segmented label {
-  position: relative;
-}
-.segmented input {
-  position: absolute;
-  opacity: 0;
-  inset: 0;
-  cursor: pointer;
-}
-.segmented label span {
-  display: inline-block;
-  padding: 7px 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  background: var(--surface);
-  font-size: 13.5px;
-  font-weight: 550;
-}
-.segmented input:checked + span {
-  background: var(--primary-weak);
-  border-color: var(--primary);
-  color: var(--primary);
-}
-.segmented input:focus-visible + span {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-}
-.follow-due {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 14px;
-  border-radius: var(--radius);
-  background: var(--warn-weak);
+  max-width: 920px;
 }
 .review-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: var(--shadow);
-  padding: 22px 24px;
+  border-radius: 12px;
+  padding: 24px 28px 26px;
 }
 .review-body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-}
-.review-body p {
-  margin: 0;
+  gap: 16px;
 }
 .review-head {
   display: flex;
@@ -926,22 +1207,31 @@ a.button.big {
 }
 .review-head h2 {
   font-size: 22px;
+  font-weight: 650;
   line-height: 1.2;
+  letter-spacing: -0.01em;
 }
+.review-head h2:focus {
+  outline: none;
+}
+.review-head p {
+  margin-top: 3px;
+}
+/* The reason to write, in the source's own words. */
 .reason {
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 12px 14px;
-  border-radius: var(--radius);
+  border-radius: 10px;
   background: var(--primary-weak);
 }
 .reason.none {
-  background: var(--surface-2);
   flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  background: var(--bg);
 }
 .reason-head {
   display: flex;
@@ -957,15 +1247,34 @@ a.button.big {
   font-size: 15px;
   line-height: 1.5;
 }
-.pill.reason-common {
+.pill.reason-common,
+.pill.alumni {
   background: var(--ok-weak);
   color: var(--ok);
+}
+/* The email as an email program shows one: who to, the subject, then the words, in one frame. */
+.composer {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.composer:focus-within {
+  border-color: var(--primary);
+}
+.to-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
 }
 .to-line {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
   font-size: 15px;
 }
 .to-line .address {
@@ -974,14 +1283,6 @@ a.button.big {
 .to-line .ghost {
   margin-left: auto;
 }
-.to-block {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.to-block > p {
-  margin: 0;
-}
 .to-pick {
   display: flex;
   flex-wrap: wrap;
@@ -989,47 +1290,74 @@ a.button.big {
   gap: 8px;
 }
 .to-pick select {
+  flex: 1 1 280px;
   max-width: 100%;
   min-width: 0;
-  flex: 1 1 280px;
 }
-.typed-to.row {
+.subject-row {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+  align-items: baseline;
+  gap: 10px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
 }
-.typed-to input {
-  flex: 1 1 260px;
-  min-width: 0;
+.subject-row > span {
+  color: var(--muted);
 }
-.typed-to .error {
-  flex-basis: 100%;
-  margin: 0;
+/* The subject and the words have no frames of their own: the one being typed in shows a bar down its left. */
+.composer :is(input.subject, textarea.body) {
+  border: 0;
+  border-radius: 0;
+  background: none;
 }
-.pill.alumni {
-  background: var(--ok-weak);
-  color: var(--ok);
+.composer :is(input.subject, textarea.body):focus {
+  box-shadow: none;
 }
-.review-body input.subject {
-  font-size: 16px;
+.composer input.subject {
+  flex: 1;
+  padding: 12px 0;
+  font-size: 15px;
   font-weight: 600;
-  padding: 10px 12px;
 }
-.review-body textarea.body {
-  font: inherit;
+.composer textarea.body {
+  display: block;
+  padding: 14px;
   font-size: 15px;
   line-height: 1.55;
-  padding: 12px 14px;
   resize: vertical;
+}
+.composer :is(.subject-row:focus-within, textarea.body:focus) {
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+/* What the draft's checks say: each thing to look at on a line of its own. */
+.checks-note {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.checks-note.warn {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--warn-weak);
+  color: var(--warn);
+}
+.checks-note ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .review-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
 }
 .review-actions .send-go {
-  min-width: 180px;
+  min-width: 160px;
 }
 .review-actions .armed {
   background: var(--warn);
@@ -1037,7 +1365,7 @@ a.button.big {
 }
 .doubts {
   padding: 10px 14px;
-  border-radius: var(--radius);
+  border-radius: 10px;
   background: var(--warn-weak);
   color: var(--warn);
 }
@@ -1061,9 +1389,14 @@ a.button.big {
 }
 .summary h2 {
   font-size: 20px;
+  font-weight: 650;
+}
+.summary h2:focus {
+  outline: none;
 }
 .review-keys {
   text-align: center;
+  line-height: 2;
 }
 .toasts {
   position: fixed;
@@ -1088,7 +1421,7 @@ a.button.big {
   border-radius: 12px;
   background: var(--text);
   color: var(--surface);
-  box-shadow: var(--shadow);
+  box-shadow: var(--pop);
 }
 .toast.error {
   background: var(--danger);
@@ -1107,52 +1440,57 @@ a.button.big {
   color: inherit;
   text-decoration: underline;
 }
-@media (max-width: 640px) {
-  .review-card {
-    padding: 16px;
+@media (max-width: 900px) {
+  .review-cols {
+    grid-template-columns: minmax(0, 1fr);
   }
-  .review-actions > * {
-    flex: 1 1 auto;
+  .queue-side {
+    position: static;
+    max-height: none;
   }
-}
-#review-count:empty {
-  display: none;
-}
-.review-progress .nav {
-  display: inline-flex;
-  gap: 4px;
-  white-space: nowrap;
-}
-.review-head h2:focus {
-  outline: none;
+  .queue-list {
+    max-height: 220px;
+  }
 }
 
-/* Overview: the numbers, what to do now, preparing ahead, and the latest activity. */
+/* ---------------------------------------------------------------- overview */
+
+/* The numbers as one strip, a hairline between each: every one a button that opens where it's counted. */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
 }
 .stat {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  text-align: left;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 14px;
+  gap: 4px;
+  border: 0;
+  border-radius: 0;
+  padding: 14px 16px;
   background: var(--surface);
+  text-align: left;
   font-weight: 500;
 }
+.stat:focus-visible {
+  outline-offset: -3px;
+}
 .stat .n {
-  font-size: 26px;
-  font-weight: 700;
+  font-size: 24px;
+  font-weight: 650;
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
 }
 .stat .label {
-  font-size: 12.5px;
   color: var(--muted);
+  font-size: 12.5px;
+}
+.stat.zero .n {
+  color: var(--border-strong);
 }
 .stat.ok .n {
   color: var(--ok);
@@ -1172,11 +1510,6 @@ a.button.big {
   gap: 16px;
   align-items: start;
 }
-@media (max-width: 860px) {
-  .home-cols {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
 .todo,
 .activity {
   list-style: none;
@@ -1190,29 +1523,32 @@ a.button.big {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 12px;
-  padding: 10px 0;
+  gap: 4px 12px;
+  padding: 11px 0;
   border-top: 1px solid var(--border);
 }
-.todo li:first-child,
-.activity li:first-child {
+:is(.todo, .activity) li:first-child {
   border-top: 0;
+  padding-top: 2px;
+}
+:is(.todo, .activity) li:last-child {
+  padding-bottom: 2px;
 }
 .todo .what {
   flex: 1 1 260px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 .todo .what strong {
   font-weight: 600;
 }
 .todo .tone {
-  width: 10px;
-  height: 10px;
+  flex: none;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--border-strong);
-  flex: none;
 }
 .todo .tone.ok {
   background: var(--ok);
@@ -1227,9 +1563,9 @@ a.button.big {
   background: var(--primary);
 }
 .activity .when {
+  min-width: 56px;
   color: var(--muted);
   font-size: 12px;
-  min-width: 56px;
   font-variant-numeric: tabular-nums;
 }
 .activity .name {
@@ -1237,65 +1573,113 @@ a.button.big {
 }
 .activity .snippet {
   flex: 1 1 100%;
+  padding-left: 68px;
   color: var(--muted);
   font-size: 12.5px;
-  padding-left: 68px;
+}
+#home-stats-line:empty {
+  display: none;
 }
 .setup {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  padding-top: 12px;
   border-top: 1px solid var(--border);
-  padding-top: 10px;
 }
 .setup:empty {
   display: none;
 }
-.setup li {
-  font-size: 13px;
+@media (max-width: 1100px) {
+  .stats-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media (max-width: 860px) {
+  .home-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
-/* Outreach: filter chips with counts, then one row per firm. */
-.filter-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.filter-chips button {
-  border-radius: 999px;
-  padding: 4px 11px;
-  font-size: 12.5px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.filter-chips button[aria-checked='true'] {
-  background: var(--primary-weak);
-  border-color: var(--primary);
-  color: var(--primary);
-}
-.filter-chips .count {
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-  font-weight: 600;
-}
+/* ---------------------------------------------------------------- outreach */
+
 #outreach-search {
-  width: 220px;
+  width: 240px;
+}
+/* One line per firm under the headings: who and what they said | the status | a note | its buttons. */
+.list-cols {
+  padding: 9px 18px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.outreach-cols,
+.outreach-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) 128px minmax(0, 1fr) 124px;
+  column-gap: 16px;
+}
+.outreach-item {
+  row-gap: 5px;
+  align-items: start;
+}
+.outreach-item > :is(.firm-head, .reply-snippet, p) {
+  grid-column: 1;
 }
 .outreach-item .firm-head .reply-pill {
-  margin-left: auto;
+  margin-left: 2px;
+}
+.outreach-item > .outreach-fields {
+  grid-column: 2 / 4;
+  grid-row: 1 / span 3;
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.outreach-item > .firm-actions {
+  grid-column: 4;
+  grid-row: 1 / span 3;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  margin: 0;
+}
+/* Named once, over the list. */
+.outreach-fields .field > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.outreach-fields :is(select, textarea) {
+  padding: 5px 9px;
+  font-size: 13px;
+}
+.outreach-fields textarea {
+  min-height: 32px;
+  line-height: 1.45;
+}
+/* An empty note is a quiet box until it's wanted. */
+.outreach-fields textarea:placeholder-shown:not(:focus) {
+  border-color: var(--border);
+  background: none;
 }
 .reply-snippet {
-  font-size: 13px;
-  border-left: 3px solid var(--border-strong);
   padding: 2px 0 2px 10px;
-  color: var(--text);
+  border-left: 3px solid var(--border-strong);
+  font-size: 13px;
 }
 .reply-snippet.positive {
   border-left-color: var(--ok);
 }
-.reply-snippet.bounced,
-.reply-snippet.declined {
+.reply-snippet:is(.bounced, .declined) {
   border-left-color: var(--danger);
 }
 .reply-snippet.apply {
@@ -1303,4 +1687,97 @@ a.button.big {
 }
 .age {
   font-variant-numeric: tabular-nums;
+}
+@media (max-width: 860px) {
+  .list-cols {
+    display: none;
+  }
+  .outreach-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .outreach-item > :is(.outreach-fields, .firm-actions) {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .outreach-item > .firm-actions {
+    flex-direction: row;
+    margin-left: -8px;
+  }
+  .outreach-fields .field > span {
+    position: static;
+    width: auto;
+    height: auto;
+    clip-path: none;
+    color: var(--muted);
+    font-size: 11.5px;
+  }
+}
+
+/* --------------------------------------------------------------- watchlist */
+
+#watchlist .firm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ------------------------------------------------------------------- phone */
+
+/* A phone-sized window: the five tabs wrap under the title, so none is out of sight. */
+@media (max-width: 640px) {
+  .topbar {
+    padding: 0 14px;
+  }
+  .tabs {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    overflow-x: visible;
+    order: 3;
+  }
+  .tabs button {
+    min-height: 40px;
+    padding: 0 8px;
+  }
+  .health {
+    padding: 8px 0;
+  }
+  .menu-panel {
+    position: fixed;
+    top: calc(var(--bar, 53px) + 6px);
+    right: 12px;
+    left: 12px;
+    width: auto;
+  }
+  .page {
+    padding: 16px 14px 32px;
+    gap: 16px;
+  }
+  .card {
+    padding: 14px;
+  }
+  .firm,
+  .pick-bar,
+  .list-cols {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .grid,
+  .outreach-item > .outreach-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .review-card {
+    padding: 16px;
+  }
+  .review-actions > * {
+    flex: 1 1 auto;
+  }
+  #outreach-search {
+    width: 100%;
+  }
+  .activity .snippet {
+    padding-left: 0;
+  }
 }
