@@ -32,6 +32,12 @@ async function openExt(path) {
 
 const profile = () => h.bg(async () => (await globalThis.JTF.store.getActive()).profile);
 
+/** Discover › Review: Email options open (they start folded on a window as short as the tests', until opened once). */
+async function emailOptions(page) {
+  const box = '.review-options-box';
+  if (!(await page.$eval(box, (d) => d.open))) await page.click(`${box} > summary`);
+}
+
 // What the stand-in AI drafts on the Discover page: the body only (the greeting and sign-off are added there).
 const DRAFT = {
   subject: 'Summer internship enquiry',
@@ -438,8 +444,22 @@ test('Discover lists registry firms, and watched firms’ new programmes show on
   assert.ok((await page.$$('#results .firm')).length >= 10);
   assert.match(await page.textContent('#status'), /firms? match/);
   assert.ok(!(await page.textContent('#results')).includes('Man Group'), 'Trackr’s firms are left out');
-  // A hedge fund search fetches only Trackr's list, but Simplify's kept copy counts too.
+  // A hedge fund search fetches only Trackr's list, but Simplify's kept copy counts too. With their firms left out
+  // it's said once, under Search, and no row repeats it.
+  assert.match(await page.textContent('#status'), /Trackr and Simplify list 2 names; those are left out\./);
+  assert.doesNotMatch(await page.textContent('#results'), /Trackr or Simplify/);
+  // Shown too (Man Group is the last of them), each row says which it is.
+  const searched = async () => {
+    await page.click('#search');
+    await page.waitForFunction(() => !document.querySelector('#search').disabled);
+  };
+  await page.uncheck('#hide-trackr');
+  await searched();
   assert.match(await page.textContent('#results .firm .badges'), /Not on Trackr or Simplify/);
+  assert.doesNotMatch(await page.textContent('#status'), /left out/);
+  await page.check('#hide-trackr');
+  await searched();
+  assert.doesNotMatch(await page.textContent('#results'), /Trackr or Simplify/);
 
   // A watched firm whose careers page gains a programme.
   const careers = h.url('discover-careers.html');
@@ -1292,7 +1312,9 @@ test('Discover: at a large firm Review writes to someone from your university, a
 
   // Everyone found, as raw as it comes: one row per address, ranked, with the source's own words.
   await page.click('#tab-find');
+  await page.click('#results-menu summary');
   const [download] = await Promise.all([page.waitForEvent('download'), page.click('#people-export')]);
+  assert.equal(await page.isVisible('#people-export'), false, 'the menu closes once one of its items is pressed');
   const csv = await readFile(await download.path(), 'utf8');
   const lines = csv.trim().split(/\r\n/);
   assert.match(
@@ -1459,6 +1481,7 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
   assert.equal(await page.isVisible('#review-keys'), true);
   assert.equal(await page.textContent(`${card} button.write-go`), 'In Review');
   // Arriving in their morning depends on the hour: off here, so it sends now.
+  await emailOptions(page);
   await page.uncheck('#their-morning');
   await until(
     h.bg,
@@ -1605,6 +1628,7 @@ test('Discover: Review prepares a firm’s email by itself, shows it with big bu
   await page.clock.install({ time: saturday });
   await page.goto(h.extUrl('discover/discover.html#review'));
   await ready();
+  await emailOptions(page);
   await page.check('#their-morning');
   await until(h.bg, async () => (await globalThis.JTF.store.getSettings()).discoverAi.theirMorning, null, 5000);
   await page.click('#tab-find');
@@ -1906,6 +1930,27 @@ test('Discover: the Overview counts everything, replies are sorted (a bounce, an
   assert.equal(await page.textContent('#picked-count'), 'None selected');
   // Every registry firm was checked ahead of time: its way in shows before any check runs here.
   assert.ok((await page.$$('#results .firm .glance')).length > 0, 'ways in from data/checks.json');
+  // What its site said then stays folded under the row until Details opens it; pressed again, it folds.
+  const folded = '#results .firm:has(.found-toggle[aria-expanded="false"])';
+  const row = `#results .firm[data-id="${await page.$eval(folded, (li) => li.dataset.id)}"]`;
+  assert.equal(await page.$(`${row} .found`), null);
+  await page.click(`${row} .found-toggle`);
+  await page.waitForSelector(`${row} .found .contacts`);
+  assert.equal(await page.getAttribute(`${row} .found-toggle`, 'aria-expanded'), 'true');
+  assert.equal(await page.$eval(`${row} .found-toggle`, (b) => b === document.activeElement), true, 'focus kept');
+  await page.click(`${row} .found-toggle`);
+  assert.equal(await page.$(`${row} .found`), null);
+  // The bar's pills: the AI model's box hangs under its own (“AI: …” above, “No AI key” once the key is gone) and
+  // closes on Escape or a click elsewhere.
+  assert.equal(await page.textContent('#ai-summary'), 'No AI key');
+  await page.click('#ai-summary');
+  assert.equal(await page.isVisible('#discover-provider'), true);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.isVisible('#discover-provider'), false);
+  await page.click('#ai-summary');
+  await page.click('#results-title');
+  assert.equal(await page.isVisible('#discover-provider'), false);
+  assert.equal(await page.textContent('#health-inbox'), 'Inbox connected');
 
   await h.context.unroute('https://api.us.nylas.com/**');
   await h.context.unroute(elsewhere);

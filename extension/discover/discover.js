@@ -61,7 +61,7 @@ const state = {
   running: new Set(),
   reading: new Set(),
   showAll: new Set(), // cards showing every contact
-  opened: new Set(), // cards whose folded detail (a firm checked only ahead of time) was opened
+  folds: new Map(), // firmId → whether its row's detail was opened or folded by hand (else: open once checked here)
   drafts: {}, // firmId → the email drawer: { contact, kind, instruction, subject, body, result, running, error, … }
   watch: [],
   watchStates: {},
@@ -75,6 +75,7 @@ const state = {
   preBuilt: '',
   picked: new Set(), // firms ticked in the results, for Write to them / Watch them
   hidden: 0, // results left out as written to already, at the last draw
+  leftOut: true, // the last search left out the firms Trackr and Simplify list, so no row needs to say it's not on them
   outreachFilter: 'all',
   checkingReplies: false,
 };
@@ -259,6 +260,7 @@ async function search(event, { quiet = false } = {}) {
       mergeWiki(results, similar, q);
     }
     state.results = results;
+    state.leftOut = q.hideTrackr;
     state.shown = PAGE;
     let hnNote = '';
     // A finance-only search shows no posts (hnFits), so they aren't fetched for one.
@@ -912,7 +914,7 @@ function alumniLine(p) {
 /**
  * What an email to this person asks for: someone early in their career, or from your university and not running
  * recruiting or the firm, can't offer an internship or set a task, but answers a request for a 15-minute call; anyone
- * else gets the ask chosen above the queue.
+ * else gets the ask chosen under Email options.
  */
 function askFor(p) {
   const ask = askChoice();
@@ -1304,8 +1306,13 @@ function meta(firm) {
 
 const link = (href, text, props) => el('a', { href, target: '_blank', rel: 'noopener', textContent: text, ...props });
 
+/** What kind of firm it is, then what vouches for it, as one quiet line under its name. */
 function badges(firm, flags) {
-  const out = [];
+  // Not the kind a badge of its own says ("Backed startups (Y Combinator)" beside "Y Combinator W25").
+  const out = [...new Set((firm.tags || []).filter((t) => !(firm.yc && t === 'yc')).map(nicheOfTag))]
+    .filter(Boolean)
+    .slice(0, 3)
+    .map((niche) => el('span', { className: 'pill', textContent: niche.label }));
   if (firm.crd) out.push(el('span', { className: 'pill ok', textContent: 'SEC-registered', title: `CRD ${firm.crd}` }));
   if (firm.yc) out.push(el('span', { className: 'pill ok', textContent: `Y Combinator ${firm.yc}` }));
   if (firm.wiki)
@@ -1323,12 +1330,12 @@ function badges(firm, flags) {
     );
   if (firm.remote) out.push(el('span', { className: 'pill', textContent: 'Remote' }));
   if (flags && flags.ai) out.push(el('span', { className: 'pill warn', textContent: 'AI idea · verified' }));
-  // The lists consulted: "Trackr" alone for a finance search without Simplify's kept.
+  // The lists consulted: "Trackr" alone for a finance search without Simplify's kept. Said of each firm only when
+  // the listed ones are shown too: with those left out, every row would say "Not on Trackr or Simplify".
   const lists = state.sources.join(' or ') || 'Trackr or Simplify';
-  if (flags && flags.onTrackr) out.push(el('span', { className: 'pill', textContent: `On ${lists}` }));
-  else if (state.listed) out.push(el('span', { className: 'pill ok', textContent: `Not on ${lists}` }));
-  for (const niche of [...new Set((firm.tags || []).map(nicheOfTag).filter(Boolean))].slice(0, 3))
-    out.push(el('span', { className: 'pill', textContent: niche.label }));
+  if (flags && flags.onTrackr) out.push(el('span', { className: 'pill warn', textContent: `On ${lists}` }));
+  else if (state.listed && !state.leftOut)
+    out.push(el('span', { className: 'pill ok', textContent: `Not on ${lists}` }));
   return el('div', { className: 'badges' }, out);
 }
 
@@ -1602,7 +1609,9 @@ function sizeNote(firm) {
         : `No one here from ${alumni.key.split('|').join(' or ')} was borne out by a source.`,
     );
   } else if (r && canSearch() && settingOf('commonGround', false) !== true && size.tier === 'big')
-    lines.push('Tick Look for common ground (above the Review queue) to look for people here from your university.');
+    lines.push(
+      'Tick Look for common ground (Email options, beside the Review queue) to look for people here from your university.',
+    );
   return lines.length ? el('p', { className: 'small muted size-note', textContent: lines.join(' ') }) : null;
 }
 
@@ -1896,29 +1905,21 @@ function foundView(firm, result) {
       url: typeof x === 'string' ? x : (x && x.what) || '',
     })),
   ];
+  // A firm checked only ahead of time keeps this folded (detailOpen): the row's middle column says the gist.
   const bundled = !!(state.checks[firm.id] || {}).bundled;
-  // A firm checked only ahead of time keeps the detail folded: the line at the top of its card says the gist. Opened,
-  // it stays open while the card is drawn again.
-  const open = !bundled || state.opened.has(firm.id);
   return el(
-    'details',
-    {
-      className: 'found',
-      open,
-      ontoggle: (e) => (e.target.open ? state.opened.add(firm.id) : state.opened.delete(firm.id)),
-    },
-    el('summary', {
-      textContent: bundled
-        ? `Careers pages and who to email${state.preBuilt ? ` (checked ${longDate(state.preBuilt)})` : ''}`
-        : 'Careers pages and who to email',
-    }),
-    // The check's own status, unless the way in already says it ("Programme page" twice).
+    'div',
+    { className: 'found' },
+    // The check's own status, unless the way in already says it ("Programme page" twice); and when it was checked.
     el(
       'div',
       { className: 'row small' },
       text !== WAYS[way][1] ? el('span', { className: `pill ${tone}`, textContent: text }) : null,
       boardText ? el('span', { className: 'muted', textContent: `Board: ${boardText}` }) : null,
       result.other ? el('span', { className: 'muted', textContent: `${plural(result.other, 'other job')}` }) : null,
+      bundled && state.preBuilt
+        ? el('span', { className: 'muted', textContent: `Checked ${longDate(state.preBuilt)}` })
+        : null,
     ),
     (result.roles || []).length ? rolesList(result.roles) : null,
     result.pre && (result.pre.roles || result.pre.programmes)
@@ -2609,10 +2610,10 @@ function writeButton(firm) {
   });
 }
 
-/** One line at the top of a card: the best way in and the first person to write to, from whatever check there is. */
+/** A row's middle column: the best way in and the first person to write to, from whatever check there is. */
 function glanceView(firm) {
   const way = wayOf(firm);
-  if (way == null) return null;
+  if (way == null) return el('div', { className: 'glance none', textContent: 'Not checked yet' });
   const first = reachable(firm)[0];
   return el(
     'div',
@@ -2662,6 +2663,20 @@ function pickedBar() {
 /** The firms picked, in the order they're shown. */
 const pickedFirms = () => state.results.filter((r) => state.picked.has(r.firm.id)).map((r) => r.firm);
 
+/** Is the row's detail (what its site says, who to email) showing? A firm checked here opens by itself. */
+const detailOpen = (firm) => {
+  const check = state.checks[firm.id];
+  return !!check && (state.folds.has(firm.id) ? state.folds.get(firm.id) : !check.bundled);
+};
+
+// What the row's first line says already: "$94bn under management" beside "$94bn AUM", "144 staff" twice.
+const SAID_ALREADY =
+  /^SEC-registered adviser$|^Wikipedia article$|^Y Combinator-backed$|^Hiring on Hacker News this month$|bn under management$|^[\d,]+ staff$/;
+
+/**
+ * A firm's row: who it is | the way in and who to write to | the one button that writes to them. Under those, the
+ * quiet actions (its detail, the checks, Watch, the email drawer) and whatever of them is open.
+ */
 function firmCard(r) {
   const { firm } = r;
   const check = state.checks[firm.id];
@@ -2671,45 +2686,55 @@ function firmCard(r) {
   const people = contactsOf(firm);
   const d = state.drafts[firm.id];
   const picked = state.picked.has(firm.id);
+  const open = detailOpen(firm);
+  const why = [r.why, firm.about, ...r.reasons.filter((x) => !SAID_ALREADY.test(x))].filter(Boolean).join(' · ');
   return el(
     'li',
     {
       className: 'firm' + (picked ? ' picked' : ''),
       dataset: { id: firm.id, open: String(hasOpen(check && check.result)) },
     },
+    el('input', {
+      type: 'checkbox',
+      className: 'pick',
+      checked: picked,
+      attrs: { 'aria-label': `Select ${firm.name}` },
+      onchange: (e) => pick(firm.id, e.target.checked),
+    }),
     el(
       'div',
-      { className: 'firm-head' },
-      el('input', {
-        type: 'checkbox',
-        className: 'pick',
-        checked: picked,
-        attrs: { 'aria-label': `Select ${firm.name}` },
-        onchange: (e) => pick(firm.id, e.target.checked),
-      }),
-      el('span', { className: 'firm-name', textContent: firm.name }),
-      el('span', { className: 'firm-meta', textContent: meta(firm) }),
-      outreachPill(state.outreach[firm.id]),
+      { className: 'firm-id' },
+      el(
+        'div',
+        { className: 'firm-head' },
+        el('span', { className: 'firm-name', textContent: firm.name }),
+        el('span', { className: 'firm-meta', textContent: meta(firm) }),
+      ),
+      badges(firm, r.flags),
+      why ? el('p', { className: 'firm-why', textContent: why }) : null,
     ),
-    glanceView(firm),
-    badges(firm, r.flags),
-    r.reasons.length || r.why || firm.about
-      ? el('p', {
-          className: 'firm-why',
-          textContent: [
-            r.why,
-            firm.about,
-            ...r.reasons.filter((x) => !/^SEC-registered adviser$|^Wikipedia article$/.test(x)),
-          ]
-            .filter(Boolean)
-            .join(' · '),
-        })
-      : null,
+    el('div', { className: 'firm-way' }, glanceView(firm)),
+    el('div', { className: 'firm-cta' }, writeButton(firm), outreachPill(state.outreach[firm.id])),
     firm.hn ? hnView(firm.hn) : null,
     el(
       'div',
       { className: 'firm-actions' },
-      writeButton(firm),
+      check
+        ? el('button', {
+            className: 'small found-toggle',
+            type: 'button',
+            attrs: { 'aria-expanded': String(open) },
+            textContent: 'Details',
+            title: `Careers pages and who to email${check.bundled && state.preBuilt ? ` (checked ${longDate(state.preBuilt)})` : ''}`,
+            // The row is drawn again: the keyboard's focus goes to the button as it is now.
+            onclick: () => {
+              state.folds.set(firm.id, !open);
+              rerender(firm.id);
+              const again = document.querySelector(`#results .firm[data-id="${CSS.escape(firm.id)}"] .found-toggle`);
+              if (again) again.focus();
+            },
+          })
+        : null,
       el('button', {
         className: 'small check',
         type: 'button',
@@ -2721,7 +2746,11 @@ function firmCard(r) {
             : check
               ? 'Check now'
               : 'Check careers & contacts',
-        onclick: () => checkAndRead(firm, { force: !!check }, thorough() ? requestAiConsent() : null),
+        // What it finds shows, also in a row folded by hand before.
+        onclick: () => {
+          state.folds.delete(firm.id);
+          return checkAndRead(firm, { force: !!check }, thorough() ? requestAiConsent() : null);
+        },
         title:
           (check && check.bundled
             ? `Checked ahead of time${state.preBuilt ? ` on ${longDate(state.preBuilt)}` : ''}: Check now reads its site again for today’s roles and people. `
@@ -2738,7 +2767,10 @@ function firmCard(r) {
               : state.research[firm.id]
                 ? 'Search the web again'
                 : 'Find people',
-            onclick: () => researchFirm(firm, canSearch() ? requestAiConsent() : null),
+            onclick: () => {
+              state.folds.delete(firm.id);
+              return researchFirm(firm, canSearch() ? requestAiConsent() : null);
+            },
           })
         : null,
       el('button', {
@@ -2766,7 +2798,7 @@ function firmCard(r) {
       firm.site ? link(firm.site, firm.domain || 'Website', { className: 'small' }) : null,
     ),
     running && thorough() ? el('p', { className: 'small muted reads', textContent: THOROUGH_READ }) : null,
-    check ? foundView(firm, check.result) : null,
+    check && open ? foundView(firm, check.result) : null,
     researchView(firm),
     d && d.open && people.length ? drawerView(firm) : null,
   );
@@ -3293,7 +3325,7 @@ function outreachItem(id, rec) {
         el('span', { textContent: 'Notes' }),
         el('textarea', {
           className: 'outreach-notes',
-          rows: 2,
+          rows: Math.min(4, String(rec.notes || '').split('\n').length),
           value: rec.notes || '',
           placeholder: 'Add a note',
           oninput: (e) => saveNote(id, e.target.value),
@@ -3435,7 +3467,7 @@ function outreachToast(text, label, act, focus) {
  */
 function renderOutreach(sort) {
   const every = outreachList();
-  $('#outreach-count').textContent = String(every.length);
+  $('#outreach-count').textContent = every.length ? String(every.length) : '';
   $('#outreach-empty').hidden = !!every.length;
   $('#outreach-export').disabled = !every.length;
   $('#outreach-filters').hidden = !every.length;
@@ -3545,7 +3577,7 @@ async function loadWatch() {
   state.watch = await store.getWatchlist();
   state.watchStates = await store.getWatchStates(state.watch.map((w) => w.id));
   const fresh = Object.values(state.watchStates).reduce((n, s) => n + ((s && s.fresh.length) || 0), 0);
-  $('#watch-count').textContent = fresh ? `${fresh} new` : String(state.watch.length);
+  $('#watch-count').textContent = fresh ? `${fresh} new` : state.watch.length ? String(state.watch.length) : '';
   $('#watch-count').className = 'pill' + (fresh ? ' ok' : '');
   renderWatch();
 }
@@ -4343,7 +4375,7 @@ async function writeDraft(item, job) {
   const { profile } = await store.getActive();
   const kit = await store.getKit(profile.id);
   const cvText = await readCv(profile, kit);
-  // A junior, or someone from your university, is asked for a 15-minute call whatever is chosen above the queue.
+  // A junior, or someone from your university, is asked for a 15-minute call whatever is chosen under Email options.
   const ask = askFor(contact);
   const role = ask === 'internship' ? roleOf(firm) : '';
   const hook = item.hook >= 0 ? item.hooks[item.hook] || null : null;
@@ -5158,7 +5190,7 @@ async function primaryAction(item) {
 function reviewKeys(e) {
   if ($('#review-view').hidden || frozen()) return;
   const send = (e.ctrlKey || e.metaKey) && e.key === 'Enter';
-  // Keys are letters while the cursor is in a box; a tick box or a choice above the queue just had the last click.
+  // Keys are letters while the cursor is in a box; a tick box or a choice beside the queue just had the last click.
   const typing =
     e.target.closest &&
     e.target.closest('textarea, select, [contenteditable="true"], input:not([type="checkbox"]):not([type="radio"])');
@@ -5783,28 +5815,46 @@ function itemView(item) {
     { className: 'review-body' },
     head,
     item.type === 'follow' ? null : reasonView(item),
-    toView(item),
-    el('input', {
-      className: 'subject',
-      type: 'text',
-      value: item.subject,
-      attrs: { 'aria-label': 'Subject' },
-      oninput: (e) => ((item.subject = e.target.value), edited(item, e.target)),
-    }),
-    el('textarea', {
-      className: 'body',
-      value: item.body,
-      rows: Math.min(22, Math.max(12, item.body.split('\n').length + 2)),
-      attrs: { 'aria-label': 'Email' },
-      oninput: (e) => ((item.body = e.target.value), edited(item, e.target)),
-    }),
+    // As an email program shows one: who to, the subject, then the words, in one frame.
     el(
-      'p',
-      { className: 'small ' + (failed.length ? 'warn-text' : 'muted') },
+      'div',
+      { className: 'composer' },
+      toView(item),
+      el(
+        'label',
+        { className: 'subject-row' },
+        el('span', { className: 'small', textContent: 'Subject' }),
+        el('input', {
+          className: 'subject',
+          type: 'text',
+          value: item.subject,
+          oninput: (e) => ((item.subject = e.target.value), edited(item, e.target)),
+        }),
+      ),
+      el('textarea', {
+        className: 'body',
+        value: item.body,
+        rows: Math.min(22, Math.max(12, item.body.split('\n').length + 2)),
+        attrs: { 'aria-label': 'Email' },
+        oninput: (e) => ((item.body = e.target.value), edited(item, e.target)),
+      }),
+    ),
+    // What the draft's checks made of it: each thing to look at on its own line, never one run-on sentence.
+    el(
+      'div',
+      { className: 'checks-note' + (failed.length ? ' warn' : '') },
       failed.length
-        ? `Check before sending: ${failed.map((c) => c.what).join(' · ')}`
-        : `All ${checks.length} checks passed: every fact is from your CV or the firm’s own pages${item.hook >= 0 ? ' and the source quoted above' : ''}.`,
-      item.usage ? ` · ${item.usage}` : '',
+        ? [
+            el('strong', { textContent: 'Check before sending' }),
+            el(
+              'ul',
+              {},
+              failed.map((c) => el('li', { textContent: c.what })),
+            ),
+          ]
+        : el('span', {
+            textContent: `All ${checks.length} checks passed: every fact is from your CV or the firm’s own pages${item.hook >= 0 ? ' and the source quoted above' : ''}.`,
+          }),
     ),
     item.thin
       ? el('p', {
@@ -5827,6 +5877,7 @@ function itemView(item) {
       : null,
     reviewActions(item),
     sendNote(item),
+    item.usage ? el('p', { className: 'small muted usage', textContent: item.usage }) : null,
   );
 }
 
@@ -6038,7 +6089,7 @@ function lookingUntil(looking) {
   return at > Date.now() ? `until ${day(at)}` : 'until it’s next looked for';
 }
 
-/** Firm 3 of 10, with how many are ready, being prepared, not prepared, need you and done, as a bar. */
+/** Firm 3 of 10 and the way back and on; under it how many are ready, being prepared, need you and done, as a bar. */
 function progressView() {
   const n = review.items.length;
   if (!n) return [];
@@ -6049,20 +6100,6 @@ function progressView() {
       'div',
       { className: 'row' },
       el('strong', { textContent: review.at < n ? `${review.at + 1} of ${n}` : plural(n, 'firm') }),
-      el('span', {
-        className: 'muted small',
-        textContent: [
-          t.ready && `${t.ready} ready to read`,
-          t.working && `${t.working} being prepared`,
-          t.held && `${t.held} not prepared yet`,
-          t.needYou && `${t.needYou} need${t.needYou === 1 ? 's' : ''} you`,
-          t.sending && `${t.sending} sending`,
-          t.saving && `${t.saving} saving`,
-          t.done && `${t.done} done`,
-        ]
-          .filter(Boolean)
-          .join(' · '),
-      }),
       el('span', { className: 'grow' }),
       el(
         'span',
@@ -6087,6 +6124,20 @@ function progressView() {
         }),
       ),
     ),
+    el('span', {
+      className: 'muted small',
+      textContent: [
+        t.ready && `${t.ready} ready to read`,
+        t.working && `${t.working} being prepared`,
+        t.held && `${t.held} not prepared yet`,
+        t.needYou && `${t.needYou} need${t.needYou === 1 ? 's' : ''} you`,
+        t.sending && `${t.sending} sending`,
+        t.saving && `${t.saving} saving`,
+        t.done && `${t.done} done`,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    }),
     bar,
   ];
 }
@@ -6298,10 +6349,10 @@ function renderReview(force) {
     if (moved && !$('#review-view').hidden) {
       const heading = $('#review-card h2');
       if (heading) heading.focus({ preventScroll: true });
-      // Below the sticky bar at the top (taller on a phone, where it wraps), so "3 of 10" isn't under it.
+      // Below the sticky bar at the top (taller on a phone, where it wraps), so the firm's name isn't under it.
       const bar = document.querySelector('.topbar');
       const under = bar ? bar.getBoundingClientRect().bottom : 0;
-      const top = $('#review-progress').getBoundingClientRect().top;
+      const top = $('#review-card').getBoundingClientRect().top;
       if (top < under || top > innerHeight - 100)
         scrollTo({ top: Math.max(0, scrollY + $('#review-view').getBoundingClientRect().top - under - 8) });
     }
@@ -6330,7 +6381,7 @@ function fitBox(box) {
 }
 
 /**
- * The queue as it was left (squared with the outreach records), and the choices above it; with the alerts not yet read
+ * The queue as it was left (squared with the outreach records), and the choices beside it; with the alerts not yet read
  * (`alerts`) when this tab is handed it by another. Only the latest call counts: one begun before is stale.
  */
 async function loadReview(alerts) {
@@ -6597,7 +6648,7 @@ async function settingsChanged(changes) {
   renderReview();
 }
 
-/** A choice above the queue saved; the drafts already written keep theirs until written again. */
+/** A choice under Email options saved; the drafts already written keep theirs until written again. */
 async function saveReviewChoice(patch) {
   await saveAi(patch);
   state.settings = await store.getSettings();
@@ -6683,7 +6734,7 @@ function outreachTally() {
 function stat(n, label, tone, go) {
   return el(
     'button',
-    { className: `stat ${n ? tone : ''}`, type: 'button', onclick: go },
+    { className: `stat ${n ? tone : 'zero'}`, type: 'button', onclick: go },
     el('span', { className: 'n', textContent: String(n) }),
     el('span', { className: 'label', textContent: label }),
   );
@@ -6951,15 +7002,31 @@ function topUp() {
   if (state.results.length) renderResults();
 }
 
-/** The header's line on how things stand: the AI, the inbox, the CV. */
+/**
+ * The bar's two pills on how things stand. The AI's is the summary of “AI model for this page”, which opens under it:
+ * "AI: Claude Sonnet 5.5 · thorough", or "No AI key". The inbox's opens Settings › Email codes until one is connected.
+ */
 function renderHealth() {
-  const pill = (tone, text, title) => el('span', { className: `pill ${tone}`, textContent: text, title });
+  const c = state.config;
+  const ready = aiReady();
+  const summary = $('#ai-summary');
+  summary.className = `pill ${ready ? 'ok' : 'bad'}`;
+  summary.textContent = ready ? `AI: ${modelLabel(c)}${c.effort === 'thorough' ? ' · thorough' : ''}` : 'No AI key';
   const inbox = state.nylas && state.nylas.grantId;
-  $('#health').replaceChildren(
-    aiReady() ? pill('ok', `AI: ${modelLabel(state.config)}`, 'Discover’s AI model') : pill('bad', 'No AI key', NO_AI),
+  $('#health-inbox').replaceChildren(
     inbox
-      ? pill('ok', 'Inbox connected', `Sends from ${state.nylas.email || 'your inbox'}`)
-      : pill('warn', 'No inbox', 'Connect one under Settings › Email codes to send in one click'),
+      ? el('span', {
+          className: 'pill ok',
+          textContent: 'Inbox connected',
+          title: `Sends from ${state.nylas.email || 'your inbox'}`,
+        })
+      : el('button', {
+          className: 'pill warn',
+          type: 'button',
+          textContent: 'No inbox',
+          title: 'Connect one under Settings › Email codes to send in one click',
+          onclick: () => api.tabs.create({ url: api.runtime.getURL('options/options.html#email') }),
+        }),
   );
 }
 
@@ -6979,6 +7046,50 @@ function showTab(which) {
   if (which === 'review') renderReview();
   const box = which === 'review' && $('#review-card textarea.body');
   if (box) fitBox(box);
+}
+
+/* ---------------------------------------------------------------- menus */
+
+/**
+ * The page's menus (the AI model's under its pill in the bar, More over the results) are <details class="menu">: one
+ * closes on a click outside it or on one of its items, and on Escape, which gives the focus back to its summary.
+ */
+function wireMenus() {
+  const open = () => [...document.querySelectorAll('details.menu[open]')];
+  document.addEventListener('click', (e) => {
+    for (const m of open()) if (!m.contains(e.target) || e.target.closest('.menu-items button')) m.open = false;
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    for (const m of open()) {
+      m.open = false;
+      m.querySelector('summary').focus();
+    }
+  });
+}
+
+/**
+ * Email options, under the queue, stay as they were left (open or folded) from one visit to the next. Until they've
+ * been touched they're open where there's room, and folded on a short window, where they'd leave the queue above them
+ * three firms' worth of room.
+ */
+const OPTIONS_OPEN = 'jobtofill-review-options-open';
+function keepOptionsFolded() {
+  const box = $('.review-options-box');
+  let left = '';
+  try {
+    left = localStorage.getItem(OPTIONS_OPEN) || '';
+  } catch (err) {
+    // Not allowed to read it: as on a first visit.
+  }
+  box.open = left ? left === 'yes' : innerHeight >= 820;
+  box.addEventListener('toggle', () => {
+    try {
+      localStorage.setItem(OPTIONS_OPEN, box.open ? 'yes' : 'no');
+    } catch (err) {
+      // Not kept, then: as on a first visit next time.
+    }
+  });
 }
 
 /* ------------------------------------------------------------- AI model */
@@ -7049,16 +7160,11 @@ async function saveAi(patch) {
 }
 
 /**
- * Everything that depends on whether an AI is set up: the summary, the tick box, the check buttons' word on Thorough
- * mode, the cards' AI buttons. Not the model picker: buildAiBox() and a change of provider draw that.
+ * Everything that depends on whether an AI is set up: its pill in the bar, the tick box, the check buttons' word on
+ * Thorough mode, the rows' AI buttons. Not the model picker: buildAiBox() and a change of provider draw that.
  */
 function syncAi() {
-  const c = state.config;
   const ready = aiReady();
-  const effort = c && c.effort === 'thorough' ? ' · thorough' : '';
-  $('#ai-summary').textContent = ready
-    ? `AI: ${modelLabel(c)}${c.source === 'settings' ? ' (same as Settings)' : ` (${ai.resolve(c).label})`}${effort}`
-    : 'AI: none set up yet';
   $('#use-ai').disabled = !ready;
   $('#ai-wrap').title = ready ? '' : NO_AI;
   $('#check-top').title = thorough() ? THOROUGH_READ : '';
@@ -7260,6 +7366,8 @@ async function start() {
     (e) => e.target.matches('.outreach-notes') && !pressing && setTimeout(() => renderOutreach()),
   );
   for (const t of TABS) $(`#tab-${t}`).addEventListener('click', () => showTab(t));
+  wireMenus();
+  keepOptionsFolded();
   // The popup bringing this tab forward on one of its tabs (the watchlist's new roles).
   addEventListener('hashchange', () => TABS.includes(location.hash.slice(1)) && showTab(location.hash.slice(1)));
   $('#watch-check').addEventListener('click', checkWatchNow);
