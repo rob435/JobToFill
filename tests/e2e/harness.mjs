@@ -97,7 +97,9 @@ export const ICIMS_HOST = 'globalcampus-acme.icims.com';
 export const ICIMS_JOB = 'jobs/93127/summer-2027-software-engineer-intern';
 // A SuccessFactors classic site's, the same way: after Apply its steps stay at /portalcareer?_s.crb=….
 export const SF_HOST = 'career2.successfactors.eu';
-const LOCAL_HOSTS = [ICIMS_HOST, SF_HOST];
+// Greenhouse's host for the forms recruiters email after an application (/application_form/{token}).
+export const GREENHOUSE_FORM_HOST = 'app2.greenhouse.io';
+const LOCAL_HOSTS = [ICIMS_HOST, SF_HOST, GREENHOUSE_FORM_HOST];
 
 // A tiny but valid PDF.
 export const RESUME_PDF =

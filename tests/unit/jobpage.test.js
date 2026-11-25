@@ -39,6 +39,15 @@ test('ats: Greenhouse boards, embeds and company sites', () => {
   assert.equal(embed.company, 'jumptrading');
   assert.equal(embed.jobId, '4982814');
   assert.equal(jp.ats('https://job-boards.greenhouse.io/point72/jobs/8845395002/confirmation').stage, 'unknown');
+  // The questionnaire a recruiter emails after the application ("Addepar Internship Questionnaire"): a step of it.
+  const form = 'https://app2.greenhouse.io/application_form/028d57edefed5ac90b59184e0fb20dec';
+  assert.deepEqual(jp.ats(`${form}?utm_medium=email&utm_source=FormMailer%23form_email`), {
+    name: 'greenhouse',
+    company: null,
+    jobId: null,
+    stage: 'application',
+  });
+  assert.equal(jp.ats(`${form}/confirmation`).stage, 'unknown');
   const site = jp.ats('https://www.jumptrading.com/hr/job?gh_jid=4982814');
   assert.deepEqual(
     [site.name, site.company, site.jobId, site.stage],
@@ -581,6 +590,25 @@ test('applicationContext: Greenhouse page with the description above the form', 
   assert.ok(c.posting && words(c.posting.description) > 80);
   assert.doesNotThrow(() => JSON.stringify(c));
   assert.deepEqual(JSON.parse(JSON.stringify(c)).jobIds, c.jobIds);
+});
+
+test('applicationContext: a recruiter’s follow-up names its employer only in its heading and words', () => {
+  const form = parseHTML(fs.readFileSync(path.join(FIX, '..', 'greenhouse-questionnaire.html'), 'utf8')).document;
+  const c = jp.applicationContext(form, 'https://app2.greenhouse.io/application_form/028d57edefed5ac90b59184e0fb20dec');
+  // Not the tab's "Greenhouse | Form": the heading, and the firm its intro names ("your interest in Addepar").
+  assert.equal(c.title, 'Addepar Internship Questionnaire- Edi Data');
+  assert.equal(c.company, 'Addepar');
+  assert.equal(c.ats.stage, 'application');
+  assert.equal(c.posting, null);
+  // A heading's season or field of work is no firm, nor one the page's words don't name as one.
+  const page = (title, h2, text) =>
+    parseHTML(`<html><head><title>${title}</title></head><body><h2>${h2}</h2><p>${text}</p></body></html>`).document;
+  const url = 'https://docs.google.com/forms/d/e/1FAIpQLSf/viewform';
+  const named = (h2, text) => jp.applicationContext(page('Form', h2, text), url).company;
+  assert.equal(named('Summer Analyst Questions', 'Thank you for your interest in Summer roles.'), '');
+  assert.equal(named('Software Engineering Internship Form', 'Experience in Software matters.'), '');
+  assert.equal(named('Belvedere Internship Questions', 'Belvedere is a trading firm.'), '');
+  assert.equal(named('Belvedere Internship Questions', 'Thanks for applying to Belvedere.'), 'Belvedere');
 });
 
 test('applicationContext: Lever /apply page', () => {

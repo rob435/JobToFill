@@ -314,6 +314,10 @@
 
     // Greenhouse: job-boards(.eu).greenhouse.io/{board}/jobs/{id}, boards.greenhouse.io/embed/job_app?for=&token=
     if (/(^|\.)greenhouse\.io$/.test(host)) {
+      // A form a recruiter emails after the application (app2.greenhouse.io/application_form/{token}, "Addepar
+      // Internship Questionnaire"): a step of it, whose address names neither the employer nor the job.
+      if (lower[0] === 'application_form')
+        return set('greenhouse', null, null, lower[2] === 'confirmation' ? 'unknown' : 'application');
       if (lower[0] === 'embed') {
         const stage = lower[1] === 'job_app' ? 'application' : 'unknown';
         return set('greenhouse', qp.get('for'), qp.get('token') || qp.get('gh_jid'), stage);
@@ -1288,6 +1292,26 @@
 
   const JOBBY_TITLE =
     /\b(analyst|analyste|analista|engineer|ingénieur|ingenieur|developer|intern|internship|manager|associate|graduate|trader|researcher|scientist|designer|consultant|specialist|officer|assistant|director|apprentice|trainee|programme|program|scheme|placement|praktikum|praktikant|stage|stagiaire|alternant|alternance|werkstudent|becario|tirocinio)\b/i;
+  /**
+   * The employer a recruiter's follow-up names only in its heading and words: "Addepar" from "Addepar Internship
+   * Questionnaire- Edi Data" over "Thank you for your interest in Addepar". Only a heading that is a form's
+   * ("…Questionnaire", "…Questions", "…Form"); the capitalised words before its first job word, when the page's
+   * `text` names them as a firm ("interest in Addepar", "join Addepar"); else ''. Never a season or a field of work
+   * ("Summer Analyst Questions", "Software Engineering Internship Form").
+   */
+  function headingFirm(title, text) {
+    const t = clean(title, 200);
+    const m = /\b(questionnaire|questions|form|survey)\b/i.test(t) ? t.match(JOBBY_TITLE) : null;
+    if (!m || !m.index) return '';
+    const firm = t.slice(0, m.index).replace(/[\s:|–—-]+$/, '');
+    if (!/^\p{Lu}/u.test(firm) || firm.split(' ').length > 4 || NOT_HEADING_FIRM.test(firm)) return '';
+    const esc = firm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const said = new RegExp(`\\b(in|to|at|with|join|joining|from|for)\\s+${esc}(?![\\p{L}\\p{N}])`, 'u');
+    return said.test(String(text || '')) ? firm : '';
+  }
+  const NOT_HEADING_FIRM =
+    /^((19|20)\d\d|summer|spring|winter|autumn|fall|off[- ]?cycle|early careers?|campus|junior|senior|graduate|software|data|quantitative|quant|investment|technology|engineering|research|trading|finance|financial|business|global|your|our|the|new|apply|application)\b/i;
+
   // "Susquehanna International Group, LLP Careers", "Meta Careers" (every page of that site) name the site, not a job.
   const siteTitle = (t) => /\b(careers?|jobs|karriere|carrières?|emplois)\b/i.test(t) && !JOBBY_TITLE.test(t);
 
@@ -1871,7 +1895,7 @@
   /* --------------------------------------------------------- page headings */
 
   const GENERIC_TITLE =
-    /^(apply|application|apply now|apply for this (job|position|role)|job application|start your application|my information|personal (information|details)|sign in|log in|login|create (an )?account|already (have an account|registered)|new users? register|choose your sign ?in option|log ?in(to)? (to )?your account|returning (users?|candidates?)|careers?|jobs?|job search|search jobs|welcome|home|current vacancies|open positions|join us|thank you|are you still with us\??|work summary|job application form|candidate (home|experience)|review|submit|resume|cv|error\s*\d*\b|\d{3}\b|internal server error|access denied|forbidden|too many requests|just a moment|attention required|page not found|listings|search results|current openings|(\w+ )?candidate portal|(join )?(our |the [\w&'’ .-]{1,40} )?talent (community|network|pool)|sign up|your personal space|who we are|my (profile|account|applications?)|dashboard|create (a |your )?profile|register|your privacy|privacy (policy|notice|statement|settings|preferences|cent(er|re))|(your )?cookies?( (policy|settings|preferences|notice|consent|declaration|choices))?|(vacancy|job|role|position|opportunity) details|details|manage (cookies|consent|preferences)|we (use|value) (cookies|your privacy)|terms (of use|and conditions)|legal (notice|information)|disclaimer|imprint|impressum|datenschutz\w*|mentions légales|politique de confidentialité|view this (site|page) in|(choose|select|change) (your )?(language|country|region|location)|.{0,60}\bequal (employment )?opportunit(y|ies)\b.*|.{0,40}\bis an? (equal|e-verify)\b.*)\b/i;
+    /^(apply|application|apply now|apply for this (job|position|role)|job application|(candidate |application )?(form|questionnaire|survey)$|start your application|my information|personal (information|details)|sign in|log in|login|create (an )?account|already (have an account|registered)|new users? register|choose your sign ?in option|log ?in(to)? (to )?your account|returning (users?|candidates?)|careers?|jobs?|job search|search jobs|welcome|home|current vacancies|open positions|join us|thank you|are you still with us\??|work summary|job application form|candidate (home|experience)|review|submit|resume|cv|error\s*\d*\b|\d{3}\b|internal server error|access denied|forbidden|too many requests|just a moment|attention required|page not found|listings|search results|current openings|(\w+ )?candidate portal|(join )?(our |the [\w&'’ .-]{1,40} )?talent (community|network|pool)|sign up|your personal space|who we are|my (profile|account|applications?)|dashboard|create (a |your )?profile|register|your privacy|privacy (policy|notice|statement|settings|preferences|cent(er|re))|(your )?cookies?( (policy|settings|preferences|notice|consent|declaration|choices))?|(vacancy|job|role|position|opportunity) details|details|manage (cookies|consent|preferences)|we (use|value) (cookies|your privacy)|terms (of use|and conditions)|legal (notice|information)|disclaimer|imprint|impressum|datenschutz\w*|mentions légales|politique de confidentialité|view this (site|page) in|(choose|select|change) (your )?(language|country|region|location)|.{0,60}\bequal (employment )?opportunit(y|ies)\b.*|.{0,40}\bis an? (equal|e-verify)\b.*)\b/i;
   const notGeneric = (t) => !GENERIC_TITLE.test(t);
   const SITE_PIECE =
     /^(workday|careers?|jobs?|job board|lever|greenhouse|ashby|smartrecruiters|workable|icims|taleo|avature|eightfold|oracle|apply|application|home|(job|vacancy|role|position) details?|job description|careers? (site|page|portal)|kernel ats|d[ée]tails? (du poste|de l['’]offre)|candidate experience( page)?)$/i;
@@ -2653,6 +2677,7 @@
       spelled ||
       named[0] ||
       (a.company ? slugTitle(a.company) : '') ||
+      headingFirm(context.title, context.pageText) ||
       '';
     context.location = placeWithoutCompany(
       field(

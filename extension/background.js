@@ -354,7 +354,12 @@ async function fillFrames(tabId, opts, payload, letter, aiReady) {
     if (aiReady.ok) {
       summary.ai = { status: 'running', stage: 'job', asked: pending.length };
       const aiToast = opts.aiToast != null ? opts.aiToast : opts.toast;
-      run = answerWithAi(tabId, pending, { toast: aiToast && settings.toast !== false, again: payload.again });
+      run = answerWithAi(tabId, pending, {
+        toast: aiToast && settings.toast !== false,
+        again: payload.again,
+        // Only another form's open questions (Settings › "Answer open questions on any form"): no job to look for.
+        noJob: !frames.some((f) => f.jobContext),
+      });
       if (opts.waitAi) summary.ai = await run;
     } else summary.ai = { status: aiReady.reason, asked: pending.length };
   }
@@ -1738,16 +1743,30 @@ async function jobFor(tabId) {
     };
   } else {
     const context = await jobContext(tabId);
-    const found = await findPosting(context).catch(() => null);
     const sameCompany = (p) =>
       !!p &&
       !!p.company &&
       !!context.company &&
       util.normalize(p.company).split(' ')[0] === util.normalize(context.company).split(' ')[0];
-    const ok =
-      found &&
-      found.posting &&
-      (['same', 'likely'].includes(found.verdict) || (found.verdict === 'unsure' && sameCompany(found.posting)));
+    const fits = (f) =>
+      !!f &&
+      !!f.posting &&
+      (['same', 'likely'].includes(f.verdict) || (f.verdict === 'unsure' && sameCompany(f.posting)));
+    let found = await findPosting(context).catch(() => null);
+    // A recruiter's follow-up names the employer but no job (Greenhouse's "Addepar Internship Questionnaire"): when
+    // nothing else is found, the application it follows, from the log, does, and its job page is read as if you had
+    // given its address. Never ahead of what the page itself leads to (a second role at the same firm).
+    const followed = !fits(found) ? await followedApplication(context).catch(() => null) : null;
+    if (followed) {
+      Object.assign(context, {
+        pasted: followed.jobUrl || followed.url,
+        company: followed.company || context.company,
+        title: followed.role || context.title,
+        location: followed.location || context.location,
+      });
+      found = (await findPosting(context).catch(() => null)) || found;
+    }
+    const ok = fits(found);
     // (Not an application step's text, which the finder has weighed already: Greencore's "Question Summary".)
     const onPage =
       context.posting &&
@@ -1775,6 +1794,19 @@ async function jobFor(tabId) {
   }
   await store.setTabJob(tabId, { host, url, job });
   return job;
+}
+
+/**
+ * The application in the log a page follows up, when the page is about no job of its own (no posting, no job id: a
+ * recruiter's questionnaire): the one whose employer its heading or words name, as an email of theirs would be put on
+ * it (tracker.match: the role decides between two at one firm). Null when none is, or it can't tell which.
+ */
+async function followedApplication(context) {
+  if (!context || context.posting || (context.jobIds || []).length || (context.ats && context.ats.jobId)) return null;
+  const apps = (await store.getHistory()).filter((h) => h.url !== context.url && (h.company || h.title));
+  const page = { subject: context.title || '', text: String(context.pageText || '').slice(0, 4000), at: Date.now() };
+  const hit = globalThis.JTF.tracker.match(page, apps);
+  return (hit && hit.id && apps.find((a) => a.id === hit.id)) || null;
 }
 
 /** The text of the profile's CV, read once per file and kept with the cover letter material. */
@@ -1977,14 +2009,16 @@ async function answerWithAi(tabId, pending, opts = {}) {
   await callFrames(tabId, 'hold', [240000], [0]).catch(() => {});
   try {
     const { profile, settings } = await store.getActive();
+    const tab = await api.tabs.get(tabId);
     const ctx = {
       profile,
       settings,
       config: await store.aiConfig(),
       controller,
       report,
-      tab: await api.tabs.get(tabId),
-      job: null,
+      tab,
+      // A form that isn't a job's is known by its address alone: no job posting is looked for.
+      job: opts.noJob ? { url: tab.url } : null,
       cost: 0,
       // A fix asks only what the page still wants: what the model declined on this page stays declined.
       again: !!opts.again || !!opts.fix,
@@ -1995,7 +2029,9 @@ async function answerWithAi(tabId, pending, opts = {}) {
       // Give the page a moment to show what the answers revealed, then answer only questions not asked before.
       await new Promise((resolve) => setTimeout(resolve, 700));
       // What the answers revealed is the rules' first ("Full degree title" once the degree type is chosen).
-      const frames = await callFrames(tabId, 'pending', [{ profile, settings, ai: true, rules: true }]).catch(() => []);
+      const frames = await callFrames(tabId, 'pending', [
+        { profile, settings, ai: true, rules: true, anyForm: !!opts.noJob },
+      ]).catch(() => []);
       const seen = new Set(first.keys);
       const fresh = frames
         .flatMap((f) => (f.items || []).map((item) => ({ ...item, frameId: f.frameId })))

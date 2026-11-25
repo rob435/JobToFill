@@ -314,3 +314,40 @@ test('page: Lloyds’ questionnaire, each field as a fill leaves it', () => {
   );
   assert.equal(out[10].ai, true);
 });
+
+test('asks: a question answered in your own words, never a box’s name or a site’s search', () => {
+  for (const q of [
+    'Addepar brings together complex portfolio and market data from many sources. Do you have any coursework, project experience or personal interest in financial instruments or portfolio data? (Max 150 words)',
+    'Describe a scenario where you encountered messy, incomplete, or inconsistent data, particularly within large datasets.',
+    'How do you leverage AI tooling to accelerate your coding, troubleshooting, or learning',
+    'Do you have any hands-on experience using SQL for data querying and analysis.',
+    'Tell us about a project you are proud of',
+    'In 200 words, outline your interest in markets',
+    'Your motivation for applying (300 words max)',
+    'Which events would you like to see this year?',
+  ])
+    assert.equal(decide.asks(q), true, q);
+  for (const q of [
+    'Gift message',
+    'Order notes',
+    'Search',
+    'Company (optional)',
+    'Delivery instructions for the courier',
+    'Why?',
+    '',
+  ])
+    assert.equal(decide.asks(q), false, q);
+});
+
+test('forJob: a page whose title or headings say it is part of applying for a job', () => {
+  for (const t of [
+    'Greenhouse | Form Addepar Internship Questionnaire- Edi Data',
+    'Spring Week 2027 – Additional Questions - Google Forms',
+    'Candidate Questionnaire',
+    'Graduate Programme: video interview preferences',
+    'Off-cycle internship follow-up',
+  ])
+    assert.equal(decide.forJob(t), true, t);
+  for (const t of ['Join the Coding Society', 'Checkout - Example Store', 'Customer satisfaction survey', ''])
+    assert.equal(decide.forJob(t), false, t);
+});

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- A form that isn't a job application: a university society's membership form, with a question in the member's
+       own words beside the contact details the rules fill, and a site search the AI never answers. -->
+  <title>Join the Coding Society</title>
+  <style>
+    body { font: 15px system-ui; max-width: 620px; margin: 24px auto; }
+    label { display: block; margin: 14px 0 4px; }
+    input, textarea { display: block; width: 100%; box-sizing: border-box; padding: 6px; }
+  </style>
+</head>
+<body>
+  <div class="site-search"><input type="text" name="q" placeholder="What are you looking for?" aria-label="What are you looking for?"></div>
+  <h1>Join the Coding Society</h1>
+  <form id="join">
+    <label for="name">Full name</label><input id="name" name="name" autocomplete="name">
+    <label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email">
+    <label for="why">Why do you want to join the society? (100 words max)</label><textarea id="why" name="why" rows="4"></textarea>
+    <label for="gift">Gift message</label><input id="gift" name="gift">
+    <button type="submit">Join</button>
+  </form>
+</body>
+</html>

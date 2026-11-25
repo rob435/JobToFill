@@ -631,6 +631,68 @@ test('prompt: with Your story, motivation and experience questions are told to d
   );
 });
 
+test('prompt: with example letters, written answers take the candidate’s voice from them, and nothing else', async () => {
+  const letter = (firm) =>
+    `Dear ${firm} Recruitment Team,\n\nI build things that other people rely on. Last summer I wrote the scripts that checked a charity’s donor records every night, and I learnt more from the three nights they failed than from the weeks they worked. ${'I like plain tools and plain words, and I check my own numbers twice before anyone else sees them. '.repeat(3)}\n\nYours sincerely,\nAlex Morgan`;
+  const samples = [
+    { id: 's1', name: 'goldman.pdf', text: letter('Goldman Sachs') },
+    { id: 's2', name: 'citadel.pdf', text: letter('Citadel') },
+    { id: 's3', name: 'short.pdf', text: 'Dear team, thanks.' },
+  ];
+  const line = /^- Write in the voice of the WRITING SAMPLES, the candidate’s own cover letters[^\n]*sign-off\.$/m;
+  assert.doesNotMatch(A.systemPrompt({ name: 'Alex Morgan', lang: 'en-GB' }), line);
+  assert.match(A.systemPrompt({ name: 'Alex Morgan', lang: 'en-GB', voice: true }), line);
+
+  const essay = { id: '0:1', question: 'Why do you want to join Acme Capital? (120 words max)', kind: 'textarea' };
+  const choice = { id: '0:2', question: 'Do you have Python experience?', kind: 'select', options: ['Yes', 'No'] };
+  const seen = [];
+  const answerOf = {
+    '0:1': 'At Goldman Sachs I checked donor records every night, and I want to bring that care to Acme Capital.',
+    '0:2': 'Yes',
+  };
+  const chat = async (messages) => {
+    seen.push(messages);
+    const last = messages[messages.length - 1].content;
+    if (/strict fact-checker/.test(messages[0].content)) return { json: { unsupported: [] } };
+    const qs = JSON.parse(last.slice(last.indexOf('QUESTIONS:') + 10));
+    const real = {
+      'Why do you want to join Acme Capital? (120 words max)': '0:1',
+      'Do you have Python experience?': '0:2',
+    };
+    return { json: { answers: qs.map((q) => ({ id: q.id, answer: answerOf[real[q.question]] })) } };
+  };
+  const input = (kit) => ({
+    profile: profile(),
+    kit,
+    cvText: 'Python, SQL. Wrote nightly checks of donor records.',
+    job: { company: 'Acme Capital', title: 'Rates Summer Analyst', description: 'Rates desk.' },
+    today: new Date('2026-10-02').getTime(),
+  });
+  const out = await A.answer(chat, input({ notes: '', samples }), [essay, choice]);
+  const [system, user] = seen[0];
+  assert.match(system.content, line);
+  // Two letters long enough to show a voice, each from its start.
+  assert.match(
+    user.content,
+    /WRITING SAMPLES \(the candidate’s own cover letters, for other employers: their voice only\):/,
+  );
+  assert.match(user.content, /--- Sample 1 ---\nDear Goldman Sachs Recruitment Team/);
+  assert.match(user.content, /--- Sample 2 ---\nDear Citadel/);
+  assert.doesNotMatch(user.content, /Sample 3|thanks\./);
+  // An answer that takes a letter's employer is sent back, as one naming another employer's earlier answer is.
+  assert.ok(!out.answers.some((a) => a.id === '0:1' && /Goldman/.test(a.value)), JSON.stringify(out));
+
+  // Without a written answer in the batch, or without letters, the prompts are as before.
+  seen.length = 0;
+  await A.answer(chat, input({ notes: '', samples }), [choice]);
+  assert.doesNotMatch(seen[0][0].content, line);
+  assert.doesNotMatch(seen[0][1].content, /WRITING SAMPLES/);
+  seen.length = 0;
+  await A.answer(chat, input({ notes: '', samples: [] }), [essay]);
+  assert.doesNotMatch(seen[0][0].content, line);
+  assert.doesNotMatch(seen[0][1].content, /WRITING SAMPLES/);
+});
+
 test('prompt: each kind’s rules only when it is allowed, and the default rules drop what it answers', () => {
   const sys = (allow) => A.systemPrompt({ name: 'Alex Morgan', lang: 'en-GB', allow });
   const RULES = {

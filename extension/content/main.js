@@ -576,9 +576,7 @@
     context.jobLocation = jobLocation(payload);
     const hosts = { applicationHosts: payload.applicationHosts };
     const page = JTF.flow.analyze({ fields, results }, hosts);
-    // A step of nothing the rules know, on an application's address (iCIMS's "Job Specific Questions"): its questions
-    // are the job's, for the AI.
-    if (page.byAddress) context.jobContext = true;
+    aiScope({ fields, results, context }, page, settings);
     // On a pure sign-up page in an account flow, the sign-up form's own terms box is part of creating the account.
     const accountTerms = !!payload.accountFlow && page.kind === 'signup' && page.pure;
 
@@ -608,6 +606,8 @@
       title: document.title,
       top: isTop(),
       jobContext: context.jobContext,
+      // Open questions on a form that isn't a job's, for the AI with Settings › "Answer open questions on any form".
+      anyForm: context.asking === 'any',
       detected: 0,
       filled: 0,
       skipped: 0,
@@ -1106,8 +1106,9 @@
     report.unmatched = [...new Set(report.unmatched)];
     remember(history);
     report.undoable = state.history.length > 0;
-    // Only a job application's leftovers go to the AI (never a checkout's gift message or a sign-up page).
-    if (!only && context.jobContext)
+    // Only a job application's leftovers go to the AI (never a checkout's gift message or a sign-up page), and, when
+    // the person lets it, another form's open questions (aiScope).
+    if (!only && (context.jobContext || context.asking))
       report.pending = await pendingQuestions(profile, context, { peek: !!payload.ai, settings });
     // What kind of page this is now (sign-in, sign-up, emailed code…), for signing in and creating accounts.
     report.account = JTF.flow.analyze(scan(profile), { ignore: payload.accountIgnore, ...hosts });
@@ -1286,6 +1287,24 @@
   const askedOf = (field) => U.normalize(U.cleanLabel(JTF.matcher.questionText(field.desc), 600));
 
   /**
+   * Whose this frame's leftover questions are, for the AI: an application's ('job'), by its fields' types
+   * (context.jobContext), its address (`page.byAddress`: iCIMS's "Job Specific Questions") or what the page says it is
+   * for (a recruiter's follow-up: "Addepar Internship Questionnaire"); or, with Settings › Cover letters & AI › "Answer
+   * open questions on any form", another form's ('any'). Else ''. Sets context.jobContext for an application's, and
+   * context.asking.
+   */
+  function aiScope(scanned, page, settings) {
+    const { context } = scanned;
+    if (page.byAddress) context.jobContext = true;
+    const asking = context.jobContext
+      ? ''
+      : JTF.flow.questionnaire(scanned, { anyForm: !!(settings && settings.aiAnyForm) });
+    if (asking === 'job') context.jobContext = true;
+    context.asking = asking;
+    return context.jobContext ? 'job' : asking;
+  }
+
+  /**
    * The questions the fill left empty, for the AI to answer: ones nothing recognised, recognised ones the
    * profile has nothing for, and choices none of whose options matched the profile's answer (`guess`). Each
    * comes with its options (a custom dropdown is opened to read them when `peek`) and the question before it.
@@ -1312,6 +1331,8 @@
       const tried = o && o.type === ((r && r.type) || null) && !/^(kept|filled)$/.test(o.state) ? o.state : null;
       const asked = JTF.decide.forAi(field.desc, r, profile, context, prevType, before, allow, tried);
       if (!asked) continue;
+      // On a form that isn't a job's, only its open questions (aiScope).
+      if (context.asking === 'any' && !context.jobContext && !JTF.flow.asksOpenly(field, r && r.type)) continue;
       const item = JTF.decide.aiItem(field.desc, asked.guess);
       // A closed list not read yet (the fill's second look reads those it leaves) is opened now.
       if (!field.desc.options && peek && LIST_KINDS.has(field.kind) && !state.peeked.has(field.el)) {
@@ -1592,9 +1613,8 @@
     const { fields, results, context } = scan(profile);
     context.jobLocation = jobLocation(payload);
     // Only a job application's questions go to the AI (never a checkout's or a sign-up page's), as with a fill's.
-    const forJob =
-      !!context.jobContext ||
-      !!JTF.flow.analyze({ fields, results }, { applicationHosts: payload.applicationHosts }).byAddress;
+    const page = JTF.flow.analyze({ fields, results }, { applicationHosts: payload.applicationHosts });
+    const forJob = !!aiScope({ fields, results, context }, page, settings);
     const history = [];
     const items = [];
     let rewrote = 0;
@@ -2025,6 +2045,8 @@
       if (payload.rules) await rulesFirst(payload);
       const { context } = scan(payload.profile);
       context.jobLocation = jobLocation(payload);
+      // The AI's second round on a form that isn't a job's asks what the fill did: its open questions alone (aiScope).
+      if (payload.anyForm) context.asking = 'any';
       return {
         items: await pendingQuestions(payload.profile, context, { peek: !!payload.ai, settings: payload.settings }),
       };

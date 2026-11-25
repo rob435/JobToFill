@@ -619,6 +619,11 @@ async function answersGroup(kit, saveKit, settings, profile, refresh) {
     if (box.checked && !(await requestAiConsent())) box.checked = false;
     await store.saveSettings({ aiAnswers: box.checked });
   });
+  const any = el('input', { type: 'checkbox', checked: settings.aiAnyForm === true, name: 'ai-any-form' });
+  any.addEventListener('change', async () => {
+    if (any.checked && !(await requestAiConsent())) any.checked = false;
+    await store.saveSettings({ aiAnyForm: any.checked });
+  });
   const entries = (await store.getAnswers()).filter((e) => e.profileId === profile.id);
   const rows = entries.slice(0, 30).map((e) =>
     el(
@@ -674,6 +679,22 @@ async function answersGroup(kit, saveKit, settings, profile, refresh) {
           className: 'muted',
           textContent:
             'Uses your API key above. When it’s off, the popup still offers “Answer them with AI” for one page.',
+        }),
+      ),
+    ),
+    el(
+      'label',
+      { className: 'check top' },
+      any,
+      el(
+        'span',
+        {},
+        el('strong', { textContent: 'Answer open questions on any form, not just job applications' }),
+        el('br'),
+        el('small', {
+          className: 'muted',
+          textContent:
+            'A society’s “Why do you want to join?”, a scholarship’s “Describe a project you’re proud of (max 200 words)”: sent to your AI provider with your CV and profile, as for an application. Never on sign-in, sign-up or checkout pages. A recruiter’s follow-up questionnaire (“Addepar Internship Questionnaire”) counts as an application either way.',
         }),
       ),
     ),
