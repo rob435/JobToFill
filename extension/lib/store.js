@@ -75,6 +75,10 @@
     jobWebSearch: false,
     // Questions the rules leave empty are answered by the AI (when a key is set up) as part of each fill.
     aiAnswers: true,
+    // …and, switched on, the open questions of any other form a fill meets ("What topics would you like covered?" on
+    // a society's sign-up), not just a job application's (content/account.js questionnaire). Never a sign-in, sign-up or
+    // checkout page's, nor a frame from another site.
+    aiAnyForm: false,
     // Questions the AI never sees unless switched on here (Settings › Cover letters & AI, answers.withheld): eeo
     // (diversity and social-mobility monitoring), consent (declarations, typed signatures, AI-use disclosures; never
     // marketing opt-ins), legal (government officials, criminal and regulatory history, sanctions, vetting and checks),

@@ -219,6 +219,47 @@
     );
   }
 
+  // A site's search box asks too ("What job are you looking for?"), and is no question for anyone to answer.
+  const SEARCH_NAME = /^(q|query|keywords?|search\w*)$/i;
+  const sameOriginTop = () => {
+    try {
+      return window.top === window || !!window.top.location.hostname;
+    } catch (err) {
+      return false; // (a frame from another site: a chat widget's, an ad's)
+    }
+  };
+
+  /**
+   * Does a field the rules don't know (`type` none) ask an open question (decide.asks: "Describe a scenario where…",
+   * "…? (Max 150 words)"), outside the site's header, menus and search? On a form that isn't a job's, these alone go
+   * to the AI (never its "Gift message" or "What are you looking for?").
+   */
+  const asksOpenly = (f, type) =>
+    !type &&
+    /^(select|radio|checkboxes|combo|combobox|text|textarea|editor)$/.test(f.kind) &&
+    f.el.type !== 'search' &&
+    !SEARCH_NAME.test(f.el.name || f.el.id || '') &&
+    !f.el.closest(PAGE_CHROME) &&
+    shown(f.el) &&
+    JTF.decide.asks(JTF.matcher.questionText(f.desc));
+
+  /**
+   * Does this frame ask open questions though none of its fields is a job application's by its type? 'job' when the
+   * page says it is part of applying (a recruiter's follow-up form on Greenhouse or Google Forms: "Addepar Internship
+   * Questionnaire", decide.forJob), 'any' on another page's form when the person lets the AI answer those (Settings ›
+   * Cover letters & AI › "Answer open questions on any form", `opts.anyForm`; only the page's own frames, never a chat
+   * widget's), else ''. Only when one of its boxes asks openly (asksOpenly); never on a page with a password, a card
+   * or a code (signing in, a checkout).
+   */
+  function questionnaire(scan, opts) {
+    const { fields, results } = scan;
+    const types = results.map((r) => (r && r.type) || null);
+    if (fields.some((f, i) => f.kind === 'password' || /^(account\.|cc\.|otp$)/.test(types[i] || ''))) return '';
+    if (!fields.some((f, i) => asksOpenly(f, types[i]))) return '';
+    if (JTF.decide.forJob(`${document.title} ${headings()}`)) return 'job';
+    return opts && opts.anyForm && sameOriginTop() ? 'any' : '';
+  }
+
   /**
    * What kind of page this frame is, from a scan ({ fields, results } as main.js makes them):
    *   kind     'login' | 'signup' | 'verify' | 'chooser' | 'application' | 'none'
@@ -811,6 +852,8 @@
 
   JTF.flow = {
     analyze,
+    questionnaire,
+    asksOpenly,
     click,
     stepState,
     advance,

@@ -6,10 +6,14 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { PROFILE, checked, launch, selectedText, until, value } from './harness.mjs';
+import { GREENHOUSE_FORM_HOST, PROFILE, checked, launch, selectedText, until, value } from './harness.mjs';
 
 const ESSAY = (n) =>
   `I want to join Acme Capital’s Rates desk because the work is building pricing and risk tools in Python that traders use every day. I built a reconciliation tool in Python that checks ${n} trades a night, and explaining breaks to traders is how I learnt that a tool is only useful when people trust it.`;
+
+/** An answer to an open question of a follow-up form, from the candidate's notes (the first few words of it kept). */
+const FOLLOW_UP = (question) =>
+  `${question.split(' ').slice(0, 3).join(' ')}: I built a reconciliation tool in Python that checks 40,000 trades a night, and explaining breaks to traders taught me to trace each mismatch to its source.`;
 
 /**
  * What a model makes of the sensitive questions (tests/fixtures/ai-sensitive.html): answered only where the system
@@ -58,6 +62,9 @@ function mockAi() {
             answers: questions.map((q) => {
               const kept = sensitive(q, system);
               if (kept) return kept;
+              // Addepar's follow-up questionnaire (its SQL question names Python too), and a society's "Why join?".
+              if (/portfolio data|messy|AI tooling|using SQL|join the society/i.test(q.question))
+                return { id: q.id, answer: FOLLOW_UP(q.question), basis: 'material' };
               if (/^why/i.test(q.question)) return { id: q.id, answer: ESSAY('90,000'), basis: 'material' };
               if (/python/i.test(q.question)) return { id: q.id, answer: 'Yes', basis: 'material' };
               if (/product/i.test(q.question)) return { id: q.id, answer: 'Rates and inflation', basis: 'posting' };
@@ -237,6 +244,98 @@ test('a page that isn’t a job application (a checkout) never goes to the AI', 
   assert.equal(r.ai, undefined);
   assert.equal(ai.calls.length, before);
   await page.close();
+});
+
+test('a recruiter’s follow-up questionnaire on Greenhouse (nothing on it a profile knows) is answered by the AI', async () => {
+  const before = answerCalls().length;
+  // The application it follows, in the log: an Addepar internship filled a month before (and a Jane Street one).
+  const month = 30 * 24 * 3600e3;
+  await h.bg(
+    async ([job, at]) => {
+      const { store } = globalThis.JTF;
+      await store.addHistory({ url: 'https://www.janestreet.com/join/x', company: 'Jane Street', role: 'Intern' });
+      await store.updateHistory((list) => [
+        {
+          id: 'addepar-1',
+          date: at,
+          updatedAt: at,
+          stage: 'filled',
+          url: job,
+          host: new URL(job).host,
+          company: 'Addepar',
+          role: 'Data Engineering Intern',
+          filled: 12,
+        },
+        ...list,
+      ]);
+    },
+    [h.url('addepar-posting.html'), Date.now() - month],
+  );
+  const page = await h.open('application_form/028d57edefed5ac90b59184e0fb20dec?utm_medium=email', GREENHOUSE_FORM_HOST);
+  const r = await fillAndWait(page);
+  assert.equal(r.error, undefined);
+  assert.equal(r.unknown, 4, 'four questions, none the rules know');
+  assert.equal(r.ai.status, 'done', JSON.stringify(r.ai));
+  assert.equal(r.ai.filled, 4, JSON.stringify(r.ai));
+  for (const id of ['126024067002', '126024068002', '126024069002', '126024070002'])
+    assert.match(await value(page, `#question_${id}`), /reconciliation tool in Python/);
+  const calls = answerCalls().slice(before);
+  const asked = askedIn(calls);
+  assert.equal(asked.length, 4, asked.join(' | '));
+  assert.match(asked.join('\n'), /Max 150 words/);
+  // Each written to the question's own limit, for the job the application in the log was for (its posting read).
+  const sent = calls.map((c) => c.last).join('\n');
+  assert.match(sent, /"limit": "at most 150 words"/);
+  assert.match(sent, /Employer: Addepar/);
+  assert.match(sent, /Role: Data Engineering Intern/);
+  assert.match(sent, /JOB POSTING:[\s\S]*Enterprise Data Integration \(EDI\) team/);
+  // Said as what it is, never "No fillable fields found".
+  const said = await h.bg((s) => globalThis.JTFBackground.summaryText(s), r);
+  assert.doesNotMatch(said, /No fillable fields/);
+  // A follow-up starts no application of its own in the log: nothing of the profile's was filled on it.
+  const logged = await h.bg(() => globalThis.JTF.store.getHistory());
+  assert.ok(!logged.some((e) => /greenhouse\.io/.test(e.url)), JSON.stringify(logged.map((e) => e.url)));
+  await page.close();
+});
+
+test('another form’s open questions go to the AI only with “Answer open questions on any form” on', async () => {
+  const before = ai.calls.length;
+  let page = await h.open('society-form.html');
+  let r = await fillAndWait(page);
+  assert.equal(await value(page, '#email'), PROFILE.contact.email);
+  assert.equal(r.pending, 0);
+  assert.equal(r.ai, undefined);
+  assert.equal(ai.calls.length, before, 'off by default: nothing sent');
+  await page.close();
+
+  await h.setSettings({ aiAnyForm: true });
+  try {
+    page = await h.open('society-form.html');
+    r = await fillAndWait(page);
+    assert.equal(r.ai.status, 'done', JSON.stringify(r.ai));
+    assert.match(await value(page, '#why'), /reconciliation tool in Python/);
+    // The site's search box asks too, and is never sent; nor is a job looked for.
+    const calls = answerCalls().filter((c) => ai.calls.indexOf(c) >= before);
+    const asked = askedIn(calls);
+    assert.ok(
+      asked.some((q) => /join the society/.test(q)),
+      asked.join(' | '),
+    );
+    assert.ok(!asked.some((q) => /looking for/.test(q)), asked.join(' | '));
+    assert.doesNotMatch(calls.map((c) => c.last).join('\n'), /JOB POSTING/);
+    assert.equal(await value(page, 'input[name="q"]'), '');
+    await page.close();
+
+    // Still never a checkout's.
+    const was = ai.calls.length;
+    page = await h.open('checkout.html');
+    r = await fillAndWait(page);
+    assert.equal(r.pending, 0);
+    assert.equal(ai.calls.length, was);
+    await page.close();
+  } finally {
+    await h.setSettings({ aiAnyForm: false });
+  }
 });
 
 test('a question an AI answer brings up ("If yes, which firm…") is answered in a second round', async () => {

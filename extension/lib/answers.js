@@ -358,6 +358,18 @@
     return scored.sort((a, b) => b.score - a.score || (b.at || 0) - (a.at || 0)).slice(0, 6);
   }
 
+  // The candidate's example letters (Settings › Cover letters & AI) for a batch with written answers: how they write,
+  // two at most, the start of each (where their voice is, before the letter's own facts pile up).
+  const VOICE_SAMPLES = 2;
+  const VOICE_CHARS = 1500;
+
+  /** The candidate's own letters to take written answers' voice from: none when no item wants a written answer. */
+  function voiceSamples(items, kit) {
+    const samples = ((kit && kit.samples) || []).filter((s) => s && L().words(s.text || s) >= 60);
+    if (!samples.length || !items.some((i) => answerKind(i) === 'essay')) return [];
+    return samples.slice(0, VOICE_SAMPLES).map((s) => L().clip(String(s.text || s), VOICE_CHARS));
+  }
+
   /* --------------------------------------------------------------- prompt */
 
   // What each kind of question the candidate lets the AI answer is answered with (see standingAnswers()).
@@ -404,6 +416,11 @@
     };
   }
 
+  // With example letters: the candidate's voice, never their facts or their structure.
+  const VOICE_ANSWERS = [
+    '- Write in the voice of the WRITING SAMPLES, the candidate’s own cover letters: their sentence length, word choice, tone and how they make a point, so the answers read as written by the same person. Take no facts, employers, reasons or phrases from them, and none of a letter’s greeting, opening or sign-off.',
+  ];
+
   // With Your story filled in: where motivation and "tell us about a time" answers come from.
   const STORY_ANSWERS = [
     '- Motivation and experience questions ("Why do you want…", "Tell us about a time when…", "Describe a project you’re proud of", "What would you bring"): draw first on the part of CANDIDATE MATERIAL headed “About the candidate, in their own words”: their projects, results, stories and own reasons, choosing what this employer will care about most, in the way they talk about their work. Your aim is to get them to interview.',
@@ -437,6 +454,7 @@
       '',
       'Written answers:',
       '- First person, as the candidate. Plain, specific and confident: short declarative sentences, concrete detail from the material (what they did, how, the result), no flattery, no filler. Match the voice of the PREVIOUS ANSWERS when there are any.',
+      ...(o.voice ? VOICE_ANSWERS : []),
       '- Keep to each question’s "limit". Never exceed a word, sentence or character limit.',
       '- "Why us / why this role / what excites you" answers: connect two or three specific things the posting says about the work, team or programme to specific things the candidate has done or studied. Name the employer.',
       ...(o.story ? STORY_ANSWERS : []),
@@ -542,6 +560,10 @@
         'EQUAL-OPPORTUNITY ANSWERS (the candidate’s own, for monitoring questions only; anything not here they left unanswered):',
         input.eeo || '(none)',
       );
+    if (input.voice && input.voice.length) {
+      parts.push('', 'WRITING SAMPLES (the candidate’s own cover letters, for other employers: their voice only):');
+      input.voice.forEach((v, i) => parts.push(`--- Sample ${i + 1} ---`, v));
+    }
     if (previous.length) {
       parts.push('', 'PREVIOUS ANSWERS (the candidate’s own, for other employers):');
       for (const p of previous)
@@ -977,7 +999,13 @@
       own: candidate,
       company: job.company,
       role: job.title,
-      others: [...new Set(previous.map((p) => p.company).filter(Boolean))].filter(
+      // Other employers an answer mustn't name: those of the earlier answers and of the example letters it may sound like.
+      others: [
+        ...new Set([
+          ...previous.map((p) => p.company).filter(Boolean),
+          ...(voiceSamples(ask, input.kit).length ? L().sampleCompanies(input.kit.samples) : []),
+        ]),
+      ].filter(
         (c) =>
           !L()
             .companyAliases(job.company)
@@ -985,13 +1013,17 @@
       ),
       today: input.today || Date.now(),
     };
-    const system = systemPrompt({
-      name: L().fullName(input.profile),
-      lang,
-      allow: may,
-      fixing: ask.some((it) => !!it.pageError),
-      story: L().hasStory(input.profile),
-    });
+    // The example letters go with a batch that has a written answer to sound like the candidate (voiceSamples), and
+    // the system prompt says how to use them only then: without letters, every prompt is the one the eval measured.
+    const systemFor = (voice) =>
+      systemPrompt({
+        name: L().fullName(input.profile),
+        lang,
+        allow: may,
+        fixing: ask.some((it) => !!it.pageError),
+        story: L().hasStory(input.profile),
+        voice: voice.length > 0,
+      });
     let calls = 0;
 
     // The model sees plain ids (q1, q2, …): the page's own ("0:12", frame and field) are easy to garble.
@@ -1008,9 +1040,13 @@
     // its questions for the person, and the other batches' answers still go in. Stopped, or all failed: the run fails.
     const settled = await Promise.allSettled(
       batches.map(async (batch) => {
+        const voice = voiceSamples(batch, input.kit);
         const messages = [
-          { role: 'system', content: system },
-          { role: 'user', content: userPrompt({ ...input, candidate, guidance, eeo, allow: may }, batch, previous) },
+          { role: 'system', content: systemFor(voice) },
+          {
+            role: 'user',
+            content: userPrompt({ ...input, candidate, guidance, eeo, allow: may, voice }, batch, previous),
+          },
         ];
         const budget = batch.reduce(
           (n, it) => n + Math.max(60, (limits(it).maxWords || (answerKind(it) === 'essay' ? 170 : 25)) * 2),

@@ -7,6 +7,7 @@
  *   outcome(r, d, res)                       what the rules' turn left a field as (OUTCOMES): the fill records it
  *   forAi(desc, r, profile, context, prev, before, allow, tried)  whether a field left empty goes to the AI, and the
  *                                            rules' guess
+ *   asks(question), forJob(text)             a question answered in your own words; a page that is part of applying
  *   page(descs, profile, opts)               every field of a page, as a fill would leave it
  */
 (function (root) {
@@ -105,6 +106,30 @@
   // of its own. It asks nothing anyone can answer, and twenty of them on a page read the same.
   const PROMPT_ONLY =
     /^(please )?(select|choose|pick)( (one|an? (option|item|answer|value|response)|options?|from (the )?(list|options)))?( required| optional)?$/;
+  // A question someone answers in their own words: one that opens by asking ("Do you have any hands-on experience
+  // using SQL…"), says what to write ("Describe a scenario where…", "Tell us about…") or sets its length ("(Max 150
+  // words)"), or ends with a question mark. Never a box's name ("Gift message", "Order notes", "Search").
+  const ASKING =
+    /^(why|how|what|which|when|where|who|whose|describe|tell (us|me)|explain|share|outline|summari[sz]e|walk us through|give (us )?an example|please (describe|explain|tell|share|outline|summari[sz]e|elaborate|provide|give|list|state|specify|indicate)|in (no more than |under |fewer than |less than )?\d+ words|(do|does|did|are|is|have|has|were|was|would|will|can|could) you)\b/;
+  const LENGTH = /\b\d{1,4} ?(words?|characters?|chars?)\b|\bword (limit|count)\b/;
+
+  /** Does a field's question (its words as the page shows them) ask something answered in your own words? */
+  function asks(question) {
+    const raw = String(question || '');
+    const q = U.normalize(raw);
+    if (q.split(' ').length < 4) return false;
+    return /\?/.test(raw) || ASKING.test(q) || LENGTH.test(q);
+  }
+
+  // What a page says it is for when it is part of applying for a job, though none of its fields is an application's
+  // (a recruiter's follow-up: "Addepar Internship Questionnaire", "Spring Week – Additional Questions",
+  // "Candidate Questionnaire", "Graduate Programme: Video Interview Preferences").
+  const JOB_PURPOSE =
+    /\b(intern(ship)?s?|graduate (programmes?|programs?|schemes?|roles?|jobs?)|placements?|apprenticeships?|spring (weeks?|insights?)|insight (days?|weeks?|programmes?|programs?)|off ?cycle|candidates?|recruit(ment|ing)|hiring|interviews?|job applications?|vacanc(y|ies)|careers?|assessment cent(re|er)s?)\b/;
+
+  /** Does a page's title and headings (`text`) say it is part of applying for a job? */
+  const forJob = (text) => JOB_PURPOSE.test(U.normalize(text));
+
   // Contact details read into a question that isn't one: what a list none of whose options fits them hands back to
   // the AI as a question nobody recognised. Never a diversity question, a consent, an upload or a secret.
   const MISREAD = /^(name\.|address\.|phone|links\.)/;
@@ -437,6 +462,8 @@
     picks,
     forAi,
     aiItem,
+    asks,
+    forJob,
     hidesAnswer,
     beforeOf,
     conditionOn,

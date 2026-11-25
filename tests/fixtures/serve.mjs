@@ -66,6 +66,8 @@ export function serve(port = 0) {
     // ?in_iframe=1 the step that page frames.
     const icims = file.match(/^jobs\/\d+\/[\w-]+\/(login|candidate|questions)$/);
     if (icims) file = url.searchParams.get('in_iframe') === '1' ? `icims-${icims[1]}.html` : 'icims.html';
+    // Greenhouse's questionnaire a recruiter emails after the application (/application_form/{token}).
+    if (/^application_form\/[0-9a-f]+$/.test(file)) file = 'greenhouse-questionnaire.html';
     // A SuccessFactors classic site's application after Apply (/portalcareer?_s.crb=…, a session token alone).
     if (file === 'portalcareer') file = 'successfactors-apply.html';
     if (file.includes('..')) {
